@@ -201,7 +201,10 @@ class Codex(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(result[0]["host"], "worker")
         self.assertEqual(result[0]["codexHome"], "/resolved remote home")
-        self.assertEqual(remote.call_args.args[1], ["list", "--all", "--agent", "codex", "--codex-home", "/remote"])
+        self.assertEqual(remote.call_args.args[1], [
+            "list", "--no-update-notice", "--all", "--agent", "codex",
+            "--codex-home", "/remote",
+        ])
 
     def test_multihost_results_keep_destination_specific_home(self):
         def remote(host, argv, ssh_opts):
