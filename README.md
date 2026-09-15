@@ -285,8 +285,10 @@ works. `--codex-home` explicitly chooses that copy but is not proof of activity.
 This explicit-home form also works with releases that predate active-writer
 resolution.
 
-The #55 safeguards described below ship in v0.6.1; the original PyPI 0.6.0
-package does not check other homes or expose the new JSON fields.
+The duplicate-home rejection baseline shipped in v0.6.1. The active-writer
+selection, revalidation, and detailed `codexHomeResolution` evidence described
+below ship in v0.6.2; v0.6.1 requires an explicit `--codex-home` when the same
+thread UUID exists in more than one known home.
 
 Without `--codex-home`, selection still uses destination `CODEX_HOME`, then
 `~/.codex`. Before send or dry-run, the ambiguity guard checks a bounded inventory:
@@ -522,6 +524,17 @@ fixtures, real UDS payload checks and broader exit-code/remote-command regressio
 tests remain tracked in [#28](https://github.com/abruption/session-peer/issues/28).
 
 ## Verified
+
+### session-peer v0.6.2 (2026-09-15)
+
+- 198 local tests and the release build checks passed for UUID-specific Codex
+  writer validation, same-machine reply localization, SSH destination-user
+  resolution, and structured connection-failure diagnostics.
+- Wheel and sdist contents were inspected and installed independently. Both
+  artifacts report v0.6.2 and exclude the frozen legacy `cc_peer.py`.
+- No live message was submitted during release preparation. Queue acceptance,
+  consumption, acknowledgements, and reverse SSH reachability remain distinct
+  outcomes.
 
 ### session-peer v0.6.1 (2026-09-15)
 
