@@ -214,6 +214,7 @@ from the desired release checkout to refresh both standalone program and skill.
 | `CLAUDE_CONFIG_DIR` | Where Claude Code keeps its config (default `~/.claude`). Respected by `session-peer list` for session discovery and by `install.sh` for skill placement. |
 | `ANTHROPIC_CONFIG_DIR` | Fallback if `CLAUDE_CONFIG_DIR` is unset. |
 | `CODEX_HOME` | Codex discovery/queue home (default `~/.codex`); overridden by `--codex-home`. |
+| `SESSION_PEER_CODEX_HOMES` | Additional destination homes to check for duplicate thread UUIDs before an implicit send/dry-run. JSON array of absolute paths (or `~/…`), not a shell command or a path-separated list. It does not change the selected home or merge listings. |
 
 With `--host`, discovery uses the destination's environment; local environment
 variables are not automatically forwarded. `--codex-home` and `--codex-bin`
@@ -232,6 +233,66 @@ remote paths. Sending requires a Codex executable with the `queue` command and
 the appropriate saved thread/rollout in that home; a listing alone does not
 prove the queue can accept it.
 
+### Orca and multiple Codex homes
+
+An Orca-launched session can use a per-account home while a separate terminal
+or SSH command uses `~/.codex`. The same UUID can exist in both. A successful
+queue submission to one copy does not establish that the intended session is
+using that home.
+
+Use the **same explicit destination home for list and send**. For example, replace
+`<account-id>` and `<full-thread-uuid>` with the intended account and thread:
+
+```bash
+session-peer list --host mac --agent codex \
+  --codex-home '~/Library/Application Support/orca/codex-accounts/<account-id>/home' --json
+session-peer send --host mac --to 'codex:<full-thread-uuid>' \
+  --codex-home '~/Library/Application Support/orca/codex-accounts/<account-id>/home' \
+  --dry-run --json "message"
+```
+
+Omit `--host mac` for local use. Remove `--dry-run` only when ready to submit.
+Quoting `~` keeps expansion on the destination; an absolute remote path also
+works. `--codex-home` explicitly chooses that copy but is not proof of activity.
+This workaround also works with the published 0.6.0 package.
+
+The #55 safeguards described below are for the next release; the original PyPI
+0.6.0 package does not check other homes or expose the new JSON fields.
+
+Without `--codex-home`, selection still uses destination `CODEX_HOME`, then
+`~/.codex`. Before send or dry-run, the ambiguity guard checks a bounded inventory:
+
+- The selected home and the default `~/.codex` when its state DB exists.
+- On macOS only, existing state DBs immediately under
+  `~/Library/Application Support/orca/codex-accounts/*/home`.
+- Additional homes from destination `SESSION_PEER_CODEX_HOMES`, for example:
+
+```bash
+export SESSION_PEER_CODEX_HOMES='["/srv/codex/account-a", "/srv/codex/account-b"]'
+```
+
+Configure this in the destination command's environment; a local export is not
+forwarded by `--host`. On Windows, use absolute Windows paths with backslashes
+escaped as required by JSON. Empty configuration arrays are allowed; malformed
+configuration is an error for implicit sends.
+
+If the UUID occurs in multiple known homes, the command fails before queueing
+and names the candidates. Archived copies count too. During multi-home checks,
+unreadable or incompatible known databases and missing configured additional
+databases prevent implicit submission; an unreadable Orca inventory also blocks it. Choose
+`--codex-home` explicitly to bypass the ambiguity guard and unrelated inventory
+errors. Resolved symlink aliases and repeated paths count as one home.
+
+The guard never automatically switches to another home. With no competing
+home, native queue behavior is preserved; `list` still reads only the selected
+home, so a successful listing is not an ambiguity check. There is no general
+filesystem scan, process-environment inspection, activity detection or atomic
+cross-home snapshot. Unconfigured/custom layouts and copies created after the
+check can be missed. For Orca layouts other than the macOS path above, configure
+the additional homes or use `--codex-home`. Further diagnostics belong to [#45](https://github.com/abruption/session-peer/issues/45).
+
+### Submission and JSON results
+
 Submission uses `codex queue`, never direct database writes. `queued` means the
 CLI accepted the submission, not that a turn consumed it or acknowledged it.
 session-peer does not wake or resume sessions. Queue DB writes and Claude socket
@@ -245,15 +306,27 @@ session-peer portability policy rather than a measured Codex server limit. NUL
 characters cannot be passed as CLI arguments. `--dry-run` verifies the executable
 and saved target without queueing but cannot guarantee a later submission will succeed.
 
-Local Codex list JSON has the `{sessions, version}` envelope. Each entry has
+Local Codex list JSON retains `sessions` and `version`, and adds the resolved
+absolute `codexHome` at the top level. Each entry has
 `agent`, `id`, `name` (first line, at most 120 characters), `cwd`, `updatedAt`
 (Unix seconds), and `archived`. Remote list JSON is an array of per-host results,
-even for one host; each successful result includes `host`, `sessions`, `version`
+even for one host; each successful result includes `host`, `sessions`, `version`, `codexHome`
 and an optional `remoteVersion` for an installed standalone copy.
 
-Codex send JSON adds `target: {agent, id}` and `status: queued` (or `validated`
-under dry-run) to `{ok, chars, dryRun}`; `queueId` is optional. A remote send to
-one host returns a flat object with `host`; multiple hosts return an array.
+Codex send JSON retains `target: {agent, id}`, `status: queued` (or `validated`
+under dry-run), `ok`, `chars`, `dryRun`, and optional `queueId`. It adds:
+
+- `codexHome`: the resolved absolute destination home, not a sender-side guess.
+- `submitted`: `true` only after successful queue CLI completion, `false` for dry-run.
+- `consumptionConfirmed`: always `false`; neither queued nor validated establishes consumption.
+
+Errors keep the existing `{ok: false, error}` shape (plus host on remote results).
+A timeout has an unknown submission outcome; missing `submitted` on an error
+must not be interpreted as proof that nothing was queued. Listing results do
+not describe a submission and have no submission/consumption fields. The changes
+are additive, not the cross-command envelope redesign tracked in [#29](https://github.com/abruption/session-peer/issues/29).
+
+A remote send to one host returns a flat object with `host`; multiple hosts return an array.
 Claude output stays compatible. When `CODEX_THREAD_ID` (or the compatibility
 fallback `CODEX_SESSION_ID`) is present, the message envelope and reply command
 identify the originating Codex thread.
@@ -392,6 +465,10 @@ compatibility tests, shared CLI helpers, fixture-based Codex discovery and queue
 subprocess tests, and isolated standalone installation/coexistence checks.
 Codex coverage includes argv/payload handling, destination home selection,
 dry-run without dispatch, failure/timeout semantics and remote option forwarding.
+Multi-home fixtures reproduce duplicate UUIDs across the default and Orca/configured
+homes, fail-closed inventory errors, explicit selection, alias deduplication,
+single-home compatibility and home/submission metadata. They never infer a live
+writer from a saved row or submit messages to real sessions.
 
 CI runs tests on Ubuntu/macOS with Python 3.9 and 3.13, and Windows with Python
 3.13 (POSIX installer tests are skipped there). Separate jobs check shell syntax

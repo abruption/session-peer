@@ -20,6 +20,7 @@ import shlex
 import socket
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import urllib.error
@@ -63,6 +64,86 @@ class NoTargetError(CcPeerError):
 def codex_home(args: argparse.Namespace) -> Path:
     return Path(getattr(args, "codex_home", None) or os.environ.get("CODEX_HOME")
                 or Path.home() / ".codex").expanduser().resolve()
+
+
+def known_codex_homes(selected: Path) -> list[Path]:
+    """Bounded destination-side inventory, not process/liveness detection.
+
+    Only existing default/Orca DBs are auto-discovered. Configured additional
+    homes must not be silently skipped if their DB is missing. Do not use glob:
+    some Python versions suppress scanning errors that should fail closed.
+    """
+    homes = [selected]
+
+    def add_existing(home: Path) -> None:
+        try:
+            mode = (home / "state_5.sqlite").stat().st_mode
+        except (FileNotFoundError, NotADirectoryError):
+            return
+        if not stat.S_ISREG(mode):
+            raise CcPeerError(f"Codex state DB is not a regular file in {home}; select --codex-home explicitly")
+        homes.append(home.resolve())
+
+    try:
+        add_existing(Path.home() / ".codex")
+        if sys.platform == "darwin":
+            accounts = Path.home() / "Library/Application Support/orca/codex-accounts"
+            try:
+                entries = sorted(accounts.iterdir())
+            except FileNotFoundError:
+                entries = []
+            for account in entries:
+                add_existing(account / "home")
+
+        configured = os.environ.get("SESSION_PEER_CODEX_HOMES")
+        if configured is not None:
+            try:
+                paths = json.loads(configured)
+            except ValueError as exc:
+                raise CcPeerError("SESSION_PEER_CODEX_HOMES must be a JSON array of absolute home paths; "
+                                  "fix it or select --codex-home explicitly") from exc
+            if not isinstance(paths, list) or any(not isinstance(p, str) or not p.strip() for p in paths):
+                raise CcPeerError("SESSION_PEER_CODEX_HOMES must be a JSON array of non-empty absolute home paths; "
+                                  "fix it or select --codex-home explicitly")
+            for value in paths:
+                path = Path(value).expanduser()
+                if not path.is_absolute():
+                    raise CcPeerError("SESSION_PEER_CODEX_HOMES paths must be absolute (or start with ~/); "
+                                      "fix it or select --codex-home explicitly")
+                homes.append(path.resolve())
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise CcPeerError(f"Cannot inspect Codex homes: {exc}; select --codex-home explicitly") from exc
+    return list(dict.fromkeys(homes))  # resolved aliases do not create ambiguity
+
+
+def check_codex_home_selection(args: argparse.Namespace, selected: Path, thread_id: str) -> None:
+    """Reject competing saved copies before queueing or claiming dry-run success."""
+    if getattr(args, "codex_home", None):
+        return  # an explicit destination choice; never second-guess it via other homes
+    homes = known_codex_homes(selected)
+    if len(homes) == 1:
+        return  # preserve native queue behavior for single-home installations
+    matches = []
+    for home in homes:
+        try:
+            conn = sqlite3.connect((home / "state_5.sqlite").as_uri() + "?mode=ro", uri=True, timeout=3)
+            try:
+                conn.execute("PRAGMA query_only=ON")
+                # Include archived copies; do not infer which copy has a live writer.
+                if conn.execute("SELECT 1 FROM threads WHERE id = ? LIMIT 1", (thread_id,)).fetchone():
+                    matches.append(home)
+            finally:
+                conn.close()
+        except sqlite3.Error as exc:
+            raise CcPeerError(f"Cannot check Codex home {home}: {exc}; "
+                              "select --codex-home explicitly before sending") from exc
+    candidates = ", ".join(str(home) for home in matches)
+    if len(matches) > 1:
+        raise CcPeerError(f"Ambiguous Codex thread {thread_id}; found in homes: {candidates}. "
+                          "Select --codex-home explicitly; nothing queued. Execution state is unknown.")
+    if matches and selected not in matches:
+        raise NoTargetError(f"No saved Codex thread {thread_id} in selected home {selected}; "
+                            f"found in {candidates}. Select --codex-home explicitly; nothing queued.")
 
 
 def codex_executable(args: argparse.Namespace) -> str:
@@ -120,8 +201,11 @@ def queue_codex(args: argparse.Namespace, text: str) -> dict:
     check_codex_message(text)
     executable = codex_executable(args)
     root = codex_home(args)
+    check_codex_home_selection(args, root, thread_id)
     result = {"ok": True, "target": {"agent": "codex", "id": thread_id},
               "chars": len(text), "dryRun": args.dry_run,
+              "codexHome": str(root), "submitted": not args.dry_run,
+              "consumptionConfirmed": False,
               "status": "validated" if args.dry_run else "queued"}
     if args.dry_run:
         discovery_args = argparse.Namespace(codex_home=str(root), all=True)
@@ -162,9 +246,10 @@ def render_codex(sessions: list[dict], where: str) -> str:
 
 
 def codex_submission_text(result: dict, where: str) -> str:
+    home = f" (Codex home: {result['codexHome']})" if "codexHome" in result else ""
     if result["dryRun"]:
-        return f"Validated Codex thread {result['target']['id']} on {where}; nothing queued (submission not guaranteed)."
-    return f"Queued for Codex thread {result['target']['id']} on {where}; consumption not confirmed."
+        return f"Validated Codex thread {result['target']['id']} on {where}{home}; nothing queued (submission not guaranteed)."
+    return f"Queued for Codex thread {result['target']['id']} on {where}{home}; consumption not confirmed."
 
 
 # --------------------------------------------------------------------------
@@ -865,7 +950,10 @@ def cmd_list(args: argparse.Namespace) -> int:
     if not args.host:
         sessions = discover_codex(args) if is_codex else discover(include_unreachable=args.all)
         human = render(sessions, "this machine")
-        emit(args.json, {"sessions": sessions, "version": __version__}, human)
+        home_info = {"codexHome": str(codex_home(args))} if is_codex else {}
+        if is_codex:
+            human += f"\nCodex home: {home_info['codexHome']} (selected home only)."
+        emit(args.json, {"sessions": sessions, "version": __version__, **home_info}, human)
         return 0
 
     exit_code = 0
@@ -884,6 +972,8 @@ def cmd_list(args: argparse.Namespace) -> int:
             remote_version = remote_installed_version(requested_host, ssh_opts)
             shown_host = display_host(requested_host, host)
             human = render(sessions, shown_host)
+            if is_codex and "codexHome" in result:
+                human += f"\nCodex home: {result['codexHome']} (selected home only)."
             if remote_version and remote_version != __version__:
                 human = (
                     f"{shown_host} runs session-peer {remote_version}; this machine has {__version__}."
@@ -893,6 +983,7 @@ def cmd_list(args: argparse.Namespace) -> int:
                 **host_metadata(requested_host, host),
                 "sessions": sessions, "version": __version__,
                 **({"remoteVersion": remote_version} if remote_version else {}),
+                **({"codexHome": result["codexHome"]} if is_codex and "codexHome" in result else {}),
             }
             all_results.append(host_result)
             if not args.json:
@@ -1223,7 +1314,9 @@ def build_parser() -> argparse.ArgumentParser:
     listing = subparsers.add_parser("list", help="list sessions that can be messaged")
     add_common(listing)
     listing.add_argument("--agent", choices=("claude", "codex"), default="claude")
-    listing.add_argument("--codex-home", help="Codex home on the destination machine")
+    home_help = ("select one Codex home on the destination (default: CODEX_HOME or ~/.codex); "
+                 "set explicitly for Orca/multiple homes; listing shows only this home")
+    listing.add_argument("--codex-home", help=home_help)
     listing.add_argument("--codex-bin", help="Codex executable on the destination (used by send)")
     listing.add_argument(
         "--all", action="store_true", help="include stale records and sessions with no inbox"
@@ -1233,7 +1326,11 @@ def build_parser() -> argparse.ArgumentParser:
     sending = subparsers.add_parser("send", help="send one message to a session")
     add_common(sending)
     sending.add_argument("--to", required=True, metavar="NAME|PID|codex:UUID", help="target session")
-    sending.add_argument("--codex-home", help="Codex home on the destination machine")
+    sending.add_argument("--codex-home", help=home_help)
+    sending.epilog = ("Without --codex-home, duplicate threads in known homes are rejected. "
+                      "Known homes: selected/default, macOS Orca account homes, and destination "
+                      "SESSION_PEER_CODEX_HOMES (JSON array of paths). Queued/submitted never "
+                      "confirms consumption; no process activity inspection is performed.")
     sending.add_argument("--codex-bin", help="Codex executable on the destination machine")
     sending.add_argument("message", nargs="?", help="message text; omit or use - to read stdin")
     sending.add_argument("--b64", help=argparse.SUPPRESS)  # used for remote dispatch
