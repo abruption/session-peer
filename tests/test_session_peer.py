@@ -197,18 +197,35 @@ class Envelope(unittest.TestCase):
 
     SESSION = {"pid": 42, "name": "documents-ed", "reachable": True}
 
-    def wrap(self, body="hello", with_from=True, with_reply=True, host="100.64.0.1"):
+    def wrap(self, body="hello", with_from=True, with_reply=True, host="100.64.0.1",
+             local_reply=False):
         with mock.patch.object(session_peer, "own_session", return_value=self.SESSION), \
              mock.patch.object(session_peer, "detect_reply_host", return_value=host), \
              mock.patch.object(session_peer.getpass, "getuser", return_value="alice"), \
              mock.patch.dict(os.environ, {}, clear=True):
-            return session_peer.wrap_message(body, None, with_from, with_reply)
+            return session_peer.wrap_message(
+                body, None, with_from, with_reply, local_reply=local_reply
+            )
 
     def test_default_carries_sender_and_reply(self):
         out = self.wrap()
         self.assertTrue(out.startswith("From: claude:documents-ed @ alice@100.64.0.1"))
         self.assertIn("hello", out)
         self.assertIn("Reply:", out)
+
+    def test_local_reply_keeps_identity_but_omits_ssh_route(self):
+        out = self.wrap(local_reply=True)
+        self.assertTrue(out.startswith("From: claude:documents-ed @ alice@100.64.0.1"))
+        reply = out.split("Reply: ", 1)[1]
+        self.assertIn("--to documents-ed", reply)
+        self.assertIn("--no-reply-to", reply)
+        self.assertNotIn("--host", reply)
+
+    def test_local_reply_works_without_a_tailnet_address(self):
+        out = self.wrap(host=None, local_reply=True)
+        self.assertIn("From: claude:documents-ed @ alice@", out)
+        self.assertIn("Reply:", out)
+        self.assertNotIn("--host", out.split("Reply: ", 1)[1])
 
     def test_from_survives_no_reply_to(self):
         # Knowing who sent something stays useful when you can't answer it.
@@ -241,6 +258,22 @@ class Envelope(unittest.TestCase):
         self.assertEqual(out.count("line one"), 1)
         self.assertLess(out.index("From:"), out.index("line one"))
         self.assertLess(out.index("line two"), out.index("Reply:"))
+
+    def test_local_send_normalizes_only_an_automatic_reply_route(self):
+        session = {"pid": 42, "name": "worker", "reachable": True,
+                   "socket": "/tmp/worker.sock"}
+        for extra, expected_local in (([], True),
+                                      (["--reply-to", "alice@other"], False)):
+            with self.subTest(extra=extra), \
+                 mock.patch.object(session_peer, "wrap_message", return_value="wrapped") as wrap, \
+                 mock.patch.object(session_peer, "discover", return_value=[session]), \
+                 mock.patch.dict(os.environ, {}, clear=True), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                code = session_peer.main([
+                    "send", "--to", "worker", "--dry-run", "--json", *extra, "hello",
+                ])
+            self.assertEqual(code, 0)
+            self.assertIs(wrap.call_args.kwargs["local_reply"], expected_local)
 
 
 class VersionParsing(unittest.TestCase):
@@ -520,6 +553,21 @@ class ErrorHandling(unittest.TestCase):
              mock.patch("pathlib.Path.glob", side_effect=PermissionError):
             result = session_peer.discover()
         self.assertEqual(result, [])
+
+    def test_remote_error_keeps_structured_codex_home_resolution(self):
+        resolution = {"schemaVersion": 1, "status": "unknown", "selected": None,
+                      "reason": "active_writer_unverified", "candidates": []}
+        completed = subprocess.CompletedProcess(
+            [], 1,
+            stdout=json.dumps({"ok": False, "error": "ambiguous",
+                               "codexHomeResolution": resolution}),
+            stderr="",
+        )
+        with mock.patch.object(session_peer.Path, "read_text", return_value="source"), \
+             mock.patch.object(session_peer.subprocess, "run", return_value=completed), \
+             self.assertRaises(session_peer.CcPeerError) as caught:
+            session_peer.run_remote("worker", ["send"], [])
+        self.assertEqual(caught.exception.details["codexHomeResolution"], resolution)
 
 
 class ReadMessage(unittest.TestCase):

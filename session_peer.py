@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import errno
 import getpass
 from importlib import metadata
 import json
@@ -23,10 +24,16 @@ import sqlite3
 import stat
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # Windows has no POSIX flock; activity stays unknown there.
+    fcntl = None
 
 __version__ = "0.6.1"
 GITHUB_REPO = "abruption/session-peer"
@@ -44,6 +51,7 @@ DRAIN_TIMEOUT = 2.0
 DETECT_TIMEOUT = 3.0
 CODEX_QUEUE_TIMEOUT = 30.0
 MAX_CODEX_MESSAGE_BYTES = 32 * 1024
+CODEX_HOME_STABILITY_SECONDS = 0.25
 
 # Tailscale hands out addresses from the CGNAT range, 100.64.0.0/10. Matching on
 # "100." alone would also catch ordinary public addresses like 100.200.x.x.
@@ -55,6 +63,10 @@ EXIT_NO_TARGET = 2
 
 class CcPeerError(Exception):
     """Anything the user should see as a one-line failure."""
+
+    def __init__(self, message: str, details: dict | None = None):
+        super().__init__(message)
+        self.details = details or {}
 
 
 class NoTargetError(CcPeerError):
@@ -116,34 +128,313 @@ def known_codex_homes(selected: Path) -> list[Path]:
     return list(dict.fromkeys(homes))  # resolved aliases do not create ambiguity
 
 
-def check_codex_home_selection(args: argparse.Namespace, selected: Path, thread_id: str) -> None:
-    """Reject competing saved copies before queueing or claiming dry-run success."""
+def _codex_thread_is_saved(home: Path, thread_id: str) -> bool:
+    db = home / "state_5.sqlite"
+    conn = sqlite3.connect(db.as_uri() + "?mode=ro", uri=True, timeout=3)
+    try:
+        conn.execute("PRAGMA query_only=ON")
+        return conn.execute(
+            "SELECT 1 FROM threads WHERE id = ? LIMIT 1", (thread_id,)
+        ).fetchone() is not None
+    finally:
+        conn.close()
+
+
+def _codex_lock_snapshot(path: Path) -> tuple[int, int, int, int] | None:
+    try:
+        value = path.lstat()
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns
+
+
+def probe_codex_writer_lock(path: Path) -> tuple[str, str]:
+    """Probe Codex's real advisory lock without changing the lock file."""
+    if fcntl is None:
+        return "unknown", "lock_probe_unsupported"
+    try:
+        before = path.lstat()
+    except (FileNotFoundError, NotADirectoryError):
+        return "absent", "lock_absent"
+    except OSError:
+        return "unknown", "lock_stat_failed"
+    if stat.S_ISLNK(before.st_mode):
+        return "unknown", "lock_symlink"
+    if not stat.S_ISREG(before.st_mode):
+        return "unknown", "lock_not_regular"
+
+    descriptor = None
+    try:
+        flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            return "unknown", "lock_changed_while_opening"
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno in (errno.EACCES, errno.EAGAIN):
+                return "held", "kernel_lock_held"
+            return "unknown", "lock_probe_failed"
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        except OSError:
+            return "unknown", "lock_probe_release_failed"
+        return "free", "kernel_lock_free"
+    except OSError:
+        return "unknown", "lock_open_failed"
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def parse_lsof_processes(output: str) -> list[dict]:
+    """Parse lsof's NUL/newline-delimited PID, command, and UID fields."""
+    processes: dict[int, dict] = {}
+    current = None
+    for token in re.split(r"[\0\n]", output):
+        if len(token) < 2:
+            continue
+        field, value = token[0], token[1:].strip()
+        if field == "p":
+            try:
+                pid = int(value)
+            except ValueError:
+                current = None
+                continue
+            if pid <= 0:
+                current = None
+                continue
+            current = processes.setdefault(pid, {"pid": pid, "command": None, "uid": None})
+        elif field == "c" and current is not None:
+            current["command"] = value or None
+        elif field == "u" and current is not None:
+            try:
+                current["uid"] = int(value)
+            except ValueError:
+                current["uid"] = None
+    return [processes[pid] for pid in sorted(processes)]
+
+
+def _lsof_executable() -> str | None:
+    for candidate in ("/usr/sbin/lsof", "/usr/bin/lsof"):
+        if Path(candidate).is_file():
+            return candidate
+    return shutil.which("lsof")
+
+
+def _process_start_time(pid: int) -> str | None:
+    try:
+        done = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "lstart="], capture_output=True,
+            encoding="utf-8", errors="replace", timeout=DETECT_TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    value = done.stdout.strip() if done.returncode == 0 else ""
+    return value or None
+
+
+def _codex_lock_openers(path: Path) -> tuple[list[dict], str | None]:
+    executable = _lsof_executable()
+    if executable is None:
+        return [], "lsof_unavailable"
+    try:
+        done = subprocess.run(
+            [executable, "-nP", "-F0pcu", "--", str(path)], capture_output=True,
+            encoding="utf-8", errors="replace", timeout=DETECT_TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return [], "lsof_failed"
+    processes = parse_lsof_processes(done.stdout)
+    if done.returncode not in (0, 1) or (done.returncode == 1 and processes):
+        return processes, "lsof_failed"
+    for process in processes:
+        process["startTime"] = _process_start_time(process["pid"])
+    return processes, None
+
+
+def _codex_lock_sample(path: Path) -> dict:
+    writer_lock, probe_reason = probe_codex_writer_lock(path)
+    openers, opener_error = _codex_lock_openers(path) if writer_lock == "held" else ([], None)
+    return {
+        "snapshot": _codex_lock_snapshot(path),
+        "writerLock": writer_lock,
+        "probeReason": probe_reason,
+        "openers": openers,
+        "openerError": opener_error,
+    }
+
+
+def inspect_codex_writer(home: Path, thread_id: str) -> dict:
+    """Classify one candidate home from bounded, UUID-specific lock evidence."""
+    lock_path = home / "thread-writer-locks" / f"{thread_id}.lock"
+    before = _codex_lock_sample(lock_path)
+    if before["writerLock"] != "held":
+        activity = "inactive" if before["writerLock"] in ("absent", "free") else "unknown"
+        return {"activity": activity, "writerLock": before["writerLock"],
+                "reason": before["probeReason"]}
+
+    time.sleep(CODEX_HOME_STABILITY_SECONDS)
+    after = _codex_lock_sample(lock_path)
+    result = {"activity": "unknown", "writerLock": after["writerLock"]}
+    if before["snapshot"] != after["snapshot"]:
+        return {**result, "reason": "lock_file_changed"}
+    if after["writerLock"] != "held":
+        return {**result, "reason": "lock_state_changed"}
+    if before["openerError"] or after["openerError"]:
+        return {**result, "reason": before["openerError"] or after["openerError"]}
+    if len(before["openers"]) != 1 or len(after["openers"]) != 1:
+        return {**result, "reason": "lock_owner_not_unique"}
+
+    first, second = before["openers"][0], after["openers"][0]
+    identity = ("pid", "uid", "command", "startTime")
+    if any(first.get(key) != second.get(key) for key in identity):
+        return {**result, "reason": "lock_owner_changed"}
+    if first.get("startTime") is None:
+        return {**result, "reason": "lock_owner_start_time_unknown"}
+    current_uid = os.getuid() if hasattr(os, "getuid") else None
+    if current_uid is None or first.get("uid") != current_uid:
+        return {**result, "reason": "lock_owner_wrong_user"}
+    command = str(first.get("command") or "").lower()
+    if command != "codex" and not command.startswith("codex-"):
+        return {**result, "reason": "lock_owner_not_codex"}
+    return {
+        "activity": "live_writer", "writerLock": "held",
+        "ownerPid": first["pid"], "ownerStable": True,
+        "reason": "stable_live_writer",
+    }
+
+
+def _home_resolution(status: str, selected: Path | None, reason: str,
+                     candidates: list[dict]) -> dict:
+    return {
+        "schemaVersion": 1,
+        "status": status,
+        "selected": str(selected) if selected is not None else None,
+        "reason": reason,
+        "candidates": candidates,
+    }
+
+
+def resolve_codex_home(args: argparse.Namespace, selected: Path,
+                       thread_id: str) -> tuple[Path, dict]:
+    """Select a destination home or fail closed with structured evidence."""
     if getattr(args, "codex_home", None):
-        return  # an explicit destination choice; never second-guess it via other homes
+        candidate = {"codexHome": str(selected), "savedThread": None,
+                     "writerLock": "not_checked", "reason": "explicit_selection"}
+        return selected, _home_resolution(
+            "explicit", selected, "explicit_codex_home", [candidate]
+        )
+
     homes = known_codex_homes(selected)
     if len(homes) == 1:
-        return  # preserve native queue behavior for single-home installations
-    matches = []
-    for home in homes:
+        candidate = {"codexHome": str(selected), "savedThread": None,
+                     "writerLock": "not_checked", "reason": "single_known_home"}
+        return selected, _home_resolution(
+            "selected", selected, "single_known_home", [candidate]
+        )
+
+    candidates = [
+        {"codexHome": str(home), "savedThread": None,
+         "writerLock": "not_checked", "reason": "not_inspected"}
+        for home in homes
+    ]
+    for home, candidate in zip(homes, candidates):
         try:
-            conn = sqlite3.connect((home / "state_5.sqlite").as_uri() + "?mode=ro", uri=True, timeout=3)
-            try:
-                conn.execute("PRAGMA query_only=ON")
-                # Include archived copies; do not infer which copy has a live writer.
-                if conn.execute("SELECT 1 FROM threads WHERE id = ? LIMIT 1", (thread_id,)).fetchone():
-                    matches.append(home)
-            finally:
-                conn.close()
+            candidate["savedThread"] = _codex_thread_is_saved(home, thread_id)
         except sqlite3.Error as exc:
-            raise CcPeerError(f"Cannot check Codex home {home}: {exc}; "
-                              "select --codex-home explicitly before sending") from exc
-    candidates = ", ".join(str(home) for home in matches)
-    if len(matches) > 1:
-        raise CcPeerError(f"Ambiguous Codex thread {thread_id}; found in homes: {candidates}. "
-                          "Select --codex-home explicitly; nothing queued. Execution state is unknown.")
-    if matches and selected not in matches:
-        raise NoTargetError(f"No saved Codex thread {thread_id} in selected home {selected}; "
-                            f"found in {candidates}. Select --codex-home explicitly; nothing queued.")
+            candidate["reason"] = "state_db_unreadable"
+            resolution = _home_resolution(
+                "unknown", None, "home_inventory_unreadable", candidates
+            )
+            raise CcPeerError(
+                f"Cannot check Codex home {home}: {exc}; select --codex-home "
+                "explicitly before sending",
+                {"codexHomeResolution": resolution},
+            ) from exc
+    matches = [candidate for candidate in candidates if candidate["savedThread"]]
+    if not matches:
+        return selected, _home_resolution(
+            "selected", selected, "no_competing_saved_copy", candidates
+        )
+    if len(matches) == 1 and matches[0]["codexHome"] == str(selected):
+        matches[0]["reason"] = "single_saved_copy"
+        return selected, _home_resolution(
+            "selected", selected, "single_saved_copy", candidates
+        )
+
+    by_home = {str(home): home for home in homes}
+    for candidate in matches:
+        candidate.update(inspect_codex_writer(by_home[candidate["codexHome"]], thread_id))
+    live = [candidate for candidate in matches if candidate.get("activity") == "live_writer"]
+    unknown = any(candidate.get("activity") == "unknown" for candidate in matches)
+    if len(live) == 1 and not unknown:
+        active = by_home[live[0]["codexHome"]]
+        return active, _home_resolution(
+            "selected", active, "single_stable_live_writer", candidates
+        )
+
+    paths = ", ".join(candidate["codexHome"] for candidate in matches)
+    if len(matches) == 1:
+        reason = "saved_copy_outside_selected_home_not_active"
+        resolution = _home_resolution("unknown", None, reason, candidates)
+        raise NoTargetError(
+            f"No saved Codex thread {thread_id} in selected home {selected}; found in "
+            f"{paths}, but no unique stable live writer selected it. Select --codex-home "
+            "explicitly; nothing queued.",
+            {"codexHomeResolution": resolution},
+        )
+
+    reason = "multiple_live_writers" if len(live) > 1 else (
+        "active_writer_unverified" if unknown else "no_live_writer"
+    )
+    status = "unknown" if unknown and len(live) <= 1 else "ambiguous"
+    resolution = _home_resolution(status, None, reason, candidates)
+    raise CcPeerError(
+        f"Ambiguous Codex thread {thread_id}; found in homes: {paths}. No unique "
+        "stable live writer could select one. Select --codex-home explicitly; nothing queued.",
+        {"codexHomeResolution": resolution},
+    )
+
+
+def revalidate_codex_home(root: Path, thread_id: str, resolution: dict) -> None:
+    if resolution.get("reason") != "single_stable_live_writer":
+        return
+    previous = next(
+        candidate for candidate in resolution["candidates"]
+        if candidate["codexHome"] == str(root)
+    )
+    updated = []
+    for candidate in resolution["candidates"]:
+        current = (
+            inspect_codex_writer(Path(candidate["codexHome"]), thread_id)
+            if candidate.get("savedThread")
+            else candidate
+        )
+        updated.append({**candidate, **current})
+
+    selected = next(
+        candidate for candidate in updated if candidate["codexHome"] == str(root)
+    )
+    competitors = [
+        candidate for candidate in updated
+        if candidate.get("savedThread") and candidate["codexHome"] != str(root)
+    ]
+    if (
+        (selected.get("activity"), selected.get("ownerPid"))
+        == ("live_writer", previous.get("ownerPid"))
+        and all(candidate.get("activity") == "inactive" for candidate in competitors)
+    ):
+        return
+    failed = _home_resolution(
+        "unknown", None, "writer_evidence_changed_before_queue", updated
+    )
+    raise CcPeerError(
+        f"Codex writer evidence for {thread_id} changed before queue submission; nothing queued. "
+        "Retry discovery or select --codex-home explicitly.",
+        {"codexHomeResolution": failed},
+    )
 
 
 def codex_executable(args: argparse.Namespace) -> str:
@@ -200,18 +491,20 @@ def queue_codex(args: argparse.Namespace, text: str) -> dict:
     thread_id = codex_thread(args.to)
     check_codex_message(text)
     executable = codex_executable(args)
-    root = codex_home(args)
-    check_codex_home_selection(args, root, thread_id)
+    selected = codex_home(args)
+    root, home_resolution = resolve_codex_home(args, selected, thread_id)
     result = {"ok": True, "target": {"agent": "codex", "id": thread_id},
               "chars": len(text), "dryRun": args.dry_run,
               "codexHome": str(root), "submitted": not args.dry_run,
               "consumptionConfirmed": False,
-              "status": "validated" if args.dry_run else "queued"}
+              "status": "validated" if args.dry_run else "queued",
+              "codexHomeResolution": home_resolution}
     if args.dry_run:
         discovery_args = argparse.Namespace(codex_home=str(root), all=True)
         if not any(s["id"] == thread_id for s in discover_codex(discovery_args)):
             raise NoTargetError(f"No saved Codex thread {thread_id} in {root}")
         return result
+    revalidate_codex_home(root, thread_id, home_resolution)
     env = dict(os.environ, CODEX_HOME=str(root))
     try:
         done = subprocess.run([executable, "queue", "--thread", thread_id, "--message", text],
@@ -653,6 +946,12 @@ def sender_agent() -> dict | None:
     return None
 
 
+def configured_reply_host(explicit_host: str | None) -> str | None:
+    return explicit_host or (
+        os.environ.get("SESSION_PEER_REPLY_HOST") or os.environ.get("CC_PEER_REPLY_HOST")
+    )
+
+
 def sender_identity(explicit_host: str | None) -> dict | None:
     """Agent-qualified identity and reachable address for this session.
 
@@ -662,9 +961,7 @@ def sender_identity(explicit_host: str | None) -> dict | None:
     identity = sender_agent()
     if identity is None:
         return None
-    configured_host = explicit_host or (
-        os.environ.get("SESSION_PEER_REPLY_HOST") or os.environ.get("CC_PEER_REPLY_HOST")
-    )
+    configured_host = configured_reply_host(explicit_host)
     host = resolve_ssh_destination(configured_host) if configured_host else detect_reply_host()
     if host and "@" not in host:
         host = f"{getpass.getuser()}@{host}"
@@ -695,7 +992,8 @@ def from_header(explicit_host: str | None) -> str | None:
 
 
 def wrap_message(
-    text: str, explicit_host: str | None, with_from: bool, with_reply: bool
+    text: str, explicit_host: str | None, with_from: bool, with_reply: bool,
+    local_reply: bool = False,
 ) -> str:
     """Put the body in an envelope: who sent it, and how to answer.
 
@@ -707,7 +1005,7 @@ def wrap_message(
     """
     identity = sender_identity(explicit_host) if with_from or with_reply else None
     header = _from_identity(identity) if with_from else None
-    footer = _reply_from_identity(identity) if with_reply else None
+    footer = _reply_from_identity(identity, local=local_reply) if with_reply else None
     body = text.strip("\n")
     parts = ([header, ""] if header else []) + [body]
     if footer:
@@ -715,12 +1013,12 @@ def wrap_message(
     return "\n".join(parts)
 
 
-def _reply_from_identity(identity: dict | None) -> str | None:
+def _reply_from_identity(identity: dict | None, local: bool = False) -> str | None:
     """Format a reply command from one already-detected identity."""
     if identity is None:
         return None
     target, host = identity["target"], identity["host"]
-    if not host:
+    if not host and not local:
         return None
     script = Path(__file__).resolve()
     script_str = (
@@ -728,10 +1026,9 @@ def _reply_from_identity(identity: dict | None) -> str | None:
         if script.is_file()
         else '~/.local/share/session-peer/session_peer.py'
     )
-    return (
-        f"Reply: python3 {script_str} send "
-        f"--host {shlex.quote(host)} --to {shlex.quote(target)} --no-reply-to"
-    )
+    route = "" if local else f"--host {shlex.quote(host)} "
+    return (f"Reply: python3 {script_str} send {route}"
+            f"--to {shlex.quote(target)} --no-reply-to")
 
 
 def reply_line(explicit_host: str | None) -> str | None:
@@ -826,7 +1123,12 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     # The far end reports its own failures in-band; surface them here rather
     # than letting a caller read an error payload as a success.
     if isinstance(result, dict) and result.get("ok") is False:
-        raise CcPeerError(f"{host}: {result.get('error', 'remote command failed')}")
+        details = {}
+        if "codexHomeResolution" in result:
+            details["codexHomeResolution"] = result["codexHomeResolution"]
+        raise CcPeerError(
+            f"{host}: {result.get('error', 'remote command failed')}", details
+        )
     return result
 
 
@@ -1206,6 +1508,7 @@ def cmd_send(args: argparse.Namespace) -> int:
             explicit_host=args.reply_to,
             with_from=not args.no_from,
             with_reply=not args.no_reply_to,
+            local_reply=not args.host and configured_reply_host(args.reply_to) is None,
         )
         if (
             not args.no_reply_to
@@ -1276,7 +1579,7 @@ def cmd_send(args: argparse.Namespace) -> int:
         except CcPeerError as exc:
             exit_code = EXIT_ERROR
             all_results.append({"ok": False, **host_metadata(requested_host, host),
-                                "error": str(exc)})
+                                "error": str(exc), **exc.details})
             if not args.json:
                 print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
 
@@ -1327,10 +1630,10 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(sending)
     sending.add_argument("--to", required=True, metavar="NAME|PID|codex:UUID", help="target session")
     sending.add_argument("--codex-home", help=home_help)
-    sending.epilog = ("Without --codex-home, duplicate threads in known homes are rejected. "
-                      "Known homes: selected/default, macOS Orca account homes, and destination "
-                      "SESSION_PEER_CODEX_HOMES (JSON array of paths). Queued/submitted never "
-                      "confirms consumption; no process activity inspection is performed.")
+    sending.epilog = ("Without --codex-home, duplicate threads in known homes select only one "
+                      "stable live writer or fail closed. Known homes: selected/default, macOS "
+                      "Orca account homes, and destination SESSION_PEER_CODEX_HOMES (JSON array "
+                      "of paths). Queued/submitted never confirms consumption.")
     sending.add_argument("--codex-bin", help="Codex executable on the destination machine")
     sending.add_argument("message", nargs="?", help="message text; omit or use - to read stdin")
     sending.add_argument("--b64", help=argparse.SUPPRESS)  # used for remote dispatch
@@ -1370,7 +1673,7 @@ def main(argv: list[str] | None = None) -> int:
     except CcPeerError as exc:
         message = str(exc)
         if args.json:
-            print(json.dumps({"ok": False, "error": message}, ensure_ascii=False))
+            print(json.dumps({"ok": False, "error": message, **exc.details}, ensure_ascii=False))
         else:
             print(f"session-peer: {message}", file=sys.stderr)
         return EXIT_NO_TARGET if isinstance(exc, NoTargetError) or "no reachable session" in message else EXIT_ERROR
