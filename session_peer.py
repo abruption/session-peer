@@ -56,6 +56,10 @@ EXIT_NO_TARGET = 2
 class CcPeerError(Exception):
     """Anything the user should see as a one-line failure."""
 
+    def __init__(self, message: str, details: dict | None = None):
+        super().__init__(message)
+        self.details = details or {}
+
 
 class NoTargetError(CcPeerError):
     """A requested saved session cannot be resolved."""
@@ -787,6 +791,86 @@ def check_ssh_argument(value: str, flag: str) -> None:
             )
 
 
+SSH_METADATA_FIELDS = ("sshUser", "sshUserSource")
+
+
+def ssh_metadata_from(payload: dict) -> dict:
+    return {key: payload[key] for key in SSH_METADATA_FIELDS if key in payload}
+
+
+def ssh_user_metadata(host: str, ssh_opts: list[str]) -> dict:
+    """Ask OpenSSH which login user it will use without making a connection."""
+    check_ssh_argument(host, "--host")
+    for opt in ssh_opts:
+        check_ssh_argument(opt, "--ssh-opt")
+
+    explicit_user, separator, _ = host.rpartition("@")
+    if separator and explicit_user:
+        return {"sshUser": explicit_user, "sshUserSource": "explicit"}
+
+    try:
+        completed = subprocess.run(
+            ["ssh", "-G", *ssh_opts, host], capture_output=True,
+            encoding="utf-8", errors="replace", timeout=DETECT_TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {"sshUser": None, "sshUserSource": "unknown"}
+    if completed.returncode != 0:
+        return {"sshUser": None, "sshUserSource": "unknown"}
+    for line in completed.stdout.splitlines():
+        key, separator, value = line.partition(" ")
+        if separator and key.lower() == "user" and value.strip():
+            return {
+                "sshUser": value.strip(),
+                "sshUserSource": "ssh_config_or_local_default",
+            }
+    return {"sshUser": None, "sshUserSource": "unknown"}
+
+
+def classify_ssh_failure(detail: str, returncode: int | None = None) -> str | None:
+    lowered = detail.lower()
+    if any(marker in lowered for marker in (
+        "permission denied", "authentication failed",
+        "no supported authentication methods available", "too many authentication failures",
+    )):
+        return "authentication_failed"
+    if any(marker in lowered for marker in (
+        "host key verification failed", "remote host identification has changed",
+        "offending key in", "known_hosts",
+    )):
+        return "host_key_failed"
+    if any(marker in lowered for marker in (
+        "operation timed out", "connection timed out", "connect timeout", "timed out",
+    )):
+        return "timeout"
+    if returncode == 255:
+        return "transport_failed"
+    return None
+
+
+def ssh_failure_error(host: str, ssh_info: dict, failure: str,
+                      detail: str | None = None) -> CcPeerError:
+    user = ssh_info.get("sshUser")
+    _, separator, hostname = host.rpartition("@")
+    target = f"{user}@{hostname if separator else host}" if user else host
+    if failure == "authentication_failed":
+        message = (
+            f"SSH authentication failed for {target}; use --host USER@HOST or "
+            "configure User for the original host alias in ~/.ssh/config"
+        )
+    elif failure == "host_key_failed":
+        message = (
+            f"SSH host-key verification failed for {target}; verify the destination "
+            "and its ~/.ssh/known_hosts entry"
+        )
+    elif failure == "timeout":
+        message = f"SSH connection to {target} timed out"
+    else:
+        suffix = f": {detail.strip()[:2000]}" if detail and detail.strip() else ""
+        message = f"SSH transport failed for {target}{suffix}"
+    return CcPeerError(message, {**ssh_info, "sshFailure": failure})
+
+
 def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     check_ssh_argument(host, "--host")
     for opt in ssh_opts:
@@ -796,6 +880,8 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
         source = Path(__file__).resolve().read_text(encoding="utf-8")
     except OSError as exc:  # pragma: no cover - only when run from a pipe
         raise CcPeerError(f"cannot read own source to send to {host}: {exc}") from exc
+
+    ssh_info = ssh_user_metadata(host, ssh_opts)
 
     # ssh joins everything after the destination with spaces and hands the
     # result to the remote *shell*, so an argv list is not the protection it
@@ -808,20 +894,28 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
             command, input=source, encoding="utf-8", capture_output=True, timeout=120
         )
     except FileNotFoundError as exc:
-        raise CcPeerError("ssh not found on PATH") from exc
+        raise ssh_failure_error(host, ssh_info, "transport_failed", "ssh not found on PATH") from exc
     except subprocess.TimeoutExpired as exc:
-        raise CcPeerError(f"ssh to {host} timed out") from exc
+        raise ssh_failure_error(host, ssh_info, "timeout") from exc
     except OSError as exc:
-        raise CcPeerError(f"could not run ssh to {host}: {exc}") from exc
+        raise ssh_failure_error(host, ssh_info, "transport_failed", str(exc)) from exc
 
     stdout = completed.stdout.strip()
+    detail = completed.stderr.strip() or f"ssh exited {completed.returncode}"
+    failure = (
+        classify_ssh_failure(detail, completed.returncode)
+        if completed.returncode != 0 else None
+    )
+    if failure:
+        raise ssh_failure_error(host, ssh_info, failure, detail)
     if not stdout:
-        detail = completed.stderr.strip() or f"ssh exited {completed.returncode}"
-        raise CcPeerError(f"{host}: {detail}")
+        raise CcPeerError(f"{host}: {detail}", ssh_info)
     try:
         result = json.loads(stdout)
     except ValueError as exc:
-        raise CcPeerError(f"{host}: unexpected output: {stdout[:200]}") from exc
+        raise CcPeerError(f"{host}: unexpected output: {stdout[:200]}", ssh_info) from exc
+    if isinstance(result, dict):
+        result.update(ssh_info)
 
     # The far end reports its own failures in-band; surface them here rather
     # than letting a caller read an error payload as a success.
@@ -830,7 +924,7 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     return result
 
 
-def push_to_remote(host: str, ssh_opts: list[str]) -> str:
+def push_to_remote(host: str, ssh_opts: list[str], ssh_info: dict | None = None) -> str:
     """Push this script to a remote machine's skill dir over SSH.
 
     Returns the version string reported by the newly installed copy.
@@ -845,6 +939,8 @@ def push_to_remote(host: str, ssh_opts: list[str]) -> str:
         source = Path(__file__).resolve().read_bytes()
     except OSError as exc:
         raise CcPeerError(f"cannot read own source to push to {host}: {exc}") from exc
+
+    ssh_info = ssh_user_metadata(host, ssh_opts) if ssh_info is None else ssh_info
 
     source_b64 = base64.b64encode(source).decode("ascii")
 
@@ -864,15 +960,18 @@ def push_to_remote(host: str, ssh_opts: list[str]) -> str:
             capture_output=True, timeout=120,
         )
     except FileNotFoundError as exc:
-        raise CcPeerError("ssh not found on PATH") from exc
+        raise ssh_failure_error(host, ssh_info, "transport_failed", "ssh not found on PATH") from exc
     except subprocess.TimeoutExpired as exc:
-        raise CcPeerError(f"ssh to {host} timed out") from exc
+        raise ssh_failure_error(host, ssh_info, "timeout") from exc
     except OSError as exc:
-        raise CcPeerError(f"could not run ssh to {host}: {exc}") from exc
+        raise ssh_failure_error(host, ssh_info, "transport_failed", str(exc)) from exc
 
     if completed.returncode != 0:
         detail = completed.stderr.strip() or f"ssh exited {completed.returncode}"
-        raise CcPeerError(f"{host}: {detail}")
+        failure = classify_ssh_failure(detail, completed.returncode)
+        if failure:
+            raise ssh_failure_error(host, ssh_info, failure, detail)
+        raise CcPeerError(f"{host}: {detail}", ssh_info)
 
     version_line = completed.stdout.strip()
     parts = version_line.split()
@@ -969,7 +1068,8 @@ def cmd_list(args: argparse.Namespace) -> int:
                 argv += ["--agent", "codex"] + codex_remote_options(args)
             result = run_remote(requested_host, argv, ssh_opts)
             sessions = result.get("sessions", [])
-            remote_version = remote_installed_version(requested_host, ssh_opts)
+            ssh_info = ssh_metadata_from(result)
+            remote_version = remote_installed_version(requested_host, ssh_opts, ssh_info)
             shown_host = display_host(requested_host, host)
             human = render(sessions, shown_host)
             if is_codex and "codexHome" in result:
@@ -981,6 +1081,7 @@ def cmd_list(args: argparse.Namespace) -> int:
                 )
             host_result = {
                 **host_metadata(requested_host, host),
+                **ssh_info,
                 "sessions": sessions, "version": __version__,
                 **({"remoteVersion": remote_version} if remote_version else {}),
                 **({"codexHome": result["codexHome"]} if is_codex and "codexHome" in result else {}),
@@ -993,7 +1094,7 @@ def cmd_list(args: argparse.Namespace) -> int:
         except CcPeerError as exc:
             exit_code = EXIT_ERROR
             all_results.append({**host_metadata(requested_host, host),
-                                "ok": False, "error": str(exc)})
+                                "ok": False, "error": str(exc), **exc.details})
             if not args.json:
                 print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
 
@@ -1021,7 +1122,8 @@ def read_message(args: argparse.Namespace) -> str:
     return args.message
 
 
-def remote_installed_version(host: str, ssh_opts: list[str]) -> str | None:
+def remote_installed_version(host: str, ssh_opts: list[str],
+                             ssh_info: dict | None = None) -> str | None:
     """Version of the copy *installed* on that machine.
 
     Not the same thing as asking the remote command to report itself:
@@ -1032,15 +1134,24 @@ def remote_installed_version(host: str, ssh_opts: list[str]) -> str | None:
     check_ssh_argument(host, "--host")
     for opt in ssh_opts:
         check_ssh_argument(opt, "--ssh-opt")
+    ssh_info = ssh_user_metadata(host, ssh_opts) if ssh_info is None else ssh_info
     probe = 'python3 "$HOME/.local/share/session-peer/session_peer.py" --version 2>/dev/null'
     try:
         done = subprocess.run(
             ["ssh", *ssh_opts, host, probe],
             capture_output=True, encoding="utf-8", errors="replace", timeout=30,
         )
-    except (OSError, subprocess.SubprocessError):
-        return None
+    except FileNotFoundError as exc:
+        raise ssh_failure_error(host, ssh_info, "transport_failed", "ssh not found on PATH") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ssh_failure_error(host, ssh_info, "timeout") from exc
+    except OSError as exc:
+        raise ssh_failure_error(host, ssh_info, "transport_failed", str(exc)) from exc
     out = done.stdout.strip()
+    detail = done.stderr.strip() or f"ssh exited {done.returncode}"
+    failure = classify_ssh_failure(detail, done.returncode) if done.returncode != 0 else None
+    if failure:
+        raise ssh_failure_error(host, ssh_info, failure, detail)
     return out.split()[-1] if out.startswith("session-peer") else None
 
 
@@ -1099,7 +1210,8 @@ def cmd_update(args: argparse.Namespace) -> int:
                 host = resolve_ssh_destination(requested_host, tailnet_status)
                 ssh_opts = tailscale_ssh_options(requested_host, host) + args.ssh_opt
                 shown_host = display_host(requested_host, host)
-                there = remote_installed_version(requested_host, ssh_opts)
+                ssh_info = ssh_user_metadata(requested_host, ssh_opts)
+                there = remote_installed_version(requested_host, ssh_opts, ssh_info)
 
                 if args.check:
                     if there is None:
@@ -1108,7 +1220,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                         state = "up to date"
                     else:
                         state = f"{there} → {__version__} available"
-                    all_results.append({**host_metadata(requested_host, host),
+                    all_results.append({**host_metadata(requested_host, host), **ssh_info,
                                         "remoteVersion": there, "current": __version__,
                                         "outdated": there != __version__})
                     if not args.json:
@@ -1116,15 +1228,15 @@ def cmd_update(args: argparse.Namespace) -> int:
                     continue
 
                 if there == __version__:
-                    all_results.append({**host_metadata(requested_host, host),
+                    all_results.append({**host_metadata(requested_host, host), **ssh_info,
                                         "remoteVersion": there, "current": __version__,
                                         "updated": False})
                     if not args.json:
                         print(f"{shown_host} runs session-peer {there} — already current.")
                     continue
 
-                new_version = push_to_remote(requested_host, ssh_opts)
-                all_results.append({**host_metadata(requested_host, host), "ok": True,
+                new_version = push_to_remote(requested_host, ssh_opts, ssh_info)
+                all_results.append({**host_metadata(requested_host, host), **ssh_info, "ok": True,
                                     "previous": there, "current": __version__, "updated": True})
                 if not args.json:
                     prev = there or "(none)"
@@ -1133,7 +1245,7 @@ def cmd_update(args: argparse.Namespace) -> int:
             except CcPeerError as exc:
                 exit_code = EXIT_ERROR
                 all_results.append({**host_metadata(requested_host, host),
-                                    "ok": False, "error": str(exc)})
+                                    "ok": False, "error": str(exc), **exc.details})
                 if not args.json:
                     print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
         if args.json:
@@ -1269,14 +1381,15 @@ def cmd_send(args: argparse.Namespace) -> int:
             name = target.get("name") or target.get("pid")
             verb = "Would post to" if args.dry_run else "Posted to"
             host_result = {"ok": True, **host_metadata(requested_host, host), "target": target,
-                           "chars": len(text), "dryRun": args.dry_run}
+                           **ssh_metadata_from(result), "chars": len(text),
+                           "dryRun": args.dry_run}
             all_results.append(host_result)
             if not args.json:
                 print(f"{verb} {name}'s inbox on {shown_host} ({len(text)} chars).")
         except CcPeerError as exc:
             exit_code = EXIT_ERROR
             all_results.append({"ok": False, **host_metadata(requested_host, host),
-                                "error": str(exc)})
+                                "error": str(exc), **exc.details})
             if not args.json:
                 print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
 
@@ -1300,7 +1413,7 @@ def build_parser() -> argparse.ArgumentParser:
     def add_common(sub: argparse.ArgumentParser) -> None:
         sub.add_argument(
             "--host", action="append", default=[], metavar="DEST",
-            help="SSH destination, repeatable; known Tailscale peers are verified by MagicDNS",
+            help="SSH [USER@]HOST, repeatable; otherwise User comes from SSH config/default",
         )
         sub.add_argument(
             "--ssh-opt",
@@ -1370,7 +1483,7 @@ def main(argv: list[str] | None = None) -> int:
     except CcPeerError as exc:
         message = str(exc)
         if args.json:
-            print(json.dumps({"ok": False, "error": message}, ensure_ascii=False))
+            print(json.dumps({"ok": False, "error": message, **exc.details}, ensure_ascii=False))
         else:
             print(f"session-peer: {message}", file=sys.stderr)
         return EXIT_NO_TARGET if isinstance(exc, NoTargetError) or "no reachable session" in message else EXIT_ERROR
