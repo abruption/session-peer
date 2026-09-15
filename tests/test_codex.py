@@ -498,7 +498,8 @@ class CodexHomes(unittest.TestCase):
                 raise peer.CcPeerError(host + ": " + result["error"])
             return result
 
-        with mock.patch.object(peer, "run_remote", side_effect=destination):
+        with mock.patch.object(peer, "run_remote", side_effect=destination), \
+             mock.patch.object(peer, "tailscale_status", return_value=None):
             code, result = self.send("--host", "worker")
             self.assertEqual(code, 1)
             self.assertEqual(result["host"], "worker")

@@ -1,6 +1,6 @@
 """Unit tests for session-peer. Standard library only, no network, no SSH.
 
-Run with:  python3 -m unittest test_session_peer -v
+Run with:  python3 -m unittest tests.test_session_peer -v
 
 Every case here corresponds to something that was once wrong and shipped —
 the injection paths, the caps that weren't enforced, the reply line that
@@ -9,8 +9,11 @@ couldn't be run. The point is that the next release breaks loudly.
 
 import argparse
 import base64
+import contextlib
+import io
 import json
 import os
+import shlex
 import subprocess
 import unittest
 from pathlib import Path
@@ -162,7 +165,8 @@ class ReplyLine(unittest.TestCase):
                                                     "reachable": True}))
 
     def test_none_outside_a_session(self):
-        with mock.patch.object(session_peer, "own_session", return_value=None):
+        with mock.patch.object(session_peer, "own_session", return_value=None), \
+             mock.patch.dict(os.environ, {}, clear=True):
             self.assertIsNone(session_peer.reply_line("100.64.0.1"))
 
     def test_none_when_no_address_can_be_found(self):
@@ -172,13 +176,13 @@ class ReplyLine(unittest.TestCase):
             self.assertIsNone(session_peer.reply_line(None))
 
     def test_uses_actual_file_path(self):
-        fake_path = "/opt/custom/session_peer.py"
+        fake_path = "/opt/custom tools/session_peer.py"
         resolved = Path(fake_path)
         with mock.patch.object(session_peer, "__file__", fake_path), \
              mock.patch("pathlib.Path.is_file", return_value=True), \
              mock.patch("pathlib.Path.resolve", return_value=resolved):
             line = self.line()
-        self.assertIn(str(resolved), line)
+        self.assertIn(shlex.quote(str(resolved)), line)
         self.assertNotIn("~/.claude/skills", line)
 
     def test_falls_back_for_stdin(self):
@@ -202,14 +206,14 @@ class Envelope(unittest.TestCase):
 
     def test_default_carries_sender_and_reply(self):
         out = self.wrap()
-        self.assertTrue(out.startswith("From: alice@100.64.0.1 (documents-ed)"))
+        self.assertTrue(out.startswith("From: claude:documents-ed @ alice@100.64.0.1"))
         self.assertIn("hello", out)
         self.assertIn("Reply:", out)
 
     def test_from_survives_no_reply_to(self):
         # Knowing who sent something stays useful when you can't answer it.
         out = self.wrap(with_reply=False)
-        self.assertIn("From: alice@100.64.0.1", out)
+        self.assertIn("From: claude:documents-ed @ alice@100.64.0.1", out)
         self.assertNotIn("Reply:", out)
 
     def test_no_from_leaves_the_body_alone(self):
@@ -224,11 +228,12 @@ class Envelope(unittest.TestCase):
 
     def test_from_falls_back_to_hostname_without_a_tailnet_address(self):
         out = self.wrap(host=None)
-        self.assertIn("From: alice@", out)
+        self.assertIn("From: claude:documents-ed @ alice@", out)
         self.assertNotIn("Reply:", out)   # nothing runnable to offer
 
     def test_no_envelope_outside_a_session(self):
-        with mock.patch.object(session_peer, "own_session", return_value=None):
+        with mock.patch.object(session_peer, "own_session", return_value=None), \
+             mock.patch.dict(os.environ, {}, clear=True):
             self.assertEqual(session_peer.wrap_message("hello", None, True, True), "hello")
 
     def test_body_is_not_duplicated_or_reordered(self):
@@ -298,6 +303,189 @@ class OwnSession(unittest.TestCase):
         with mock.patch.dict(os.environ,
                              {"CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/cc-socks/odd.sock"}):
             self.assertIsNone(session_peer.own_session())
+
+
+class SenderAgent(unittest.TestCase):
+    THREAD = "01900000-0000-7000-8000-000000000001"
+
+    def test_codex_thread_is_explicit_in_header_and_reply_target(self):
+        with mock.patch.object(session_peer, "own_session", return_value=None), \
+             mock.patch.object(session_peer, "tailscale_status", return_value=None), \
+             mock.patch.dict(os.environ, {"CODEX_THREAD_ID": self.THREAD}, clear=True), \
+             mock.patch.object(session_peer.getpass, "getuser", return_value="alice"):
+            wrapped = session_peer.wrap_message("hello", "100.64.0.1", True, True)
+        self.assertIn(f"From: codex:{self.THREAD} @ alice@100.64.0.1", wrapped)
+        self.assertIn(f"--to codex:{self.THREAD}", wrapped)
+
+    def test_codex_session_id_is_the_compatibility_fallback(self):
+        with mock.patch.object(session_peer, "own_session", return_value=None), \
+             mock.patch.dict(os.environ, {"CODEX_SESSION_ID": self.THREAD}, clear=True):
+            self.assertEqual(session_peer.sender_agent(), {
+                "agent": "codex", "id": self.THREAD,
+                "target": f"codex:{self.THREAD}",
+            })
+
+    def test_claude_socket_takes_precedence_over_nested_codex_variables(self):
+        session = {"pid": 42, "name": "reviewer", "reachable": True}
+        with mock.patch.object(session_peer, "own_session", return_value=session), \
+             mock.patch.dict(os.environ, {"CODEX_THREAD_ID": self.THREAD}, clear=True):
+            self.assertEqual(session_peer.sender_agent(), {
+                "agent": "claude", "id": "reviewer", "target": "reviewer",
+            })
+
+    def test_plain_shell_and_invalid_codex_id_do_not_invent_an_agent(self):
+        for environment in ({}, {"CODEX_THREAD_ID": "not-a-thread"}):
+            with self.subTest(environment=environment), \
+                 mock.patch.object(session_peer, "own_session", return_value=None), \
+                 mock.patch.dict(os.environ, environment, clear=True):
+                self.assertIsNone(session_peer.sender_agent())
+
+
+class TailscaleDestination(unittest.TestCase):
+    ONLINE = {
+        "ID": "peer-online",
+        "HostName": "macbook-pro-m4-pro",
+        "DNSName": "macbook-pro-m4-pro.tailnet.ts.net.",
+        "TailscaleIPs": ["100.122.73.69", "fd7a:115c:a1e0::1"],
+        "Online": True,
+    }
+    OFFLINE = {
+        "ID": "peer-offline",
+        "HostName": "old-macbook",
+        "DNSName": "old-macbook.tailnet.ts.net.",
+        "TailscaleIPs": ["100.96.246.30"],
+        "Online": False,
+    }
+
+    def status(self, *peers):
+        return {
+            "BackendState": "Running",
+            "CurrentTailnet": {"MagicDNSEnabled": True},
+            "Self": {
+                "ID": "self", "HostName": "mac-mini-m4",
+                "DNSName": "mac-mini-m4.tailnet.ts.net.",
+                "TailscaleIPs": ["100.93.90.11"], "Online": True,
+            },
+            "Peer": {peer["ID"]: peer for peer in peers},
+        }
+
+    def test_status_reads_running_json_despite_cli_warning(self):
+        expected = self.status(self.ONLINE)
+        completed = subprocess.CompletedProcess(
+            [], 0, json.dumps(expected), "client/server version mismatch"
+        )
+        with mock.patch.object(session_peer.subprocess, "run", return_value=completed) as run:
+            self.assertEqual(session_peer.tailscale_status(), expected)
+        self.assertEqual(run.call_args.args[0], ["tailscale", "status", "--json"])
+
+    def test_reply_host_prefers_self_magicdns(self):
+        with mock.patch.object(session_peer, "tailscale_status", return_value=self.status(self.ONLINE)):
+            self.assertEqual(session_peer.detect_reply_host(), "mac-mini-m4.tailnet.ts.net")
+
+    def test_hostname_short_name_ip_and_username_resolve_to_magicdns(self):
+        status = self.status(self.ONLINE)
+        expected = "macbook-pro-m4-pro.tailnet.ts.net"
+        for destination in (
+            "macbook-pro-m4-pro", expected, expected + ".", "100.122.73.69"
+        ):
+            with self.subTest(destination=destination):
+                self.assertEqual(session_peer.resolve_ssh_destination(destination, status), expected)
+        self.assertEqual(
+            session_peer.resolve_ssh_destination("alice@100.122.73.69", status),
+            "alice@" + expected,
+        )
+
+    def test_known_offline_peer_fails_before_ssh(self):
+        status = self.status(self.OFFLINE)
+        with self.assertRaisesRegex(session_peer.CcPeerError, "offline"):
+            session_peer.resolve_ssh_destination("old-macbook", status)
+
+        output = io.StringIO()
+        with mock.patch.object(session_peer, "tailscale_status", return_value=status), \
+             mock.patch.object(session_peer, "run_remote") as remote, \
+             contextlib.redirect_stdout(output):
+            code = session_peer.main([
+                "send", "--host", "old-macbook", "--to", "worker",
+                "--no-from", "--no-reply-to", "--json", "hello",
+            ])
+        self.assertEqual(code, session_peer.EXIT_ERROR)
+        self.assertIn("offline", json.loads(output.getvalue())["error"])
+        remote.assert_not_called()
+
+    def test_unknown_and_magicdns_disabled_destinations_remain_generic_ssh(self):
+        status = self.status(self.ONLINE)
+        self.assertEqual(session_peer.resolve_ssh_destination("build-alias", status), "build-alias")
+        status["CurrentTailnet"]["MagicDNSEnabled"] = False
+        self.assertEqual(
+            session_peer.resolve_ssh_destination("100.122.73.69", status),
+            "100.122.73.69",
+        )
+
+    def test_ambiguous_short_name_requires_full_magicdns(self):
+        duplicate = {
+            **self.ONLINE,
+            "ID": "peer-duplicate",
+            "DNSName": "macbook-pro-m4-pro.other.ts.net.",
+            "TailscaleIPs": ["100.100.100.100"],
+        }
+        with self.assertRaisesRegex(session_peer.CcPeerError, "ambiguous"):
+            session_peer.resolve_ssh_destination(
+                "macbook-pro-m4-pro", self.status(self.ONLINE, duplicate)
+            )
+
+    def test_remote_send_uses_and_reports_canonical_destination(self):
+        response = {"ok": True, "target": {"pid": 1, "name": "worker"}}
+        output = io.StringIO()
+        with mock.patch.object(session_peer, "tailscale_status", return_value=self.status(self.ONLINE)), \
+             mock.patch.object(session_peer, "run_remote", return_value=response) as remote, \
+             contextlib.redirect_stdout(output):
+            code = session_peer.main([
+                "send", "--host", "alice@100.122.73.69", "--to", "worker",
+                "--no-from", "--no-reply-to", "--json", "hello",
+            ])
+        self.assertEqual(code, 0)
+        expected = "alice@macbook-pro-m4-pro.tailnet.ts.net"
+        self.assertEqual(remote.call_args.args[0], "alice@100.122.73.69")
+        self.assertEqual(remote.call_args.args[2], [
+            "-o", "HostName=macbook-pro-m4-pro.tailnet.ts.net",
+            "-o", "HostKeyAlias=100.122.73.69",
+        ])
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["host"], expected)
+        self.assertEqual(result["sshHost"], "alice@100.122.73.69")
+
+    def test_remote_list_and_update_check_use_the_same_verified_identity(self):
+        expected = "macbook-pro-m4-pro.tailnet.ts.net"
+        with mock.patch.object(session_peer, "tailscale_status", return_value=self.status(self.ONLINE)), \
+             mock.patch.object(session_peer, "run_remote", return_value={"sessions": []}) as remote, \
+             mock.patch.object(session_peer, "remote_installed_version", return_value="0.6.0") as version:
+            for command in (["list"], ["update", "--check"]):
+                with self.subTest(command=command), contextlib.redirect_stdout(io.StringIO()) as output:
+                    code = session_peer.main([*command, "--host", "100.122.73.69", "--json"])
+                self.assertEqual(code, 0)
+                result = json.loads(output.getvalue())[0]
+                self.assertEqual(result["host"], expected)
+                self.assertEqual(result["sshHost"], "100.122.73.69")
+        route = [
+            "-o", "HostName=macbook-pro-m4-pro.tailnet.ts.net",
+            "-o", "HostKeyAlias=100.122.73.69",
+        ]
+        remote.assert_called_once_with("100.122.73.69", ["list"], route)
+        self.assertEqual([call.args[0] for call in version.call_args_list],
+                         ["100.122.73.69", "100.122.73.69"])
+        self.assertEqual([call.args[1] for call in version.call_args_list], [route, route])
+
+    def test_magicdns_route_keeps_user_options_after_verified_overrides(self):
+        self.assertEqual(
+            session_peer.tailscale_ssh_options(
+                "alice@100.122.73.69", "alice@macbook-pro-m4-pro.tailnet.ts.net"
+            ) + ["-p", "2222"],
+            [
+                "-o", "HostName=macbook-pro-m4-pro.tailnet.ts.net",
+                "-o", "HostKeyAlias=100.122.73.69", "-p", "2222",
+            ],
+        )
+        self.assertEqual(session_peer.tailscale_ssh_options("build-alias", "build-alias"), [])
 
 
 class ErrorHandling(unittest.TestCase):
@@ -459,8 +647,11 @@ class PackageManagement(unittest.TestCase):
 
     def test_new_reply_variable_precedes_legacy(self):
         with mock.patch.dict(os.environ, {"SESSION_PEER_REPLY_HOST": "alice@new", "CC_PEER_REPLY_HOST": "bob@old"}), \
-             mock.patch.object(session_peer, "own_session", return_value={"name": "worker", "pid": 42}):
-            self.assertEqual(session_peer.sender_identity(None), ("worker", "alice@new"))
+             mock.patch.object(session_peer, "own_session", return_value={"name": "worker", "pid": 42}), \
+             mock.patch.object(session_peer, "tailscale_status", return_value=None):
+            self.assertEqual(session_peer.sender_identity(None), {
+                "agent": "claude", "id": "worker", "target": "worker", "host": "alice@new"
+            })
 
 
 if __name__ == "__main__":

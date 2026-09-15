@@ -25,9 +25,9 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Compile
-        run: python -m compileall -q cc_peer.py session_peer.py test_cc_peer.py test_session_peer.py
+        run: python -m compileall -q cc_peer.py session_peer.py tests
       - name: Unit tests
-        run: python -m unittest discover -v
+        run: python -m unittest discover -s tests -v
 
   package:
     name: wheel and sdist
