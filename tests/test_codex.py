@@ -156,9 +156,13 @@ class Codex(unittest.TestCase):
         queue.assert_not_called()
 
     def test_remote_send_preserves_status_and_destination_options(self):
+        resolution = {"schemaVersion": 1, "status": "explicit",
+                      "selected": "/resolved remote home",
+                      "reason": "explicit_codex_home", "candidates": []}
         response = {"ok": True, "target": {"agent": "codex", "id": THREAD}, "status": "queued",
                     "queueId": "queue-id", "dryRun": False, "chars": 4,
-                    "codexHome": "/resolved remote home", "submitted": True, "consumptionConfirmed": False}
+                    "codexHome": "/resolved remote home", "submitted": True,
+                    "consumptionConfirmed": False, "codexHomeResolution": resolution}
         with mock.patch.object(peer, "run_remote", return_value=response) as remote:
             code, result = self.invoke("send", "--host", "worker", "--to", "codex:" + THREAD,
                 "--codex-home", "/remote home", "--codex-bin", "/remote bin/codex", "--json", "--no-from", "--no-reply-to", "test")
@@ -167,11 +171,28 @@ class Codex(unittest.TestCase):
         self.assertEqual(result["queueId"], "queue-id")
         self.assertEqual(result["status"], "queued")
         self.assertEqual(result["codexHome"], "/resolved remote home")
+        self.assertEqual(result["codexHomeResolution"], resolution)
         self.assertTrue(result["submitted"])
         self.assertIs(result["consumptionConfirmed"], False)
         argv = remote.call_args.args[1]
         self.assertEqual(argv[argv.index("--codex-home") + 1], "/remote home")
         self.assertEqual(argv[argv.index("--codex-bin") + 1], "/remote bin/codex")
+
+    def test_remote_send_preserves_structured_home_failure(self):
+        resolution = {"schemaVersion": 1, "status": "ambiguous", "selected": None,
+                      "reason": "multiple_live_writers", "candidates": []}
+        error = peer.CcPeerError(
+            "worker: ambiguous Codex home",
+            {"codexHomeResolution": resolution},
+        )
+        with mock.patch.object(peer, "run_remote", side_effect=error), \
+             mock.patch.object(peer, "tailscale_status", return_value=None):
+            code, result = self.invoke(
+                "send", "--host", "worker", "--to", "codex:" + THREAD,
+                "--json", "--no-from", "--no-reply-to", "test",
+            )
+        self.assertEqual(code, 1)
+        self.assertEqual(result["codexHomeResolution"], resolution)
 
     def test_remote_list_forwards_agent_and_home(self):
         with mock.patch.object(peer, "run_remote", return_value={"sessions": [], "codexHome": "/resolved remote home"}) as remote, \
@@ -215,7 +236,103 @@ class Codex(unittest.TestCase):
             self.assertIn("Orca/multiple homes", help_text)
             if command == "send":
                 self.assertIn("SESSION_PEER_CODEX_HOMES", help_text)
-                self.assertIn("no process activity inspection", help_text)
+                self.assertIn("stable live writer", help_text)
+
+
+class CodexWriterEvidence(unittest.TestCase):
+    def test_parses_nul_delimited_lsof_processes(self):
+        self.assertEqual(peer.parse_lsof_processes("p42\0ccodex\0u501\0\np7\0cnode\0u502\0"), [
+            {"pid": 7, "command": "node", "uid": 502},
+            {"pid": 42, "command": "codex", "uid": 501},
+        ])
+
+    @unittest.skipIf(peer.fcntl is None, "POSIX flock is unavailable")
+    def test_probes_a_real_advisory_lock_without_changing_the_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "thread.lock"
+            lock.write_text("unchanged", encoding="utf-8")
+            child = subprocess.Popen([
+                peer.sys.executable, "-c",
+                "import fcntl,sys,time; f=open(sys.argv[1],'r+'); "
+                "fcntl.flock(f,fcntl.LOCK_EX); print('ready',flush=True); time.sleep(60)",
+                str(lock),
+            ], stdout=subprocess.PIPE, text=True)
+
+            def cleanup():
+                if child.poll() is None:
+                    child.kill()
+                    child.wait(timeout=5)
+                if child.stdout and not child.stdout.closed:
+                    child.stdout.close()
+
+            self.addCleanup(cleanup)
+            self.assertEqual(child.stdout.readline().strip(), "ready")
+            self.assertEqual(peer.probe_codex_writer_lock(lock),
+                             ("held", "kernel_lock_held"))
+            self.assertEqual(lock.read_text(encoding="utf-8"), "unchanged")
+            child.terminate()
+            child.wait(timeout=5)
+            self.assertEqual(peer.probe_codex_writer_lock(lock),
+                             ("free", "kernel_lock_free"))
+
+    @unittest.skipIf(peer.fcntl is None, "POSIX flock is unavailable")
+    @unittest.skipIf(peer._lsof_executable() is None, "lsof is unavailable")
+    def test_correlates_a_real_lock_opener_without_reading_process_arguments(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "thread.lock"
+            lock.write_text("unchanged", encoding="utf-8")
+            child = subprocess.Popen([
+                peer.sys.executable, "-c",
+                "import fcntl,sys,time; f=open(sys.argv[1],'r+'); "
+                "fcntl.flock(f,fcntl.LOCK_EX); print('ready',flush=True); time.sleep(60)",
+                str(lock),
+            ], stdout=subprocess.PIPE, text=True)
+
+            def cleanup():
+                if child.poll() is None:
+                    child.kill()
+                    child.wait(timeout=5)
+                if child.stdout and not child.stdout.closed:
+                    child.stdout.close()
+
+            self.addCleanup(cleanup)
+            self.assertEqual(child.stdout.readline().strip(), "ready")
+            openers, error = peer._codex_lock_openers(lock)
+            self.assertIsNone(error)
+            self.assertEqual([process["pid"] for process in openers], [child.pid])
+            self.assertNotIn("args", openers[0])
+
+    @unittest.skipUnless(hasattr(os, "getuid"), "POSIX UID is unavailable")
+    def test_stable_same_user_codex_owner_is_live(self):
+        sample = {
+            "snapshot": (1, 2, 0, 3), "writerLock": "held",
+            "probeReason": "kernel_lock_held", "openerError": None,
+            "openers": [{"pid": 42, "uid": os.getuid(), "command": "codex",
+                         "startTime": "stable"}],
+        }
+        with mock.patch.object(peer, "_codex_lock_sample", side_effect=[sample, sample]), \
+             mock.patch.object(peer.time, "sleep"):
+            result = peer.inspect_codex_writer(Path("/home"), THREAD)
+        self.assertEqual(result["activity"], "live_writer")
+        self.assertEqual(result["ownerPid"], 42)
+        self.assertNotIn("command", result)
+        self.assertNotIn("startTime", result)
+
+    @unittest.skipUnless(hasattr(os, "getuid"), "POSIX UID is unavailable")
+    def test_pid_change_is_unknown(self):
+        def sample(pid):
+            return {
+                "snapshot": (1, 2, 0, 3), "writerLock": "held",
+                "probeReason": "kernel_lock_held", "openerError": None,
+                "openers": [{"pid": pid, "uid": os.getuid(), "command": "codex",
+                             "startTime": "stable"}],
+            }
+        with mock.patch.object(peer, "_codex_lock_sample",
+                               side_effect=[sample(42), sample(43)]), \
+             mock.patch.object(peer.time, "sleep"):
+            result = peer.inspect_codex_writer(Path("/home"), THREAD)
+        self.assertEqual(result["activity"], "unknown")
+        self.assertEqual(result["reason"], "lock_owner_changed")
 
 
 class CodexHomes(unittest.TestCase):
@@ -270,6 +387,106 @@ class CodexHomes(unittest.TestCase):
         for path, original in before.items():
             self.assertEqual((path / "state_5.sqlite").read_bytes(), original)
 
+    def test_one_stable_live_writer_selects_its_home_and_revalidates(self):
+        inactive = {"activity": "inactive", "writerLock": "free",
+                    "reason": "kernel_lock_free"}
+        active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
+                  "ownerStable": True, "reason": "stable_live_writer"}
+        with mock.patch.object(peer, "inspect_codex_writer",
+                               side_effect=[inactive, active, inactive, active]) as inspect:
+            code, result = self.send()
+        self.assertEqual(code, 0)
+        self.assertEqual(result["codexHome"], str(self.account))
+        self.assertEqual(result["codexHomeResolution"]["status"], "selected")
+        self.assertEqual(result["codexHomeResolution"]["reason"],
+                         "single_stable_live_writer")
+        self.assertEqual(self.queue.call_args.kwargs["env"]["CODEX_HOME"], str(self.account))
+        self.assertEqual(inspect.call_count, 4)
+
+    def test_dry_run_selects_live_writer_without_queue_or_revalidation(self):
+        inactive = {"activity": "inactive", "writerLock": "absent",
+                    "reason": "lock_absent"}
+        active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
+                  "ownerStable": True, "reason": "stable_live_writer"}
+        with mock.patch.object(peer, "inspect_codex_writer",
+                               side_effect=[inactive, active]) as inspect:
+            code, result = self.send("--dry-run")
+        self.assertEqual(code, 0)
+        self.assertEqual(result["codexHome"], str(self.account))
+        self.assertFalse(result["submitted"])
+        self.assertEqual(inspect.call_count, 2)
+        self.queue.assert_not_called()
+
+    def test_live_writer_can_select_the_only_saved_copy_outside_default(self):
+        with contextlib.closing(sqlite3.connect(self.default / "state_5.sqlite")) as conn:
+            conn.execute("DELETE FROM threads")
+            conn.commit()
+        active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
+                  "ownerStable": True, "reason": "stable_live_writer"}
+        with mock.patch.object(peer, "inspect_codex_writer", side_effect=[active, active]):
+            code, result = self.send()
+        self.assertEqual(code, 0)
+        self.assertEqual(result["codexHome"], str(self.account))
+        self.assertEqual(result["codexHomeResolution"]["reason"],
+                         "single_stable_live_writer")
+
+    def test_multiple_live_writers_are_structured_ambiguity(self):
+        active_a = {"activity": "live_writer", "writerLock": "held", "ownerPid": 41,
+                    "ownerStable": True, "reason": "stable_live_writer"}
+        active_b = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
+                    "ownerStable": True, "reason": "stable_live_writer"}
+        with mock.patch.object(peer, "inspect_codex_writer", side_effect=[active_a, active_b]):
+            code, result = self.send()
+        self.assertEqual(code, 1)
+        resolution = result["codexHomeResolution"]
+        self.assertEqual(resolution["status"], "ambiguous")
+        self.assertEqual(resolution["reason"], "multiple_live_writers")
+        self.assertIsNone(resolution["selected"])
+        self.queue.assert_not_called()
+
+    def test_unknown_competing_writer_prevents_selection(self):
+        active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 41,
+                  "ownerStable": True, "reason": "stable_live_writer"}
+        unknown = {"activity": "unknown", "writerLock": "held",
+                   "reason": "lsof_unavailable"}
+        with mock.patch.object(peer, "inspect_codex_writer", side_effect=[active, unknown]):
+            code, result = self.send()
+        self.assertEqual(code, 1)
+        self.assertEqual(result["codexHomeResolution"]["status"], "unknown")
+        self.assertEqual(result["codexHomeResolution"]["reason"],
+                         "active_writer_unverified")
+        self.queue.assert_not_called()
+
+    def test_writer_pid_change_before_queue_fails_closed(self):
+        inactive = {"activity": "inactive", "writerLock": "free",
+                    "reason": "kernel_lock_free"}
+        active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
+                  "ownerStable": True, "reason": "stable_live_writer"}
+        changed = {**active, "ownerPid": 43}
+        with mock.patch.object(peer, "inspect_codex_writer",
+                               side_effect=[inactive, active, inactive, changed]):
+            code, result = self.send()
+        self.assertEqual(code, 1)
+        self.assertEqual(result["codexHomeResolution"]["status"], "unknown")
+        self.assertEqual(result["codexHomeResolution"]["reason"],
+                         "writer_evidence_changed_before_queue")
+        self.queue.assert_not_called()
+
+    def test_competing_writer_appearing_before_queue_fails_closed(self):
+        inactive = {"activity": "inactive", "writerLock": "free",
+                    "reason": "kernel_lock_free"}
+        selected = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
+                    "ownerStable": True, "reason": "stable_live_writer"}
+        competitor = {**selected, "ownerPid": 41}
+        with mock.patch.object(peer, "inspect_codex_writer",
+                               side_effect=[inactive, selected, competitor, selected]):
+            code, result = self.send()
+        self.assertEqual(code, 1)
+        self.assertEqual(result["codexHomeResolution"]["status"], "unknown")
+        self.assertEqual(result["codexHomeResolution"]["reason"],
+                         "writer_evidence_changed_before_queue")
+        self.queue.assert_not_called()
+
     def test_configured_duplicate_rejected_without_macos_discovery(self):
         with mock.patch.object(peer.sys, "platform", "linux"):
             os.environ["SESSION_PEER_CODEX_HOMES"] = json.dumps([str(self.account)])
@@ -287,6 +504,9 @@ class CodexHomes(unittest.TestCase):
                 self.assertEqual(result["status"], "queued")
                 self.assertTrue(result["submitted"])
                 self.assertIs(result["consumptionConfirmed"], False)
+                self.assertEqual(result["codexHomeResolution"]["status"], "explicit")
+                self.assertEqual(result["codexHomeResolution"]["reason"],
+                                 "explicit_codex_home")
                 self.assertEqual(self.queue.call_args.kwargs["env"]["CODEX_HOME"], str(home))
 
     def test_explicit_dry_run_selects_one_copy_without_submission(self):

@@ -153,6 +153,10 @@ Reply: python3 /path/to/session_peer.py send --host abruptly@mac-mini-m4.example
 Claude senders use `claude:<session-name>` in the same positions. The identity is
 best-effort text derived from the current process environment; it is not an
 authentication claim. A plain shell has no agent identity to advertise.
+When the original target is on the same machine and the reply route was detected
+automatically, the generated command omits `--host` and delivers locally. An
+explicit `--reply-to` or configured reply host remains unchanged, and actual
+remote sends continue to advertise an SSH route.
 
 Repeat `--host` to operate on several SSH destinations. `--json` is available on
 `list`, `send`, and `update`; v0.6 retains command-specific response shapes rather
@@ -215,7 +219,7 @@ from the desired release checkout to refresh both standalone program and skill.
 | `CLAUDE_CONFIG_DIR` | Where Claude Code keeps its config (default `~/.claude`). Respected by `session-peer list` for session discovery and by `install.sh` for skill placement. |
 | `ANTHROPIC_CONFIG_DIR` | Fallback if `CLAUDE_CONFIG_DIR` is unset. |
 | `CODEX_HOME` | Codex discovery/queue home (default `~/.codex`); overridden by `--codex-home`. |
-| `SESSION_PEER_CODEX_HOMES` | Additional destination homes to check for duplicate thread UUIDs before an implicit send/dry-run. JSON array of absolute paths (or `~/…`), not a shell command or a path-separated list. It does not change the selected home or merge listings. |
+| `SESSION_PEER_CODEX_HOMES` | Additional destination homes to check for duplicate thread UUIDs and stable live writers before an implicit send/dry-run. JSON array of absolute paths (or `~/…`), not a shell command or a path-separated list. It does not merge listings; an unambiguous active writer may change the implicit send home. |
 
 With `--host`, discovery uses the destination's environment; local environment
 variables are not automatically forwarded. `--codex-home` and `--codex-bin`
@@ -241,7 +245,7 @@ or SSH command uses `~/.codex`. The same UUID can exist in both. A successful
 queue submission to one copy does not establish that the intended session is
 using that home.
 
-Use the **same explicit destination home for list and send**. For example, replace
+An explicit destination home remains the strongest selection. For example, replace
 `<account-id>` and `<full-thread-uuid>` with the intended account and thread:
 
 ```bash
@@ -255,7 +259,8 @@ session-peer send --host mac --to 'codex:<full-thread-uuid>' \
 Omit `--host mac` for local use. Remove `--dry-run` only when ready to submit.
 Quoting `~` keeps expansion on the destination; an absolute remote path also
 works. `--codex-home` explicitly chooses that copy but is not proof of activity.
-This explicit-home workaround also works with the published 0.6.0 package.
+This explicit-home form also works with releases that predate active-writer
+resolution.
 
 The #55 safeguards described below ship in v0.6.1; the original PyPI 0.6.0
 package does not check other homes or expose the new JSON fields.
@@ -277,20 +282,27 @@ forwarded by `--host`. On Windows, use absolute Windows paths with backslashes
 escaped as required by JSON. Empty configuration arrays are allowed; malformed
 configuration is an error for implicit sends.
 
-If the UUID occurs in multiple known homes, the command fails before queueing
-and names the candidates. Archived copies count too. During multi-home checks,
-unreadable or incompatible known databases and missing configured additional
-databases prevent implicit submission; an unreadable Orca inventory also blocks it. Choose
-`--codex-home` explicitly to bypass the ambiguity guard and unrelated inventory
-errors. Resolved symlink aliases and repeated paths count as one home.
+If the UUID occurs in multiple known homes, session-peer examines the exact
+`thread-writer-locks/<uuid>.lock` in each matching home. It independently probes
+the kernel advisory lock and correlates the opener through two stable `lsof`
+observations. Exactly one stable, same-user Codex writer selects that home; the
+evidence is checked again immediately before queue submission. A free or stale
+lock does not win merely because its file exists.
 
-The guard never automatically switches to another home. With no competing
-home, native queue behavior is preserved; `list` still reads only the selected
-home, so a successful listing is not an ambiguity check. There is no general
-filesystem scan, process-environment inspection, activity detection or atomic
-cross-home snapshot. Unconfigured/custom layouts and copies created after the
-check can be missed. For Orca layouts other than the macOS path above, configure
-the additional homes or use `--codex-home`. Further diagnostics belong to [#45](https://github.com/abruption/session-peer/issues/45).
+Zero or multiple live writers, missing `lsof`, permission failures, changing
+PIDs/inodes and conflicting evidence fail closed before queueing. Archived saved
+copies still count. Unreadable or incompatible known databases and missing
+configured databases also prevent implicit submission. Choose `--codex-home`
+explicitly to bypass unrelated inventory and activity checks. Resolved symlink
+aliases and repeated paths count as one home.
+
+With no competing saved home, native queue behavior is preserved; `list` still
+reads only the selected home. There is no general filesystem scan or process
+environment inspection, and process arguments are not exposed. Activity
+inspection runs on the destination machine, including over SSH. Platforms
+without POSIX `flock` or `lsof` cannot automatically resolve competing homes and
+must use `--codex-home`. Unconfigured/custom layouts and copies created after the
+check can still be missed. Further diagnostics belong to [#45](https://github.com/abruption/session-peer/issues/45).
 
 ### Submission and JSON results
 
@@ -318,10 +330,15 @@ Codex send JSON retains `target: {agent, id}`, `status: queued` (or `validated`
 under dry-run), `ok`, `chars`, `dryRun`, and optional `queueId`. It adds:
 
 - `codexHome`: the resolved absolute destination home, not a sender-side guess.
+- `codexHomeResolution`: schema-versioned `status`, `selected`, `reason`, and
+  bounded candidate evidence. Status is `explicit`, `selected`, `ambiguous`, or
+  `unknown`; candidates expose saved-thread, writer-lock and stable owner PID
+  facts without process arguments or environment values.
 - `submitted`: `true` only after successful queue CLI completion, `false` for dry-run.
 - `consumptionConfirmed`: always `false`; neither queued nor validated establishes consumption.
 
-Errors keep the existing `{ok: false, error}` shape (plus host on remote results).
+Errors keep the existing `{ok: false, error}` fields (plus host on remote results)
+and add `codexHomeResolution` when home evidence caused the failure.
 A timeout has an unknown submission outcome; missing `submitted` on an error
 must not be interpreted as proof that nothing was queued. Listing results do
 not describe a submission and have no submission/consumption fields. The changes
@@ -465,11 +482,13 @@ The suite needs no live agent, SSH server or network. It includes legacy
 compatibility tests, shared CLI helpers, fixture-based Codex discovery and queue
 subprocess tests, and isolated standalone installation/coexistence checks.
 Codex coverage includes argv/payload handling, destination home selection,
-dry-run without dispatch, failure/timeout semantics and remote option forwarding.
+real advisory-lock probing, stable owner evidence, dry-run without dispatch,
+failure/timeout semantics and remote option forwarding.
 Multi-home fixtures reproduce duplicate UUIDs across the default and Orca/configured
-homes, fail-closed inventory errors, explicit selection, alias deduplication,
-single-home compatibility and home/submission metadata. They never infer a live
-writer from a saved row or submit messages to real sessions.
+homes, unique/multiple/changing writer evidence, fail-closed inventory errors,
+explicit selection, alias deduplication, single-home compatibility and structured
+home/submission metadata. They never infer a live writer from a saved row or
+submit messages to real sessions.
 
 CI runs tests on Ubuntu/macOS with Python 3.9 and 3.13, and Windows with Python
 3.13 (POSIX installer tests are skipped there). Separate jobs check shell syntax
