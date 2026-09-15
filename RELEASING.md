@@ -1,11 +1,24 @@
-# Publishing the transition
+# Releasing session-peer
 
-The GitHub repository is `abruption/session-peer`. Keep its history and issues;
-do not archive it or recreate `abruption/cc-peer`, which would replace redirects.
+Publishing a GitHub release triggers `.github/workflows/publish.yml`, which builds
+the tag and uploads it to PyPI through Trusted Publishing. A draft release does
+not publish. Keep release preparation, approval, publication, and verification as
+separate steps so the tag and uploaded artifacts always point at reviewed code.
 
-## PyPI setup (project owner)
+## Current candidate: v0.6.1
 
-Configure a **pending Trusted Publisher** for the new `session-peer` project:
+The v0.6.1 candidate contains #56 and #58. It does not include the unfinished
+v0.7 roadmap in #45. The version source is `session_peer.py`; Hatch reads it for
+both wheel and sdist metadata. Reviewed notes live in
+`docs/releases/v0.6.1.md`.
+
+The repository must continue to contain the frozen root `cc_peer.py` for legacy
+self-update URLs. It must remain outside the session-peer wheel and sdist.
+
+## Trusted Publisher configuration
+
+The GitHub environment is `pypi`, and the active workflow is `publish.yml`.
+The PyPI project owner should retain this Trusted Publisher mapping:
 
 | Field | Value |
 | --- | --- |
@@ -15,50 +28,83 @@ Configure a **pending Trusted Publisher** for the new `session-peer` project:
 | Workflow filename | `publish.yml` |
 | GitHub environment | `pypi` |
 
-Update the existing `cc-peer` project's Trusted Publisher to the same GitHub
-owner/repository/workflow/environment. Its final release still uses distribution
-name `cc-peer`, from the maintenance branch. A GitHub rename does not automatically
-update PyPI's publisher configuration. GitHub administrator access alone does not
-provide access to these PyPI owner settings.
+The v0.6.0 release used this path successfully. GitHub cannot inspect the PyPI
+owner-side mapping, so a previous success is evidence rather than a guarantee
+that it has not changed.
 
-References: [pending publishers](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/),
-[rename failures](https://docs.pypi.org/trusted-publishers/troubleshooting/).
-A pending publisher does not reserve a package name. Recheck name availability
-before publishing; do not publish an empty placeholder to reserve it.
+## Prepare and verify
 
-## Publication order
+1. Create a release issue and branch from current `origin/main`.
+2. Update `session_peer.__version__`, durable README wording, this runbook, and
+   `docs/releases/<version>.md` in one release-preparation PR.
+3. Run the checks used by CI:
 
-1. Confirm all PR checks and distribution installation tests pass on the release
-   commit. Preserve the standalone frozen `cc_peer.py` in every new release tag;
-   old updaters fetch that exact path. It must stay out of the new wheel/sdist.
-2. Publish the prepared **session-peer v0.6.0** GitHub release from the verified
-   main commit. Publishing triggers `publish.yml`; a draft does not.
-3. Check the Actions publish result and install `session-peer==0.6.0` from PyPI in
-   a fresh environment. Confirm version, local listing and safe dry-run. Do not
-   treat submission as acknowledgement or bypass a receiving agent's quota.
-4. Publish **cc-peer v0.5.1** from `maintenance/cc-peer`, explicitly with
-   `latest=false`. Its tagged pyproject names the old distribution and uses the
-   old standalone code. Check its PyPI upload and migration notice.
-5. Confirm GitHub's latest release is still v0.6.0 and the old GitHub URLs redirect.
-   Only then archive the **PyPI cc-peer project** in its owner settings. Keep its
-   existing distributions downloadable; do not delete or yank them for migration.
-6. Complete the transition checklist in #48. #45–#47 remain future work.
+   ```bash
+   python3 -m compileall -q cc_peer.py session_peer.py tests
+   python3 -m unittest discover -s tests -v
+   python3 -m unittest discover -v
+   python3 -m build
+   ```
 
-If OIDC setup, publication, or installation verification fails, leave the old
-PyPI project unarchived and report the failed stage. Do not replace credentials
-with repository secrets or republish a used version. Package-managed installs
-upgrade with their own manager; standalone installs use the self-updater.
+4. Inspect both archives. `session_peer.py`, license, metadata, and README belong
+   in the sdist; the wheel contains the session-peer module and metadata. Neither
+   archive may contain `cc_peer.py`, credentials, session databases, or local
+   notes.
+5. Install the wheel and sdist independently in fresh environments. Confirm
+   `session-peer --version`, `session-peer list --json`, and import metadata.
+6. Merge the release-preparation PR only after every required check passes. Fetch
+   `main`, record its exact commit, and confirm it still contains the intended
+   changes and version.
 
-## Verification limits for this transition
+## Prepare the draft
 
-134 unit/integration tests passed locally and CI exercised Python 3.9/3.13 on
-macOS/Linux and Python 3.13 on Windows. Wheel/sdist build and isolated installation,
-shellcheck, and standalone install/reinstall/uninstall coexistence were exercised.
-The actual v0.5.0 updater was tested against the frozen compatibility file.
+Create the draft only after the release-preparation PR is merged, because a
+squash or merge commit changes the release commit:
 
-On two macOS machines, Codex CLI 0.154.0 discovery, dry-run, and actual queue
-submission worked; queued payloads matched the originals. These were pending
-submissions, not acknowledged responses. Claude local/SSH inbox writes succeeded,
-but its weekly quota was exhausted: receiving turns, responses, and the separately
-requested ontology document update were not verified. Do not run further live
-Claude consumption tests until that limit is restored.
+```bash
+git fetch origin main --tags
+release_commit=$(git rev-parse origin/main)
+gh release create v0.6.1 \
+  --repo abruption/session-peer \
+  --target "$release_commit" \
+  --title "session-peer v0.6.1" \
+  --notes-file docs/releases/v0.6.1.md \
+  --draft --latest
+```
+
+Verify the draft's tag, target commit, title, notes, draft status, and prerelease
+status. If GitHub created the tag while saving the draft, confirm it resolves to
+the recorded release commit. Do not move an existing published tag.
+
+## Publish
+
+Obtain final approval immediately before publication. Publishing is the action
+that makes the GitHub release public and starts the PyPI upload:
+
+```bash
+gh release edit v0.6.1 --repo abruption/session-peer --draft=false --latest
+```
+
+Do not create a second release or retry with modified artifacts if the workflow
+fails. Preserve the failed run and diagnose the failing stage. A version already
+accepted by PyPI cannot be replaced.
+
+## Verify publication
+
+1. Confirm the release-triggered `publish.yml` run completed successfully and
+   used the expected tag and commit.
+2. Confirm PyPI exposes exactly `session-peer==0.6.1`. Download the wheel and
+   sdist, compare their filenames and SHA-256 hashes with the workflow artifacts,
+   and inspect their contents again.
+3. Install 0.6.1 from PyPI into a fresh environment. Confirm the version and a
+   local read-only listing. A no-submit dry-run may use an explicit temporary
+   Codex home and executable; expected target failure is acceptable if it proves
+   no queue command ran.
+4. Confirm GitHub marks v0.6.1 as latest and `session-peer update --check` reports
+   it to an older standalone installation.
+5. Close the release issue only after GitHub, PyPI, fresh-install, and updater
+   verification are recorded.
+
+Package-managed installations upgrade with their own manager. Standalone
+installations use `session-peer update`; `install.sh` is required to refresh the
+bundled Claude skill. Submission is never proof of consumption or acknowledgement.

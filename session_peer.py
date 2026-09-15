@@ -28,7 +28,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 GITHUB_REPO = "abruption/session-peer"
 
 # Claude Code refuses a same-machine message once its serialized form passes

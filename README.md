@@ -11,8 +11,9 @@ SSH runs the same Python script on the destination, so session-peer need not be
 installed there to receive a send or list request.
 
 This project continues cc-peer with its Git history and issue numbers preserved.
-[session-peer 0.6.0](https://pypi.org/project/session-peer/0.6.0/) is released;
-the old PyPI cc-peer project is archived after its final 0.5.1 release.
+session-peer releases are published on [PyPI](https://pypi.org/project/session-peer/)
+and [GitHub](https://github.com/abruption/session-peer/releases); the old PyPI
+cc-peer project is archived after its final 0.5.1 release.
 See [Moving from cc-peer](#moving-from-cc-peer) for explicit migration steps.
 
 ## Quick start
@@ -254,10 +255,10 @@ session-peer send --host mac --to 'codex:<full-thread-uuid>' \
 Omit `--host mac` for local use. Remove `--dry-run` only when ready to submit.
 Quoting `~` keeps expansion on the destination; an absolute remote path also
 works. `--codex-home` explicitly chooses that copy but is not proof of activity.
-This workaround also works with the published 0.6.0 package.
+This explicit-home workaround also works with the published 0.6.0 package.
 
-The #55 safeguards described below are for the next release; the original PyPI
-0.6.0 package does not check other homes or expose the new JSON fields.
+The #55 safeguards described below ship in v0.6.1; the original PyPI 0.6.0
+package does not check other homes or expose the new JSON fields.
 
 Without `--codex-home`, selection still uses destination `CODEX_HOME`, then
 `~/.codex`. Before send or dry-run, the ambiguity guard checks a bounded inventory:
@@ -478,6 +479,18 @@ fixtures, real UDS payload checks and broader exit-code/remote-command regressio
 tests remain tracked in [#28](https://github.com/abruption/session-peer/issues/28).
 
 ## Verified
+
+### session-peer v0.6.1 (2026-09-15)
+
+- 174 local tests and the release CI checks passed after integrating the v0.6.0
+  Codex adapter with duplicate-home protection, sender-agent envelopes, and
+  MagicDNS SSH routing. Wheel/sdist builds and isolated installs were checked.
+- A local Codex listing and explicit-home dry-run succeeded without submission.
+  A read-only SSH listing supplied by Tailscale IP connected through the current
+  MagicDNS `HostName` and retained the original value as `sshHost`/`HostKeyAlias`.
+- No live message was submitted as part of release preparation. Queue acceptance,
+  message consumption, acknowledgements, and reverse SSH reachability remain
+  distinct outcomes.
 
 ### session-peer v0.6.0 transition (2026-09-10)
 
