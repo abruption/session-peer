@@ -417,13 +417,116 @@ def _run(command: list[str]) -> str:
     return done.stdout
 
 
+def tailscale_status() -> dict | None:
+    """Return the local tailnet map when the Tailscale CLI is available."""
+    commands = [["tailscale", "status", "--json"]]
+    if sys.platform == "darwin":
+        commands.append([
+            "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+            "status", "--json",
+        ])
+    for command in commands:
+        try:
+            done = subprocess.run(
+                command, capture_output=True, encoding="utf-8", errors="replace",
+                timeout=DETECT_TIMEOUT,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if done.returncode:
+            continue
+        try:
+            status = json.loads(done.stdout)
+        except ValueError:
+            continue
+        if isinstance(status, dict) and status.get("BackendState") == "Running":
+            return status
+    return None
+
+
+def _magicdns_enabled(status: dict) -> bool:
+    tailnet = status.get("CurrentTailnet")
+    return isinstance(tailnet, dict) and tailnet.get("MagicDNSEnabled") is True
+
+
+def _tailnet_nodes(status: dict) -> list[dict]:
+    nodes = []
+    own = status.get("Self")
+    if isinstance(own, dict):
+        nodes.append(own)
+    peers = status.get("Peer")
+    if isinstance(peers, dict):
+        nodes.extend(peer for peer in peers.values() if isinstance(peer, dict))
+    return nodes
+
+
+def _node_names(node: dict) -> set[str]:
+    names = set()
+    dns_name = str(node.get("DNSName") or "").rstrip(".").lower()
+    hostname = str(node.get("HostName") or "").rstrip(".").lower()
+    if dns_name:
+        names.add(dns_name)
+        names.add(dns_name.split(".", 1)[0])
+    if hostname:
+        names.add(hostname)
+    addresses = node.get("TailscaleIPs")
+    if isinstance(addresses, list):
+        names.update(str(address).lower() for address in addresses)
+    return names
+
+
+def resolve_ssh_destination(destination: str, status: dict | None = None) -> str:
+    """Resolve a known online Tailscale peer's canonical MagicDNS identity.
+
+    A destination that is not in the local tailnet map remains an ordinary SSH
+    destination. Callers keep the requested value as SSH's destination alias and
+    override HostName with this result, preserving Host/User/Port/IdentityFile
+    configuration while connecting to the verified MagicDNS name.
+    """
+    check_ssh_argument(destination, "--host")
+    user, separator, host = destination.rpartition("@")
+    if not separator:
+        user, host = "", destination
+    lookup = host.strip("[]").rstrip(".").lower()
+    status = tailscale_status() if status is None else status
+    if not status or not _magicdns_enabled(status):
+        return destination
+
+    matches = [node for node in _tailnet_nodes(status) if lookup in _node_names(node)]
+    if not matches:
+        return destination
+    unique = {str(node.get("ID") or node.get("PublicKey") or id(node)): node for node in matches}
+    if len(unique) != 1:
+        raise CcPeerError(
+            f"Tailscale destination {host!r} is ambiguous; use its full MagicDNS name"
+        )
+    node = next(iter(unique.values()))
+    dns_name = str(node.get("DNSName") or "").rstrip(".")
+    if not dns_name:
+        return destination
+    if node.get("Online") is False:
+        raise CcPeerError(f"Tailscale peer {dns_name} is offline")
+    return f"{user}@{dns_name}" if user else dns_name
+
+
 def detect_reply_host() -> str | None:
     """This machine's tailnet address, or None if it can't be determined.
 
-    `tailscale ip -4` is the direct answer where the CLI is on PATH. On macOS it
-    usually isn't — the app ships it inside the bundle — so fall back to reading
-    it off the interfaces.
+    Prefer the canonical MagicDNS name from `tailscale status --json`. Fall back
+    to a Tailscale IPv4 address for older/unavailable clients, then interfaces.
     """
+    status = tailscale_status()
+    if status:
+        own = status.get("Self")
+        if isinstance(own, dict):
+            dns_name = str(own.get("DNSName") or "").rstrip(".")
+            if dns_name and _magicdns_enabled(status):
+                return dns_name
+            addresses = own.get("TailscaleIPs")
+            if isinstance(addresses, list):
+                for candidate in addresses:
+                    if is_tailnet_address(str(candidate)):
+                        return str(candidate)
     for command in (["tailscale", "ip", "-4"], ["ip", "-4", "-o", "addr", "show"], ["ifconfig"]):
         for candidate in re.findall(r"\b100\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", _run(command)):
             if is_tailnet_address(candidate):
@@ -448,24 +551,54 @@ def own_session() -> dict | None:
     return None
 
 
-def sender_identity(explicit_host: str | None) -> tuple[str, str | None] | None:
-    """(session name, reachable address) for the session we're running in.
+def sender_agent() -> dict | None:
+    """The agent session running this process, when its environment says so."""
+    session = own_session()
+    if session is not None:
+        name = session["name"] or str(session["pid"])
+        return {"agent": "claude", "id": str(name).splitlines()[0], "target": str(name)}
+
+    thread = os.environ.get("CODEX_THREAD_ID") or os.environ.get("CODEX_SESSION_ID")
+    if thread:
+        try:
+            thread = str(uuid.UUID(thread))
+        except ValueError:
+            return None
+        return {"agent": "codex", "id": thread, "target": f"codex:{thread}"}
+    return None
+
+
+def sender_identity(explicit_host: str | None) -> dict | None:
+    """Agent-qualified identity and reachable address for this session.
 
     Both the From: header and the Reply: line are built from this, so they
     can't drift apart. None outside a session, where there is no name to give.
     """
-    session = own_session()
-    if session is None:
+    identity = sender_agent()
+    if identity is None:
         return None
-    name = session["name"] or str(session["pid"])
-    host = explicit_host or (os.environ.get("SESSION_PEER_REPLY_HOST") or os.environ.get("CC_PEER_REPLY_HOST")) or detect_reply_host()
+    configured_host = explicit_host or (
+        os.environ.get("SESSION_PEER_REPLY_HOST") or os.environ.get("CC_PEER_REPLY_HOST")
+    )
+    host = resolve_ssh_destination(configured_host) if configured_host else detect_reply_host()
     if host and "@" not in host:
         host = f"{getpass.getuser()}@{host}"
-    return name, host
+    return {**identity, "host": host}
+
+
+def _from_identity(identity: dict | None) -> str | None:
+    """Format who is speaking from one already-detected identity."""
+    if identity is None:
+        return None
+    agent, identifier, host = identity["agent"], identity["id"], identity["host"]
+    # Fall back to the local hostname so this line survives even when no
+    # tailnet address turns up; it is for reading, not for connecting.
+    where = host or f"{getpass.getuser()}@{socket.gethostname()}"
+    return f"From: {agent}:{identifier} @ {where}"
 
 
 def from_header(explicit_host: str | None) -> str | None:
-    """Who is speaking.
+    """Detect and format who is speaking.
 
     Claude Code records an arriving peer message with `from: "unknown"` when
     it was posted to the socket directly, so without this the receiver has no
@@ -473,14 +606,7 @@ def from_header(explicit_host: str | None) -> str | None:
     request. Separate from the reply address on purpose: knowing the sender
     stays useful when answering isn't possible.
     """
-    identity = sender_identity(explicit_host)
-    if identity is None:
-        return None
-    name, host = identity
-    # Fall back to the local hostname so this line survives even when no
-    # tailnet address turns up; it is for reading, not for connecting.
-    where = host or f"{getpass.getuser()}@{socket.gethostname()}"
-    return f"From: {where} ({name})"
+    return _from_identity(sender_identity(explicit_host))
 
 
 def wrap_message(
@@ -494,8 +620,9 @@ def wrap_message(
     and compound with each hop. The two facts it *doesn't* have are the
     sender's identity and a working return address.
     """
-    header = from_header(explicit_host) if with_from else None
-    footer = reply_line(explicit_host) if with_reply else None
+    identity = sender_identity(explicit_host) if with_from or with_reply else None
+    header = _from_identity(identity) if with_from else None
+    footer = _reply_from_identity(identity) if with_reply else None
     body = text.strip("\n")
     parts = ([header, ""] if header else []) + [body]
     if footer:
@@ -503,8 +630,27 @@ def wrap_message(
     return "\n".join(parts)
 
 
+def _reply_from_identity(identity: dict | None) -> str | None:
+    """Format a reply command from one already-detected identity."""
+    if identity is None:
+        return None
+    target, host = identity["target"], identity["host"]
+    if not host:
+        return None
+    script = Path(__file__).resolve()
+    script_str = (
+        shlex.quote(str(script))
+        if script.is_file()
+        else '~/.local/share/session-peer/session_peer.py'
+    )
+    return (
+        f"Reply: python3 {script_str} send "
+        f"--host {shlex.quote(host)} --to {shlex.quote(target)} --no-reply-to"
+    )
+
+
 def reply_line(explicit_host: str | None) -> str | None:
-    """How to answer, as a command that runs verbatim.
+    """Detect how to answer and return a command that runs verbatim.
 
     Three things the first version left out, each of which broke it in
     practice:
@@ -519,18 +665,7 @@ def reply_line(explicit_host: str | None) -> str | None:
     The username is the sender's; there's no guarantee the far side knows it,
     but it is right whenever accounts match and strictly better than nothing.
     """
-    identity = sender_identity(explicit_host)
-    if identity is None:
-        return None
-    name, host = identity
-    if not host:
-        return None
-    script = Path(__file__).resolve()
-    script_str = str(script) if script.is_file() else '~/.local/share/session-peer/session_peer.py'
-    return (
-        f"Reply: python3 {script_str} send "
-        f"--host {host} --to {shlex.quote(name)} --no-reply-to"
-    )
+    return _reply_from_identity(sender_identity(explicit_host))
 
 
 # --------------------------------------------------------------------------
@@ -687,6 +822,38 @@ def emit(as_json: bool, payload: dict, human: str) -> None:
     print(json.dumps(payload, ensure_ascii=False) if as_json else human)
 
 
+def host_metadata(ssh_host: str, canonical_host: str) -> dict:
+    metadata = {"host": canonical_host}
+    if ssh_host != canonical_host:
+        metadata["sshHost"] = ssh_host
+    return metadata
+
+
+def display_host(ssh_host: str, canonical_host: str) -> str:
+    if ssh_host == canonical_host:
+        return canonical_host
+    return f"{canonical_host} (via SSH {ssh_host})"
+
+
+def tailscale_ssh_options(ssh_host: str, canonical_host: str) -> list[str]:
+    """Route an SSH alias to its verified MagicDNS name without losing config.
+
+    Keeping ssh_host as the command destination preserves matching `Host` and
+    `User` settings. HostKeyAlias preserves an existing known_hosts entry keyed
+    by the caller's original IP or hostname.
+    """
+    if ssh_host == canonical_host:
+        return []
+    _, _, original_name = ssh_host.rpartition("@")
+    _, _, magicdns_name = canonical_host.rpartition("@")
+    original_name = (original_name or ssh_host).strip("[]")
+    magicdns_name = (magicdns_name or canonical_host).strip("[]")
+    return [
+        "-o", f"HostName={magicdns_name}",
+        "-o", f"HostKeyAlias={original_name}",
+    ]
+
+
 # --------------------------------------------------------------------------
 # Commands
 # --------------------------------------------------------------------------
@@ -703,22 +870,28 @@ def cmd_list(args: argparse.Namespace) -> int:
 
     exit_code = 0
     all_results = []
-    for host in args.host:
+    tailnet_status = tailscale_status() or {}
+    for requested_host in args.host:
+        host = requested_host
         try:
+            host = resolve_ssh_destination(requested_host, tailnet_status)
+            ssh_opts = tailscale_ssh_options(requested_host, host) + args.ssh_opt
             argv = ["list"] + (["--all"] if args.all else [])
             if is_codex:
                 argv += ["--agent", "codex"] + codex_remote_options(args)
-            result = run_remote(host, argv, args.ssh_opt)
+            result = run_remote(requested_host, argv, ssh_opts)
             sessions = result.get("sessions", [])
-            remote_version = remote_installed_version(host, args.ssh_opt)
-            human = render(sessions, host)
+            remote_version = remote_installed_version(requested_host, ssh_opts)
+            shown_host = display_host(requested_host, host)
+            human = render(sessions, shown_host)
             if remote_version and remote_version != __version__:
                 human = (
-                    f"{host} runs session-peer {remote_version}; this machine has {__version__}."
-                    f"\nUpdate it with:  session-peer update --host {host}\n\n{human}"
+                    f"{shown_host} runs session-peer {remote_version}; this machine has {__version__}."
+                    f"\nUpdate it with:  session-peer update --host {requested_host}\n\n{human}"
                 )
             host_result = {
-                "host": host, "sessions": sessions, "version": __version__,
+                **host_metadata(requested_host, host),
+                "sessions": sessions, "version": __version__,
                 **({"remoteVersion": remote_version} if remote_version else {}),
             }
             all_results.append(host_result)
@@ -728,9 +901,10 @@ def cmd_list(args: argparse.Namespace) -> int:
                 print(human)
         except CcPeerError as exc:
             exit_code = EXIT_ERROR
-            all_results.append({"host": host, "ok": False, "error": str(exc)})
+            all_results.append({**host_metadata(requested_host, host),
+                                "ok": False, "error": str(exc)})
             if not args.json:
-                print(f"session-peer: {host}: {exc}", file=sys.stderr)
+                print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
 
     if args.json:
         print(json.dumps(all_results, ensure_ascii=False))
@@ -827,9 +1001,14 @@ def cmd_update(args: argparse.Namespace) -> int:
     if args.host:
         exit_code = 0
         all_results = []
-        for host in args.host:
+        tailnet_status = tailscale_status() or {}
+        for requested_host in args.host:
+            host = requested_host
             try:
-                there = remote_installed_version(host, args.ssh_opt)
+                host = resolve_ssh_destination(requested_host, tailnet_status)
+                ssh_opts = tailscale_ssh_options(requested_host, host) + args.ssh_opt
+                shown_host = display_host(requested_host, host)
+                there = remote_installed_version(requested_host, ssh_opts)
 
                 if args.check:
                     if there is None:
@@ -838,31 +1017,34 @@ def cmd_update(args: argparse.Namespace) -> int:
                         state = "up to date"
                     else:
                         state = f"{there} → {__version__} available"
-                    all_results.append({"host": host, "remoteVersion": there,
-                                        "current": __version__, "outdated": there != __version__})
+                    all_results.append({**host_metadata(requested_host, host),
+                                        "remoteVersion": there, "current": __version__,
+                                        "outdated": there != __version__})
                     if not args.json:
-                        print(f"{host}: session-peer {there or '(none)'} — {state}")
+                        print(f"{shown_host}: session-peer {there or '(none)'} — {state}")
                     continue
 
                 if there == __version__:
-                    all_results.append({"host": host, "remoteVersion": there,
-                                        "current": __version__, "updated": False})
+                    all_results.append({**host_metadata(requested_host, host),
+                                        "remoteVersion": there, "current": __version__,
+                                        "updated": False})
                     if not args.json:
-                        print(f"{host} runs session-peer {there} — already current.")
+                        print(f"{shown_host} runs session-peer {there} — already current.")
                     continue
 
-                new_version = push_to_remote(host, args.ssh_opt)
-                all_results.append({"host": host, "ok": True, "previous": there,
-                                    "current": __version__, "updated": True})
+                new_version = push_to_remote(requested_host, ssh_opts)
+                all_results.append({**host_metadata(requested_host, host), "ok": True,
+                                    "previous": there, "current": __version__, "updated": True})
                 if not args.json:
                     prev = there or "(none)"
-                    print(f"{host}: session-peer {prev} → {new_version}")
+                    print(f"{shown_host}: session-peer {prev} → {new_version}")
 
             except CcPeerError as exc:
                 exit_code = EXIT_ERROR
-                all_results.append({"host": host, "ok": False, "error": str(exc)})
+                all_results.append({**host_metadata(requested_host, host),
+                                    "ok": False, "error": str(exc)})
                 if not args.json:
-                    print(f"session-peer: {host}: {exc}", file=sys.stderr)
+                    print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
         if args.json:
             print(json.dumps(all_results, ensure_ascii=False))
         return exit_code
@@ -936,8 +1118,8 @@ def cmd_send(args: argparse.Namespace) -> int:
         )
         if (
             not args.no_reply_to
-            and reply_line(args.reply_to) is None
             and (args.reply_to or (os.environ.get("SESSION_PEER_REPLY_HOST") or os.environ.get("CC_PEER_REPLY_HOST")))
+            and sender_agent() is None
             and not args.json
         ):
             # A reply address names a session, and outside one there is no name
@@ -972,34 +1154,40 @@ def cmd_send(args: argparse.Namespace) -> int:
 
     exit_code = 0
     all_results = []
-    for host in args.host:
+    tailnet_status = tailscale_status() or {}
+    for requested_host in args.host:
+        host = requested_host
         try:
+            host = resolve_ssh_destination(requested_host, tailnet_status)
+            ssh_opts = tailscale_ssh_options(requested_host, host) + args.ssh_opt
+            shown_host = display_host(requested_host, host)
             encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
             remote_argv = ["send", "--to", args.to, "--b64", encoded]
             if is_codex:
                 remote_argv += codex_remote_options(args)
             if args.dry_run:
                 remote_argv.append("--dry-run")
-            result = run_remote(host, remote_argv, args.ssh_opt)
+            result = run_remote(requested_host, remote_argv, ssh_opts)
             if is_codex:
-                result["host"] = host
+                result.update(host_metadata(requested_host, host))
                 all_results.append(result)
                 if not args.json:
-                    print(codex_submission_text(result, host))
+                    print(codex_submission_text(result, shown_host))
                 continue
             target = result.get("target", {})
             name = target.get("name") or target.get("pid")
             verb = "Would post to" if args.dry_run else "Posted to"
-            host_result = {"ok": True, "host": host, "target": target,
+            host_result = {"ok": True, **host_metadata(requested_host, host), "target": target,
                            "chars": len(text), "dryRun": args.dry_run}
             all_results.append(host_result)
             if not args.json:
-                print(f"{verb} {name}'s inbox on {host} ({len(text)} chars).")
+                print(f"{verb} {name}'s inbox on {shown_host} ({len(text)} chars).")
         except CcPeerError as exc:
             exit_code = EXIT_ERROR
-            all_results.append({"ok": False, "host": host, "error": str(exc)})
+            all_results.append({"ok": False, **host_metadata(requested_host, host),
+                                "error": str(exc)})
             if not args.json:
-                print(f"session-peer: {host}: {exc}", file=sys.stderr)
+                print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
 
     if args.json:
         if len(all_results) == 1:
@@ -1021,7 +1209,7 @@ def build_parser() -> argparse.ArgumentParser:
     def add_common(sub: argparse.ArgumentParser) -> None:
         sub.add_argument(
             "--host", action="append", default=[], metavar="DEST",
-            help="SSH destination, repeatable; omit to act on this machine",
+            help="SSH destination, repeatable; known Tailscale peers are verified by MagicDNS",
         )
         sub.add_argument(
             "--ssh-opt",

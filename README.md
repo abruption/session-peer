@@ -131,16 +131,40 @@ session-peer list --host web-01 --json             # machine-readable
 
 session-peer send --host web-01 --ssh-opt=-p --ssh-opt=2222 --to api-worker "..."   # note the '='
 
-# Envelope. Sends carry who they're from and how to answer, both resolved from
-# the Claude session session-peer is running inside, when available.
+# Envelope. Sends identify the Claude/Codex sender and how to answer when the
+# current agent session and a return route can be detected.
 session-peer send --host web-01 --to api-worker --no-reply-to "..."         # no return address
 session-peer send --host web-01 --to api-worker --no-from "..."             # no From: header
 session-peer send --host web-01 --to api-worker --reply-to 100.64.0.5 "..." # state the address
 ```
 
+Inside an agent session, the default envelope identifies the sender explicitly:
+
+```text
+From: codex:01a08dd6-d3f6-7783-a62b-52c1fd049181 @ abruptly@mac-mini-m4.example.ts.net
+
+message
+
+---
+Reply: python3 /path/to/session_peer.py send --host abruptly@mac-mini-m4.example.ts.net --to codex:01a08dd6-d3f6-7783-a62b-52c1fd049181 --no-reply-to
+```
+
+Claude senders use `claude:<session-name>` in the same positions. The identity is
+best-effort text derived from the current process environment; it is not an
+authentication claim. A plain shell has no agent identity to advertise.
+
 Repeat `--host` to operate on several SSH destinations. `--json` is available on
 `list`, `send`, and `update`; v0.6 retains command-specific response shapes rather
 than a uniform envelope. See [#29](https://github.com/abruption/session-peer/issues/29).
+
+When local `tailscale status --json` identifies a `--host` by device hostname,
+short MagicDNS name, full MagicDNS name, or Tailscale IP, session-peer verifies and
+reports the current MagicDNS FQDN as `host`. SSH still receives the supplied value
+as its destination alias, reported separately as `sshHost` when different, while a
+`HostName` override routes the connection to that FQDN and `HostKeyAlias` retains
+the existing host-key lookup. This preserves matching `Host`, `User`, `Port`, and
+`IdentityFile` settings. A known peer reported offline fails before SSH. Hosts
+absent from the tailnet map remain normal SSH destinations.
 
 Exit codes: `0` successful command (including listing or dry-run), `1` operational
 error, `2` CLI usage error or an unresolved target reported as no-target, and
@@ -185,7 +209,7 @@ from the desired release checkout to refresh both standalone program and skill.
 
 | Variable | Effect |
 | :-- | :-- |
-| `SESSION_PEER_REPLY_HOST` | Override the advertised reply host: `--reply-to` → `SESSION_PEER_REPLY_HOST` → `CC_PEER_REPLY_HOST` → auto-detected Tailscale IP. A detectable Claude sender session is still required for a reply line. |
+| `SESSION_PEER_REPLY_HOST` | Override the advertised reply host: `--reply-to` → `SESSION_PEER_REPLY_HOST` → `CC_PEER_REPLY_HOST` → auto-detected Tailscale MagicDNS name or IP. A detectable Claude or Codex sender session is still required for a reply line. |
 | `CC_PEER_REPLY_HOST` | Legacy fallback; prefer `SESSION_PEER_REPLY_HOST` for new configuration. |
 | `CLAUDE_CONFIG_DIR` | Where Claude Code keeps its config (default `~/.claude`). Respected by `session-peer list` for session discovery and by `install.sh` for skill placement. |
 | `ANTHROPIC_CONFIG_DIR` | Fallback if `CLAUDE_CONFIG_DIR` is unset. |
@@ -230,9 +254,9 @@ and an optional `remoteVersion` for an installed standalone copy.
 Codex send JSON adds `target: {agent, id}` and `status: queued` (or `validated`
 under dry-run) to `{ok, chars, dryRun}`; `queueId` is optional. A remote send to
 one host returns a flat object with `host`; multiple hosts return an array.
-Claude output stays compatible. Existing identity/reply detection identifies
-Claude senders, not Codex senders: a Codex target is supported, but an automatic
-return address for a Codex sender is not yet provided.
+Claude output stays compatible. When `CODEX_THREAD_ID` (or the compatibility
+fallback `CODEX_SESSION_ID`) is present, the message envelope and reply command
+identify the originating Codex thread.
 
 `doctor`, reply waiting/`--wait`, structured reply URIs and optional wake are
 future work, not v0.6 features: see the [v0.7](https://github.com/abruption/session-peer/issues/45)
@@ -334,14 +358,18 @@ not as the user typing approval.
 
 ## Limits
 
-- **Sender identity is best-effort.** When running inside a detectable Claude
-  session, session-peer can add a textual `From:` header. Outside that context,
-  it may omit it. This is not an authenticated identity protocol, and Codex
-  sender detection is not implemented in v0.6.
-- **Advertised replies need a working return path.** When a Claude sender and
+- **Sender identity is best-effort.** When running inside a detectable Claude or
+  Codex session, session-peer adds an agent-qualified textual `From:` header.
+  Outside that context, it may omit it. This is not an authenticated identity
+  protocol; environment variables and session registries are local hints.
+- **Advertised replies need a working return path.** When an agent sender and
   reply host can be determined, a `Reply:` line supplies an SSH return command.
   Forward SSH success does not prove reverse SSH access. v0.6 does not verify
   that route, correlate a reply, or wait for one; the address grants no access.
+- **Tailscale status is a local routing hint.** A known online peer is addressed
+  by its current MagicDNS name and a known offline peer is rejected before SSH.
+  An unknown destination remains ordinary SSH; session-peer does not claim that
+  every SSH host belongs to the tailnet.
 - **No discovery across a bastion.** `--host` is a single SSH hop; chain it yourself with an SSH config `ProxyJump`.
 - **Destination user and execution permissions matter.** Claude inboxes and
   Codex state/queues belong to the destination account. Use the correct account
@@ -356,7 +384,7 @@ not as the user typing approval.
 ## Tests
 
 ```bash
-python3 -m unittest discover -v
+python3 -m unittest discover -s tests -v
 ```
 
 The suite needs no live agent, SSH server or network. It includes legacy

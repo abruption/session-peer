@@ -15,7 +15,7 @@ class Install(unittest.TestCase):
             legacy.parent.mkdir(parents=True)
             legacy.write_text("legacy", encoding="utf-8")
             env = dict(os.environ, HOME=str(root), CLAUDE_CONFIG_DIR=str(root / "custom claude"))
-            script = str(Path(__file__).parent / "install.sh")
+            script = str(Path(__file__).parent.parent / "install.sh")
             for _ in range(2):
                 result = subprocess.run(["sh", script], env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
