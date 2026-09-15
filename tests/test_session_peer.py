@@ -70,6 +70,89 @@ class SshArgumentChecks(unittest.TestCase):
             session_peer.check_ssh_argument(value, "--host")
 
 
+class SshUserResolution(unittest.TestCase):
+    @staticmethod
+    def completed(stdout="", stderr="", returncode=0):
+        return subprocess.CompletedProcess([], returncode, stdout, stderr)
+
+    def test_explicit_user_takes_precedence_without_config_probe(self):
+        with mock.patch.object(session_peer.subprocess, "run") as run:
+            result = session_peer.ssh_user_metadata("release-user@build-alias", [])
+        self.assertEqual(result, {
+            "sshUser": "release-user", "sshUserSource": "explicit",
+        })
+        run.assert_not_called()
+
+    def test_ssh_config_or_local_default_uses_original_alias_and_options(self):
+        completed = self.completed("host build-alias\nuser deploy\nhostname verified.example.ts.net\n")
+        with mock.patch.object(session_peer.subprocess, "run", return_value=completed) as run:
+            result = session_peer.ssh_user_metadata(
+                "build-alias", ["-o", "HostName=verified.example.ts.net", "-p", "2222"]
+            )
+        self.assertEqual(result, {
+            "sshUser": "deploy", "sshUserSource": "ssh_config_or_local_default",
+        })
+        self.assertEqual(run.call_args.args[0], [
+            "ssh", "-G", "-o", "HostName=verified.example.ts.net",
+            "-p", "2222", "build-alias",
+        ])
+
+    def test_missing_or_malformed_ssh_config_probe_is_unknown(self):
+        cases = (
+            OSError("ssh missing"),
+            self.completed("host build-alias\nhostname build-alias\n"),
+            self.completed("", "bad option", 255),
+        )
+        for outcome in cases:
+            with self.subTest(outcome=outcome), \
+                 mock.patch.object(session_peer.subprocess, "run", side_effect=[outcome]):
+                self.assertEqual(session_peer.ssh_user_metadata("build-alias", []), {
+                    "sshUser": None, "sshUserSource": "unknown",
+                })
+
+    def test_success_reports_the_effective_user(self):
+        config = self.completed("user deploy\nhostname build-alias\n")
+        remote = self.completed('{"ok": true, "sessions": []}\n')
+        with mock.patch.object(session_peer.Path, "read_text", return_value="source"), \
+             mock.patch.object(session_peer.subprocess, "run",
+                               side_effect=[config, remote]) as run:
+            result = session_peer.run_remote("build-alias", ["list"], [])
+        self.assertEqual(result["sshUser"], "deploy")
+        self.assertEqual(result["sshUserSource"], "ssh_config_or_local_default")
+        self.assertEqual(run.call_count, 2)
+
+    def test_connection_failures_are_classified_without_retrying(self):
+        cases = (
+            (self.completed("", "Permission denied (publickey).", 255),
+             "authentication_failed"),
+            (self.completed("", "Host key verification failed.", 255),
+             "host_key_failed"),
+            (subprocess.TimeoutExpired(["ssh"], 120), "timeout"),
+            (self.completed("", "connect to host failed: Connection refused", 255),
+             "transport_failed"),
+        )
+        for outcome, expected in cases:
+            config = self.completed("user deploy\nhostname build-alias\n")
+            with self.subTest(expected=expected), \
+                 mock.patch.object(session_peer.Path, "read_text", return_value="source"), \
+                 mock.patch.object(session_peer.subprocess, "run",
+                                   side_effect=[config, outcome]) as run, \
+                 self.assertRaises(session_peer.CcPeerError) as caught:
+                session_peer.run_remote("build-alias", ["list"], [])
+            self.assertEqual(caught.exception.details["sshFailure"], expected)
+            self.assertEqual(caught.exception.details["sshUser"], "deploy")
+            self.assertEqual(run.call_count, 2)
+            if expected == "authentication_failed":
+                self.assertIn("--host USER@HOST", str(caught.exception))
+
+    def test_help_explains_user_precedence(self):
+        help_text = session_peer.build_parser()._subparsers._group_actions[0].choices[
+            "send"
+        ].format_help()
+        self.assertIn("[USER@]HOST", help_text)
+        self.assertIn("SSH config/default", help_text)
+
+
 class MessageChecks(unittest.TestCase):
     def test_rejects_empty_and_whitespace(self):
         for text in ("", "   ", "\n\n", "\t "):
@@ -310,9 +393,11 @@ class RemoteInstalledVersion(unittest.TestCase):
         self.assertIsNone(self.run_with(""))
         self.assertIsNone(self.run_with("python3: can't open file\n"))
 
-    def test_none_when_ssh_fails(self):
+    def test_ssh_failure_is_not_reported_as_not_installed(self):
         with mock.patch.object(session_peer.subprocess, "run", side_effect=OSError("boom")):
-            self.assertIsNone(session_peer.remote_installed_version("web-01", []))
+            with self.assertRaises(session_peer.CcPeerError) as caught:
+                session_peer.remote_installed_version("web-01", [])
+        self.assertEqual(caught.exception.details["sshFailure"], "transport_failed")
 
     def test_still_validates_ssh_arguments(self):
         # This path builds its own ssh command, so it needs the same guard.
@@ -626,6 +711,31 @@ class MultiHost(unittest.TestCase):
                 host=["bad", "good"], ssh_opt=[], json=False, all=False))
         self.assertEqual(code, session_peer.EXIT_ERROR)
 
+    def test_ssh_failure_details_survive_multi_host_results(self):
+        failure = session_peer.CcPeerError(
+            "SSH authentication failed for deploy@bad",
+            {"sshUser": "deploy", "sshUserSource": "ssh_config_or_local_default",
+             "sshFailure": "authentication_failed"},
+        )
+        success = {
+            "ok": True, "target": {"pid": 1, "name": "w"},
+            "sshUser": "release", "sshUserSource": "explicit",
+        }
+        output = io.StringIO()
+        with mock.patch.object(session_peer, "run_remote",
+                               side_effect=[failure, success]), \
+             mock.patch.object(session_peer, "tailscale_status", return_value=None), \
+             contextlib.redirect_stdout(output):
+            code = session_peer.main([
+                "send", "--host", "bad", "--host", "release@good",
+                "--to", "w", "--no-from", "--no-reply-to", "--json", "hi",
+            ])
+        results = json.loads(output.getvalue())
+        self.assertEqual(code, session_peer.EXIT_ERROR)
+        self.assertEqual(results[0]["sshFailure"], "authentication_failed")
+        self.assertEqual(results[0]["sshUser"], "deploy")
+        self.assertEqual(results[1]["sshUser"], "release")
+
     def test_single_host_send_json_is_flat(self):
         import io
         buf = io.StringIO()
@@ -661,22 +771,33 @@ class PushToRemote(unittest.TestCase):
 
     def test_update_host_pushes_when_outdated(self):
         with mock.patch.object(session_peer, "remote_installed_version", return_value="0.3.0"), \
-             mock.patch.object(session_peer, "push_to_remote", return_value="0.4.0") as push:
+             mock.patch.object(session_peer, "push_to_remote", return_value="0.4.0") as push, \
+             mock.patch.object(session_peer, "ssh_user_metadata", return_value={
+                 "sshUser": "deploy", "sshUserSource": "ssh_config_or_local_default",
+             }):
             session_peer.cmd_update(argparse.Namespace(
                 host=["web-01"], ssh_opt=[], json=False, check=False))
-        push.assert_called_once_with("web-01", [])
+        push.assert_called_once_with("web-01", [], {
+            "sshUser": "deploy", "sshUserSource": "ssh_config_or_local_default",
+        })
 
     def test_update_host_skips_when_current(self):
         with mock.patch.object(session_peer, "remote_installed_version",
                                return_value=session_peer.__version__), \
-             mock.patch.object(session_peer, "push_to_remote") as push:
+             mock.patch.object(session_peer, "push_to_remote") as push, \
+             mock.patch.object(session_peer, "ssh_user_metadata", return_value={
+                 "sshUser": "deploy", "sshUserSource": "ssh_config_or_local_default",
+             }):
             session_peer.cmd_update(argparse.Namespace(
                 host=["web-01"], ssh_opt=[], json=False, check=False))
         push.assert_not_called()
 
     def test_update_host_check_reports_only(self):
         with mock.patch.object(session_peer, "remote_installed_version", return_value="0.3.0"), \
-             mock.patch.object(session_peer, "push_to_remote") as push:
+             mock.patch.object(session_peer, "push_to_remote") as push, \
+             mock.patch.object(session_peer, "ssh_user_metadata", return_value={
+                 "sshUser": "deploy", "sshUserSource": "ssh_config_or_local_default",
+             }):
             session_peer.cmd_update(argparse.Namespace(
                 host=["web-01"], ssh_opt=[], json=False, check=True))
         push.assert_not_called()

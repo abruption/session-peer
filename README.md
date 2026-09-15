@@ -124,6 +124,7 @@ session-peer list --agent codex --all              # include archived Codex thre
 
 session-peer send --to api-worker "message"        # local session
 session-peer send --host web-01 --to api-worker "message"
+session-peer send --host deploy@web-01 --to api-worker "message"  # explicit SSH user
 session-peer send --host web-01 --to 4011 "message"          # address by pid
 git log --oneline -5 | session-peer send --host web-01 --to api-worker -   # stdin
 
@@ -170,6 +171,28 @@ as its destination alias, reported separately as `sshHost` when different, while
 the existing host-key lookup. This preserves matching `Host`, `User`, `Port`, and
 `IdentityFile` settings. A known peer reported offline fails before SSH. Hosts
 absent from the tailnet map remain normal SSH destinations.
+
+Host identity does not supply a login account: `known_hosts`, Tailscale peers,
+and MagicDNS names identify a machine, not its OS users. Specify the account as
+`--host USER@HOST`, or configure it for the original alias:
+
+```sshconfig
+Host web-01
+    User deploy
+```
+
+An explicit `USER@HOST` takes precedence. Otherwise session-peer runs `ssh -G`
+with the same alias and options to report the effective OpenSSH configuration or
+local-user default. It never guesses from another machine or retries a failed
+login under different usernames.
+
+Successful remote results and SSH connection failures add `sshUser` and
+`sshUserSource`; the source is `explicit`, `ssh_config_or_local_default`, or
+`unknown` when `ssh -G` cannot resolve it. Connection failures also add
+`sshFailure`, classified as `authentication_failed`, `host_key_failed`, `timeout`,
+or `transport_failed`. Authentication errors direct the caller to
+`--host USER@HOST` or the original alias's SSH `User` setting and are never
+retried.
 
 Exit codes: `0` successful command (including listing or dry-run), `1` operational
 error, `2` CLI usage error or an unresolved target reported as no-target, and
@@ -464,8 +487,9 @@ not as the user typing approval.
 - **No discovery across a bastion.** `--host` is a single SSH hop; chain it yourself with an SSH config `ProxyJump`.
 - **Destination user and execution permissions matter.** Claude inboxes and
   Codex state/queues belong to the destination account. Use the correct account
-  and home; a caller's sandbox may still deny access. session-peer does not
-  bypass either agent's permissions or quota.
+  and home. A `known_hosts` entry does not store that account. A caller's sandbox
+  may still deny access; session-peer does not bypass either agent's permissions
+  or quota.
 - **`--host` and `--ssh-opt` are as trusted as your ssh config.** They are handed to `ssh`, so whoever controls them controls where you connect. Values that would make ssh run a local command (`ProxyCommand` and friends) are refused, and a `--host` starting with `-` is rejected outright — but if you allowlist `session-peer` for an agent, treat it as granting SSH, not just messaging. Message bodies and session names carry no such risk: they are quoted before they reach any shell.
 - **Windows support.** Claude's named pipe transport is supported.
   `install.sh` and the standalone remote installer/updater use POSIX shell;
