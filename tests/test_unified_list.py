@@ -2,6 +2,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -16,6 +17,22 @@ class UnifiedList(unittest.TestCase):
               "reachable": True, "status": "idle"}
     codex = {"id": "01900000-0000-7000-8000-000000000001",
              "name": "worker", "cwd": "/project", "archived": False}
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name).resolve()
+        self.home = root / ".codex"
+        self.home.mkdir()
+        (self.home / "state_5.sqlite").touch()
+        self.codex = {**type(self).codex, "agent": "codex", "updatedAt": 1,
+                      "codexHome": str(self.home), "stateDb": str(self.home / "state_5.sqlite")}
+        for patcher in (mock.patch.object(Path, "home", return_value=root),
+                        mock.patch.dict(os.environ)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        os.environ.pop("CODEX_HOME", None)
+        os.environ.pop("SESSION_PEER_CODEX_HOMES", None)
 
     def invoke(self, *args):
         out = io.StringIO()
@@ -67,11 +84,11 @@ class UnifiedList(unittest.TestCase):
 
     def test_all_and_home_forwarded_and_human_states(self):
         with mock.patch.object(peer, "discover", return_value=[self.claude]) as claude,              mock.patch.object(peer, "discover_codex", return_value=[self.codex]) as codex:
-            code, output = self.invoke("--all", "--codex-home", "/custom")
+            code, output = self.invoke("--all", "--codex-home", str(self.home))
         self.assertEqual(code, 0)
         claude.assert_called_once_with(include_unreachable=True)
         self.assertTrue(codex.call_args.args[0].all)
-        self.assertEqual(codex.call_args.args[0].codex_home, "/custom")
+        self.assertEqual(codex.call_args.args[0].codex_home, str(self.home))
         self.assertIn("AGENT", output)
         self.assertIn("execution unknown", output)
 
@@ -105,5 +122,6 @@ class UnifiedList(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(result["ok"])
         self.assertEqual(result["sessions"], [])
-        self.assertEqual(result["discovery"], {
-            "claude": {"status": "ok"}, "codex": {"status": "ok"}})
+        self.assertEqual(result["discovery"]["claude"], {"status": "ok"})
+        self.assertEqual(result["discovery"]["codex"]["status"], "ok")
+        self.assertEqual(result["discovery"]["codex"]["homes"][0]["sessionCount"], 0)

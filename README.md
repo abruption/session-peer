@@ -403,8 +403,8 @@ configured databases also prevent implicit submission. Choose `--codex-home`
 explicitly to bypass unrelated inventory and activity checks. Resolved symlink
 aliases and repeated paths count as one home.
 
-With no competing saved home, native queue behavior is preserved; `list` still
-reads only the selected home. There is no general filesystem scan or process
+With no competing saved home, native queue behavior is preserved. `list`
+aggregates known homes unless `--codex-home` selects exactly one. There is no general filesystem scan or process
 environment inspection, and process arguments are not exposed. Activity
 inspection runs on the destination machine, including over SSH. Platforms
 without POSIX `flock` or `lsof` cannot automatically resolve competing homes and
@@ -428,10 +428,11 @@ characters cannot be passed as CLI arguments. `--dry-run` verifies the executabl
 and saved target without queueing but cannot guarantee a later submission will succeed.
 
 Local Codex list JSON uses the common response envelope and includes `sessions`,
-`version`, and the resolved absolute `codexHome`. Each session entry has
+`version`, and per-home diagnostics in `discovery.codex.homes`. Each session entry has
 `agent`, `id`, `name` (first line, at most 120 characters), `cwd`, `updatedAt`
-(Unix seconds), and `archived`. Each successful remote result includes
-`sessions`, `version`, `codexHome`, and an optional `remoteVersion` for an
+(Unix seconds), `archived`, canonical `codexHome`, and `stateDb`. Top-level
+`codexHome` is retained only for a single candidate home without inventory errors.
+Each successful remote result includes the same fields and an optional `remoteVersion` for an
 installed standalone copy. One remote host returns an object; repeated hosts
 return an array.
 
@@ -723,19 +724,22 @@ Default `list` and `list --json` query Claude and Codex together. Use
 for Codex only. Every session row includes `agent: "claude" | "codex"`;
 agent-specific fields such as PID and thread UUID remain unchanged. Combined
 human output includes an AGENT column. Claude rows precede Codex rows, preserving
-each discovery source's ordering.
+Claude discovery ordering; Codex rows sort by descending update time, then home and UUID.
 
 List responses include `discovery`, keyed by each requested agent, with
-`status: "ok" | "error"` and an `error` explanation for failed sources.
+`status: "ok" | "not_installed" | "error"` (the middle state is Codex-only)
+and an `error` explanation for failed sources.
 Any discovery failure returns `ok: false`, a top-level error summary, and exit
-code 1 while retaining successfully discovered sessions. A missing Codex DB is
-a discovery error; a missing Claude sessions directory is an empty result.
+code 1 while retaining successfully discovered sessions. No automatically discovered
+Codex installation is a normal empty result (`not_installed`, exit 0); a missing
+explicitly configured home is an error. A missing Claude sessions directory is an empty result.
 Neither is evidence of a running Codex process. Malformed individual Claude
 records continue to be skipped as before.
 
 These semantics apply locally and over SSH. Repeated hosts retain independent
 results in the existing ordered array; any failure makes the overall exit code 1.
-Codex listing still inspects only the selected home, reported as `codexHome`.
+Codex listing includes default, environment-selected, Orca, and configured homes.
+Use `--codex-home PATH` to inspect only that home.
 `--all` retains Claude stale/no-inbox records and includes archived Codex threads.
 
 ### Optional MCP / Codex plugin
@@ -746,3 +750,6 @@ The default policy permits local listing only. The standalone CLI and shell
 installer retain their existing dependency requirements.
 
 For opt-in activation of queued Codex sessions, see [explicit wake](docs/wake.md).
+
+See [multi-home Codex listing](docs/multi-home-list.md) for candidate sources,
+per-home errors, duplicate UUIDs, and selecting the exact home for send.

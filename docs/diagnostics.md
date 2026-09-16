@@ -157,10 +157,12 @@ and [the session inbox socket](https://code.claude.com/docs/en/cross-session-mes
 ## List discovery outcomes
 
 `list` defaults to both agents; `--agent claude|codex` selects one.
-The `discovery` object reports each requested agent as `{"status": "ok"}` or
-`{"status": "error", "error": "..."}`. Failures preserve successful session rows
-but set `ok=false`, a top-level error summary, and exit code 1. This includes
-a missing Codex state DB. A missing Claude session directory is an empty result;
-an unreadable directory is an error. Use `doctor` for more detailed diagnostics.
-SSH preserves these partial results, and repeated hosts retain independent
-envelopes. Every returned row has an `agent` discriminator.
+The `discovery` object reports each requested agent. Claude retains `ok`/`error`;
+Codex reports `ok`, `not_installed`, or `error` plus per-home diagnostics.
+Failures preserve successful rows but set `ok=false`, a top-level error summary,
+and exit code 1. No automatic Codex installation is `not_installed`, an empty
+result with exit code 0. Missing explicitly configured homes remain errors.
+A missing Claude session directory is an empty result; an unreadable directory
+is an error. SSH preserves partial results and repeated-host envelopes.
+Every row has an `agent` discriminator. See [multi-home listing](multi-home-list.md)
+for candidate discovery, metadata and permission boundaries.

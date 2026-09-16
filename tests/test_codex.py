@@ -247,7 +247,7 @@ class Codex(unittest.TestCase):
                 peer.main([command, "--help"])
             self.assertEqual(context.exception.code, 0)
             help_text = " ".join(output.getvalue().split())
-            self.assertIn("Orca/multiple homes", help_text)
+            self.assertIn("Orca", help_text)
             if command == "send":
                 self.assertIn("SESSION_PEER_CODEX_HOMES", help_text)
                 self.assertIn("stable live writer", help_text)
@@ -687,7 +687,7 @@ class CodexHomes(unittest.TestCase):
         self.assertIn(str(unusual), result["error"])
         self.queue.assert_not_called()
 
-    def test_listing_identifies_selected_home_without_merging_or_claiming_activity(self):
+    def test_listing_merges_known_homes_unless_explicit_without_claiming_activity(self):
         for selected in (None, self.account):
             output = io.StringIO()
             flags = ["--codex-home", str(selected)] if selected else []
@@ -695,8 +695,14 @@ class CodexHomes(unittest.TestCase):
                 code = peer.main(["list", "--agent", "codex", "--json", *flags])
             self.assertEqual(code, 0)
             result = json.loads(output.getvalue())
-            self.assertEqual(result["codexHome"], str(selected or self.default))
-            self.assertEqual(len(result["sessions"]), 1)
+            if selected:
+                self.assertEqual(result["codexHome"], str(selected))
+                self.assertEqual(len(result["sessions"]), 1)
+            else:
+                self.assertNotIn("codexHome", result)
+                self.assertEqual({r["codexHome"] for r in result["sessions"]},
+                                 {str(self.default), str(self.account)})
+                self.assertEqual(len(result["sessions"]), 2)
             self.assertNotIn("alive", result["sessions"][0])
             self.assertNotIn("submitted", result)
         self.queue.assert_not_called()
