@@ -130,6 +130,7 @@ git log --oneline -5 | session-peer send --host web-01 --to api-worker -   # std
 
 session-peer send --host web-01 --to api-worker --dry-run "x"   # resolve only
 session-peer list --host web-01 --json             # machine-readable
+session-peer list --no-update-notice                # disable cached update notices/checks
 
 session-peer send --host web-01 --ssh-opt=-p --ssh-opt=2222 --to api-worker "..."   # note the '='
 
@@ -162,6 +163,32 @@ remote sends continue to advertise an SSH route.
 Repeat `--host` to operate on several SSH destinations. `--json` is available on
 `list`, `send`, and `update`; v0.6 retains command-specific response shapes rather
 than a uniform envelope. See [#29](https://github.com/abruption/session-peer/issues/29).
+
+Normal commands read a dedicated 24-hour update cache. A missing, expired, or
+invalid cache starts one detached best-effort GitHub refresh and never delays or
+changes the requested command. When a fresh cache proves that the invoking CLI is
+behind a stable release, JSON results add `clientUpdate`:
+
+```json
+{
+  "clientUpdate": {
+    "schemaVersion": 1,
+    "status": "available",
+    "current": "0.6.2",
+    "latest": "0.6.3",
+    "checkedAt": "2026-09-15T10:00:00Z",
+    "source": "github_release_cache",
+    "command": "session-peer update"
+  }
+}
+```
+
+Human output gets the same short guidance on stderr. The field is omitted when
+the client is current, the cache is unavailable or stale, the host is offline,
+or notices are disabled, so absence alone does not prove the client is current.
+For multi-host commands the fact remains scoped to the one invoking CLI and is
+copied into each existing result object; destination `remoteVersion` fields keep
+their separate meaning. Remote subprocesses do not perform their own refresh.
 
 When local `tailscale status --json` identifies a `--host` by device hostname,
 short MagicDNS name, full MagicDNS name, or Tailscale IP, session-peer verifies and
@@ -210,8 +237,10 @@ pipx upgrade session-peer
 # or, in its virtual environment: python -m pip install --upgrade session-peer
 ```
 
-For these installs, local `session-peer update` (including `--check`) prints
-package-manager guidance without checking GitHub or replacing the package's files.
+For these installs, local `session-peer update` prints package-manager guidance
+without replacing package-owned files. `session-peer update --check` checks the
+latest stable GitHub release, refreshes the shared cache, and reports the exact
+upgrade command, but still does not replace those files.
 
 For standalone programs:
 
@@ -232,6 +261,8 @@ package-managed remote CLI, upgrade it with its own manager on that host instead
 
 Neither local nor remote `update` refreshes the Claude skill. Re-run `install.sh`
 from the desired release checkout to refresh both standalone program and skill.
+Local `session-peer update --check` and `session-peer update` also populate the
+same cache used by automatic notices.
 
 ### Environment variables
 
@@ -243,6 +274,8 @@ from the desired release checkout to refresh both standalone program and skill.
 | `ANTHROPIC_CONFIG_DIR` | Fallback if `CLAUDE_CONFIG_DIR` is unset. |
 | `CODEX_HOME` | Codex discovery/queue home (default `~/.codex`); overridden by `--codex-home`. |
 | `SESSION_PEER_CODEX_HOMES` | Additional destination homes to check for duplicate thread UUIDs and stable live writers before an implicit send/dry-run. JSON array of absolute paths (or `~/…`), not a shell command or a path-separated list. It does not merge listings; an unambiguous active writer may change the implicit send home. |
+| `SESSION_PEER_NO_UPDATE_NOTICE` | Set to `1`, `true`, `yes`, or `on` to disable automatic cached update notices and background refreshes. The per-command equivalent is `--no-update-notice`. Explicit `session-peer update --check` still checks. |
+| `XDG_CACHE_HOME` | Base directory for the update cache; otherwise `~/.cache/session-peer/update.json` is used. |
 
 With `--host`, discovery uses the destination's environment; local environment
 variables are not automatically forwarded. `--codex-home` and `--codex-bin`
@@ -515,6 +548,9 @@ homes, unique/multiple/changing writer evidence, fail-closed inventory errors,
 explicit selection, alias deduplication, single-home compatibility and structured
 home/submission metadata. They never infer a live writer from a saved row or
 submit messages to real sessions.
+Update-notice coverage checks freshness and expiry, strict stable versions,
+atomic private writes, single-flight background refresh, opt-out behavior,
+package-manager guidance, multi-host scope, and failure isolation.
 
 CI runs tests on Ubuntu/macOS with Python 3.9 and 3.13, and Windows with Python
 3.13 (POSIX installer tests are skipped there). Separate jobs check shell syntax

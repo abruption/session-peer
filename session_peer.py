@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+from datetime import datetime, timezone
 import errno
 import getpass
 from importlib import metadata
@@ -52,6 +53,12 @@ DETECT_TIMEOUT = 3.0
 CODEX_QUEUE_TIMEOUT = 30.0
 MAX_CODEX_MESSAGE_BYTES = 32 * 1024
 CODEX_HOME_STABILITY_SECONDS = 0.25
+UPDATE_CACHE_SCHEMA_VERSION = 1
+UPDATE_CACHE_TTL_SECONDS = 24 * 60 * 60
+UPDATE_REFRESH_LOCK_SECONDS = 5 * 60
+UPDATE_CACHE_MAX_BYTES = 4096
+UPDATE_NOTICE_ENV = "SESSION_PEER_NO_UPDATE_NOTICE"
+UPDATE_REFRESH_ARG = "--_refresh-update-cache"
 
 # Tailscale hands out addresses from the CGNAT range, 100.64.0.0/10. Matching on
 # "100." alone would also catch ordinary public addresses like 100.200.x.x.
@@ -59,6 +66,8 @@ TAILNET_SECOND_OCTET = range(64, 128)
 
 EXIT_ERROR = 1
 EXIT_NO_TARGET = 2
+
+_CLIENT_UPDATE_NOTICE: dict | None = None
 
 
 class CcPeerError(Exception):
@@ -1300,8 +1309,32 @@ def render_sessions(sessions: list[dict], where: str) -> str:
     return f"Sessions on {where}:\n" + "\n".join(lines)
 
 
+def with_client_update(payload: dict | list[dict]) -> dict | list[dict]:
+    """Attach the invoking client's cached update fact without changing shapes."""
+    if _CLIENT_UPDATE_NOTICE is None:
+        return payload
+    if isinstance(payload, list):
+        return [
+            {**item, "clientUpdate": dict(_CLIENT_UPDATE_NOTICE)}
+            if isinstance(item, dict) else item
+            for item in payload
+        ]
+    return {**payload, "clientUpdate": dict(_CLIENT_UPDATE_NOTICE)}
+
+
 def emit(as_json: bool, payload: dict, human: str) -> None:
-    print(json.dumps(payload, ensure_ascii=False) if as_json else human)
+    print(json.dumps(with_client_update(payload), ensure_ascii=False) if as_json else human)
+
+
+def emit_human_update_notice() -> None:
+    if _CLIENT_UPDATE_NOTICE is None:
+        return
+    print(
+        f"Update available: {_CLIENT_UPDATE_NOTICE['current']} → "
+        f"{_CLIENT_UPDATE_NOTICE['latest']}. "
+        f"Run: {_CLIENT_UPDATE_NOTICE['command']}",
+        file=sys.stderr,
+    )
 
 
 def host_metadata(ssh_host: str, canonical_host: str) -> dict:
@@ -1361,7 +1394,7 @@ def cmd_list(args: argparse.Namespace) -> int:
         try:
             host = resolve_ssh_destination(requested_host, tailnet_status)
             ssh_opts = tailscale_ssh_options(requested_host, host) + args.ssh_opt
-            argv = ["list"] + (["--all"] if args.all else [])
+            argv = ["list", "--no-update-notice"] + (["--all"] if args.all else [])
             if is_codex:
                 argv += ["--agent", "codex"] + codex_remote_options(args)
             result = run_remote(requested_host, argv, ssh_opts)
@@ -1397,7 +1430,7 @@ def cmd_list(args: argparse.Namespace) -> int:
                 print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
 
     if args.json:
-        print(json.dumps(all_results, ensure_ascii=False))
+        print(json.dumps(with_client_update(all_results), ensure_ascii=False))
     return exit_code
 
 
@@ -1459,13 +1492,246 @@ def parse_version(text: str) -> tuple[int, ...]:
     return tuple(int(p) if p.isdigit() else 0 for p in parts[:3])
 
 
+def stable_version(text: object) -> tuple[int, int, int] | None:
+    """Strict stable release version; prereleases and partial tags are ignored."""
+    if not isinstance(text, str):
+        return None
+    match = re.fullmatch(r"[vV]?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", text.strip())
+    if match is None:
+        return None
+    values = tuple(int(part) for part in match.groups())
+    return values if all(value <= sys.maxsize for value in values) else None
+
+
+def normalized_version(version: tuple[int, int, int]) -> str:
+    return ".".join(str(part) for part in version)
+
+
+def update_cache_path() -> Path:
+    configured = os.environ.get("XDG_CACHE_HOME")
+    base = Path(configured).expanduser() if configured else Path.home() / ".cache"
+    return base / "session-peer" / "update.json"
+
+
+def update_notices_disabled(args: argparse.Namespace | None = None) -> bool:
+    if args is not None and getattr(args, "no_update_notice", False):
+        return True
+    return os.environ.get(UPDATE_NOTICE_ENV, "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def read_update_cache(path: Path | None = None, now: float | None = None) -> dict:
+    """Return an explicit internal cache state; never raise into a CLI command."""
+    path = update_cache_path() if path is None else path
+    now = time.time() if now is None else now
+    try:
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+            return {"status": "invalid", "reason": "not_regular"}
+        if info.st_size > UPDATE_CACHE_MAX_BYTES:
+            return {"status": "invalid", "reason": "too_large"}
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"status": "missing"}
+    except (OSError, UnicodeError, ValueError):
+        return {"status": "invalid", "reason": "unreadable_or_malformed"}
+
+    if not isinstance(value, dict) or value.get("schemaVersion") != UPDATE_CACHE_SCHEMA_VERSION:
+        return {"status": "invalid", "reason": "schema"}
+    latest = stable_version(value.get("latest"))
+    checked_at = value.get("checkedAt")
+    if (
+        latest is None
+        or isinstance(checked_at, bool)
+        or not isinstance(checked_at, (int, float))
+        or checked_at != checked_at
+        or checked_at > now + 300
+    ):
+        return {"status": "invalid", "reason": "fields"}
+
+    state = {
+        "status": "fresh",
+        "latest": normalized_version(latest),
+        "checkedAt": float(checked_at),
+    }
+    if now - checked_at >= UPDATE_CACHE_TTL_SECONDS:
+        state["status"] = "expired"
+    return state
+
+
+def write_update_cache(tag: str, path: Path | None = None,
+                       checked_at: float | None = None) -> Path:
+    """Atomically store only public release metadata with user-only permissions."""
+    parsed = stable_version(tag)
+    if parsed is None:
+        raise ValueError("latest release is not a stable semantic version")
+    path = update_cache_path() if path is None else path
+    checked_at = time.time() if checked_at is None else checked_at
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        path.parent.chmod(0o700)
+    except OSError:
+        pass
+    encoded = json.dumps({
+        "schemaVersion": UPDATE_CACHE_SCHEMA_VERSION,
+        "latest": normalized_version(parsed),
+        "checkedAt": int(checked_at),
+    }, separators=(",", ":")).encode("utf-8")
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    descriptor = None
+    try:
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = None
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        path.chmod(0o600)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+    return path
+
+
+def update_refresh_lock_path(path: Path | None = None) -> Path:
+    cache = update_cache_path() if path is None else path
+    return cache.with_name("update.lock")
+
+
+def schedule_update_refresh(path: Path | None = None, now: float | None = None,
+                            popen=None) -> bool:
+    """Start one detached refresh and return immediately; all failures are isolated."""
+    path = update_cache_path() if path is None else path
+    now = time.time() if now is None else now
+    source = Path(__file__).resolve()
+    if not source.is_file():  # `python3 -` on an SSH destination has no reusable source file.
+        return False
+    lock = update_refresh_lock_path(path)
+    descriptor = None
+    owns_lock = False
+    try:
+        lock.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        try:
+            lock.parent.chmod(0o700)
+        except OSError:
+            pass
+        try:
+            descriptor = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            owns_lock = True
+        except FileExistsError:
+            try:
+                if now - lock.stat().st_mtime < UPDATE_REFRESH_LOCK_SECONDS:
+                    return False
+                lock.unlink()
+            except (FileNotFoundError, OSError):
+                return False
+            try:
+                descriptor = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                owns_lock = True
+            except FileExistsError:
+                # Another invocation won the stale-lock replacement race.
+                return False
+        os.write(descriptor, str(os.getpid()).encode("ascii"))
+        os.close(descriptor)
+        descriptor = None
+
+        launch = subprocess.Popen if popen is None else popen
+        options = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "close_fds": True,
+        }
+        if os.name == "nt":
+            options["creationflags"] = (
+                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            )
+        else:
+            options["start_new_session"] = True
+        launch([sys.executable, str(source), UPDATE_REFRESH_ARG], **options)
+        return True
+    except Exception:
+        if owns_lock:
+            try:
+                lock.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return False
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def refresh_update_cache_background() -> int:
+    lock = update_refresh_lock_path()
+    try:
+        tag, _ = latest_release()
+        write_update_cache(tag)
+    except (CcPeerError, OSError, ValueError):
+        pass
+    finally:
+        try:
+            lock.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return 0
+
+
+def update_command() -> str:
+    if not installed_as_distribution():
+        return "session-peer update"
+    prefix = tuple(part.lower() for part in Path(sys.prefix).parts)
+    if "pipx" in prefix and "venvs" in prefix:
+        return "pipx upgrade session-peer"
+    if "uv" in prefix and "tools" in prefix:
+        return "uv tool upgrade session-peer"
+    return "python -m pip install --upgrade session-peer"
+
+
+def prepare_client_update(args: argparse.Namespace, now: float | None = None,
+                          launcher=None) -> dict | None:
+    """Read only local cached state; an expired/missing cache refreshes later."""
+    if update_notices_disabled(args):
+        return None
+    if getattr(args, "command", None) == "update" and not getattr(args, "host", []):
+        return None
+    state = read_update_cache(now=now)
+    if state["status"] != "fresh":
+        try:
+            (schedule_update_refresh if launcher is None else launcher)()
+        except Exception:
+            pass
+        return None
+    current = stable_version(__version__)
+    latest = stable_version(state["latest"])
+    if current is None or latest is None or latest <= current:
+        return None
+    checked_at = datetime.fromtimestamp(state["checkedAt"], timezone.utc)
+    return {
+        "schemaVersion": UPDATE_CACHE_SCHEMA_VERSION,
+        "status": "available",
+        "current": normalized_version(current),
+        "latest": normalized_version(latest),
+        "checkedAt": checked_at.isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "source": "github_release_cache",
+        "command": update_command(),
+    }
+
+
 def latest_release() -> tuple[str, str]:
     """(tag, download URL) of the newest release on GitHub."""
     url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
     request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
     try:
         with urllib.request.urlopen(request, timeout=DETECT_TIMEOUT * 4) as response:
-            tag = json.load(response).get("tag_name", "")
+            release = json.load(response)
+            if not isinstance(release, dict):
+                raise ValueError("unexpected release response")
+            tag = release.get("tag_name", "")
     except (urllib.error.URLError, OSError, ValueError) as exc:
         raise CcPeerError(
             f"could not reach GitHub to check for updates: {exc}. "
@@ -1474,6 +1740,8 @@ def latest_release() -> tuple[str, str]:
         ) from exc
     if not tag:
         raise CcPeerError("GitHub returned no release tag")
+    if stable_version(tag) is None:
+        raise CcPeerError(f"GitHub returned a non-stable release tag: {tag!r}")
     return tag, f"https://raw.githubusercontent.com/{GITHUB_REPO}/{tag}/session_peer.py"
 
 
@@ -1489,13 +1757,28 @@ def installed_as_distribution() -> bool:
 
 def cmd_update(args: argparse.Namespace) -> int:
     if not args.host and installed_as_distribution():
+        command = update_command()
+        if args.check:
+            tag, _ = latest_release()
+            try:
+                write_update_cache(tag)
+            except (OSError, ValueError):
+                pass
+            latest, current = stable_version(tag), stable_version(__version__)
+            outdated = latest is not None and current is not None and current < latest
+            state = f"{tag} available" if outdated else "up to date"
+            emit(
+                args.json,
+                {"current": __version__, "latest": tag, "outdated": outdated,
+                 "managedBy": "package-manager", "updateCommand": command},
+                f"session-peer {__version__} — {state}. Upgrade with: {command}",
+            )
+            return 0
         emit(
             args.json,
             {"current": __version__, "updated": False,
-             "managedBy": "package-manager"},
-            "This installation is package-managed. Upgrade with its installer: "
-            "pipx upgrade session-peer, uv tool upgrade session-peer, "
-            "or python -m pip install --upgrade session-peer.",
+             "managedBy": "package-manager", "updateCommand": command},
+            f"This installation is package-managed. Upgrade with: {command}",
         )
         return 0
     if args.host:
@@ -1547,10 +1830,14 @@ def cmd_update(args: argparse.Namespace) -> int:
                 if not args.json:
                     print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
         if args.json:
-            print(json.dumps(all_results, ensure_ascii=False))
+            print(json.dumps(with_client_update(all_results), ensure_ascii=False))
         return exit_code
 
     tag, url = latest_release()
+    try:
+        write_update_cache(tag)
+    except (OSError, ValueError):
+        pass
     latest, current = parse_version(tag), parse_version(__version__)
 
     if args.check:
@@ -1664,7 +1951,7 @@ def cmd_send(args: argparse.Namespace) -> int:
             ssh_opts = tailscale_ssh_options(requested_host, host) + args.ssh_opt
             shown_host = display_host(requested_host, host)
             encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
-            remote_argv = ["send", "--to", args.to, "--b64", encoded]
+            remote_argv = ["send", "--no-update-notice", "--to", args.to, "--b64", encoded]
             if is_codex:
                 remote_argv += codex_remote_options(args)
             if args.dry_run:
@@ -1694,9 +1981,9 @@ def cmd_send(args: argparse.Namespace) -> int:
 
     if args.json:
         if len(all_results) == 1:
-            print(json.dumps(all_results[0], ensure_ascii=False))
+            print(json.dumps(with_client_update(all_results[0]), ensure_ascii=False))
         else:
-            print(json.dumps(all_results, ensure_ascii=False))
+            print(json.dumps(with_client_update(all_results), ensure_ascii=False))
     return exit_code
 
 
@@ -1722,6 +2009,10 @@ def build_parser() -> argparse.ArgumentParser:
             help="extra ssh argument, repeatable (e.g. --ssh-opt -p --ssh-opt 2222)",
         )
         sub.add_argument("--json", action="store_true", help="machine-readable output")
+        sub.add_argument(
+            "--no-update-notice", action="store_true",
+            help="disable automatic cached update notices and refreshes",
+        )
 
     listing = subparsers.add_parser("list", help="list sessions that can be messaged")
     add_common(listing)
@@ -1771,30 +2062,52 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    global _CLIENT_UPDATE_NOTICE
+    cli_invocation = argv is None
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if raw_argv == [UPDATE_REFRESH_ARG]:
+        return refresh_update_cache_background()
+
     if IS_WINDOWS:
         for stream in (sys.stdout, sys.stderr):
             if hasattr(stream, "reconfigure"):
                 stream.reconfigure(encoding="utf-8", errors="replace")
 
-    args = build_parser().parse_args(argv)
+    args = build_parser().parse_args(raw_argv)
     try:
-        return args.func(args)
+        _CLIENT_UPDATE_NOTICE = prepare_client_update(args) if cli_invocation else None
+    except Exception:
+        # Update discovery is advisory. Even an unexpected cache or launcher
+        # failure must not change the requested command's result or exit code.
+        _CLIENT_UPDATE_NOTICE = None
+    show_human_notice = True
+    try:
+        exit_code = args.func(args)
     except CcPeerError as exc:
         message = str(exc)
         if args.json:
-            print(json.dumps({"ok": False, "error": message, **exc.details}, ensure_ascii=False))
+            payload = {"ok": False, "error": message, **exc.details}
+            print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
             print(f"session-peer: {message}", file=sys.stderr)
-        return EXIT_NO_TARGET if isinstance(exc, NoTargetError) or "no reachable session" in message else EXIT_ERROR
+        exit_code = (
+            EXIT_NO_TARGET
+            if isinstance(exc, NoTargetError) or "no reachable session" in message
+            else EXIT_ERROR
+        )
     except KeyboardInterrupt:
-        return 130
+        show_human_notice = False
+        exit_code = 130
     except Exception as exc:
         message = f"{type(exc).__name__}: {exc}"
         if getattr(args, "json", False):
-            print(json.dumps({"ok": False, "error": message}, ensure_ascii=False))
+            print(json.dumps(with_client_update({"ok": False, "error": message}), ensure_ascii=False))
         else:
             print(f"session-peer: {message}", file=sys.stderr)
-        return EXIT_ERROR
+        exit_code = EXIT_ERROR
+    if show_human_notice and not args.json:
+        emit_human_update_notice()
+    return exit_code
 
 
 if __name__ == "__main__":
