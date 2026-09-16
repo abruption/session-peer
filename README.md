@@ -737,3 +737,10 @@ These semantics apply locally and over SSH. Repeated hosts retain independent
 results in the existing ordered array; any failure makes the overall exit code 1.
 Codex listing still inspects only the selected home, reported as `codexHome`.
 `--all` retains Claude stale/no-inbox records and includes archived Codex threads.
+
+### Optional MCP / Codex plugin
+
+For structured, destination-restricted `list_sessions` and `send_message` tools,
+install `session-peer[mcp]` with Python 3.10+ and follow [MCP setup](docs/mcp.md).
+The default policy permits local listing only. The standalone CLI and shell
+installer retain their existing dependency requirements.
