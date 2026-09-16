@@ -677,7 +677,9 @@ def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeou
         for number, handler in previous_signals.items():
             signal.signal(number, handler)
         if process is not None:
-            if process.poll() is None:
+            # Keep the child unreaped until its group is stopped: a zombie
+            # leader still reserves the PID even if descendants outlive it.
+            if process.returncode is None:
                 try:
                     os.killpg(process.pid, signal.SIGTERM)
                     process.wait(timeout=3)
