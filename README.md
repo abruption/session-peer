@@ -161,8 +161,9 @@ best-effort text derived from the current process environment; it is not an
 authentication claim. A plain shell has no agent identity to advertise.
 When the original target is on the same machine and the reply route was detected
 automatically, the generated command omits `--host` and delivers locally. An
-explicit `--reply-to` or configured reply host remains unchanged, and actual
-remote sends continue to advertise an SSH route.
+explicit `--reply-to` or configured reply host is also normalized when it names
+the current OS user on this machine. Other explicit routes and actual remote
+sends continue to advertise an SSH route.
 
 `Reply-To` is the canonical, versioned address. Pass the complete URI back as
 `--to`; session-peer validates every field and chooses local or SSH delivery:
@@ -191,7 +192,7 @@ Every JSON result object starts with the same schema-versioned envelope:
   "host": "mac-mini.example.ts.net",
   "command": "list",
   "sessions": [],
-  "version": "0.6.2"
+  "version": "0.7.0"
 }
 ```
 
@@ -222,9 +223,9 @@ behind a stable release, JSON results add `clientUpdate`:
   "clientUpdate": {
     "schemaVersion": 1,
     "status": "available",
-    "current": "0.6.2",
-    "latest": "0.6.3",
-    "checkedAt": "2026-09-15T10:00:00Z",
+    "current": "0.7.0",
+    "latest": "0.7.1",
+    "checkedAt": "2026-09-16T10:00:00Z",
     "source": "github_release_cache",
     "command": "session-peer update"
   }
@@ -408,7 +409,8 @@ environment inspection, and process arguments are not exposed. Activity
 inspection runs on the destination machine, including over SSH. Platforms
 without POSIX `flock` or `lsof` cannot automatically resolve competing homes and
 must use `--codex-home`. Unconfigured/custom layouts and copies created after the
-check can still be missed. Further diagnostics belong to [#45](https://github.com/abruption/session-peer/issues/45).
+check can still be missed. Use `session-peer doctor` to inspect the selected home,
+bounded candidates, executable, and supported state DB schema without submitting.
 
 ### Submission and JSON results
 
@@ -599,7 +601,8 @@ not as the user typing approval.
 - **Windows support.** Claude's named pipe transport is supported.
   `install.sh` and the standalone remote installer/updater use POSIX shell;
   use a Python package manager on native Windows. Live Codex verification
-  for v0.6 was on macOS, not Windows.
+  remains macOS-only; the Codex home, Reply-To, doctor, and JSON fixtures run in
+  Windows CI.
 
 ## Tests
 
@@ -630,6 +633,20 @@ fixtures, real UDS payload checks and broader exit-code/remote-command regressio
 tests remain tracked in [#28](https://github.com/abruption/session-peer/issues/28).
 
 ## Verified
+
+### session-peer v0.7.0 (2026-09-16)
+
+- 240 local tests passed for cached update notices, the shared JSON envelope,
+  read-only diagnostics, structured Reply-To parsing/routing, same-machine
+  normalization, and opt-in reverse-route classification.
+- CI covers Ubuntu and macOS with Python 3.9/3.13, Windows with Python 3.13,
+  package build and isolated installs, standalone install smoke tests, shellcheck,
+  and secret scanning.
+- Wheel and sdist contents were inspected and installed independently. Both
+  artifacts report v0.7.0 and exclude the frozen legacy `cc_peer.py`.
+- A real SSH doctor run found Claude inboxes and bounded default/Orca Codex homes.
+  Its opt-in reverse probe reported authentication failure independently of the
+  successful forward connection. No live message was submitted.
 
 ### session-peer v0.6.2 (2026-09-15)
 

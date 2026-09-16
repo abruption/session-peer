@@ -359,6 +359,27 @@ class Envelope(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIs(wrap.call_args.kwargs["local_reply"], expected_local)
 
+    def test_local_send_normalizes_an_explicit_self_reply_route(self):
+        session = {"pid": 42, "name": "worker", "reachable": True,
+                   "socket": "/tmp/worker.sock"}
+        identity = {
+            "agent": "claude", "id": "sender", "target": "sender",
+            "host": "alice@mac-mini.tailnet.ts.net",
+        }
+        with mock.patch.object(session_peer, "wrap_message", return_value="wrapped") as wrap, \
+             mock.patch.object(session_peer, "sender_identity", return_value=identity), \
+             mock.patch.object(session_peer, "is_self_ssh_destination", return_value=True) as is_self, \
+             mock.patch.object(session_peer, "discover", return_value=[session]), \
+             mock.patch.dict(os.environ, {}, clear=True), \
+             contextlib.redirect_stdout(io.StringIO()):
+            code = session_peer.main([
+                "send", "--to", "worker", "--dry-run", "--json",
+                "--reply-to", "mac-mini.tailnet.ts.net", "hello",
+            ])
+        self.assertEqual(code, 0)
+        is_self.assert_called_once_with("alice@mac-mini.tailnet.ts.net")
+        self.assertIs(wrap.call_args.kwargs["local_reply"], True)
+
 
 class VersionParsing(unittest.TestCase):
     def test_orders_releases(self):
@@ -888,9 +909,9 @@ class ClientUpdateNotice(unittest.TestCase):
     NOTICE = {
         "schemaVersion": 1,
         "status": "available",
-        "current": "0.6.2",
-        "latest": "0.6.3",
-        "checkedAt": "2026-09-15T10:00:00Z",
+        "current": "0.7.0",
+        "latest": "0.7.1",
+        "checkedAt": "2026-09-16T10:00:00Z",
         "source": "github_release_cache",
         "command": "session-peer update",
     }
@@ -911,20 +932,20 @@ class ClientUpdateNotice(unittest.TestCase):
 
     def test_stable_versions_are_strict(self):
         self.assertEqual(session_peer.stable_version("v1.2.3"), (1, 2, 3))
-        self.assertEqual(session_peer.stable_version("0.6.2"), (0, 6, 2))
+        self.assertEqual(session_peer.stable_version("0.7.0"), (0, 7, 0))
         for value in ("1.2", "1.2.3.4", "1.2.3-rc1", "01.2.3", "latest", None):
             with self.subTest(value=value):
                 self.assertIsNone(session_peer.stable_version(value))
 
     def test_latest_release_rejects_malformed_and_prerelease_responses(self):
-        for response in (b"[]", b'{"tag_name":"v0.7.0-rc1"}'):
+        for response in (b"[]", b'{"tag_name":"v0.8.0-rc1"}'):
             with self.subTest(response=response), \
                  mock.patch.object(session_peer.urllib.request, "urlopen", return_value=io.BytesIO(response)), \
                  self.assertRaises(session_peer.CcPeerError):
                 session_peer.latest_release()
 
     def test_fresh_newer_cache_produces_structured_notice(self):
-        session_peer.write_update_cache("v0.6.3", self.cache, checked_at=1_000)
+        session_peer.write_update_cache("v0.7.1", self.cache, checked_at=1_000)
         with mock.patch.object(session_peer, "update_cache_path", return_value=self.cache), \
              mock.patch.object(session_peer, "installed_as_distribution", return_value=False):
             notice = session_peer.prepare_client_update(self.args(), now=1_001)
@@ -933,7 +954,7 @@ class ClientUpdateNotice(unittest.TestCase):
         })
 
     def test_current_expired_missing_and_malformed_states_are_explicit(self):
-        session_peer.write_update_cache("0.6.2", self.cache, checked_at=1_000)
+        session_peer.write_update_cache("0.7.0", self.cache, checked_at=1_000)
         self.assertEqual(session_peer.read_update_cache(self.cache, now=1_001)["status"], "fresh")
         self.assertEqual(
             session_peer.read_update_cache(
@@ -1067,7 +1088,7 @@ class ClientUpdateNotice(unittest.TestCase):
              contextlib.redirect_stderr(io.StringIO()) as stderr:
             self.assertEqual(session_peer.main(), 0)
         self.assertIn("No reachable", stdout.getvalue())
-        self.assertIn("Update available: 0.6.2", stderr.getvalue())
+        self.assertIn("Update available: 0.7.0", stderr.getvalue())
 
     def test_prepare_failure_never_changes_primary_cli_result(self):
         with mock.patch.object(
@@ -1087,7 +1108,7 @@ class ClientUpdateNotice(unittest.TestCase):
         with mock.patch.object(session_peer, "prepare_client_update", prepare), \
              mock.patch.object(session_peer, "tailscale_status", return_value={}), \
              mock.patch.object(session_peer, "run_remote", remote), \
-             mock.patch.object(session_peer, "remote_installed_version", return_value="0.6.2"), \
+             mock.patch.object(session_peer, "remote_installed_version", return_value="0.7.0"), \
              mock.patch.object(session_peer, "latest_release") as latest, \
              mock.patch.object(
                  session_peer.sys, "argv",
@@ -1146,14 +1167,14 @@ class PackageManagement(unittest.TestCase):
         args = argparse.Namespace(host=[], check=True, json=True)
         with mock.patch.object(session_peer, "installed_as_distribution", return_value=True), \
              mock.patch.object(session_peer, "update_command", return_value="pipx upgrade session-peer"), \
-             mock.patch.object(session_peer, "latest_release", return_value=("v0.6.3", "url")), \
+             mock.patch.object(session_peer, "latest_release", return_value=("v0.7.1", "url")), \
              mock.patch.object(session_peer, "write_update_cache") as write, \
              contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(session_peer.cmd_update(args), 0)
         result = json.loads(output.getvalue())
         self.assertTrue(result["outdated"])
         self.assertEqual(result["updateCommand"], "pipx upgrade session-peer")
-        write.assert_called_once_with("v0.6.3")
+        write.assert_called_once_with("v0.7.1")
 
     def test_new_reply_variable_precedes_legacy(self):
         with mock.patch.dict(os.environ, {"SESSION_PEER_REPLY_HOST": "alice@new", "CC_PEER_REPLY_HOST": "bob@old"}), \

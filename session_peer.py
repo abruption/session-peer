@@ -37,7 +37,7 @@ try:
 except ImportError:  # Windows has no POSIX flock; activity stays unknown there.
     fcntl = None
 
-__version__ = "0.6.2"
+__version__ = "0.7.0"
 GITHUB_REPO = "abruption/session-peer"
 
 # Claude Code refuses a same-machine message once its serialized form passes
@@ -2511,10 +2511,18 @@ def cmd_send(args: argparse.Namespace) -> int:
     # envelope is already part of the payload.
     advertised_route = None
     if args.b64 is None:
-        local_reply = not args.host and configured_reply_host(args.reply_to) is None
         identity = (
             sender_identity(args.reply_to)
             if not args.no_from or not args.no_reply_to else None
+        )
+        configured_host = configured_reply_host(args.reply_to)
+        local_reply = not args.host and (
+            configured_host is None
+            or bool(
+                identity
+                and identity.get("host")
+                and is_self_ssh_destination(str(identity["host"]))
+            )
         )
         text = wrap_message(
             text,
