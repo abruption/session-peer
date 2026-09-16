@@ -166,3 +166,13 @@ A missing Claude session directory is an empty result; an unreadable directory
 is an error. SSH preserves partial results and repeated-host envelopes.
 Every row has an `agent` discriminator. See [multi-home listing](multi-home-list.md)
 for candidate discovery, metadata and permission boundaries.
+
+## CLI input and output selection
+
+Use `--output-format json` on list/send/doctor/update for the result envelope;
+`--json` remains an alias. `--output-format text` is the default human output.
+These options do not interpret a send body as JSON. Use `send --message TEXT`
+(or `-m TEXT`), a legacy positional message, or stdin (`--message -`).
+Contradictory output flags are usage errors (stderr, exit 2); conflicting body
+sources fail before reading stdin or dispatch, with the selected result format
+and exit 1. Existing CLI, SSH and MCP submission/receipt semantics are unchanged.

@@ -2408,22 +2408,26 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def read_message(args: argparse.Namespace) -> str:
+    named = getattr(args, "message_option", None)
+    if sum(value is not None for value in (args.message, named, args.b64)) > 1:
+        raise CcPeerError("Choose one message source: positional message, --message/-m, or internal --b64")
+    message = named if named is not None else args.message
     if args.b64 is not None:
         try:
             return base64.b64decode(args.b64, validate=True).decode("utf-8")
         except (binascii.Error, UnicodeDecodeError) as exc:
             raise CcPeerError(f"--b64 is not valid base64-encoded UTF-8: {exc}") from exc
-    if args.message is None or args.message == "-":
+    if message is None or message == "-":
         if sys.stdin.isatty():
             raise CcPeerError(
                 "no message given and stdin is a terminal — "
-                "pass a message argument or pipe one in"
+                "pass --message TEXT, a positional message, or pipe one in"
             )
         try:
             return sys.stdin.read()
         except UnicodeDecodeError as exc:
             raise CcPeerError(f"stdin is not valid UTF-8: {exc}") from exc
-    return args.message
+    return message
 
 
 def remote_installed_version(host: str, ssh_opts: list[str],
@@ -3063,7 +3067,9 @@ def build_parser() -> argparse.ArgumentParser:
             metavar="OPT",
             help="extra ssh argument, repeatable (e.g. --ssh-opt -p --ssh-opt 2222)",
         )
-        sub.add_argument("--json", action="store_true", help="machine-readable output")
+        sub.add_argument("--output-format", choices=("text", "json"),
+                         help="command result format (default: text); does not change message input")
+        sub.add_argument("--json", action="store_true", help="alias for --output-format json (command results only)")
         sub.add_argument(
             "--no-update-notice", action="store_true",
             help="disable automatic cached update notices and refreshes",
@@ -3111,7 +3117,9 @@ def build_parser() -> argparse.ArgumentParser:
                       "Orca account homes, and destination SESSION_PEER_CODEX_HOMES (JSON array "
                       "of paths). Queued/submitted never confirms consumption.")
     sending.add_argument("--codex-bin", help="Codex executable on the destination machine")
-    sending.add_argument("message", nargs="?", help="message text; omit or use - to read stdin")
+    sending.add_argument("message", nargs="?", help="message text (legacy positional form); omit or use - to read stdin")
+    sending.add_argument("--message", "-m", dest="message_option", metavar="TEXT",
+                         help="message body; use - for stdin; cannot combine with a positional message")
     sending.add_argument("--b64", help=argparse.SUPPRESS)  # used for remote dispatch
     sending.add_argument(
         "--reply-to",
@@ -3164,7 +3172,12 @@ def main(argv: list[str] | None = None) -> int:
             if hasattr(stream, "reconfigure"):
                 stream.reconfigure(encoding="utf-8", errors="replace")
 
-    args = build_parser().parse_args(raw_argv)
+    parser = build_parser()
+    args = parser.parse_args(raw_argv)
+    output_format = getattr(args, "output_format", None)
+    if args.json and output_format == "text":
+        parser.error("--json conflicts with --output-format text")
+    args.json = args.json or output_format == "json"
     try:
         _CLIENT_UPDATE_NOTICE = prepare_client_update(args) if cli_invocation else None
     except Exception:
