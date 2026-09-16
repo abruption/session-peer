@@ -27,19 +27,46 @@ session-peer list --agent claude                # Claude-only filter
 session-peer list --agent codex                 # saved Codex threads
 session-peer list --agent codex --host worker   # saved threads on an SSH host
 
-session-peer send --to api-worker "message"     # Claude name or PID
-session-peer send --to 'codex:<full-thread-uuid>' "message"
-session-peer send --host worker --to 'codex:<full-thread-uuid>' --dry-run "message"
+session-peer send --to api-worker --message "message"     # Claude name or PID
+session-peer send --to 'codex:<full-thread-uuid>' --message "message" --output-format json
+session-peer send --host worker --to 'codex:<full-thread-uuid>' --dry-run -m "message"
 ```
 
 Replace `<full-thread-uuid>` with a full ID from the destination's Codex listing.
-`list` selects one agent at a time; it does not merge both agents. **Use
-`--agent codex`, not `--codex`**: `--codex` is not a supported flag and is ambiguous
+`list` includes both agents by default. **Use
+`--agent codex` to filter, not `--codex`**: `--codex` is not a supported flag and is ambiguous
 with `--codex-home` and `--codex-bin`. `send` selects the agent from its target,
 not a `--agent` flag.
 
 **Posted/queued is not acknowledged.** Saved Codex threads are not necessarily
-running, and session-peer does not wake/resume a session or wait for its reply.
+running. Plain send does not activate a session; [explicit `--wake`](docs/wake.md)
+is opt-in and does not confirm consumption or a reply.
+
+### Message input and result output
+
+`--message TEXT` (short form `-m`) names the text sent to the destination.
+`--output-format text|json` selects the command result format, not the message
+format. It is available on `list`, `send`, `doctor`, and `update`; the default is
+`text`. The existing `--json` is retained as an alias for `--output-format json`.
+
+```bash
+session-peer send --to worker --message "Report progress" --output-format json
+session-peer send --to worker -m - --output-format json < message.txt
+session-peer list --output-format json
+```
+
+Legacy positional messages and omitted-message stdin input continue to work.
+Use either a positional message or `--message`, not both. `--message -` reads
+stdin; an explicit empty message is still rejected. To send text beginning with
+a dash, use `--message='--literal text'` or stdin. Internal SSH `--b64` input
+cannot be combined with either public message form.
+
+`--json --output-format json` is valid; combining `--json` with
+`--output-format text` is an error in either order. Invalid/contradictory output
+options are argparse usage errors (stderr, exit 2); message-source conflicts
+are ordinary command errors (JSON when requested, exit 1). No messages are
+submitted in either case. JSON results still describe submission rather than
+receipt; these flags introduce no structured JSON message-input protocol.
 
 ## Install
 

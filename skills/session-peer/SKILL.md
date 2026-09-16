@@ -42,14 +42,20 @@ host or config alias.
 Send only within the user's requested workflow. Use stdin for complex text:
 
 ```bash
-session-peer send --host worker --codex-home "/home/user/.codex" --to codex:<thread-uuid> -
+session-peer send --host worker --codex-home "/home/user/.codex" --to codex:<thread-uuid> --message - --output-format json
 ```
 
 Omit `--host` for local delivery. `--dry-run` resolves without sending.
 Use `--codex-home` and `--codex-bin` when the destination's default environment
 does not identify its installation; remote paths are interpreted on that host.
 
-With `--json`, every result object contains `schemaVersion`, `ok`, `host`, and
+Use `--message TEXT` / `-m TEXT` for the body (`-` reads stdin). Legacy positional
+messages still work, but cannot be combined with `--message`.
+`--output-format json` selects result output, not the transmitted message format;
+`--json` remains its compatibility alias. Do not combine either JSON selection
+with `--output-format text`.
+
+With JSON output, every result object contains `schemaVersion`, `ok`, `host`, and
 `command`. Local and one-host commands return one object; repeated `--host`
 returns an ordered array of those objects. Inspect each `ok` independently
 because one destination may fail while another succeeds.
