@@ -359,6 +359,27 @@ class Envelope(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIs(wrap.call_args.kwargs["local_reply"], expected_local)
 
+    def test_local_send_normalizes_an_explicit_self_reply_route(self):
+        session = {"pid": 42, "name": "worker", "reachable": True,
+                   "socket": "/tmp/worker.sock"}
+        identity = {
+            "agent": "claude", "id": "sender", "target": "sender",
+            "host": "alice@mac-mini.tailnet.ts.net",
+        }
+        with mock.patch.object(session_peer, "wrap_message", return_value="wrapped") as wrap, \
+             mock.patch.object(session_peer, "sender_identity", return_value=identity), \
+             mock.patch.object(session_peer, "is_self_ssh_destination", return_value=True) as is_self, \
+             mock.patch.object(session_peer, "discover", return_value=[session]), \
+             mock.patch.dict(os.environ, {}, clear=True), \
+             contextlib.redirect_stdout(io.StringIO()):
+            code = session_peer.main([
+                "send", "--to", "worker", "--dry-run", "--json",
+                "--reply-to", "mac-mini.tailnet.ts.net", "hello",
+            ])
+        self.assertEqual(code, 0)
+        is_self.assert_called_once_with("alice@mac-mini.tailnet.ts.net")
+        self.assertIs(wrap.call_args.kwargs["local_reply"], True)
+
 
 class VersionParsing(unittest.TestCase):
     def test_orders_releases(self):

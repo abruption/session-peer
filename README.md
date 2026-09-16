@@ -161,8 +161,9 @@ best-effort text derived from the current process environment; it is not an
 authentication claim. A plain shell has no agent identity to advertise.
 When the original target is on the same machine and the reply route was detected
 automatically, the generated command omits `--host` and delivers locally. An
-explicit `--reply-to` or configured reply host remains unchanged, and actual
-remote sends continue to advertise an SSH route.
+explicit `--reply-to` or configured reply host is also normalized when it names
+the current OS user on this machine. Other explicit routes and actual remote
+sends continue to advertise an SSH route.
 
 `Reply-To` is the canonical, versioned address. Pass the complete URI back as
 `--to`; session-peer validates every field and chooses local or SSH delivery:
@@ -635,7 +636,7 @@ tests remain tracked in [#28](https://github.com/abruption/session-peer/issues/2
 
 ### session-peer v0.7.0 (2026-09-16)
 
-- 239 local tests passed for cached update notices, the shared JSON envelope,
+- 240 local tests passed for cached update notices, the shared JSON envelope,
   read-only diagnostics, structured Reply-To parsing/routing, same-machine
   normalization, and opt-in reverse-route classification.
 - CI covers Ubuntu and macOS with Python 3.9/3.13, Windows with Python 3.13,
