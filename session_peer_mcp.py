@@ -127,7 +127,14 @@ class Adapter:
         if agent == "codex":
             core.codex_thread(target)
         core.check_message(message, remote=bool(entry.get("host")))
-        argv = ["send", *self.route(entry), "--to", target, "--no-from", "--no-reply-to"]
+        # Keep the validated URI intact so the CLI retains its self-host
+        # normalization and addressResolution metadata. Its host is already
+        # authorized above; passing --host alongside a URI is not supported.
+        route_entry = dict(entry)
+        if address:
+            route_entry.pop("host", None)
+        argv = ["send", *self.route(route_entry), "--to", address["uri"] if address else target,
+                "--no-from", "--no-reply-to"]
         if dry_run:
             argv.append("--dry-run")
         # A shared MCP process cannot authenticate the invoking thread. Never

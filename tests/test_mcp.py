@@ -56,7 +56,9 @@ class Policy(unittest.IsolatedAsyncioTestCase):
                 await self.adapter.send_message('worker', uri, 'hello')
         self.adapter.invoke.assert_not_called()
         await self.adapter.send_message('worker', base + 'ubuntu%40worker&codexHome=%2Fcustom', 'hello')
-        self.assertIn('codex:' + THREAD, self.adapter.invoke.call_args.args[0])
+        argv = self.adapter.invoke.call_args.args[0]
+        self.assertNotIn('--host', argv)
+        self.assertIn(base + 'ubuntu%40worker&codexHome=%2Fcustom', argv)
 
     async def test_claude_uri_cannot_smuggle_codex_target(self):
         uri = 'session-peer://v1/reply?agent=claude&session=codex:' + THREAD + '&transport=local'
