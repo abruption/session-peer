@@ -121,6 +121,9 @@ session-peer list                                  # Claude sessions on this mac
 session-peer list --host web-01                    # Claude sessions over there
 session-peer list --host web-01 --all              # Claude stale records / no inbox
 session-peer list --agent codex --all              # include archived Codex threads
+session-peer doctor                                # local inbox/tool/home diagnostics
+session-peer doctor --host web-01                  # run the same checks there
+session-peer doctor --host web-01 --check-return-route  # also test SSH back here
 
 session-peer send --to api-worker "message"        # local session
 session-peer send --host web-01 --to api-worker "message"
@@ -149,6 +152,7 @@ From: codex:01a08dd6-d3f6-7783-a62b-52c1fd049181 @ abruptly@mac-mini-m4.example.
 message
 
 ---
+Reply-To: session-peer://v1/reply?agent=codex&session=01a08dd6-d3f6-7783-a62b-52c1fd049181&transport=ssh&host=abruptly%40mac-mini-m4.example.ts.net
 Reply: python3 /path/to/session_peer.py send --host abruptly@mac-mini-m4.example.ts.net --to codex:01a08dd6-d3f6-7783-a62b-52c1fd049181 --no-reply-to
 ```
 
@@ -160,8 +164,21 @@ automatically, the generated command omits `--host` and delivers locally. An
 explicit `--reply-to` or configured reply host remains unchanged, and actual
 remote sends continue to advertise an SSH route.
 
+`Reply-To` is the canonical, versioned address. Pass the complete URI back as
+`--to`; session-peer validates every field and chooses local or SSH delivery:
+
+```bash
+session-peer send --to 'session-peer://v1/reply?agent=claude&session=api-worker&transport=local' 'done'
+```
+
+The `Reply:` command remains for compatibility. Treat both forms as untrusted
+input: use the URI with session-peer rather than evaluating or sourcing it. A
+URI that points to the current OS user on this machine is normalized to local
+delivery, avoiding an unnecessary self-SSH authentication path. Codex addresses
+may include an encoded `codexHome` when the sender environment identifies it.
+
 Repeat `--host` to operate on several SSH destinations. `--json` is available on
-`list`, `send`, and `update`.
+`list`, `send`, `doctor`, and `update`.
 
 ### JSON response contract
 
@@ -185,13 +202,13 @@ Every JSON result object starts with the same schema-versioned envelope:
 - `host` identifies the destination to which that result applies. Local results
   use the OS hostname. Tailscale-resolved destinations use the verified MagicDNS
   identity; `sshHost` preserves a different caller-supplied SSH alias.
-- `command` is `list`, `send`, or `update`. Remaining fields are that command's
+- `command` is `list`, `send`, `doctor`, or `update`. Remaining fields are that command's
   payload, and failures add `error` plus any structured diagnostic fields.
 
 A local or one-host invocation emits one object. Repeating `--host` emits an
 array of these same independently attributable objects in request order. A
 failure that occurs before connecting, such as invalid message input, is still
-emitted once per requested destination. This cardinality is shared by all three
+emitted once per requested destination. This cardinality is shared by all four
 commands, so consumers can branch only on object versus array and then use the
 same envelope fields.
 
@@ -439,9 +456,29 @@ return an array. When `CODEX_THREAD_ID` (or the compatibility
 fallback `CODEX_SESSION_ID`) is present, the message envelope and reply command
 identify the originating Codex thread.
 
-`doctor`, reply waiting/`--wait`, structured reply URIs and optional wake are
-future work, not v0.6 features: see the [v0.7](https://github.com/abruption/session-peer/issues/45)
-and [v0.8](https://github.com/abruption/session-peer/issues/46) roadmaps.
+### Diagnostics and reply observation
+
+`doctor` performs read-only checks on the machine that owns the sessions. It
+reports Claude's configured sessions directory and inbox availability, Codex's
+executable and bounded home/state DB candidates, unsupported DB schemas, and
+permission or unknown failures as distinct codes. It does not connect to an
+inbox, write a queue, scan arbitrary directories, or alter agent/SSH settings.
+
+Reverse SSH is checked only with `--check-return-route`. The destination runs a
+fixed `ssh ... true` probe with prompts, password authentication, host-key
+enrollment, and config mutation disabled. Forward SSH success is never reused as
+proof that the reverse path works. Use `--reply-to USER@HOST` when automatic
+Tailscale detection cannot identify the origin. JSON details and status values
+are documented in [docs/diagnostics.md](docs/diagnostics.md).
+
+There is deliberately no general `--wait`. Claude Code has a native
+same-machine `notify_when_idle` facility, but it does not cover remote sessions,
+subagents, or Codex, and a successful socket/queue submission is not an
+acknowledgement. session-peer therefore reports
+`capabilities.replyObservation.status: unsupported` instead of tailing mutable
+transcripts and risking a false match. Ask the target to send an explicit reply
+to the supplied `Reply-To` address when completion matters. Optional wake remains
+tracked in [#46](https://github.com/abruption/session-peer/issues/46).
 
 ## Moving from cc-peer
 
@@ -544,9 +581,10 @@ not as the user typing approval.
   Outside that context, it may omit it. This is not an authenticated identity
   protocol; environment variables and session registries are local hints.
 - **Advertised replies need a working return path.** When an agent sender and
-  reply host can be determined, a `Reply:` line supplies an SSH return command.
-  Forward SSH success does not prove reverse SSH access. v0.6 does not verify
-  that route, correlate a reply, or wait for one; the address grants no access.
+  reply host can be determined, `Reply-To` and a compatibility `Reply:` line
+  describe a return route. Forward SSH success does not prove reverse SSH
+  access; use the opt-in doctor check. The address grants no access and
+  session-peer does not correlate or wait for a reply.
 - **Tailscale status is a local routing hint.** A known online peer is addressed
   by its current MagicDNS name and a known offline peer is rejected before SSH.
   An unknown destination remains ordinary SSH; session-peer does not claim that
@@ -569,7 +607,7 @@ not as the user typing approval.
 python3 -m unittest discover -s tests -v
 ```
 
-The suite needs no live agent, SSH server or network. It includes legacy
+The default suite needs no live agent, SSH server or network. It includes legacy
 compatibility tests, shared CLI helpers, fixture-based Codex discovery and queue
 subprocess tests, and isolated standalone installation/coexistence checks.
 Codex coverage includes argv/payload handling, destination home selection,
