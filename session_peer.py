@@ -750,6 +750,9 @@ def render_codex(sessions: list[dict], where: str) -> str:
 
 def codex_submission_text(result: dict, where: str) -> str:
     home = f" (Codex home: {result['codexHome']})" if "codexHome" in result else ""
+    if result.get("submitted") is False and result.get("ok") is False and "wake" in result:
+        reason = result.get("error") or result["wake"].get("reason", "refused")
+        return f"Codex wake refused on {where}{home}: {reason}; nothing queued."
     if result["dryRun"]:
         return f"Validated Codex thread {result['target']['id']} on {where}{home}; nothing queued (submission not guaranteed)."
     if "wake" in result:

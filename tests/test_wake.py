@@ -193,3 +193,10 @@ class Wake(unittest.TestCase):
             result=peer.run_codex_wake('codex',self.root,THREAD,str(self.root),1)
         self.assertEqual(result['reason'],'native_transport_failed')
         self.assertEqual(handlers,{sig:signal.getsignal(sig) for sig in handlers})
+
+    def test_remote_preflight_refusal_renders_without_submission_fields(self):
+        error=peer.wake_refused('unsupported_version','Unsupported CLI version')
+        result={'ok':False,'error':str(error),**error.details}
+        text=peer.codex_submission_text(result,'worker')
+        self.assertIn('Unsupported CLI version',text)
+        self.assertIn('nothing queued',text)
