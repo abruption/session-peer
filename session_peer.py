@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import contextlib
 from datetime import datetime, timezone
 import errno
 import getpass
@@ -18,6 +19,8 @@ from importlib import metadata
 import json
 import os
 import re
+import selectors
+import signal
 import shlex
 import socket
 import shutil
@@ -25,6 +28,7 @@ import sqlite3
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -501,7 +505,7 @@ def check_codex_message(text: str) -> None:
         raise CcPeerError(f"Codex message is {size} UTF-8 bytes; session-peer limit is {MAX_CODEX_MESSAGE_BYTES}, including headers")
 
 
-def queue_codex(args: argparse.Namespace, text: str) -> dict:
+def _queue_codex(args: argparse.Namespace, text: str) -> dict:
     thread_id = codex_thread(args.to)
     check_codex_message(text)
     executable = codex_executable(args)
@@ -537,12 +541,202 @@ def queue_codex(args: argparse.Namespace, text: str) -> dict:
     return result
 
 
+# Wake uses the native app-server lifecycle: unlike exec resume, thread/resume
+# does not insert a second user prompt. Supported versions are evidence-based.
+CODEX_WAKE_VERSIONS = {"codex-cli 0.154.0"}
+
+
+def wake_refused(reason: str, message: str) -> CcPeerError:
+    return CcPeerError(message, {"submitted": False, "consumptionConfirmed": False,
+                               "wake": {"status": "refused", "reason": reason}})
+
+
+def codex_wake_preflight(root: Path, thread_id: str, executable: str) -> dict:
+    if fcntl is None or sys.platform not in ("darwin", "linux"):
+        raise wake_refused("unsupported_platform", "Codex wake supports macOS/Linux only")
+    try:
+        version = subprocess.run([executable, "--version"], capture_output=True, text=True,
+                                 timeout=5, check=True).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise wake_refused("version_unavailable", "Cannot establish native Codex wake support") from exc
+    if version not in CODEX_WAKE_VERSIONS:
+        raise wake_refused("unsupported_version", f"Codex wake is not validated for {version}")
+    try:
+        with contextlib.closing(sqlite3.connect((root / "state_5.sqlite").as_uri() + "?mode=ro", uri=True, timeout=3)) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            row = conn.execute("SELECT cwd, archived, rollout_path FROM threads WHERE id=?", (thread_id,)).fetchone()
+    except sqlite3.Error as exc:
+        raise wake_refused("state_unavailable", "Cannot read Codex wake target") from exc
+    if row is None:
+        raise wake_refused("missing_thread", "Codex wake target does not exist")
+    cwd, archived, rollout = row
+    if archived:
+        raise wake_refused("archived_thread", "Archived Codex threads cannot be woken")
+    if not isinstance(cwd, str) or not Path(cwd).is_absolute() or not Path(cwd).is_dir():
+        raise wake_refused("cwd_unavailable", "Original Codex working directory is unavailable")
+    if not isinstance(rollout, str) or not Path(rollout).is_file() or Path(rollout).stat().st_size == 0:
+        raise wake_refused("uninitialized_thread", "Codex wake requires an initialized rollout")
+    writer = inspect_codex_writer(root, thread_id)
+    if writer["activity"] == "unknown":
+        raise wake_refused("writer_unknown", "Cannot safely establish Codex writer ownership")
+    return {"cwd": cwd, "writer": writer, "version": version}
+
+
+@contextlib.contextmanager
+def codex_wake_guard(root: Path, thread_id: str):
+    directory = root / "session-peer" / "wake-locks"
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(directory / (thread_id + ".lock"),
+                 os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise wake_refused("wake_in_progress", "Another session-peer wake is in progress; nothing submitted") from exc
+        yield
+    finally:
+        os.close(fd)
+
+
+def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeout: float) -> dict:
+    """Resume one thread, await one turn, and own/clean up the native process."""
+    process = None
+    def cancelled(signum, frame):
+        raise KeyboardInterrupt
+    managed_signals = (signal.SIGTERM, signal.SIGHUP)
+    previous_signals = {number: signal.signal(number, cancelled) for number in managed_signals}
+    outcome = {"status": "unknown", "reason": "activation_outcome_unknown"}
+    deadline = time.monotonic() + timeout
+    try:
+        # Do not stream transcript-bearing native stdout or arbitrary stderr
+        # into CLI JSON. Only lifecycle states and bounded error text escape.
+        with tempfile.TemporaryFile() as diagnostics:
+            process = subprocess.Popen([executable, "app-server"], cwd=cwd,
+                env=dict(os.environ, CODEX_HOME=str(root)), stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=diagnostics, start_new_session=True)
+            selector = selectors.DefaultSelector()
+            selector.register(process.stdout, selectors.EVENT_READ)
+            pending = b""
+            resumed = False
+            completed = False
+
+            def send(value: dict) -> None:
+                process.stdin.write((json.dumps(value) + "\n").encode())
+                process.stdin.flush()
+
+            send({"id": 1, "method": "initialize", "params": {
+                "clientInfo": {"name": "session-peer-wake", "version": __version__}}})
+            try:
+                while time.monotonic() < deadline:
+                    ready = selector.select(max(0, deadline - time.monotonic()))
+                    if not ready:
+                        break
+                    data = os.read(process.stdout.fileno(), 65536)
+                    if not data:
+                        return {"status": "failed", "reason": "native_process_exited"}
+                    pending += data
+                    if len(pending) > 16 * 1024 * 1024:
+                        return {"status": "failed", "reason": "native_response_too_large"}
+                    while b"\n" in pending:
+                        line, pending = pending.split(b"\n", 1)
+                        value = json.loads(line)
+                        if "method" in value and "id" in value:
+                            # Never auto-approve commands, permissions or tools.
+                            send({"id": value["id"], "error": {
+                                "code": -32601, "message": "Interactive approval unavailable in session-peer wake"}})
+                            return {"status": "failed", "reason": "approval_required"}
+                        if value.get("id") in (1, 2) and "error" in value:
+                            return {"status": "failed", "reason": "native_resume_rejected",
+                                    "error": str(value["error"].get("message", "Native error"))[:1000]}
+                        if value.get("id") == 1:
+                            send({"method": "initialized"})
+                            send({"id": 2, "method": "thread/resume", "params": {
+                                "threadId": thread_id, "cwd": cwd, "excludeTurns": True}})
+                        elif value.get("id") == 2:
+                            actual = value.get("result", {}).get("thread", {}).get("id")
+                            if actual != thread_id:
+                                return {"status": "failed", "reason": "native_thread_mismatch"}
+                            resumed = True
+                        elif value.get("method") == "turn/completed":
+                            params = value.get("params", {})
+                            if params.get("threadId") == thread_id:
+                                turn = params.get("turn", {})
+                                if turn.get("status") != "completed":
+                                    return {"status": "failed", "reason": "native_turn_failed",
+                                            "error": str((turn.get("error") or {}).get("message", "Native turn failed"))[:1000]}
+                                completed = True
+                        if resumed and completed:
+                            return {"status": "completed", "reason": "native_turn_completed"}
+                outcome = {"status": "timed_out", "reason": "activation_deadline_exceeded"}
+            finally:
+                selector.close()
+    except (OSError, ValueError) as exc:
+        outcome = {"status": "failed", "reason": "native_transport_failed",
+                   "error": type(exc).__name__}
+    finally:
+        for number, handler in previous_signals.items():
+            signal.signal(number, handler)
+        if process is not None:
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=3)
+                except ProcessLookupError:
+                    process.wait(timeout=3)
+            for stream in (process.stdin, process.stdout):
+                if stream is not None:
+                    stream.close()
+    return outcome
+
+
+def queue_codex(args: argparse.Namespace, text: str) -> dict:
+    if not getattr(args, "wake", False):
+        return _queue_codex(args, text)
+    thread_id = codex_thread(args.to)
+    check_codex_message(text)
+    root, resolution = resolve_codex_home(args, codex_home(args), thread_id)
+    executable = codex_executable(args)
+    preflight = codex_wake_preflight(root, thread_id, executable)
+    selected = argparse.Namespace(**vars(args))
+    selected.codex_home = str(root)
+    if args.dry_run:
+        result = _queue_codex(selected, text)
+        result["wake"] = {"status": "validated", "reason": "dry_run", "cwd": preflight["cwd"]}
+        return result
+    with codex_wake_guard(root, thread_id):
+        revalidate_codex_home(root, thread_id, resolution)
+        preflight = codex_wake_preflight(root, thread_id, executable)
+        result = _queue_codex(selected, text)
+        result["codexHomeResolution"] = resolution
+        try:
+            writer = inspect_codex_writer(root, thread_id)
+            if writer["activity"] == "live_writer":
+                wake = {"status": "already_active", "reason": "stable_live_writer"}
+            elif writer["activity"] == "unknown":
+                wake = {"status": "refused", "reason": "writer_changed_after_submission"}
+            else:
+                wake = run_codex_wake(executable, root, thread_id, preflight["cwd"],
+                                      getattr(args, "wake_timeout", 30))
+        except KeyboardInterrupt:
+            wake = {"status": "unknown", "reason": "activation_interrupted"}
+        except Exception as exc:
+            wake = {"status": "unknown", "reason": "activation_outcome_unknown", "error": type(exc).__name__}
+        result["wake"] = {**wake, "cwd": preflight["cwd"]}
+        result["ok"] = wake["status"] in ("completed", "already_active")
+        return result
+
+
 def codex_remote_options(args: argparse.Namespace) -> list[str]:
     argv = []
     for attribute, flag in (("codex_home", "--codex-home"), ("codex_bin", "--codex-bin")):
         value = getattr(args, attribute, None)
         if value:
             argv.extend([flag, value])
+    if getattr(args, "wake", False):
+        argv += ["--wake", "--wake-timeout", str(args.wake_timeout)]
     return argv
 
 
@@ -556,6 +750,12 @@ def codex_submission_text(result: dict, where: str) -> str:
     home = f" (Codex home: {result['codexHome']})" if "codexHome" in result else ""
     if result["dryRun"]:
         return f"Validated Codex thread {result['target']['id']} on {where}{home}; nothing queued (submission not guaranteed)."
+    if "wake" in result:
+        wake = result["wake"]
+        return (f"Queued for Codex thread {result['target']['id']} on {where}{home}; "
+                f"wake={wake['status']} ({wake['reason']}); consumption not confirmed. "
+                f"{wake.get('error', '')} "
+                f"Queue ID: {result.get('queueId', 'unknown')}. Do not resend automatically.")
     return f"Queued for Codex thread {result['target']['id']} on {where}{home}; consumption not confirmed."
 
 
@@ -1394,6 +1594,10 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     # The far end reports its own failures in-band; surface them here rather
     # than letting a caller read an error payload as a success.
     if isinstance(result, dict) and result.get("ok") is False:
+        if (argv and argv[0] == "send" and result.get("command") == "send"
+                and result.get("schemaVersion") == JSON_RESPONSE_SCHEMA_VERSION
+                and isinstance(result.get("wake"), dict)):
+            return result
         if (
             argv and argv[0] == "list"
             and result.get("command") == "list"
@@ -2552,6 +2756,8 @@ def cmd_send(args: argparse.Namespace) -> int:
     resolved_address = apply_reply_target(args)
     text = read_message(args)
     is_codex = args.to.startswith("codex:")
+    if getattr(args, "wake", False) and not is_codex:
+        raise wake_refused("unsupported_agent", "--wake requires a Codex target")
     if is_codex:
         codex_thread(args.to)
 
@@ -2632,7 +2838,7 @@ def cmd_send(args: argparse.Namespace) -> int:
                 "run doctor --check-return-route to test it",
                 file=sys.stderr,
             )
-        return 0
+        return 0 if result.get("ok", True) else EXIT_ERROR
 
     if not args.host:
         session = resolve_target(discover(include_unreachable=True), args.to)
@@ -2676,6 +2882,8 @@ def cmd_send(args: argparse.Namespace) -> int:
                 result.update(host_metadata(requested_host, host))
                 result.update(routing_metadata)
                 all_results.append(json_result("send", result))
+                if result.get("ok") is False:
+                    exit_code = EXIT_ERROR
                 if not args.json:
                     print(codex_submission_text(result, shown_host))
                 continue
@@ -2796,6 +3004,9 @@ def build_parser() -> argparse.ArgumentParser:
     sending.add_argument(
         "--no-from", action="store_true", help="send without the From: header"
     )
+    sending.add_argument("--wake", action="store_true", help="explicitly resume a Codex thread; may use models and modify history")
+    sending.add_argument("--wake-timeout", type=int, choices=range(1, 61), default=30, metavar="SECONDS",
+                         help="wake deadline, 1..60 seconds (default: 30)")
     sending.add_argument("--dry-run", action="store_true", help="resolve the target, send nothing")
     sending.set_defaults(func=cmd_send)
 

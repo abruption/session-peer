@@ -95,13 +95,15 @@ class Policy(unittest.IsolatedAsyncioTestCase):
         process.returncode = None
         from unittest.mock import Mock
         process.kill = Mock()
+        process.terminate = Mock()
         process.communicate.side_effect = asyncio.TimeoutError
         with patch('asyncio.create_subprocess_exec', return_value=process) as spawn:
             result = await adapter.invoke(['send'])
         self.assertEqual(result['reason'], 'outcome_unknown')
         self.assertEqual(spawn.call_count, 1)
-        process.kill.assert_called_once()
-        process.wait.assert_awaited_once()
+        process.terminate.assert_called_once()
+        process.kill.assert_not_called()
+        self.assertGreaterEqual(process.wait.await_count, 1)
 
 
 @unittest.skipUnless(importlib.util.find_spec('mcp'), 'optional MCP SDK not installed')
@@ -167,3 +169,21 @@ class Protocol(unittest.IsolatedAsyncioTestCase):
             finally:
                 server.close()
                 await server.wait_closed()
+
+
+class WakePolicy(unittest.IsolatedAsyncioTestCase):
+    async def test_send_permission_does_not_grant_wake(self):
+        adapter=mcp_peer.Adapter({'local':{'agents':['codex'],'capabilities':['send'],'codexHome':'/custom'}})
+        adapter.invoke=AsyncMock()
+        with self.assertRaises(mcp_peer.PolicyError):
+            await adapter.send_message('local','codex:'+THREAD,'hello',wake=True)
+        adapter.invoke.assert_not_called()
+
+    async def test_wake_passes_only_bounded_native_options(self):
+        adapter=mcp_peer.Adapter({'local':{'agents':['codex'],'capabilities':['send','wake'],'codexHome':'/custom'}})
+        adapter.invoke=AsyncMock(return_value={'ok':True})
+        await adapter.send_message('local','codex:'+THREAD,'hello',wake=True,wake_timeout=12)
+        self.assertEqual(adapter.invoke.call_args.args[0][-3:],['--wake','--wake-timeout','12'])
+        for timeout in (0,61):
+            with self.assertRaises(mcp_peer.PolicyError):
+                await adapter.send_message('local','codex:'+THREAD,'hello',wake=True,wake_timeout=timeout)

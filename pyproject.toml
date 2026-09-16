@@ -48,7 +48,7 @@ path = "session_peer.py"
 pattern = '__version__ = "(?P<version>[^"]+)"'
 
 [tool.hatch.build.targets.sdist]
-include = ["session_peer.py", "session_peer_mcp.py", "LICENSE", "README.md", "docs/mcp.md", "plugins", ".agents/plugins/marketplace.json"]
+include = ["session_peer.py", "session_peer_mcp.py", "LICENSE", "README.md", "docs/mcp.md", "docs/wake.md", "plugins", ".agents/plugins/marketplace.json"]
 
 [tool.hatch.build.targets.wheel]
 only-include = ["session_peer.py", "session_peer_mcp.py"]
