@@ -228,7 +228,7 @@ class Codex(unittest.TestCase):
 
     def test_claude_listing_uses_common_json_envelope(self):
         with mock.patch.object(peer, "discover", return_value=[]):
-            code, result = self.invoke("list", "--json")
+            code, result = self.invoke("list", "--agent", "claude", "--json")
         self.assertEqual(code, 0)
         self.assertEqual(result, {
             "schemaVersion": 1,
@@ -237,6 +237,7 @@ class Codex(unittest.TestCase):
             "command": "list",
             "sessions": [],
             "version": peer.__version__,
+            "discovery": {"claude": {"status": "ok"}},
         })
 
     def test_help_documents_explicit_home_and_bounded_guard(self):

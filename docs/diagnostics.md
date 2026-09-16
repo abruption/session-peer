@@ -153,3 +153,14 @@ target to send a fresh message to its `Reply-To` URI.
 References: [Claude Code message delivery](https://code.claude.com/docs/en/cross-session-messaging#message-delivery),
 [idle notices](https://code.claude.com/docs/en/cross-session-messaging#get-a-notice-when-another-session-goes-idle),
 and [the session inbox socket](https://code.claude.com/docs/en/cross-session-messaging#the-sessions-inbox-socket).
+
+## List discovery outcomes
+
+`list` defaults to both agents; `--agent claude|codex` selects one.
+The `discovery` object reports each requested agent as `{"status": "ok"}` or
+`{"status": "error", "error": "..."}`. Failures preserve successful session rows
+but set `ok=false`, a top-level error summary, and exit code 1. This includes
+a missing Codex state DB. A missing Claude session directory is an empty result;
+an unreadable directory is an error. Use `doctor` for more detailed diagnostics.
+SSH preserves these partial results, and repeated hosts retain independent
+envelopes. Every returned row has an `agent` discriminator.

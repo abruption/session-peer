@@ -11,7 +11,7 @@ Otherwise use `session-peer`, or the standalone script at
 `~/.local/share/session-peer/session_peer.py`. The executable can also be installed
 with pipx, uv tool, or pip. Do not assume it lives in a Claude configuration directory.
 
-Discover targets before sending. `session-peer list` lists Claude sessions;
+Discover targets before sending. `session-peer list` lists Claude and Codex together;
 `session-peer list --agent codex` lists saved Codex threads. Add `--host user@host`
 for SSH. Claude targets are names or PIDs; Codex targets are `codex:<full-uuid>`.
 Resolve ambiguous targets with the user. A saved Codex record does not prove
@@ -76,3 +76,8 @@ unsupported.
 Package-managed upgrades use their installer. Independent script upgrades use
 `session-peer update`; `update --host` pushes the standalone file over SSH.
 Do not install or replace the old cc-peer product implicitly.
+
+For Claude-only discovery, use `session-peer list --agent claude`. JSON session
+rows always include `agent`. Inspect `discovery` and `ok` before treating a list
+as complete: a failed source returns exit code 1 and `ok: false` while retaining
+the other source's sessions. This applies to local and SSH listing.
