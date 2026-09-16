@@ -744,3 +744,5 @@ For structured, destination-restricted `list_sessions` and `send_message` tools,
 install `session-peer[mcp]` with Python 3.10+ and follow [MCP setup](docs/mcp.md).
 The default policy permits local listing only. The standalone CLI and shell
 installer retain their existing dependency requirements.
+
+For opt-in activation of queued Codex sessions, see [explicit wake](docs/wake.md).

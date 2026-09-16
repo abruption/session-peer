@@ -30,7 +30,7 @@ def load_policy(path: str | None) -> dict:
             raise PolicyError("Invalid destination")
         if set(entry) - {"host", "codexHome", "agents", "capabilities"}:
             raise PolicyError(f"Unknown settings for {name}")
-        for key, allowed in (("agents", {"claude", "codex"}), ("capabilities", {"list", "send"})):
+        for key, allowed in (("agents", {"claude", "codex"}), ("capabilities", {"list", "send", "wake"})):
             values = entry.get(key)
             if not isinstance(values, list) or not values or any(not isinstance(v, str) or v not in allowed for v in values):
                 raise PolicyError(f"Invalid {key} for {name}")
@@ -78,7 +78,11 @@ class Adapter:
                 process.communicate(None if message is None else message.encode("utf-8")), 130)
         except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
             if process.returncode is None:
-                process.kill()
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), 8)
+                except asyncio.TimeoutError:
+                    process.kill()
             await process.wait()
             if isinstance(exc, asyncio.CancelledError):
                 raise
@@ -108,10 +112,16 @@ class Adapter:
         return await self.invoke(argv)
 
     async def send_message(self, destination: str, target: str, message: str,
-                           dry_run: bool = False) -> dict:
+                           dry_run: bool = False, wake: bool = False, wake_timeout: int = 30) -> dict:
         address = core.parse_reply_address(target)
         agent = address["agent"] if address else ("codex" if target.startswith("codex:") else "claude")
         entry = self.authorize(destination, "send", agent)
+        if wake:
+            self.authorize(destination, "wake", agent)
+            if agent != "codex":
+                raise PolicyError("wake requires a Codex target")
+        if not 1 <= wake_timeout <= 60:
+            raise PolicyError("wake_timeout must be between 1 and 60")
         if address:
             # Exact configured routes are intentional: never follow a URI to a
             # different host/home, even if DNS says it is another local alias.
@@ -137,6 +147,8 @@ class Adapter:
                 "--no-from", "--no-reply-to"]
         if dry_run:
             argv.append("--dry-run")
+        if wake:
+            argv += ["--wake", "--wake-timeout", str(wake_timeout)]
         # A shared MCP process cannot authenticate the invoking thread. Never
         # advertise the session that happened to launch it as the caller.
         return await self.invoke(argv, "From: session-peer MCP (caller session unavailable)\n\n" + message)
@@ -168,9 +180,9 @@ def create_server(adapter: Adapter):
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
                                            idempotentHint=False, openWorldHint=True))
     async def send_message(destination: str, target: str, message: str,
-                           dry_run: bool = False):
+                           dry_run: bool = False, wake: bool = False, wake_timeout: int = 30):
         """Send once to a configured destination. Submission does not confirm consumption."""
-        return await result(adapter.send_message(destination, target, message, dry_run))
+        return await result(adapter.send_message(destination, target, message, dry_run, wake, wake_timeout))
 
     return server
 
