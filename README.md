@@ -219,7 +219,7 @@ Every JSON result object starts with the same schema-versioned envelope:
   "host": "mac-mini.example.ts.net",
   "command": "list",
   "sessions": [],
-  "version": "0.7.0"
+  "version": "0.8.0"
 }
 ```
 
@@ -661,6 +661,17 @@ fixtures, real UDS payload checks and broader exit-code/remote-command regressio
 tests remain tracked in [#28](https://github.com/abruption/session-peer/issues/28).
 
 ## Verified
+
+### session-peer v0.8.0 candidate (2026-09-16)
+
+- Integrates unified Claude/Codex listing, optional MCP tools and a Codex plugin,
+  explicit bounded Codex wake, multi-home Codex listing, and named message and output
+  formatting options from #76, #77, #78, #80, and #82.
+- See [v0.8.0 release notes](docs/releases/v0.8.0.md) for JSON compatibility,
+  optional dependencies, the Codex 0.154.0 wake boundary, and validation limits.
+- 301 local tests passed with the MCP SDK; standalone runs skip two optional
+  SDK tests. Wheel and sdist installed independently and report v0.8.0.
+- Release preparation does not publish a GitHub release or upload to PyPI.
 
 ### session-peer v0.7.0 (2026-09-16)
 

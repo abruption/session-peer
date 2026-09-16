@@ -944,6 +944,7 @@ class ClientUpdateNotice(unittest.TestCase):
                  self.assertRaises(session_peer.CcPeerError):
                 session_peer.latest_release()
 
+    @mock.patch.object(session_peer, "__version__", "0.7.0")
     def test_fresh_newer_cache_produces_structured_notice(self):
         session_peer.write_update_cache("v0.7.1", self.cache, checked_at=1_000)
         with mock.patch.object(session_peer, "update_cache_path", return_value=self.cache), \
@@ -1161,6 +1162,7 @@ class PackageManagement(unittest.TestCase):
         self.assertEqual(json.loads(output.getvalue())["managedBy"], "package-manager")
         latest.assert_not_called()
 
+    @mock.patch.object(session_peer, "__version__", "0.7.0")
     def test_package_update_check_refreshes_cache_and_reports_command(self):
         import contextlib
         import io
