@@ -1,0 +1,23 @@
+{
+  "name": "session-peer",
+  "version": "0.1.0",
+  "description": "List and message configured Claude and Codex sessions over local or SSH routes.",
+  "author": {
+    "name": "YEONGUK LEE"
+  },
+  "interface": {
+    "displayName": "Session Peer",
+    "shortDescription": "Use Session Peer in Codex.",
+    "longDescription": "List and message configured Claude and Codex sessions over local or SSH routes.",
+    "developerName": "Abruption",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": "Help me use Session Peer."
+  },
+  "mcpServers": "./.mcp.json",
+  "repository": "https://github.com/abruption/session-peer",
+  "license": "MIT"
+}

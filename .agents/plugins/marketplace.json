@@ -1,0 +1,20 @@
+{
+  "name": "session-peer",
+  "interface": {
+    "displayName": "Session Peer"
+  },
+  "plugins": [
+    {
+      "name": "session-peer",
+      "source": {
+        "source": "local",
+        "path": "./plugins/session-peer"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
