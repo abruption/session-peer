@@ -585,9 +585,12 @@ class TailscaleDestination(unittest.TestCase):
                 with self.subTest(command=command), contextlib.redirect_stdout(io.StringIO()) as output:
                     code = session_peer.main([*command, "--host", "100.122.73.69", "--json"])
                 self.assertEqual(code, 0)
-                result = json.loads(output.getvalue())[0]
+                result = json.loads(output.getvalue())
                 self.assertEqual(result["host"], expected)
                 self.assertEqual(result["sshHost"], "100.122.73.69")
+                self.assertTrue(result["ok"])
+                self.assertEqual(result["command"], command[0])
+                self.assertEqual(result["schemaVersion"], 1)
         route = [
             "-o", "HostName=macbook-pro-m4-pro.tailnet.ts.net",
             "-o", "HostKeyAlias=100.122.73.69",
@@ -619,12 +622,20 @@ class ErrorHandling(unittest.TestCase):
         import io
         buf = io.StringIO()
         with mock.patch.object(session_peer, "build_parser") as bp:
-            ns = argparse.Namespace(func=mock.Mock(side_effect=RuntimeError("boom")), json=True)
+            ns = argparse.Namespace(
+                func=mock.Mock(side_effect=RuntimeError("boom")),
+                json=True,
+                command="list",
+                host=[],
+            )
             bp.return_value.parse_args.return_value = ns
             with mock.patch("builtins.print", side_effect=lambda *a, **kw: buf.write(a[0])):
                 code = session_peer.main(["list", "--json"])
         result = json.loads(buf.getvalue())
         self.assertFalse(result["ok"])
+        self.assertEqual(result["command"], "list")
+        self.assertEqual(result["host"], session_peer.local_host())
+        self.assertEqual(result["schemaVersion"], 1)
         self.assertIn("boom", result["error"])
         self.assertEqual(code, session_peer.EXIT_ERROR)
 
@@ -632,7 +643,12 @@ class ErrorHandling(unittest.TestCase):
         import io
         buf = io.StringIO()
         with mock.patch.object(session_peer, "build_parser") as bp:
-            ns = argparse.Namespace(func=mock.Mock(side_effect=RuntimeError("boom")), json=False)
+            ns = argparse.Namespace(
+                func=mock.Mock(side_effect=RuntimeError("boom")),
+                json=False,
+                command="list",
+                host=[],
+            )
             bp.return_value.parse_args.return_value = ns
             with mock.patch("builtins.print", side_effect=lambda *a, **kw: buf.write(a[0])):
                 code = session_peer.main(["list"])
@@ -659,6 +675,59 @@ class ErrorHandling(unittest.TestCase):
              self.assertRaises(session_peer.CcPeerError) as caught:
             session_peer.run_remote("worker", ["send"], [])
         self.assertEqual(caught.exception.details["codexHomeResolution"], resolution)
+
+
+class JsonResponseContract(unittest.TestCase):
+    def assert_envelope(self, result, command, ok=True, host="local-node"):
+        self.assertEqual(result["schemaVersion"], 1)
+        self.assertIs(result["ok"], ok)
+        self.assertEqual(result["host"], host)
+        self.assertEqual(result["command"], command)
+
+    def test_local_list_send_and_update_share_the_envelope(self):
+        with mock.patch.object(session_peer.socket, "gethostname", return_value="local-node"):
+            output = io.StringIO()
+            with mock.patch.object(session_peer, "discover", return_value=[]), \
+                 contextlib.redirect_stdout(output):
+                self.assertEqual(session_peer.main(["list", "--json"]), 0)
+            listing = json.loads(output.getvalue())
+            self.assert_envelope(listing, "list")
+            self.assertEqual(listing["sessions"], [])
+
+            output = io.StringIO()
+            session = {"pid": 7, "name": "worker", "reachable": True,
+                       "socket": "/tmp/7.sock", "alive": True}
+            with mock.patch.object(session_peer, "discover", return_value=[session]), \
+                 contextlib.redirect_stdout(output):
+                self.assertEqual(session_peer.main([
+                    "send", "--to", "worker", "--dry-run", "--no-from",
+                    "--no-reply-to", "--json", "hello",
+                ]), 0)
+            sending = json.loads(output.getvalue())
+            self.assert_envelope(sending, "send")
+            self.assertTrue(sending["dryRun"])
+
+            output = io.StringIO()
+            with mock.patch.object(session_peer, "installed_as_distribution", return_value=True), \
+                 contextlib.redirect_stdout(output):
+                self.assertEqual(session_peer.main(["update", "--json"]), 0)
+            updating = json.loads(output.getvalue())
+            self.assert_envelope(updating, "update")
+            self.assertEqual(updating["managedBy"], "package-manager")
+
+    def test_command_wide_remote_failure_is_attributed_to_each_destination(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = session_peer.main([
+                "send", "--host", "first", "--host", "second", "--to", "worker",
+                "--no-from", "--no-reply-to", "--json", " ",
+            ])
+        results = json.loads(output.getvalue())
+        self.assertEqual(code, session_peer.EXIT_ERROR)
+        self.assertEqual([item["host"] for item in results], ["first", "second"])
+        for item in results:
+            self.assert_envelope(item, "send", ok=False, host=item["host"])
+            self.assertIn("empty", item["error"])
 
 
 class ReadMessage(unittest.TestCase):
@@ -741,6 +810,9 @@ class MultiHost(unittest.TestCase):
         self.assertEqual(results[0]["sshFailure"], "authentication_failed")
         self.assertEqual(results[0]["sshUser"], "deploy")
         self.assertEqual(results[1]["sshUser"], "release")
+        for result in results:
+            self.assertEqual(result["schemaVersion"], 1)
+            self.assertEqual(result["command"], "send")
 
     def test_single_host_send_json_is_flat(self):
         import io
@@ -756,6 +828,9 @@ class MultiHost(unittest.TestCase):
         self.assertIsInstance(result, dict)
         self.assertNotIsInstance(result, list)
         self.assertTrue(result["ok"])
+        self.assertEqual(result["host"], "hostA")
+        self.assertEqual(result["command"], "send")
+        self.assertEqual(result["schemaVersion"], 1)
 
 
 class PushToRemote(unittest.TestCase):

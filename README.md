@@ -161,8 +161,39 @@ explicit `--reply-to` or configured reply host remains unchanged, and actual
 remote sends continue to advertise an SSH route.
 
 Repeat `--host` to operate on several SSH destinations. `--json` is available on
-`list`, `send`, and `update`; v0.6 retains command-specific response shapes rather
-than a uniform envelope. See [#29](https://github.com/abruption/session-peer/issues/29).
+`list`, `send`, and `update`.
+
+### JSON response contract
+
+Every JSON result object starts with the same schema-versioned envelope:
+
+```json
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "host": "mac-mini.example.ts.net",
+  "command": "list",
+  "sessions": [],
+  "version": "0.6.2"
+}
+```
+
+- `schemaVersion` versions the common envelope. Command-specific nested schemas
+  such as `clientUpdate` and `codexHomeResolution` carry their own versions.
+- `ok` is present on every success and failure. A nonzero process exit can still
+  contain successful results for other hosts.
+- `host` identifies the destination to which that result applies. Local results
+  use the OS hostname. Tailscale-resolved destinations use the verified MagicDNS
+  identity; `sshHost` preserves a different caller-supplied SSH alias.
+- `command` is `list`, `send`, or `update`. Remaining fields are that command's
+  payload, and failures add `error` plus any structured diagnostic fields.
+
+A local or one-host invocation emits one object. Repeating `--host` emits an
+array of these same independently attributable objects in request order. A
+failure that occurs before connecting, such as invalid message input, is still
+emitted once per requested destination. This cardinality is shared by all three
+commands, so consumers can branch only on object versus array and then use the
+same envelope fields.
 
 Normal commands read a dedicated 24-hour update cache. A missing, expired, or
 invalid cache starts one detached best-effort GitHub refresh and never delays or
@@ -187,7 +218,7 @@ Human output gets the same short guidance on stderr. The field is omitted when
 the client is current, the cache is unavailable or stale, the host is offline,
 or notices are disabled, so absence alone does not prove the client is current.
 For multi-host commands the fact remains scoped to the one invoking CLI and is
-copied into each existing result object; destination `remoteVersion` fields keep
+copied into each result object; destination `remoteVersion` fields keep
 their separate meaning. Remote subprocesses do not perform their own refresh.
 
 When local `tailscale status --json` identifies a `--host` by device hostname,
@@ -377,15 +408,17 @@ session-peer portability policy rather than a measured Codex server limit. NUL
 characters cannot be passed as CLI arguments. `--dry-run` verifies the executable
 and saved target without queueing but cannot guarantee a later submission will succeed.
 
-Local Codex list JSON retains `sessions` and `version`, and adds the resolved
-absolute `codexHome` at the top level. Each entry has
+Local Codex list JSON uses the common response envelope and includes `sessions`,
+`version`, and the resolved absolute `codexHome`. Each session entry has
 `agent`, `id`, `name` (first line, at most 120 characters), `cwd`, `updatedAt`
-(Unix seconds), and `archived`. Remote list JSON is an array of per-host results,
-even for one host; each successful result includes `host`, `sessions`, `version`, `codexHome`
-and an optional `remoteVersion` for an installed standalone copy.
+(Unix seconds), and `archived`. Each successful remote result includes
+`sessions`, `version`, `codexHome`, and an optional `remoteVersion` for an
+installed standalone copy. One remote host returns an object; repeated hosts
+return an array.
 
-Codex send JSON retains `target: {agent, id}`, `status: queued` (or `validated`
-under dry-run), `ok`, `chars`, `dryRun`, and optional `queueId`. It adds:
+Within the common envelope, Codex send JSON includes `target: {agent, id}`,
+`status: queued` (or `validated` under dry-run), `chars`, `dryRun`, and optional
+`queueId`. It also includes:
 
 - `codexHome`: the resolved absolute destination home, not a sender-side guess.
 - `codexHomeResolution`: schema-versioned `status`, `selected`, `reason`, and
@@ -395,15 +428,14 @@ under dry-run), `ok`, `chars`, `dryRun`, and optional `queueId`. It adds:
 - `submitted`: `true` only after successful queue CLI completion, `false` for dry-run.
 - `consumptionConfirmed`: always `false`; neither queued nor validated establishes consumption.
 
-Errors keep the existing `{ok: false, error}` fields (plus host on remote results)
-and add `codexHomeResolution` when home evidence caused the failure.
+Errors set the common envelope's `ok` to `false`, add `error`, and include
+`codexHomeResolution` when home evidence caused the failure.
 A timeout has an unknown submission outcome; missing `submitted` on an error
 must not be interpreted as proof that nothing was queued. Listing results do
-not describe a submission and have no submission/consumption fields. The changes
-are additive, not the cross-command envelope redesign tracked in [#29](https://github.com/abruption/session-peer/issues/29).
+not describe a submission and have no submission/consumption fields.
 
-A remote send to one host returns a flat object with `host`; multiple hosts return an array.
-Claude output stays compatible. When `CODEX_THREAD_ID` (or the compatibility
+For every command, one remote host returns a flat object and multiple hosts
+return an array. When `CODEX_THREAD_ID` (or the compatibility
 fallback `CODEX_SESSION_ID`) is present, the message envelope and reply command
 identify the originating Codex thread.
 

@@ -1309,8 +1309,38 @@ def render_sessions(sessions: list[dict], where: str) -> str:
     return f"Sessions on {where}:\n" + "\n".join(lines)
 
 
+JSON_RESPONSE_SCHEMA_VERSION = 1
+
+
+def local_host() -> str:
+    """Stable, network-independent identity for results produced locally."""
+    return socket.gethostname()
+
+
+def json_result(command: str, payload: dict | None = None, *,
+                host: str | None = None, ok: bool | None = None) -> dict:
+    """Build one command result with the common machine-readable envelope."""
+    detail = dict(payload or {})
+    payload_ok = detail.pop("ok", True)
+    payload_host = detail.pop("host", None)
+    for reserved in ("schemaVersion", "command"):
+        detail.pop(reserved, None)
+    return {
+        "schemaVersion": JSON_RESPONSE_SCHEMA_VERSION,
+        "ok": bool(payload_ok if ok is None else ok),
+        "host": host or payload_host or local_host(),
+        "command": command,
+        **detail,
+    }
+
+
+def one_or_many(results: list[dict]) -> dict | list[dict]:
+    """Keep one destination flat; use an array only for repeated --host."""
+    return results[0] if len(results) == 1 else results
+
+
 def with_client_update(payload: dict | list[dict]) -> dict | list[dict]:
-    """Attach the invoking client's cached update fact without changing shapes."""
+    """Attach the invoking client's cached update fact to each result object."""
     if _CLIENT_UPDATE_NOTICE is None:
         return payload
     if isinstance(payload, list):
@@ -1322,8 +1352,14 @@ def with_client_update(payload: dict | list[dict]) -> dict | list[dict]:
     return {**payload, "clientUpdate": dict(_CLIENT_UPDATE_NOTICE)}
 
 
-def emit(as_json: bool, payload: dict, human: str) -> None:
-    print(json.dumps(with_client_update(payload), ensure_ascii=False) if as_json else human)
+def emit(as_json: bool, payload: dict, human: str, *, command: str,
+         host: str | None = None, ok: bool | None = None) -> None:
+    result = json_result(command, payload, host=host, ok=ok)
+    print(json.dumps(with_client_update(result), ensure_ascii=False) if as_json else human)
+
+
+def emit_json_results(results: list[dict]) -> None:
+    print(json.dumps(with_client_update(one_or_many(results)), ensure_ascii=False))
 
 
 def emit_human_update_notice() -> None:
@@ -1383,7 +1419,12 @@ def cmd_list(args: argparse.Namespace) -> int:
         home_info = {"codexHome": str(codex_home(args))} if is_codex else {}
         if is_codex:
             human += f"\nCodex home: {home_info['codexHome']} (selected home only)."
-        emit(args.json, {"sessions": sessions, "version": __version__, **home_info}, human)
+        emit(
+            args.json,
+            {"sessions": sessions, "version": __version__, **home_info},
+            human,
+            command="list",
+        )
         return 0
 
     exit_code = 0
@@ -1410,13 +1451,13 @@ def cmd_list(args: argparse.Namespace) -> int:
                     f"{shown_host} runs session-peer {remote_version}; this machine has {__version__}."
                     f"\nUpdate it with:  session-peer update --host {requested_host}\n\n{human}"
                 )
-            host_result = {
+            host_result = json_result("list", {
                 **host_metadata(requested_host, host),
                 **ssh_info,
                 "sessions": sessions, "version": __version__,
                 **({"remoteVersion": remote_version} if remote_version else {}),
                 **({"codexHome": result["codexHome"]} if is_codex and "codexHome" in result else {}),
-            }
+            })
             all_results.append(host_result)
             if not args.json:
                 if len(all_results) > 1:
@@ -1424,13 +1465,16 @@ def cmd_list(args: argparse.Namespace) -> int:
                 print(human)
         except CcPeerError as exc:
             exit_code = EXIT_ERROR
-            all_results.append({**host_metadata(requested_host, host),
-                                "ok": False, "error": str(exc), **exc.details})
+            all_results.append(json_result(
+                "list",
+                {**host_metadata(requested_host, host), "error": str(exc), **exc.details},
+                ok=False,
+            ))
             if not args.json:
                 print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
 
     if args.json:
-        print(json.dumps(with_client_update(all_results), ensure_ascii=False))
+        emit_json_results(all_results)
     return exit_code
 
 
@@ -1772,6 +1816,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                 {"current": __version__, "latest": tag, "outdated": outdated,
                  "managedBy": "package-manager", "updateCommand": command},
                 f"session-peer {__version__} — {state}. Upgrade with: {command}",
+                command="update",
             )
             return 0
         emit(
@@ -1779,6 +1824,7 @@ def cmd_update(args: argparse.Namespace) -> int:
             {"current": __version__, "updated": False,
              "managedBy": "package-manager", "updateCommand": command},
             f"This installation is package-managed. Upgrade with: {command}",
+            command="update",
         )
         return 0
     if args.host:
@@ -1801,36 +1847,45 @@ def cmd_update(args: argparse.Namespace) -> int:
                         state = "up to date"
                     else:
                         state = f"{there} → {__version__} available"
-                    all_results.append({**host_metadata(requested_host, host), **ssh_info,
-                                        "remoteVersion": there, "current": __version__,
-                                        "outdated": there != __version__})
+                    all_results.append(json_result("update", {
+                        **host_metadata(requested_host, host), **ssh_info,
+                        "remoteVersion": there, "current": __version__,
+                        "outdated": there != __version__,
+                    }))
                     if not args.json:
                         print(f"{shown_host}: session-peer {there or '(none)'} — {state}")
                     continue
 
                 if there == __version__:
-                    all_results.append({**host_metadata(requested_host, host), **ssh_info,
-                                        "remoteVersion": there, "current": __version__,
-                                        "updated": False})
+                    all_results.append(json_result("update", {
+                        **host_metadata(requested_host, host), **ssh_info,
+                        "remoteVersion": there, "current": __version__,
+                        "updated": False,
+                    }))
                     if not args.json:
                         print(f"{shown_host} runs session-peer {there} — already current.")
                     continue
 
                 new_version = push_to_remote(requested_host, ssh_opts, ssh_info)
-                all_results.append({**host_metadata(requested_host, host), **ssh_info, "ok": True,
-                                    "previous": there, "current": __version__, "updated": True})
+                all_results.append(json_result("update", {
+                    **host_metadata(requested_host, host), **ssh_info,
+                    "previous": there, "current": __version__, "updated": True,
+                }))
                 if not args.json:
                     prev = there or "(none)"
                     print(f"{shown_host}: session-peer {prev} → {new_version}")
 
             except CcPeerError as exc:
                 exit_code = EXIT_ERROR
-                all_results.append({**host_metadata(requested_host, host),
-                                    "ok": False, "error": str(exc), **exc.details})
+                all_results.append(json_result(
+                    "update",
+                    {**host_metadata(requested_host, host), "error": str(exc), **exc.details},
+                    ok=False,
+                ))
                 if not args.json:
                     print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
         if args.json:
-            print(json.dumps(with_client_update(all_results), ensure_ascii=False))
+            emit_json_results(all_results)
         return exit_code
 
     tag, url = latest_release()
@@ -1846,12 +1901,17 @@ def cmd_update(args: argparse.Namespace) -> int:
             args.json,
             {"current": __version__, "latest": tag, "outdated": current < latest},
             f"session-peer {__version__} — {state}",
+            command="update",
         )
         return 0
 
     if current >= latest:
-        emit(args.json, {"current": __version__, "latest": tag, "updated": False},
-             f"session-peer {__version__} is already current ({tag}).")
+        emit(
+            args.json,
+            {"current": __version__, "latest": tag, "updated": False},
+            f"session-peer {__version__} is already current ({tag}).",
+            command="update",
+        )
         return 0
 
     target = Path(__file__).resolve()
@@ -1878,6 +1938,7 @@ def cmd_update(args: argparse.Namespace) -> int:
         args.json,
         {"current": __version__, "latest": tag, "updated": True, "path": str(target)},
         f"session-peer {__version__} → {tag}  ({target})",
+        command="update",
     )
     return 0
 
@@ -1924,7 +1985,12 @@ def cmd_send(args: argparse.Namespace) -> int:
 
     if not args.host and is_codex:
         result = queue_codex(args, text)
-        emit(args.json, result, codex_submission_text(result, "this machine"))
+        emit(
+            args.json,
+            result,
+            codex_submission_text(result, "this machine"),
+            command="send",
+        )
         return 0
 
     if not args.host:
@@ -1938,6 +2004,7 @@ def cmd_send(args: argparse.Namespace) -> int:
             args.json,
             {"ok": True, "target": target, "chars": len(text), "dryRun": args.dry_run},
             f"{verb} {name}'s inbox on this machine ({len(text)} chars).",
+            command="send",
         )
         return 0
 
@@ -1959,31 +2026,33 @@ def cmd_send(args: argparse.Namespace) -> int:
             result = run_remote(requested_host, remote_argv, ssh_opts)
             if is_codex:
                 result.update(host_metadata(requested_host, host))
-                all_results.append(result)
+                all_results.append(json_result("send", result))
                 if not args.json:
                     print(codex_submission_text(result, shown_host))
                 continue
             target = result.get("target", {})
             name = target.get("name") or target.get("pid")
             verb = "Would post to" if args.dry_run else "Posted to"
-            host_result = {"ok": True, **host_metadata(requested_host, host), "target": target,
-                           **ssh_metadata_from(result), "chars": len(text),
-                           "dryRun": args.dry_run}
+            host_result = json_result("send", {
+                **host_metadata(requested_host, host), "target": target,
+                **ssh_metadata_from(result), "chars": len(text),
+                "dryRun": args.dry_run,
+            })
             all_results.append(host_result)
             if not args.json:
                 print(f"{verb} {name}'s inbox on {shown_host} ({len(text)} chars).")
         except CcPeerError as exc:
             exit_code = EXIT_ERROR
-            all_results.append({"ok": False, **host_metadata(requested_host, host),
-                                "error": str(exc), **exc.details})
+            all_results.append(json_result(
+                "send",
+                {**host_metadata(requested_host, host), "error": str(exc), **exc.details},
+                ok=False,
+            ))
             if not args.json:
                 print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
 
     if args.json:
-        if len(all_results) == 1:
-            print(json.dumps(with_client_update(all_results[0]), ensure_ascii=False))
-        else:
-            print(json.dumps(with_client_update(all_results), ensure_ascii=False))
+        emit_json_results(all_results)
     return exit_code
 
 
@@ -2061,6 +2130,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def json_error_result(args: argparse.Namespace, payload: dict) -> dict | list[dict]:
+    """Attribute command-wide failures to every requested destination."""
+    command = getattr(args, "command", None) or "unknown"
+    hosts = list(getattr(args, "host", None) or [])
+    if not hosts:
+        return json_result(command, payload, ok=False)
+    return one_or_many([
+        json_result(command, payload, host=host, ok=False)
+        for host in hosts
+    ])
+
+
 def main(argv: list[str] | None = None) -> int:
     global _CLIENT_UPDATE_NOTICE
     cli_invocation = argv is None
@@ -2086,7 +2167,7 @@ def main(argv: list[str] | None = None) -> int:
     except CcPeerError as exc:
         message = str(exc)
         if args.json:
-            payload = {"ok": False, "error": message, **exc.details}
+            payload = json_error_result(args, {"error": message, **exc.details})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
             print(f"session-peer: {message}", file=sys.stderr)
@@ -2101,7 +2182,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         message = f"{type(exc).__name__}: {exc}"
         if getattr(args, "json", False):
-            print(json.dumps(with_client_update({"ok": False, "error": message}), ensure_ascii=False))
+            payload = json_error_result(args, {"error": message})
+            print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
             print(f"session-peer: {message}", file=sys.stderr)
         exit_code = EXIT_ERROR
