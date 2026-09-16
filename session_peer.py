@@ -35,6 +35,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import NamedTuple, TypedDict
 
 try:
     import fcntl
@@ -1376,6 +1377,7 @@ def reply_address(identity: dict | None, local: bool = False) -> str | None:
     if identity is None:
         return None
     agent = identity["agent"]
+    AGENTS.get(agent)
     identifier = _safe_reply_value(str(identity["id"]), "session")
     host = identity.get("host")
     if not local and not host:
@@ -1437,8 +1439,7 @@ def parse_reply_address(value: str) -> dict | None:
     missing = {"agent", "session", "transport"} - fields.keys()
     if missing:
         raise CcPeerError("Reply-To is missing: " + ", ".join(sorted(missing)))
-    if fields["agent"] not in ("claude", "codex"):
-        raise CcPeerError("Reply-To agent must be claude or codex")
+    adapter = AGENTS.get(fields["agent"])
     if fields["transport"] not in ("local", "ssh"):
         raise CcPeerError("Reply-To transport must be local or ssh")
     if fields["transport"] == "ssh":
@@ -1449,11 +1450,9 @@ def parse_reply_address(value: str) -> dict | None:
         check_ssh_argument(fields["host"], "--host")
     elif "host" in fields:
         raise CcPeerError("Local Reply-To must not include host")
-    if fields["agent"] == "codex":
-        target = f"codex:{fields['session']}"
-        codex_thread(target)
-    else:
-        target = fields["session"]
+    target = adapter.target(fields["session"])
+    adapter.identity(target, ExecutionContext(fields.get("host", "local"),
+                     argparse.Namespace(codex_home=fields.get("codexHome"))))
     if fields["agent"] != "codex" and "codexHome" in fields:
         raise CcPeerError("Claude Reply-To must not include codexHome")
     if "codexHome" in fields and not (
@@ -1702,7 +1701,7 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     if isinstance(result, dict) and result.get("ok") is False:
         if (argv and argv[0] == "send" and result.get("command") == "send"
                 and result.get("schemaVersion") == JSON_RESPONSE_SCHEMA_VERSION
-                and isinstance(result.get("wake"), dict)):
+                and (isinstance(result.get("wake"), dict) or result.get("submitted") is True)):
             return result
         if (
             argv and argv[0] == "list"
@@ -1711,8 +1710,8 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
             and isinstance(result.get("sessions"), list)
             and isinstance(result.get("discovery"), dict)
             and result["discovery"]
-            and all(agent in ("claude", "codex") and isinstance(info, dict)
-                    and info.get("status") in ("ok", "error")
+            and all(agent in AGENTS.names() and isinstance(info, dict)
+                    and info.get("status") in ("ok", "error", "not_installed")
                     for agent, info in result["discovery"].items())
             and any(info["status"] == "error" for info in result["discovery"].values())
         ):
@@ -2165,14 +2164,19 @@ def probe_return_route(destination: str) -> dict:
 
 
 def doctor_payload(args: argparse.Namespace) -> dict:
-    claude = diagnose_claude()
-    codex = diagnose_codex(args)
-    available = sum(item["status"] == "available" for item in (claude, codex))
+    diagnostics = {}
+    for name in AGENTS.names():
+        try:
+            diagnostics[name] = LocalTransport().execute("doctor", AGENTS.get(name), args)
+        except (CcPeerError, OSError) as exc:
+            diagnostics[name] = {"status": "unknown", "checks": [
+                _diagnostic("error", "adapter_failed", str(exc))]}
+    available = sum(item["status"] == "available" for item in diagnostics.values())
     payload = {
-        "status": "healthy" if available == 2 else ("partial" if available else "issues_found"),
-        "claude": claude,
-        "codex": codex,
+        "status": "healthy" if available == len(diagnostics) else ("partial" if available else "issues_found"),
+        **diagnostics,
         "capabilities": {
+            "agents": {name: dict(AGENTS.get(name).capabilities._asdict()) for name in AGENTS.names()},
             "replyObservation": {
                 "status": "unsupported",
                 "reason": "no_cross_agent_acknowledgement_api",
@@ -2190,11 +2194,10 @@ def doctor_payload(args: argparse.Namespace) -> dict:
 def render_doctor(payload: dict, where: str) -> str:
     lines = [
         f"Diagnostics on {where}:",
-        f"  Claude inbox: {payload['claude']['status']}",
-        f"  Codex: {payload['codex']['status']} ({payload['codex']['selectedHome']})",
+        *("  " + AGENTS.get(name).diagnostic_text(payload[name]) for name in AGENTS.names()),
         "  Automated reply observation: unsupported across Claude, Codex, and SSH",
     ]
-    for component in ("claude", "codex"):
+    for component in AGENTS.names():
         for check in payload[component].get("checks", []):
             if check.get("status") != "ok":
                 lines.append(f"    - {check['code']}: {check['message']}")
@@ -2214,24 +2217,344 @@ def render_doctor(payload: dict, where: str) -> str:
 # --------------------------------------------------------------------------
 
 
+# Internal extension contract. Keep this in the streamed standalone source.
+ADAPTER_CONTRACT_VERSION = 1
+
+
+class SessionIdentity(NamedTuple):
+    agent: str
+    host: str
+    identifier: str
+    codex_home: str | None = None
+
+
+class ExecutionContext(NamedTuple):
+    host: str
+    options: argparse.Namespace
+
+
+class DiscoveryResult(TypedDict):
+    sessions: list[dict]
+    discovery: dict
+
+
+class SubmissionResult(TypedDict, total=False):
+    # Native payloads may additionally carry target, chars, home and wake data.
+    ok: bool
+    status: str
+    submitted: bool
+    consumptionConfirmed: bool
+    queueId: str
+
+
+class AgentCapabilities(NamedTuple):
+    list: bool = True
+    send: bool = True
+    wake: bool = False
+    wait: bool = False
+    ack: bool = False
+
+
+class AdapterError(CcPeerError):
+    def __init__(self, agent: str, code: str, message: str):
+        super().__init__(message, {"agent": agent, "reason": code})
+
+
+class AgentAdapter:
+    """Internal v1 contract; native result dictionaries retain their wire shape.
+
+    list returns sessions/discovery plus optional top-level metadata; submit
+    returns the existing agent-specific payload. Neither implies consumption.
+    Only source-registered adapters run; there is no external plugin loader.
+    """
+    contract_version = ADAPTER_CONTRACT_VERSION
+    name = ""
+    capabilities = AgentCapabilities()
+
+    def target(self, identifier: str) -> str:
+        return f"{self.name}:{identifier}"
+
+    def identity(self, target: str, context: ExecutionContext) -> SessionIdentity:
+        prefix = self.name + ":"
+        if not target.startswith(prefix) or not target[len(prefix):]:
+            raise AdapterError(self.name, "invalid_target", "Invalid agent target")
+        return SessionIdentity(self.name, context.host, target[len(prefix):])
+
+    def validate_send(self, args: argparse.Namespace, text: str | None = None) -> None:
+        if not self.capabilities.send:
+            raise AdapterError(self.name, "unsupported_capability", "Agent does not support send")
+        if getattr(args, "wake", False) and not self.capabilities.wake:
+            raise wake_refused("unsupported_agent", "--wake requires a Codex target")
+        self.identity(args.to, ExecutionContext("local", args))
+
+    def list(self, context: ExecutionContext) -> DiscoveryResult:
+        raise NotImplementedError
+
+    def submit(self, context: ExecutionContext, text: str) -> SubmissionResult:
+        raise NotImplementedError
+
+    def diagnose(self, context: ExecutionContext) -> dict:
+        return {"status": "unavailable", "checks": []}
+
+    def diagnostic_text(self, result: dict) -> str:
+        return f"{self.name}: {result['status']}"
+
+    def remote_options(self, args: argparse.Namespace) -> list[str]:
+        return []
+
+    def display_row(self, session: dict) -> tuple[str, str]:
+        return str(session["id"]), str(session.get("status", "unknown"))
+
+    def render(self, sessions: list[dict], where: str) -> str:
+        return f"Sessions on {where}:\n" + "\n".join(
+            f"{self.name}  {self.display_row(row)[0]}  {self.display_row(row)[1]}"
+            for row in sessions)
+
+    def listing_notes(self, payload: dict) -> list[str]:
+        return []
+
+    def submission_text(self, result: dict, where: str) -> str:
+        return f"{self.name} submission on {where}: {result.get('status', 'unknown')}"
+
+    def remote_submission(self, result: dict, args: argparse.Namespace, text: str) -> dict:
+        return result
+
+
+class ClaudeAdapter(AgentAdapter):
+    name = "claude"
+
+    def target(self, identifier: str) -> str:
+        return identifier
+
+    def identity(self, target: str, context: ExecutionContext) -> SessionIdentity:
+        if not target:
+            raise AdapterError(self.name, "invalid_target", "Empty Claude target")
+        return SessionIdentity(self.name, context.host, target)
+
+    def list(self, context: ExecutionContext) -> DiscoveryResult:
+        return {"sessions": [{**row, "agent": self.name} for row in
+                             discover(include_unreachable=context.options.all)],
+                "discovery": {"status": "ok"}}
+
+    def submit(self, context: ExecutionContext, text: str) -> SubmissionResult:
+        args = context.options
+        session = resolve_target(discover(include_unreachable=True), args.to)
+        if not args.dry_run:
+            post_to_socket(session["socket"], text, pid=session["pid"])
+        return {"ok": True, "target": {"pid": session["pid"], "name": session["name"]},
+                "chars": len(text), "dryRun": args.dry_run}
+
+    def diagnose(self, context: ExecutionContext) -> dict:
+        return diagnose_claude()
+
+    def diagnostic_text(self, result: dict) -> str:
+        return f"Claude inbox: {result['status']}"
+
+    def display_row(self, session: dict) -> tuple[str, str]:
+        status = session.get("status") or "-"
+        if not session["reachable"]:
+            status = "no inbox" if session["alive"] else "stale record"
+        return str(session["pid"]), status
+
+    def render(self, sessions: list[dict], where: str) -> str:
+        return render_sessions(sessions, where)
+
+    def submission_text(self, result: dict, where: str) -> str:
+        target = result.get("target", {})
+        name = target.get("name") or target.get("pid")
+        verb = "Would post to" if result["dryRun"] else "Posted to"
+        return f"{verb} {name}'s inbox on {where} ({result['chars']} chars)."
+
+    def remote_submission(self, result: dict, args: argparse.Namespace, text: str) -> dict:
+        return {"target": result.get("target", {}), **ssh_metadata_from(result),
+                "chars": len(text), "dryRun": args.dry_run}
+
+
+class CodexAdapter(AgentAdapter):
+    name = "codex"
+    capabilities = AgentCapabilities(wake=True)
+
+    def identity(self, target: str, context: ExecutionContext) -> SessionIdentity:
+        return SessionIdentity(self.name, context.host, codex_thread(target),
+                               str(codex_home(context.options)))
+
+    def validate_send(self, args: argparse.Namespace, text: str | None = None) -> None:
+        super().validate_send(args, text)
+        if text is not None:
+            check_codex_message(text)
+
+    def list(self, context: ExecutionContext) -> DiscoveryResult:
+        return collect_codex_listing(context.options)
+
+    def submit(self, context: ExecutionContext, text: str) -> SubmissionResult:
+        return queue_codex(context.options, text)
+
+    def diagnose(self, context: ExecutionContext) -> dict:
+        return diagnose_codex(context.options)
+
+    def diagnostic_text(self, result: dict) -> str:
+        return f"Codex: {result['status']} ({result.get('selectedHome', 'unknown')})"
+
+    def remote_options(self, args: argparse.Namespace) -> list[str]:
+        return codex_remote_options(args)
+
+    def display_row(self, session: dict) -> tuple[str, str]:
+        return session["id"], ("archived; execution unknown" if session["archived"]
+                               else "execution unknown")
+
+    def render(self, sessions: list[dict], where: str) -> str:
+        return render_codex(sessions, where)
+
+    def listing_notes(self, payload: dict) -> list[str]:
+        notes = []
+        if "codexHome" in payload:
+            notes.append(f"Codex home: {payload['codexHome']} (single candidate home).")
+        info = payload.get("discovery", {}).get(self.name, {})
+        if info.get("status") == "not_installed":
+            notes.append("No Codex installation found in known homes.")
+        for item in info.get("homes", []):
+            if item["status"] == "error":
+                notes.append(f"Codex home {item['codexHome']}: {item['code']}: {item['error']}")
+        for error in info.get("errors", []):
+            notes.append(f"Codex {error['source']}: {error['code']}: {error['error']}")
+        return notes
+
+    def submission_text(self, result: dict, where: str) -> str:
+        return codex_submission_text(result, where)
+
+
+class AgentRegistry:
+    def __init__(self):
+        self._adapters: dict[str, AgentAdapter] = {}
+
+    def register(self, adapter: AgentAdapter) -> None:
+        name = getattr(adapter, "name", "")
+        if (not isinstance(adapter, AgentAdapter) or not isinstance(name, str)
+                or not re.fullmatch(r"[a-z][a-z0-9_-]*", name)
+                or type(adapter.contract_version) is not int
+                or adapter.contract_version != ADAPTER_CONTRACT_VERSION
+                or not isinstance(adapter.capabilities, AgentCapabilities)
+                or any(type(value) is not bool for value in adapter.capabilities)
+                or type(adapter).list is AgentAdapter.list
+                or type(adapter).submit is AgentAdapter.submit
+                or any(not callable(getattr(adapter, method, None)) for method in
+                       ("list", "submit", "diagnose", "identity", "target", "validate_send",
+                        "remote_options", "render", "display_row", "listing_notes", "diagnostic_text",
+                        "submission_text", "remote_submission"))):
+            raise AdapterError(name, "invalid_adapter_contract", "Invalid or incompatible agent adapter")
+        if name in self._adapters:
+            raise AdapterError(name, "duplicate_agent", "Agent already registered")
+        self._adapters[name] = adapter
+
+    def names(self) -> tuple[str, ...]:
+        return tuple(self._adapters)
+
+    def get(self, name: str) -> AgentAdapter:
+        if name not in self._adapters:
+            raise AdapterError(name, "unknown_agent", f"Unknown agent: {name}")
+        return self._adapters[name]
+
+    def for_target(self, target: str) -> AgentAdapter:
+        prefix, separator, _ = target.partition(":")
+        # Unregistered prefixes remain literal Claude names for compatibility.
+        if separator and prefix in self._adapters and prefix != "claude":
+            return self.get(prefix)
+        return self.get("claude")
+
+
+AGENTS = AgentRegistry()
+AGENTS.register(ClaudeAdapter())
+AGENTS.register(CodexAdapter())
+
+
+class LocalTransport:
+    def execute(self, operation: str, adapter: AgentAdapter,
+                args: argparse.Namespace, text: str | None = None) -> dict:
+        context = ExecutionContext("local", args)
+        try:
+            if operation == "list":
+                if not adapter.capabilities.list:
+                    raise AdapterError(adapter.name, "unsupported_capability", "Agent does not support list")
+                result = adapter.list(context)
+                if (not isinstance(result, dict)
+                        or not isinstance(result.get("sessions"), list)
+                        or not isinstance(result.get("discovery"), dict)
+                        or result["discovery"].get("status") not in ("ok", "error", "not_installed")
+                        or (result["discovery"].get("status") == "error"
+                            and not isinstance(result["discovery"].get("error"), str))
+                        or any(not isinstance(row, dict) or row.get("agent") != adapter.name
+                               for row in result["sessions"])):
+                    raise AdapterError(adapter.name, "invalid_adapter_result", "Invalid discovery result")
+                # Validate rendering before aggregating so malformed rows cannot
+                # destroy successful results from other adapters, even in JSON mode.
+                for row in result["sessions"]:
+                    adapter.display_row(row)
+                return result
+            if operation == "send":
+                adapter.validate_send(args, text)
+                result = adapter.submit(context, text)
+                if not isinstance(result, dict) or type(result.get("ok")) is not bool:
+                    raise AdapterError(adapter.name, "outcome_unknown",
+                                       "Invalid submission result; do not automatically retry")
+                return result
+            if operation == "doctor":
+                result = adapter.diagnose(context)
+                if not isinstance(result, dict) or not isinstance(result.get("status"), str):
+                    raise AdapterError(adapter.name, "invalid_adapter_result", "Invalid diagnostic result")
+                return result
+            raise AdapterError(adapter.name, "unsupported_capability", "Unsupported operation")
+        except CcPeerError:
+            raise
+        except OSError:
+            raise
+        except Exception as exc:
+            # Do not echo arbitrary adapter exceptions (which may contain secrets).
+            code = "outcome_unknown" if operation == "send" else "adapter_failed"
+            message = ("Submission outcome unknown; do not automatically retry"
+                       if operation == "send" else "Agent operation failed")
+            raise AdapterError(adapter.name, code, message) from exc
+
+
+class SshTransport:
+    def __init__(self, requested_host: str, args: argparse.Namespace, status: dict):
+        self.requested_host = requested_host
+        self.host = resolve_ssh_destination(requested_host, status)
+        self.ssh_opts = tailscale_ssh_options(requested_host, self.host) + args.ssh_opt
+
+    def execute(self, argv: list[str]) -> dict:
+        return run_remote(self.requested_host, argv, self.ssh_opts)
+
+
+def validate_agent_send(adapter: AgentAdapter, args: argparse.Namespace,
+                        text: str | None = None) -> None:
+    try:
+        adapter.validate_send(args, text)
+    except CcPeerError:
+        raise
+    except Exception as exc:
+        raise AdapterError(adapter.name, "adapter_failed", "Agent validation failed") from exc
+
+
+def agent_remote_options(args: argparse.Namespace, selected: str | None = None) -> list[str]:
+    options = []
+    for name in ([selected] if selected else AGENTS.names()):
+        options.extend(AGENTS.get(name).remote_options(args))
+    return options
+
+
 def collect_listing(args: argparse.Namespace) -> dict:
     selected = getattr(args, "agent", None)
     payload = {"sessions": [], "version": __version__, "discovery": {}, "ok": True}
-    for agent in ([selected] if selected else ["claude", "codex"]):
+    for agent in ([selected] if selected else AGENTS.names()):
         try:
-            if agent == "codex":
-                listing = collect_codex_listing(args)
-                payload["sessions"].extend(listing["sessions"])
-                payload["discovery"][agent] = listing["discovery"]
-                if "codexHome" in listing:
-                    payload["codexHome"] = listing["codexHome"]
-                if listing["discovery"]["status"] == "error":
-                    payload["ok"] = False
-                continue
-            else:
-                sessions = discover(include_unreachable=args.all)
-            payload["sessions"].extend({**session, "agent": agent} for session in sessions)
-            payload["discovery"][agent] = {"status": "ok"}
+            listing = LocalTransport().execute("list", AGENTS.get(agent), args)
+            payload["sessions"].extend(listing["sessions"])
+            payload["discovery"][agent] = listing["discovery"]
+            for key, value in listing.items():
+                if key not in {"sessions", "discovery", "ok", "error", "version"}:
+                    payload[key] = value
+            if listing["discovery"]["status"] == "error":
+                payload["ok"] = False
         except (CcPeerError, OSError) as exc:
             payload["ok"] = False
             payload["discovery"][agent] = {"status": "error", "error": str(exc)}
@@ -2245,31 +2568,17 @@ def collect_listing(args: argparse.Namespace) -> dict:
 def render_listing(payload: dict, where: str, selected: str | None) -> str:
     sessions = payload["sessions"]
     if selected:
-        human = (render_codex if selected == "codex" else render_sessions)(sessions, where)
+        human = AGENTS.get(selected).render(sessions, where)
     else:
         rows = ["AGENT  NAME  ID/PID  STATUS  CWD  CODEX HOME"]
         for session in sessions:
-            if session["agent"] == "codex":
-                identifier = session["id"]
-                status = "archived; execution unknown" if session["archived"] else "execution unknown"
-            else:
-                identifier = session["pid"]
-                status = session.get("status") or "-"
-                if not session["reachable"]:
-                    status = "no inbox" if session["alive"] else "stale record"
+            identifier, status = AGENTS.get(session["agent"]).display_row(session)
             rows.append(f"{session['agent']}  {session.get('name') or '(unnamed)'}  "
                         f"{identifier}  {status}  {session.get('cwd') or '-'}  {session.get('codexHome') or '-'}")
         human = f"Sessions on {where}:\n" + "\n".join(rows)
-    if "codexHome" in payload:
-        human += f"\nCodex home: {payload['codexHome']} (single candidate home)."
-    codex_info = payload.get("discovery", {}).get("codex", {})
-    if codex_info.get("status") == "not_installed":
-        human += "\nNo Codex installation found in known homes."
-    for item in codex_info.get("homes", []):
-        if item["status"] == "error":
-            human += f"\nCodex home {item['codexHome']}: {item['code']}: {item['error']}"
-    for error in codex_info.get("errors", []):
-        human += f"\nCodex {error['source']}: {error['code']}: {error['error']}"
+    for name in payload.get("discovery", {}):
+        for note in AGENTS.get(name).listing_notes(payload):
+            human += "\n" + note
     for agent, info in payload.get("discovery", {}).items():
         if info["status"] == "error":
             human += f"\n{agent} discovery failed: {info['error']}"
@@ -2289,14 +2598,13 @@ def cmd_list(args: argparse.Namespace) -> int:
     for requested_host in args.host:
         host = requested_host
         try:
-            host = resolve_ssh_destination(requested_host, tailnet_status)
-            ssh_opts = tailscale_ssh_options(requested_host, host) + args.ssh_opt
+            transport = SshTransport(requested_host, args, tailnet_status)
+            host, ssh_opts = transport.host, transport.ssh_opts
             argv = ["list", "--no-update-notice"] + (["--all"] if args.all else [])
             if selected:
                 argv += ["--agent", selected]
-            if selected != "claude":
-                argv += codex_remote_options(args)
-            result = run_remote(requested_host, argv, ssh_opts)
+            argv += agent_remote_options(args, selected)
+            result = transport.execute(argv)
             sessions = result.get("sessions", [])
             ssh_info = ssh_metadata_from(result)
             remote_version = remote_installed_version(requested_host, ssh_opts, ssh_info)
@@ -2370,12 +2678,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     for requested_host in args.host:
         host = requested_host
         try:
-            host = resolve_ssh_destination(requested_host, tailnet_status)
-            ssh_opts = tailscale_ssh_options(requested_host, host) + args.ssh_opt
-            remote_argv = ["doctor", "--no-update-notice"] + codex_remote_options(args)
+            transport = SshTransport(requested_host, args, tailnet_status)
+            host, ssh_opts = transport.host, transport.ssh_opts
+            remote_argv = ["doctor", "--no-update-notice"] + agent_remote_options(args)
             if return_host:
                 remote_argv.extend(["--_return-host", return_host])
-            result = run_remote(requested_host, remote_argv, ssh_opts)
+            result = transport.execute(remote_argv)
             payload = {
                 key: value for key, value in result.items()
                 if key not in {"schemaVersion", "ok", "host", "command", *SSH_METADATA_FIELDS}
@@ -2879,11 +3187,10 @@ def cmd_update(args: argparse.Namespace) -> int:
 def cmd_send(args: argparse.Namespace) -> int:
     resolved_address = apply_reply_target(args)
     text = read_message(args)
-    is_codex = args.to.startswith("codex:")
-    if getattr(args, "wake", False) and not is_codex:
-        raise wake_refused("unsupported_agent", "--wake requires a Codex target")
-    if is_codex:
-        codex_thread(args.to)
+    adapter = AGENTS.for_target(args.to)
+    if resolved_address and resolved_address["agent"] != adapter.name:
+        raise AdapterError(adapter.name, "invalid_target", "Reply URI agent conflicts with target")
+    validate_agent_send(adapter, args)
 
     # Check the body the user actually wrote. Doing this after the reply line
     # is appended would let an empty message through on the strength of the
@@ -2944,47 +3251,17 @@ def cmd_send(args: argparse.Namespace) -> int:
                if "normalizedFrom" in resolved_address else {}),
         }
 
-    if is_codex:
-        check_codex_message(text)
-
-    if not args.host and is_codex:
-        result = queue_codex(args, text)
-        result.update(routing_metadata)
-        emit(
-            args.json,
-            result,
-            codex_submission_text(result, "this machine"),
-            command="send",
-        )
-        if advertised_route and advertised_route["status"] == "unverified" and not args.json:
-            print(
-                "session-peer: reverse SSH reply route was not checked; "
-                "run doctor --check-return-route to test it",
-                file=sys.stderr,
-            )
-        return 0 if result.get("ok", True) else EXIT_ERROR
+    validate_agent_send(adapter, args, text)
 
     if not args.host:
-        session = resolve_target(discover(include_unreachable=True), args.to)
-        if not args.dry_run:
-            post_to_socket(session["socket"], text, pid=session["pid"])
-        target = {"pid": session["pid"], "name": session["name"]}
-        verb = "Would post to" if args.dry_run else "Posted to"
-        name = target.get("name") or target.get("pid")
-        emit(
-            args.json,
-            {"ok": True, "target": target, "chars": len(text), "dryRun": args.dry_run,
-             **routing_metadata},
-            f"{verb} {name}'s inbox on this machine ({len(text)} chars).",
-            command="send",
-        )
+        result = LocalTransport().execute("send", adapter, args, text)
+        result.update(routing_metadata)
+        emit(args.json, result, adapter.submission_text(result, "this machine"), command="send")
         if advertised_route and advertised_route["status"] == "unverified" and not args.json:
             print(
                 "session-peer: reverse SSH reply route was not checked; "
-                "run doctor --check-return-route to test it",
-                file=sys.stderr,
-            )
-        return 0
+                "run doctor --check-return-route to test it", file=sys.stderr)
+        return 0 if result.get("ok", True) else EXIT_ERROR
 
     exit_code = 0
     all_results = []
@@ -2992,36 +3269,23 @@ def cmd_send(args: argparse.Namespace) -> int:
     for requested_host in args.host:
         host = requested_host
         try:
-            host = resolve_ssh_destination(requested_host, tailnet_status)
-            ssh_opts = tailscale_ssh_options(requested_host, host) + args.ssh_opt
+            transport = SshTransport(requested_host, args, tailnet_status)
+            host, ssh_opts = transport.host, transport.ssh_opts
             shown_host = display_host(requested_host, host)
             encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
             remote_argv = ["send", "--no-update-notice", "--to", args.to, "--b64", encoded]
-            if is_codex:
-                remote_argv += codex_remote_options(args)
+            remote_argv += adapter.remote_options(args)
             if args.dry_run:
                 remote_argv.append("--dry-run")
-            result = run_remote(requested_host, remote_argv, ssh_opts)
-            if is_codex:
-                result.update(host_metadata(requested_host, host))
-                result.update(routing_metadata)
-                all_results.append(json_result("send", result))
-                if result.get("ok") is False:
-                    exit_code = EXIT_ERROR
-                if not args.json:
-                    print(codex_submission_text(result, shown_host))
-                continue
-            target = result.get("target", {})
-            name = target.get("name") or target.get("pid")
-            verb = "Would post to" if args.dry_run else "Posted to"
-            host_result = json_result("send", {
-                **host_metadata(requested_host, host), "target": target,
-                **ssh_metadata_from(result), "chars": len(text),
-                "dryRun": args.dry_run, **routing_metadata,
-            })
-            all_results.append(host_result)
+            result = transport.execute(remote_argv)
+            payload = adapter.remote_submission(result, args, text)
+            payload.update(host_metadata(requested_host, host))
+            payload.update(routing_metadata)
+            all_results.append(json_result("send", payload))
+            if payload.get("ok") is False:
+                exit_code = EXIT_ERROR
             if not args.json:
-                print(f"{verb} {name}'s inbox on {shown_host} ({len(text)} chars).")
+                print(adapter.submission_text(payload, shown_host))
         except CcPeerError as exc:
             exit_code = EXIT_ERROR
             all_results.append(json_result(
@@ -3077,7 +3341,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     listing = subparsers.add_parser("list", help="list sessions that can be messaged")
     add_common(listing)
-    listing.add_argument("--agent", choices=("claude", "codex"), default=None,
+    listing.add_argument("--agent", choices=AGENTS.names(), default=None,
                          help="filter by agent (default: Claude and Codex)")
     home_help = ("select one Codex home on the destination (default: CODEX_HOME or ~/.codex); "
                  "set explicitly for Orca/multiple homes")

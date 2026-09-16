@@ -132,7 +132,7 @@ class MultiHome(unittest.TestCase):
             if path==blocked/'state_5.sqlite':raise PermissionError('denied')
             return original(path,*args,**kwargs)
         self.args.agent=None
-        with mock.patch.object(Path,'stat',stat), mock.patch.object(peer,'discover',return_value=[{'pid':7}]):
+        with mock.patch.object(Path,'stat',stat), mock.patch.object(peer,'discover',return_value=[{'pid':7, 'reachable':True, 'alive':True, 'name':'worker'}]):
             result=self.listing()
         self.assertEqual([s['agent'] for s in result['sessions']],['claude','codex'])
         self.assertFalse(result['ok'])
