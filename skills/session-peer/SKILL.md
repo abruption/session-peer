@@ -35,6 +35,11 @@ Omit `--host` for local delivery. `--dry-run` resolves without sending.
 Use `--codex-home` and `--codex-bin` when the destination's default environment
 does not identify its installation; remote paths are interpreted on that host.
 
+With `--json`, every result object contains `schemaVersion`, `ok`, `host`, and
+`command`. Local and one-host commands return one object; repeated `--host`
+returns an ordered array of those objects. Inspect each `ok` independently
+because one destination may fail while another succeeds.
+
 Report `posted` (Claude socket write) and `queued` (Codex queue registration)
 accurately: neither confirms the receiving agent consumed the message or replied.
 Do not automatically resume sessions, retry an ambiguous timeout, change inbound

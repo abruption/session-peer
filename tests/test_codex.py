@@ -199,8 +199,11 @@ class Codex(unittest.TestCase):
              mock.patch.object(peer, "remote_installed_version", return_value=None):
             code, result = self.invoke("list", "--agent", "codex", "--host", "worker", "--all", "--codex-home", "/remote", "--json")
         self.assertEqual(code, 0)
-        self.assertEqual(result[0]["host"], "worker")
-        self.assertEqual(result[0]["codexHome"], "/resolved remote home")
+        self.assertEqual(result["host"], "worker")
+        self.assertEqual(result["codexHome"], "/resolved remote home")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["command"], "list")
+        self.assertEqual(result["schemaVersion"], 1)
         self.assertEqual(remote.call_args.args[1], [
             "list", "--no-update-notice", "--all", "--agent", "codex",
             "--codex-home", "/remote",
@@ -223,11 +226,18 @@ class Codex(unittest.TestCase):
                 self.assertEqual([(r["host"], r["codexHome"]) for r in result],
                                  [("first", "/first/codex"), ("second", "/second/codex")])
 
-    def test_claude_listing_envelope_is_unchanged(self):
+    def test_claude_listing_uses_common_json_envelope(self):
         with mock.patch.object(peer, "discover", return_value=[]):
             code, result = self.invoke("list", "--json")
         self.assertEqual(code, 0)
-        self.assertEqual(result, {"sessions": [], "version": peer.__version__})
+        self.assertEqual(result, {
+            "schemaVersion": 1,
+            "ok": True,
+            "host": peer.local_host(),
+            "command": "list",
+            "sessions": [],
+            "version": peer.__version__,
+        })
 
     def test_help_documents_explicit_home_and_bounded_guard(self):
         for command in ("list", "send"):
