@@ -96,6 +96,121 @@ def codex_home(args: argparse.Namespace) -> Path:
                 or Path.home() / ".codex").expanduser().resolve()
 
 
+def configured_codex_home_paths() -> list[Path]:
+    """Parse only explicitly configured candidates; never enumerate the disk."""
+    configured = os.environ.get("SESSION_PEER_CODEX_HOMES")
+    if configured is None:
+        return []
+    try:
+        paths = json.loads(configured)
+    except ValueError as exc:
+        raise CcPeerError("SESSION_PEER_CODEX_HOMES must be a JSON array of absolute home paths; "
+                          "fix it or select --codex-home explicitly") from exc
+    if not isinstance(paths, list) or any(not isinstance(p, str) or not p.strip() for p in paths):
+        raise CcPeerError("SESSION_PEER_CODEX_HOMES must be a JSON array of non-empty absolute home paths; "
+                          "fix it or select --codex-home explicitly")
+    result = [Path(value).expanduser() for value in paths]
+    if any(not path.is_absolute() for path in result):
+        raise CcPeerError("SESSION_PEER_CODEX_HOMES paths must be absolute (or start with ~/); "
+                          "fix it or select --codex-home explicitly")
+    return result
+
+
+def codex_listing_candidates(args: argparse.Namespace) -> tuple[list[dict], list[dict]]:
+    """Best-effort listing inventory. Send's strict inventory remains separate."""
+    homes: dict[str, dict] = {}
+    errors = []
+
+    def add(path: Path, source: str, required: bool) -> None:
+        try:
+            canonical = str(path.expanduser().resolve())
+        except (OSError, RuntimeError, ValueError) as exc:
+            errors.append({"source": source, "path": str(path), "code": "home_resolution_failed", "error": str(exc)})
+            return
+        if canonical not in homes:
+            homes[canonical] = {"codexHome": canonical,
+                                "stateDb": str(Path(canonical) / "state_5.sqlite"),
+                                "sources": [], "required": False}
+        item = homes[canonical]
+        if source not in item["sources"]:
+            item["sources"].append(source)
+        item["required"] |= required
+
+    explicit = getattr(args, "codex_home", None)
+    if explicit:
+        add(Path(explicit), "argument", True)
+        return list(homes.values()), errors
+    add(Path.home() / ".codex", "default", False)
+    if os.environ.get("CODEX_HOME"):
+        add(Path(os.environ["CODEX_HOME"]), "environment", True)
+    if sys.platform == "darwin":
+        accounts = Path.home() / "Library/Application Support/orca/codex-accounts"
+        try:
+            entries = sorted(accounts.iterdir())
+        except FileNotFoundError:
+            entries = []
+        except OSError as exc:
+            entries = []
+            errors.append({"source": "orca", "path": str(accounts),
+                           "code": "candidate_enumeration_failed", "error": str(exc)})
+        for account in entries:
+            add(account / "home", "orca", False)
+    try:
+        for path in configured_codex_home_paths():
+            add(path, "configured", True)
+    except (CcPeerError, OSError, RuntimeError, ValueError) as exc:
+        errors.append({"source": "configured", "code": "invalid_home_configuration", "error": str(exc)})
+    return list(homes.values()), errors
+
+
+def collect_codex_listing(args: argparse.Namespace) -> dict:
+    homes, errors = codex_listing_candidates(args)
+    sessions = []
+    diagnostics = []
+    for candidate in homes:
+        item = {key: value for key, value in candidate.items() if key != "required"}
+        db = Path(item["stateDb"])
+        try:
+            try:
+                mode = db.stat().st_mode
+            except (FileNotFoundError, NotADirectoryError):
+                if candidate["required"]:
+                    item.update(status="error", code="state_db_missing", error=f"Codex state DB not found at {db}")
+                else:
+                    item.update(status="absent", code="state_db_absent")
+                diagnostics.append(item)
+                continue
+            if not stat.S_ISREG(mode):
+                item.update(status="error", code="state_db_not_regular", error=f"Codex state DB is not a regular file: {db}")
+                diagnostics.append(item)
+                continue
+            home_args = argparse.Namespace(**vars(args))
+            home_args.codex_home = item["codexHome"]
+            rows = discover_codex(home_args)
+            if any(not isinstance(row["updatedAt"], (int, float)) or
+                   not isinstance(row["id"], str) or not row["id"] for row in rows):
+                raise CcPeerError("Unsupported Codex row; expected a thread ID and numeric updated_at")
+            sessions.extend(rows)
+            item.update(status="ok", sessionCount=len(rows))
+        except PermissionError as exc:
+            item.update(status="error", code="permission_denied", error=str(exc))
+        except (CcPeerError, OSError, RuntimeError, ValueError) as exc:
+            item.update(status="error", code="state_db_read_failed", error=str(exc))
+        diagnostics.append(item)
+    failed = bool(errors) or any(item["status"] == "error" for item in diagnostics)
+    status = "error" if failed else ("ok" if any(item["status"] == "ok" for item in diagnostics) else "not_installed")
+    discovery = {"status": status, "homes": diagnostics}
+    if errors:
+        discovery["errors"] = errors
+    if failed:
+        discovery["error"] = "Codex home discovery is incomplete; inspect homes and errors"
+    sessions.sort(key=lambda row: (-row["updatedAt"], row["codexHome"], row["id"]))
+    result = {"sessions": sessions, "discovery": discovery}
+    if len(homes) == 1 and not errors:
+        result["codexHome"] = homes[0]["codexHome"]
+    return result
+
+
 def known_codex_homes(selected: Path) -> list[Path]:
     """Bounded destination-side inventory, not process/liveness detection.
 
@@ -125,22 +240,7 @@ def known_codex_homes(selected: Path) -> list[Path]:
             for account in entries:
                 add_existing(account / "home")
 
-        configured = os.environ.get("SESSION_PEER_CODEX_HOMES")
-        if configured is not None:
-            try:
-                paths = json.loads(configured)
-            except ValueError as exc:
-                raise CcPeerError("SESSION_PEER_CODEX_HOMES must be a JSON array of absolute home paths; "
-                                  "fix it or select --codex-home explicitly") from exc
-            if not isinstance(paths, list) or any(not isinstance(p, str) or not p.strip() for p in paths):
-                raise CcPeerError("SESSION_PEER_CODEX_HOMES must be a JSON array of non-empty absolute home paths; "
-                                  "fix it or select --codex-home explicitly")
-            for value in paths:
-                path = Path(value).expanduser()
-                if not path.is_absolute():
-                    raise CcPeerError("SESSION_PEER_CODEX_HOMES paths must be absolute (or start with ~/); "
-                                      "fix it or select --codex-home explicitly")
-                homes.append(path.resolve())
+        homes.extend(path.resolve() for path in configured_codex_home_paths())
     except (OSError, RuntimeError, ValueError) as exc:
         raise CcPeerError(f"Cannot inspect Codex homes: {exc}; select --codex-home explicitly") from exc
     return list(dict.fromkeys(homes))  # resolved aliases do not create ambiguity
@@ -483,7 +583,8 @@ def discover_codex(args: argparse.Namespace) -> list[dict]:
                 query += " WHERE archived = 0"
             query += " ORDER BY updated_at DESC, id ASC"
             return [{"agent": "codex", "id": r[0], "name": str(r[1]).splitlines()[0][:120], "cwd": r[2],
-                     "updatedAt": r[3], "archived": bool(r[4])} for r in conn.execute(query)]
+                     "updatedAt": r[3], "archived": bool(r[4]),
+                     "codexHome": str(root), "stateDb": str(db)} for r in conn.execute(query)]
         finally:
             conn.close()
     except sqlite3.Error as exc:
@@ -743,8 +844,8 @@ def codex_remote_options(args: argparse.Namespace) -> list[str]:
 
 
 def render_codex(sessions: list[dict], where: str) -> str:
-    rows = [f"Saved Codex sessions on {where} (execution state unknown):", "THREAD  NAME  ARCHIVED  CWD"]
-    rows.extend(f"{s['id']}  {s['name']}  {s['archived']}  {s['cwd']}" for s in sessions)
+    rows = [f"Saved Codex sessions on {where} (execution state unknown):", "THREAD  NAME  ARCHIVED  CWD  CODEX HOME"]
+    rows.extend(f"{s['id']}  {s['name']}  {s['archived']}  {s['cwd']}  {s.get('codexHome', '-')}" for s in sessions)
     return "\n".join(rows) if sessions else f"No saved Codex sessions on {where}."
 
 
@@ -2119,8 +2220,14 @@ def collect_listing(args: argparse.Namespace) -> dict:
     for agent in ([selected] if selected else ["claude", "codex"]):
         try:
             if agent == "codex":
-                payload["codexHome"] = str(codex_home(args))
-                sessions = discover_codex(args)
+                listing = collect_codex_listing(args)
+                payload["sessions"].extend(listing["sessions"])
+                payload["discovery"][agent] = listing["discovery"]
+                if "codexHome" in listing:
+                    payload["codexHome"] = listing["codexHome"]
+                if listing["discovery"]["status"] == "error":
+                    payload["ok"] = False
+                continue
             else:
                 sessions = discover(include_unreachable=args.all)
             payload["sessions"].extend({**session, "agent": agent} for session in sessions)
@@ -2140,7 +2247,7 @@ def render_listing(payload: dict, where: str, selected: str | None) -> str:
     if selected:
         human = (render_codex if selected == "codex" else render_sessions)(sessions, where)
     else:
-        rows = ["AGENT  NAME  ID/PID  STATUS  CWD"]
+        rows = ["AGENT  NAME  ID/PID  STATUS  CWD  CODEX HOME"]
         for session in sessions:
             if session["agent"] == "codex":
                 identifier = session["id"]
@@ -2151,10 +2258,18 @@ def render_listing(payload: dict, where: str, selected: str | None) -> str:
                 if not session["reachable"]:
                     status = "no inbox" if session["alive"] else "stale record"
             rows.append(f"{session['agent']}  {session.get('name') or '(unnamed)'}  "
-                        f"{identifier}  {status}  {session.get('cwd') or '-'}")
+                        f"{identifier}  {status}  {session.get('cwd') or '-'}  {session.get('codexHome') or '-'}")
         human = f"Sessions on {where}:\n" + "\n".join(rows)
     if "codexHome" in payload:
-        human += f"\nCodex home: {payload['codexHome']} (selected home only)."
+        human += f"\nCodex home: {payload['codexHome']} (single candidate home)."
+    codex_info = payload.get("discovery", {}).get("codex", {})
+    if codex_info.get("status") == "not_installed":
+        human += "\nNo Codex installation found in known homes."
+    for item in codex_info.get("homes", []):
+        if item["status"] == "error":
+            human += f"\nCodex home {item['codexHome']}: {item['code']}: {item['error']}"
+    for error in codex_info.get("errors", []):
+        human += f"\nCodex {error['source']}: {error['code']}: {error['error']}"
     for agent, info in payload.get("discovery", {}).items():
         if info["status"] == "error":
             human += f"\n{agent} discovery failed: {info['error']}"
@@ -2959,8 +3074,8 @@ def build_parser() -> argparse.ArgumentParser:
     listing.add_argument("--agent", choices=("claude", "codex"), default=None,
                          help="filter by agent (default: Claude and Codex)")
     home_help = ("select one Codex home on the destination (default: CODEX_HOME or ~/.codex); "
-                 "set explicitly for Orca/multiple homes; listing shows only this home")
-    listing.add_argument("--codex-home", help=home_help)
+                 "set explicitly for Orca/multiple homes")
+    listing.add_argument("--codex-home", help="list only this destination home (default: known default, CODEX_HOME, Orca and configured homes)")
     listing.add_argument("--codex-bin", help="Codex executable on the destination (used by send)")
     listing.add_argument(
         "--all", action="store_true", help="include stale records and sessions with no inbox"

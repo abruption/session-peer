@@ -17,6 +17,13 @@ for SSH. Claude targets are names or PIDs; Codex targets are `codex:<full-uuid>`
 Resolve ambiguous targets with the user. A saved Codex record does not prove
 that the session is running.
 
+Codex listing combines known default, CODEX_HOME, Orca and configured homes.
+Use each row's `codexHome` with `send --codex-home` to preserve its exact destination;
+the same UUID in different homes identifies different saved copies. Explicit
+`list --codex-home PATH` lists only that home. Inspect `discovery.codex.homes` and
+`errors` for partial failures; `not_installed` is a normal empty automatic result.
+MCP destinations remain restricted to their explicitly configured home.
+
 Use `session-peer doctor` when discovery or delivery prerequisites are unclear.
 It distinguishes missing tools/homes, unavailable Claude inboxes, permission
 failures, unsupported Codex schemas, and unknown inspection results. Add
@@ -35,7 +42,7 @@ host or config alias.
 Send only within the user's requested workflow. Use stdin for complex text:
 
 ```bash
-session-peer send --host worker --to codex:<thread-uuid> -
+session-peer send --host worker --codex-home "/home/user/.codex" --to codex:<thread-uuid> -
 ```
 
 Omit `--host` for local delivery. `--dry-run` resolves without sending.
