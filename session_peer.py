@@ -607,13 +607,12 @@ def discover(include_unreachable: bool = False) -> list[dict]:
     """
     found: list[dict] = []
     directory = sessions_dir()
-    if not directory.is_dir():
-        return found
-
     try:
-        entries = sorted(directory.glob("*.json"))
-    except PermissionError:
+        entries = sorted(path for path in directory.iterdir() if path.suffix == ".json")
+    except FileNotFoundError:
         return found
+    except OSError as exc:
+        raise CcPeerError(f"Cannot read Claude sessions at {directory}: {exc}") from exc
     for record_file in entries:
         if not record_file.stem.isdigit():
             continue
@@ -634,6 +633,7 @@ def discover(include_unreachable: bool = False) -> list[dict]:
             has_inbox = bool(sock) and Path(sock).is_socket()
 
         entry = {
+            "agent": "claude",
             "pid": pid,
             "name": record.get("name"),
             "status": record.get("status"),
@@ -1394,6 +1394,19 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     # The far end reports its own failures in-band; surface them here rather
     # than letting a caller read an error payload as a success.
     if isinstance(result, dict) and result.get("ok") is False:
+        if (
+            argv and argv[0] == "list"
+            and result.get("command") == "list"
+            and result.get("schemaVersion") == JSON_RESPONSE_SCHEMA_VERSION
+            and isinstance(result.get("sessions"), list)
+            and isinstance(result.get("discovery"), dict)
+            and result["discovery"]
+            and all(agent in ("claude", "codex") and isinstance(info, dict)
+                    and info.get("status") in ("ok", "error")
+                    for agent, info in result["discovery"].items())
+            and any(info["status"] == "error" for info in result["discovery"].values())
+        ):
+            return result
         details = {}
         if "codexHomeResolution" in result:
             details["codexHomeResolution"] = result["codexHomeResolution"]
@@ -1891,22 +1904,60 @@ def render_doctor(payload: dict, where: str) -> str:
 # --------------------------------------------------------------------------
 
 
+def collect_listing(args: argparse.Namespace) -> dict:
+    selected = getattr(args, "agent", None)
+    payload = {"sessions": [], "version": __version__, "discovery": {}, "ok": True}
+    for agent in ([selected] if selected else ["claude", "codex"]):
+        try:
+            if agent == "codex":
+                payload["codexHome"] = str(codex_home(args))
+                sessions = discover_codex(args)
+            else:
+                sessions = discover(include_unreachable=args.all)
+            payload["sessions"].extend({**session, "agent": agent} for session in sessions)
+            payload["discovery"][agent] = {"status": "ok"}
+        except (CcPeerError, OSError) as exc:
+            payload["ok"] = False
+            payload["discovery"][agent] = {"status": "error", "error": str(exc)}
+    failed = [agent for agent, info in payload["discovery"].items()
+              if info["status"] == "error"]
+    if failed:
+        payload["error"] = "Discovery failed for: " + ", ".join(failed)
+    return payload
+
+
+def render_listing(payload: dict, where: str, selected: str | None) -> str:
+    sessions = payload["sessions"]
+    if selected:
+        human = (render_codex if selected == "codex" else render_sessions)(sessions, where)
+    else:
+        rows = ["AGENT  NAME  ID/PID  STATUS  CWD"]
+        for session in sessions:
+            if session["agent"] == "codex":
+                identifier = session["id"]
+                status = "archived; execution unknown" if session["archived"] else "execution unknown"
+            else:
+                identifier = session["pid"]
+                status = session.get("status") or "-"
+                if not session["reachable"]:
+                    status = "no inbox" if session["alive"] else "stale record"
+            rows.append(f"{session['agent']}  {session.get('name') or '(unnamed)'}  "
+                        f"{identifier}  {status}  {session.get('cwd') or '-'}")
+        human = f"Sessions on {where}:\n" + "\n".join(rows)
+    if "codexHome" in payload:
+        human += f"\nCodex home: {payload['codexHome']} (selected home only)."
+    for agent, info in payload.get("discovery", {}).items():
+        if info["status"] == "error":
+            human += f"\n{agent} discovery failed: {info['error']}"
+    return human
+
+
 def cmd_list(args: argparse.Namespace) -> int:
-    is_codex = getattr(args, "agent", "claude") == "codex"
-    render = render_codex if is_codex else render_sessions
+    selected = getattr(args, "agent", None)
     if not args.host:
-        sessions = discover_codex(args) if is_codex else discover(include_unreachable=args.all)
-        human = render(sessions, "this machine")
-        home_info = {"codexHome": str(codex_home(args))} if is_codex else {}
-        if is_codex:
-            human += f"\nCodex home: {home_info['codexHome']} (selected home only)."
-        emit(
-            args.json,
-            {"sessions": sessions, "version": __version__, **home_info},
-            human,
-            command="list",
-        )
-        return 0
+        result = collect_listing(args)
+        emit(args.json, result, render_listing(result, "this machine", selected), command="list")
+        return 0 if result["ok"] else EXIT_ERROR
 
     exit_code = 0
     all_results = []
@@ -1917,16 +1968,18 @@ def cmd_list(args: argparse.Namespace) -> int:
             host = resolve_ssh_destination(requested_host, tailnet_status)
             ssh_opts = tailscale_ssh_options(requested_host, host) + args.ssh_opt
             argv = ["list", "--no-update-notice"] + (["--all"] if args.all else [])
-            if is_codex:
-                argv += ["--agent", "codex"] + codex_remote_options(args)
+            if selected:
+                argv += ["--agent", selected]
+            if selected != "claude":
+                argv += codex_remote_options(args)
             result = run_remote(requested_host, argv, ssh_opts)
             sessions = result.get("sessions", [])
             ssh_info = ssh_metadata_from(result)
             remote_version = remote_installed_version(requested_host, ssh_opts, ssh_info)
             shown_host = display_host(requested_host, host)
-            human = render(sessions, shown_host)
-            if is_codex and "codexHome" in result:
-                human += f"\nCodex home: {result['codexHome']} (selected home only)."
+            human = render_listing(result, shown_host, selected)
+            if result.get("ok") is False:
+                exit_code = EXIT_ERROR
             if remote_version and remote_version != __version__:
                 human = (
                     f"{shown_host} runs session-peer {remote_version}; this machine has {__version__}."
@@ -1935,9 +1988,11 @@ def cmd_list(args: argparse.Namespace) -> int:
             host_result = json_result("list", {
                 **host_metadata(requested_host, host),
                 **ssh_info,
+                **{key: result[key] for key in ("discovery", "error", "codexHome")
+                   if key in result},
+                "ok": result.get("ok", True),
                 "sessions": sessions, "version": __version__,
                 **({"remoteVersion": remote_version} if remote_version else {}),
-                **({"codexHome": result["codexHome"]} if is_codex and "codexHome" in result else {}),
             })
             all_results.append(host_result)
             if not args.json:
@@ -2688,7 +2743,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     listing = subparsers.add_parser("list", help="list sessions that can be messaged")
     add_common(listing)
-    listing.add_argument("--agent", choices=("claude", "codex"), default="claude")
+    listing.add_argument("--agent", choices=("claude", "codex"), default=None,
+                         help="filter by agent (default: Claude and Codex)")
     home_help = ("select one Codex home on the destination (default: CODEX_HOME or ~/.codex); "
                  "set explicitly for Orca/multiple homes; listing shows only this home")
     listing.add_argument("--codex-home", help=home_help)

@@ -22,8 +22,8 @@ Install the CLI with `pipx install session-peer` or `uv tool install session-pee
 For the standalone CLI plus Claude skill, see [Install](#install).
 
 ```bash
-session-peer list                              # Claude sessions (default)
-session-peer list --agent claude                # explicit equivalent
+session-peer list                              # Claude + Codex sessions (default)
+session-peer list --agent claude                # Claude-only filter
 session-peer list --agent codex                 # saved Codex threads
 session-peer list --agent codex --host worker   # saved threads on an SSH host
 
@@ -117,8 +117,8 @@ plugin or change either agent's permissions or inbound settings.
 ## Usage
 
 ```bash
-session-peer list                                  # Claude sessions on this machine
-session-peer list --host web-01                    # Claude sessions over there
+session-peer list                                  # Claude + Codex on this machine
+session-peer list --host web-01                    # Claude + Codex over there
 session-peer list --host web-01 --all              # Claude stale records / no inbox
 session-peer list --agent codex --all              # include archived Codex threads
 session-peer doctor                                # local inbox/tool/home diagnostics
@@ -715,3 +715,25 @@ agent build.
 ## License
 
 MIT
+
+### Combined session discovery
+
+Default `list` and `list --json` query Claude and Codex together. Use
+`--agent claude` to retain the previous Claude-only default, or `--agent codex`
+for Codex only. Every session row includes `agent: "claude" | "codex"`;
+agent-specific fields such as PID and thread UUID remain unchanged. Combined
+human output includes an AGENT column. Claude rows precede Codex rows, preserving
+each discovery source's ordering.
+
+List responses include `discovery`, keyed by each requested agent, with
+`status: "ok" | "error"` and an `error` explanation for failed sources.
+Any discovery failure returns `ok: false`, a top-level error summary, and exit
+code 1 while retaining successfully discovered sessions. A missing Codex DB is
+a discovery error; a missing Claude sessions directory is an empty result.
+Neither is evidence of a running Codex process. Malformed individual Claude
+records continue to be skipped as before.
+
+These semantics apply locally and over SSH. Repeated hosts retain independent
+results in the existing ordered array; any failure makes the overall exit code 1.
+Codex listing still inspects only the selected home, reported as `codexHome`.
+`--all` retains Claude stale/no-inbox records and includes archived Codex threads.

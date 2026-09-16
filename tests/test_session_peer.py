@@ -651,7 +651,7 @@ class ErrorHandling(unittest.TestCase):
             )
             bp.return_value.parse_args.return_value = ns
             with mock.patch("builtins.print", side_effect=lambda *a, **kw: buf.write(a[0])):
-                code = session_peer.main(["list", "--json"])
+                code = session_peer.main(["list", "--agent", "claude", "--json"])
         result = json.loads(buf.getvalue())
         self.assertFalse(result["ok"])
         self.assertEqual(result["command"], "list")
@@ -710,7 +710,7 @@ class JsonResponseContract(unittest.TestCase):
             output = io.StringIO()
             with mock.patch.object(session_peer, "discover", return_value=[]), \
                  contextlib.redirect_stdout(output):
-                self.assertEqual(session_peer.main(["list", "--json"]), 0)
+                self.assertEqual(session_peer.main(["list", "--agent", "claude", "--json"]), 0)
             listing = json.loads(output.getvalue())
             self.assert_envelope(listing, "list")
             self.assertEqual(listing["sessions"], [])
@@ -1074,7 +1074,7 @@ class ClientUpdateNotice(unittest.TestCase):
     def test_cli_json_and_human_notice_remain_separately_parseable(self):
         with mock.patch.object(session_peer, "prepare_client_update", return_value=self.NOTICE), \
              mock.patch.object(session_peer, "discover", return_value=[]), \
-             mock.patch.object(session_peer.sys, "argv", ["session-peer", "list", "--json"]), \
+             mock.patch.object(session_peer.sys, "argv", ["session-peer", "list", "--agent", "claude", "--json"]), \
              contextlib.redirect_stdout(io.StringIO()) as stdout, \
              contextlib.redirect_stderr(io.StringIO()) as stderr:
             self.assertEqual(session_peer.main(), 0)
@@ -1083,7 +1083,7 @@ class ClientUpdateNotice(unittest.TestCase):
 
         with mock.patch.object(session_peer, "prepare_client_update", return_value=self.NOTICE), \
              mock.patch.object(session_peer, "discover", return_value=[]), \
-             mock.patch.object(session_peer.sys, "argv", ["session-peer", "list"]), \
+             mock.patch.object(session_peer.sys, "argv", ["session-peer", "list", "--agent", "claude"]), \
              contextlib.redirect_stdout(io.StringIO()) as stdout, \
              contextlib.redirect_stderr(io.StringIO()) as stderr:
             self.assertEqual(session_peer.main(), 0)
@@ -1095,7 +1095,7 @@ class ClientUpdateNotice(unittest.TestCase):
                  session_peer, "prepare_client_update", side_effect=OSError("cache unavailable")
              ), \
              mock.patch.object(session_peer, "discover", return_value=[]), \
-             mock.patch.object(session_peer.sys, "argv", ["session-peer", "list", "--json"]), \
+             mock.patch.object(session_peer.sys, "argv", ["session-peer", "list", "--agent", "claude", "--json"]), \
              contextlib.redirect_stdout(io.StringIO()) as stdout, \
              contextlib.redirect_stderr(io.StringIO()) as stderr:
             self.assertEqual(session_peer.main(), 0)
