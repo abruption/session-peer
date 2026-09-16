@@ -27,9 +27,10 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 try:
     import fcntl
@@ -59,6 +60,9 @@ UPDATE_REFRESH_LOCK_SECONDS = 5 * 60
 UPDATE_CACHE_MAX_BYTES = 4096
 UPDATE_NOTICE_ENV = "SESSION_PEER_NO_UPDATE_NOTICE"
 UPDATE_REFRESH_ARG = "--_refresh-update-cache"
+REPLY_ADDRESS_SCHEME = "session-peer"
+REPLY_ADDRESS_VERSION = "v1"
+MAX_REPLY_ADDRESS_CHARS = 4096
 
 # Tailscale hands out addresses from the CGNAT range, 100.64.0.0/10. Matching on
 # "100." alone would also catch ordinary public addresses like 100.200.x.x.
@@ -68,6 +72,7 @@ EXIT_ERROR = 1
 EXIT_NO_TARGET = 2
 
 _CLIENT_UPDATE_NOTICE: dict | None = None
+_IDENTITY_UNSET = object()
 
 
 class CcPeerError(Exception):
@@ -896,6 +901,26 @@ def resolve_ssh_destination(destination: str, status: dict | None = None) -> str
     return f"{user}@{dns_name}" if user else dns_name
 
 
+def is_self_ssh_destination(destination: str, status: dict | None = None) -> bool:
+    """Whether an SSH destination names this OS user on this machine."""
+    user, separator, host = destination.rpartition("@")
+    if not separator:
+        user, host = "", destination
+    if user and user != getpass.getuser():
+        return False
+    lookup = host.strip("[]").rstrip(".").lower()
+    local_names = {
+        "localhost", "127.0.0.1", "::1",
+        socket.gethostname().rstrip(".").lower(),
+    }
+    status = tailscale_status() if status is None else status
+    if status:
+        own = status.get("Self")
+        if isinstance(own, dict):
+            local_names.update(_node_names(own))
+    return lookup in local_names
+
+
 def detect_reply_host() -> str | None:
     """This machine's tailnet address, or None if it can't be determined.
 
@@ -951,7 +976,11 @@ def sender_agent() -> dict | None:
             thread = str(uuid.UUID(thread))
         except ValueError:
             return None
-        return {"agent": "codex", "id": thread, "target": f"codex:{thread}"}
+        result = {"agent": "codex", "id": thread, "target": f"codex:{thread}"}
+        configured_home = os.environ.get("CODEX_HOME")
+        if configured_home:
+            result["codexHome"] = str(Path(configured_home).expanduser().resolve())
+        return result
     return None
 
 
@@ -1002,7 +1031,7 @@ def from_header(explicit_host: str | None) -> str | None:
 
 def wrap_message(
     text: str, explicit_host: str | None, with_from: bool, with_reply: bool,
-    local_reply: bool = False,
+    local_reply: bool = False, identity: dict | None | object = _IDENTITY_UNSET,
 ) -> str:
     """Put the body in an envelope: who sent it, and how to answer.
 
@@ -1012,14 +1041,157 @@ def wrap_message(
     and compound with each hop. The two facts it *doesn't* have are the
     sender's identity and a working return address.
     """
-    identity = sender_identity(explicit_host) if with_from or with_reply else None
+    if identity is _IDENTITY_UNSET:
+        identity = sender_identity(explicit_host) if with_from or with_reply else None
     header = _from_identity(identity) if with_from else None
     footer = _reply_from_identity(identity, local=local_reply) if with_reply else None
+    address = reply_address(identity, local=local_reply) if with_reply else None
     body = text.strip("\n")
     parts = ([header, ""] if header else []) + [body]
-    if footer:
-        parts += ["", "---", footer]
+    if address or footer:
+        parts += ["", "---"]
+        if address:
+            parts.append(f"Reply-To: {address}")
+        if footer:
+            parts.append(footer)
     return "\n".join(parts)
+
+
+def _safe_reply_value(value: str, field: str) -> str:
+    if not value or len(value) > MAX_REPLY_ADDRESS_CHARS:
+        raise CcPeerError(f"Reply-To {field} is empty or too long")
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise CcPeerError(f"Reply-To {field} contains a control character")
+    return value
+
+
+def reply_address(identity: dict | None, local: bool = False) -> str | None:
+    """Return a versioned, inert address that can be passed back to --to."""
+    if identity is None:
+        return None
+    agent = identity["agent"]
+    identifier = _safe_reply_value(str(identity["id"]), "session")
+    host = identity.get("host")
+    if not local and not host:
+        return None
+    fields = [
+        ("agent", agent),
+        ("session", identifier),
+        ("transport", "local" if local else "ssh"),
+    ]
+    if not local:
+        fields.append(("host", _safe_reply_value(str(host), "host")))
+    codex_root = identity.get("codexHome")
+    if agent == "codex" and codex_root:
+        fields.append(("codexHome", _safe_reply_value(str(codex_root), "codexHome")))
+    uri = urllib.parse.urlunsplit((
+        REPLY_ADDRESS_SCHEME,
+        REPLY_ADDRESS_VERSION,
+        "/reply",
+        urllib.parse.urlencode(fields),
+        "",
+    ))
+    if len(uri) > MAX_REPLY_ADDRESS_CHARS:
+        raise CcPeerError("Reply-To address is too long")
+    return uri
+
+
+def parse_reply_address(value: str) -> dict | None:
+    """Parse a Reply-To URI as data. No field is ever evaluated as a command."""
+    if not value.startswith(f"{REPLY_ADDRESS_SCHEME}:"):
+        return None
+    if len(value) > MAX_REPLY_ADDRESS_CHARS:
+        raise CcPeerError("Reply-To address is too long")
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise CcPeerError("Reply-To address contains a control character")
+    parsed = urllib.parse.urlsplit(value)
+    if (
+        parsed.scheme != REPLY_ADDRESS_SCHEME
+        or parsed.netloc != REPLY_ADDRESS_VERSION
+        or parsed.path != "/reply"
+        or parsed.fragment
+    ):
+        raise CcPeerError("Reply-To must use session-peer://v1/reply without a fragment")
+    if re.search(r"%(?![0-9a-fA-F]{2})", parsed.query):
+        raise CcPeerError("Malformed percent escape in Reply-To query")
+    try:
+        pairs = urllib.parse.parse_qsl(
+            parsed.query, keep_blank_values=True, strict_parsing=True,
+        )
+    except ValueError as exc:
+        raise CcPeerError(f"Malformed Reply-To query: {exc}") from exc
+    allowed = {"agent", "session", "transport", "host", "codexHome"}
+    fields: dict[str, str] = {}
+    for key, item in pairs:
+        if key not in allowed:
+            raise CcPeerError(f"Unknown Reply-To field: {key}")
+        if key in fields:
+            raise CcPeerError(f"Duplicate Reply-To field: {key}")
+        fields[key] = _safe_reply_value(item, key)
+    missing = {"agent", "session", "transport"} - fields.keys()
+    if missing:
+        raise CcPeerError("Reply-To is missing: " + ", ".join(sorted(missing)))
+    if fields["agent"] not in ("claude", "codex"):
+        raise CcPeerError("Reply-To agent must be claude or codex")
+    if fields["transport"] not in ("local", "ssh"):
+        raise CcPeerError("Reply-To transport must be local or ssh")
+    if fields["transport"] == "ssh":
+        if "host" not in fields:
+            raise CcPeerError("SSH Reply-To is missing host")
+        if any(character.isspace() for character in fields["host"]):
+            raise CcPeerError("Reply-To host must not contain whitespace")
+        check_ssh_argument(fields["host"], "--host")
+    elif "host" in fields:
+        raise CcPeerError("Local Reply-To must not include host")
+    if fields["agent"] == "codex":
+        target = f"codex:{fields['session']}"
+        codex_thread(target)
+    else:
+        target = fields["session"]
+    if fields["agent"] != "codex" and "codexHome" in fields:
+        raise CcPeerError("Claude Reply-To must not include codexHome")
+    if "codexHome" in fields and not (
+        PurePosixPath(fields["codexHome"]).is_absolute()
+        or PureWindowsPath(fields["codexHome"]).is_absolute()
+    ):
+        raise CcPeerError("Reply-To codexHome must be an absolute path")
+    return {**fields, "target": target, "uri": value}
+
+
+def reply_route(identity: dict | None, local: bool) -> dict | None:
+    """Describe the generated reply route without parsing untrusted body text."""
+    uri = reply_address(identity, local=local)
+    if uri is None:
+        return None
+    status = "verified" if local else "unverified"
+    return {
+        "uri": uri, "transport": "local" if local else "ssh", "status": status,
+        "reason": "same_machine_route" if local else "reverse_ssh_not_checked",
+    }
+
+
+def apply_reply_target(args: argparse.Namespace) -> dict | None:
+    """Resolve a structured --to address into ordinary, validated CLI fields."""
+    address = parse_reply_address(args.to)
+    if address is None:
+        return None
+    if args.host:
+        raise CcPeerError("Do not combine a Reply-To URI with --host")
+    uri_home = address.get("codexHome")
+    configured_home = getattr(args, "codex_home", None)
+    if uri_home and configured_home and configured_home != uri_home:
+        raise CcPeerError("Reply-To codexHome conflicts with --codex-home")
+    if uri_home:
+        args.codex_home = uri_home
+    transport = address["transport"]
+    if transport == "ssh":
+        host = address["host"]
+        if is_self_ssh_destination(host):
+            address = {**address, "transport": "local", "normalizedFrom": "ssh_self"}
+        else:
+            args.host = [host]
+    args.to = address["target"]
+    return address
 
 
 def _reply_from_identity(identity: dict | None, local: bool = False) -> str | None:
@@ -1406,6 +1578,315 @@ def tailscale_ssh_options(ssh_host: str, canonical_host: str) -> list[str]:
 
 
 # --------------------------------------------------------------------------
+# Diagnostics. These checks are read-only: no inbox connection, queue write,
+# login change, host-key enrollment, or permission change is attempted.
+# --------------------------------------------------------------------------
+
+
+def _diagnostic(status: str, code: str, message: str, **detail) -> dict:
+    return {"status": status, "code": code, "message": message, **detail}
+
+
+def diagnose_claude() -> dict:
+    directory = sessions_dir()
+    result = {
+        "sessionsDir": str(directory), "records": 0, "invalidRecords": 0,
+        "aliveSessions": 0, "availableInboxes": 0, "checks": [],
+    }
+    try:
+        mode = directory.stat().st_mode
+    except FileNotFoundError:
+        result["checks"].append(_diagnostic(
+            "error", "sessions_dir_missing",
+            "Claude sessions directory does not exist; check CLAUDE_CONFIG_DIR",
+        ))
+        return {"status": "missing_home", **result}
+    except PermissionError:
+        result["checks"].append(_diagnostic(
+            "error", "sessions_dir_permission_denied",
+            "Claude sessions directory is not readable by this user",
+        ))
+        return {"status": "permission_denied", **result}
+    except OSError as exc:
+        result["checks"].append(_diagnostic(
+            "unknown", "sessions_dir_unreadable", f"Cannot inspect Claude sessions: {exc}",
+        ))
+        return {"status": "unknown", **result}
+    if not stat.S_ISDIR(mode):
+        result["checks"].append(_diagnostic(
+            "error", "sessions_path_not_directory",
+            "Configured Claude sessions path is not a directory",
+        ))
+        return {"status": "wrong_home", **result}
+    try:
+        entries = sorted(
+            entry for entry in directory.iterdir()
+            if entry.name.endswith(".json")
+        )
+    except PermissionError:
+        result["checks"].append(_diagnostic(
+            "error", "sessions_dir_permission_denied",
+            "Claude sessions directory cannot be listed by this user",
+        ))
+        return {"status": "permission_denied", **result}
+    except OSError as exc:
+        result["checks"].append(_diagnostic(
+            "unknown", "sessions_dir_unreadable", f"Cannot list Claude sessions: {exc}",
+        ))
+        return {"status": "unknown", **result}
+
+    permission_failures = 0
+    for record_file in entries:
+        if not record_file.stem.isdigit():
+            continue
+        try:
+            record = json.loads(record_file.read_text(encoding="utf-8"))
+        except PermissionError:
+            permission_failures += 1
+            continue
+        except (OSError, ValueError):
+            result["invalidRecords"] += 1
+            continue
+        pid = record.get("pid")
+        if not isinstance(pid, int):
+            result["invalidRecords"] += 1
+            continue
+        result["records"] += 1
+        alive = pid_alive(pid)
+        if alive:
+            result["aliveSessions"] += 1
+        inbox = str(record.get("messagingSocketPath") or "")
+        try:
+            present = (
+                inbox.startswith("\\\\.\\pipe\\") if IS_WINDOWS
+                else bool(inbox) and Path(inbox).is_socket()
+            )
+        except OSError:
+            present = False
+        if alive and present:
+            result["availableInboxes"] += 1
+
+    if permission_failures:
+        result["checks"].append(_diagnostic(
+            "error", "session_record_permission_denied",
+            "One or more Claude session records are not readable",
+            count=permission_failures,
+        ))
+        return {"status": "permission_denied", **result}
+    if result["availableInboxes"]:
+        result["checks"].append(_diagnostic(
+            "ok", "inbox_present",
+            "At least one live Claude session advertises an inbox",
+            verification="filesystem_only",
+        ))
+        return {"status": "available", **result}
+    if result["aliveSessions"]:
+        result["checks"].append(_diagnostic(
+            "warning", "inbox_unavailable",
+            "Live Claude sessions exist but none advertises an available inbox",
+        ))
+        return {"status": "inbox_unavailable", **result}
+    result["checks"].append(_diagnostic(
+        "warning", "no_live_sessions",
+        "No live Claude session with an inbox was found",
+    ))
+    return {"status": "unavailable", **result}
+
+
+def _codex_home_source(args: argparse.Namespace) -> str:
+    if getattr(args, "codex_home", None):
+        return "explicit"
+    if os.environ.get("CODEX_HOME"):
+        return "environment"
+    return "default"
+
+
+def diagnose_codex_home(home: Path) -> dict:
+    db = home / "state_5.sqlite"
+    item = {"codexHome": str(home), "stateDb": str(db), "sessionCount": None}
+    try:
+        mode = db.stat().st_mode
+    except FileNotFoundError:
+        return {**item, "status": "missing_home", "code": "state_db_missing"}
+    except PermissionError:
+        return {**item, "status": "permission_denied", "code": "state_db_permission_denied"}
+    except OSError as exc:
+        return {**item, "status": "unknown", "code": "state_db_unreadable", "detail": str(exc)}
+    if not stat.S_ISREG(mode):
+        return {**item, "status": "wrong_home", "code": "state_db_not_regular"}
+    try:
+        conn = sqlite3.connect(db.as_uri() + "?mode=ro", uri=True, timeout=3)
+        try:
+            conn.execute("PRAGMA query_only=ON")
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(threads)")}
+            required = {"id", "title", "cwd", "updated_at", "archived", "rollout_path"}
+            if not required <= columns:
+                return {
+                    **item, "status": "unsupported", "code": "unsupported_threads_schema",
+                    "missingColumns": sorted(required - columns),
+                }
+            count = int(conn.execute("SELECT COUNT(*) FROM threads").fetchone()[0])
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        detail = str(exc)
+        lowered = detail.lower()
+        status = "permission_denied" if "permission" in lowered else "unknown"
+        code = "state_db_permission_denied" if status == "permission_denied" else "state_db_unreadable"
+        return {**item, "status": status, "code": code, "detail": detail}
+    return {**item, "status": "available", "code": "state_db_readable", "sessionCount": count}
+
+
+def diagnose_codex(args: argparse.Namespace) -> dict:
+    selected = codex_home(args)
+    requested_bin = getattr(args, "codex_bin", None) or "codex"
+    executable = shutil.which(os.path.expanduser(requested_bin))
+    checks = []
+    if executable:
+        checks.append(_diagnostic(
+            "ok", "codex_executable_found", "Codex executable is available",
+            path=str(Path(executable).absolute()),
+        ))
+    else:
+        checks.append(_diagnostic(
+            "error", "codex_executable_missing",
+            "Codex executable is not on PATH; set --codex-bin on the destination",
+            requested=requested_bin,
+        ))
+    inventory_error = None
+    try:
+        homes = known_codex_homes(selected)
+    except CcPeerError as exc:
+        homes = [selected]
+        inventory_error = str(exc)
+    candidates = [diagnose_codex_home(home) for home in homes]
+    selected_item = next(
+        (candidate for candidate in candidates if candidate["codexHome"] == str(selected)),
+        candidates[0],
+    )
+    if inventory_error:
+        checks.append(_diagnostic(
+            "unknown", "home_inventory_unreadable", inventory_error,
+        ))
+    checks.append(_diagnostic(
+        "ok" if selected_item["status"] == "available" else "error",
+        selected_item["code"],
+        "Selected Codex home is readable" if selected_item["status"] == "available"
+        else "Selected Codex home cannot be used",
+    ))
+    status = selected_item["status"]
+    if status == "available" and not executable:
+        status = "missing_tool"
+    if inventory_error and status == "available":
+        status = "unknown"
+    return {
+        "status": status, "selectedHome": str(selected),
+        "homeSource": _codex_home_source(args), "executable": executable,
+        "homes": candidates, "checks": checks,
+    }
+
+
+def probe_return_route(destination: str) -> dict:
+    """Test reverse SSH without prompts, key enrollment, or config mutation."""
+    check_ssh_argument(destination, "--host")
+    if is_self_ssh_destination(destination):
+        return {
+            "status": "verified", "transport": "local", "host": local_host(),
+            "reason": "self_route_normalized",
+        }
+    executable = shutil.which("ssh")
+    if executable is None:
+        return {
+            "status": "failed", "transport": "ssh", "host": destination,
+            "reason": "ssh_executable_missing",
+        }
+    ssh_info = ssh_user_metadata(destination, [])
+    command = [
+        executable,
+        "-o", "BatchMode=yes",
+        "-o", "PasswordAuthentication=no",
+        "-o", "KbdInteractiveAuthentication=no",
+        "-o", "NumberOfPasswordPrompts=0",
+        "-o", "StrictHostKeyChecking=yes",
+        "-o", "UpdateHostKeys=no",
+        "-o", "ConnectTimeout=5",
+        "-o", "ConnectionAttempts=1",
+        "-o", "ControlMaster=no",
+        destination, "true",
+    ]
+    try:
+        done = subprocess.run(
+            command, capture_output=True, encoding="utf-8", errors="replace", timeout=8,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "status": "failed", "transport": "ssh", "host": destination,
+            "reason": "timeout", **ssh_info,
+        }
+    except OSError as exc:
+        return {
+            "status": "failed", "transport": "ssh", "host": destination,
+            "reason": "transport_failed", "detail": str(exc), **ssh_info,
+        }
+    if done.returncode == 0:
+        return {
+            "status": "verified", "transport": "ssh", "host": destination,
+            "reason": "ssh_command_succeeded", **ssh_info,
+        }
+    detail = (done.stderr.strip() or done.stdout.strip())[:1000]
+    return {
+        "status": "failed", "transport": "ssh", "host": destination,
+        "reason": classify_ssh_failure(detail, done.returncode) or "remote_command_failed",
+        **({"detail": detail} if detail else {}), **ssh_info,
+    }
+
+
+def doctor_payload(args: argparse.Namespace) -> dict:
+    claude = diagnose_claude()
+    codex = diagnose_codex(args)
+    available = sum(item["status"] == "available" for item in (claude, codex))
+    payload = {
+        "status": "healthy" if available == 2 else ("partial" if available else "issues_found"),
+        "claude": claude,
+        "codex": codex,
+        "capabilities": {
+            "replyObservation": {
+                "status": "unsupported",
+                "reason": "no_cross_agent_acknowledgement_api",
+                "claudeLocalIdleNotice": "native_claude_only",
+                "automatedWait": False,
+            },
+        },
+    }
+    return_host = getattr(args, "_return_host", None)
+    if return_host:
+        payload["returnRoute"] = probe_return_route(return_host)
+    return payload
+
+
+def render_doctor(payload: dict, where: str) -> str:
+    lines = [
+        f"Diagnostics on {where}:",
+        f"  Claude inbox: {payload['claude']['status']}",
+        f"  Codex: {payload['codex']['status']} ({payload['codex']['selectedHome']})",
+        "  Automated reply observation: unsupported across Claude, Codex, and SSH",
+    ]
+    for component in ("claude", "codex"):
+        for check in payload[component].get("checks", []):
+            if check.get("status") != "ok":
+                lines.append(f"    - {check['code']}: {check['message']}")
+    route = payload.get("returnRoute")
+    if route:
+        lines.append(
+            f"  Return route: {route['status']} via {route['transport']} "
+            f"({route['reason']})"
+        )
+    else:
+        lines.append("  Return route: not checked (use --check-return-route)")
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
 # Commands
 # --------------------------------------------------------------------------
 
@@ -1473,6 +1954,75 @@ def cmd_list(args: argparse.Namespace) -> int:
             if not args.json:
                 print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
 
+    if args.json:
+        emit_json_results(all_results)
+    return exit_code
+
+
+def _doctor_return_host(args: argparse.Namespace) -> str | None:
+    host = configured_reply_host(getattr(args, "reply_to", None)) or detect_reply_host()
+    if host and "@" not in host:
+        host = f"{getpass.getuser()}@{host}"
+    return host
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    if args.reply_to and not args.check_return_route:
+        raise CcPeerError("--reply-to requires --check-return-route")
+
+    if not args.host:
+        if args.check_return_route and not args._return_host:
+            args._return_host = _doctor_return_host(args)
+        payload = doctor_payload(args)
+        if args.check_return_route and not args._return_host:
+            payload["returnRoute"] = {
+                "status": "failed", "transport": "ssh", "host": None,
+                "reason": "return_host_unavailable",
+            }
+        emit(
+            args.json, payload, render_doctor(payload, "this machine"), command="doctor",
+        )
+        return 0
+
+    exit_code = 0
+    all_results = []
+    tailnet_status = tailscale_status() or {}
+    return_host = _doctor_return_host(args) if args.check_return_route else None
+    for requested_host in args.host:
+        host = requested_host
+        try:
+            host = resolve_ssh_destination(requested_host, tailnet_status)
+            ssh_opts = tailscale_ssh_options(requested_host, host) + args.ssh_opt
+            remote_argv = ["doctor", "--no-update-notice"] + codex_remote_options(args)
+            if return_host:
+                remote_argv.extend(["--_return-host", return_host])
+            result = run_remote(requested_host, remote_argv, ssh_opts)
+            payload = {
+                key: value for key, value in result.items()
+                if key not in {"schemaVersion", "ok", "host", "command", *SSH_METADATA_FIELDS}
+            }
+            if args.check_return_route and not return_host:
+                payload["returnRoute"] = {
+                    "status": "failed", "transport": "ssh", "host": None,
+                    "reason": "return_host_unavailable",
+                }
+            host_result = json_result("doctor", {
+                **host_metadata(requested_host, host), **ssh_metadata_from(result), **payload,
+            })
+            all_results.append(host_result)
+            if not args.json:
+                if len(all_results) > 1:
+                    print()
+                print(render_doctor(payload, display_host(requested_host, host)))
+        except CcPeerError as exc:
+            exit_code = EXIT_ERROR
+            all_results.append(json_result(
+                "doctor",
+                {**host_metadata(requested_host, host), "error": str(exc), **exc.details},
+                ok=False,
+            ))
+            if not args.json:
+                print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
     if args.json:
         emit_json_results(all_results)
     return exit_code
@@ -1944,6 +2494,7 @@ def cmd_update(args: argparse.Namespace) -> int:
 
 
 def cmd_send(args: argparse.Namespace) -> int:
+    resolved_address = apply_reply_target(args)
     text = read_message(args)
     is_codex = args.to.startswith("codex:")
     if is_codex:
@@ -1958,18 +2509,27 @@ def cmd_send(args: argparse.Namespace) -> int:
     # Doing it on the far side would advertise the receiver's own address back
     # at it. The --b64 path is this script re-running remotely, where the
     # envelope is already part of the payload.
+    advertised_route = None
     if args.b64 is None:
+        local_reply = not args.host and configured_reply_host(args.reply_to) is None
+        identity = (
+            sender_identity(args.reply_to)
+            if not args.no_from or not args.no_reply_to else None
+        )
         text = wrap_message(
             text,
             explicit_host=args.reply_to,
             with_from=not args.no_from,
             with_reply=not args.no_reply_to,
-            local_reply=not args.host and configured_reply_host(args.reply_to) is None,
+            local_reply=local_reply,
+            identity=identity,
         )
+        if not args.no_reply_to:
+            advertised_route = reply_route(identity, local_reply)
         if (
             not args.no_reply_to
             and (args.reply_to or (os.environ.get("SESSION_PEER_REPLY_HOST") or os.environ.get("CC_PEER_REPLY_HOST")))
-            and sender_agent() is None
+            and identity is None
             and not args.json
         ):
             # A reply address names a session, and outside one there is no name
@@ -1980,17 +2540,35 @@ def cmd_send(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
 
+    routing_metadata = {}
+    if advertised_route:
+        routing_metadata["replyRoute"] = advertised_route
+    if resolved_address:
+        routing_metadata["addressResolution"] = {
+            "uri": resolved_address["uri"],
+            "transport": resolved_address["transport"],
+            **({"normalizedFrom": resolved_address["normalizedFrom"]}
+               if "normalizedFrom" in resolved_address else {}),
+        }
+
     if is_codex:
         check_codex_message(text)
 
     if not args.host and is_codex:
         result = queue_codex(args, text)
+        result.update(routing_metadata)
         emit(
             args.json,
             result,
             codex_submission_text(result, "this machine"),
             command="send",
         )
+        if advertised_route and advertised_route["status"] == "unverified" and not args.json:
+            print(
+                "session-peer: reverse SSH reply route was not checked; "
+                "run doctor --check-return-route to test it",
+                file=sys.stderr,
+            )
         return 0
 
     if not args.host:
@@ -2002,10 +2580,17 @@ def cmd_send(args: argparse.Namespace) -> int:
         name = target.get("name") or target.get("pid")
         emit(
             args.json,
-            {"ok": True, "target": target, "chars": len(text), "dryRun": args.dry_run},
+            {"ok": True, "target": target, "chars": len(text), "dryRun": args.dry_run,
+             **routing_metadata},
             f"{verb} {name}'s inbox on this machine ({len(text)} chars).",
             command="send",
         )
+        if advertised_route and advertised_route["status"] == "unverified" and not args.json:
+            print(
+                "session-peer: reverse SSH reply route was not checked; "
+                "run doctor --check-return-route to test it",
+                file=sys.stderr,
+            )
         return 0
 
     exit_code = 0
@@ -2026,6 +2611,7 @@ def cmd_send(args: argparse.Namespace) -> int:
             result = run_remote(requested_host, remote_argv, ssh_opts)
             if is_codex:
                 result.update(host_metadata(requested_host, host))
+                result.update(routing_metadata)
                 all_results.append(json_result("send", result))
                 if not args.json:
                     print(codex_submission_text(result, shown_host))
@@ -2036,7 +2622,7 @@ def cmd_send(args: argparse.Namespace) -> int:
             host_result = json_result("send", {
                 **host_metadata(requested_host, host), "target": target,
                 **ssh_metadata_from(result), "chars": len(text),
-                "dryRun": args.dry_run,
+                "dryRun": args.dry_run, **routing_metadata,
             })
             all_results.append(host_result)
             if not args.json:
@@ -2053,6 +2639,15 @@ def cmd_send(args: argparse.Namespace) -> int:
 
     if args.json:
         emit_json_results(all_results)
+    elif (
+        advertised_route and advertised_route["status"] == "unverified"
+        and any(result.get("ok") for result in all_results)
+    ):
+        print(
+            "session-peer: reverse SSH reply route was not checked; "
+            "run doctor --check-return-route to test it",
+            file=sys.stderr,
+        )
     return exit_code
 
 
@@ -2095,9 +2690,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     listing.set_defaults(func=cmd_list)
 
+    doctor = subparsers.add_parser(
+        "doctor", help="diagnose agent homes, inboxes, tools, and optional return routes",
+    )
+    add_common(doctor)
+    doctor.add_argument("--codex-home", help=home_help)
+    doctor.add_argument("--codex-bin", help="Codex executable on the destination machine")
+    doctor.add_argument(
+        "--check-return-route", action="store_true",
+        help="from the diagnosed host, test a non-interactive SSH route back here",
+    )
+    doctor.add_argument(
+        "--reply-to", metavar="HOST",
+        help="return host to test (default: this machine's detected tailnet address)",
+    )
+    doctor.add_argument("--_return-host", dest="_return_host", help=argparse.SUPPRESS)
+    doctor.set_defaults(func=cmd_doctor)
+
     sending = subparsers.add_parser("send", help="send one message to a session")
     add_common(sending)
-    sending.add_argument("--to", required=True, metavar="NAME|PID|codex:UUID", help="target session")
+    sending.add_argument(
+        "--to", required=True, metavar="TARGET|REPLY-URI",
+        help="session name, PID, codex:UUID, or session-peer://v1/reply address",
+    )
     sending.add_argument("--codex-home", help=home_help)
     sending.epilog = ("Without --codex-home, duplicate threads in known homes select only one "
                       "stable live writer or fail closed. Known homes: selected/default, macOS "
