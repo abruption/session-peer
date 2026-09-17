@@ -1,5 +1,7 @@
 # session-peer
 
+v0.9.0 release candidate: [opt-in Antigravity CLI adapter](docs/antigravity.md) and [paired devices with an optional encrypted relay](docs/paired-devices.md). Publication follows release PR approval.
+
 [![PyPI](https://img.shields.io/pypi/v/session-peer)](https://pypi.org/project/session-peer/)
 [![CI](https://github.com/abruption/session-peer/actions/workflows/ci.yml/badge.svg)](https://github.com/abruption/session-peer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -34,7 +36,7 @@ Install the CLI with `pipx install session-peer` or `uv tool install session-pee
 For the standalone CLI plus Claude skill, see [Install](#install).
 
 ```bash
-session-peer list                              # Claude + Codex sessions (default)
+session-peer list                              # Claude, Codex + registered Antigravity
 session-peer list --agent claude                # Claude-only filter
 session-peer list --agent codex                 # saved Codex threads
 session-peer list --agent codex --host worker   # saved threads on an SSH host
@@ -45,7 +47,8 @@ session-peer send --host worker --to 'codex:<full-thread-uuid>' --dry-run -m "me
 ```
 
 Replace `<full-thread-uuid>` with a full ID from the destination's Codex listing.
-`list` includes both agents by default. **Use
+`list` includes all registered adapters by default. Antigravity lists only live,
+explicitly registered bridges. **Use
 `--agent codex` to filter, not `--codex`**: `--codex` is not a supported flag and is ambiguous
 with `--codex-home` and `--codex-bin`. `send` selects the agent from its target,
 not a `--agent` flag.
@@ -53,6 +56,20 @@ not a `--agent` flag.
 **Posted/queued is not acknowledged.** Saved Codex threads are not necessarily
 running. Plain send does not activate a session; [explicit `--wake`](docs/wake.md)
 is opt-in and does not confirm consumption or a reply.
+
+### Optional paired devices and Antigravity
+
+Install `pipx install 'session-peer[relay]'` (Unix, Python 3.11+) for authenticated
+paired-device delivery directly or through a self-hosted WSS relay. Pairing pins
+device identities; a separate operator policy permits individual agent targets
+and operations. The blind relay cannot decrypt application messages. Follow the
+[paired-device setup and operations guide](docs/paired-devices.md) before exposing
+an endpoint. The beta does not provide NAT traversal or a hosted public service.
+
+Antigravity requires an explicitly started bridge inside the existing TUI; see
+[Antigravity setup](docs/antigravity.md). It is opt-in and does not change the
+Claude/Codex discovery; live Antigravity registrations also appear in unfiltered listing. Normal local and SSH commands retain their
+standard-library-only installation path.
 
 ### Message input and result output
 

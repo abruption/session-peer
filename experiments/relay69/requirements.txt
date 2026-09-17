@@ -1,0 +1,5 @@
+websockets==17.1
+cryptography==50.0.1
+# Transitive crypto dependencies pinned for reproducible lab installs.
+cffi==2.1.1
+pycparser==3.0
