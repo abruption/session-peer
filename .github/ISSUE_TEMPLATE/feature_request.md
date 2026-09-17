@@ -7,13 +7,15 @@ labels: enhancement
 
 ## Motivation
 
+> This issue is public. Private questions: support@abruption.dev (subject: [session-peer]).
+> Report vulnerabilities at https://github.com/abruption/session-peer/security/advisories/new.
+
 <!-- What are you trying to do that you can't do today? -->
 
-## Does the official path already cover it?
+## Alternatives considered
 
-<!-- cc-peer exists only for cases Remote Control can't serve: Bedrock/Vertex/Foundry,
-     API-key auth, air-gapped networks, unattended workers. If Remote Control would
-     solve this, that's the better answer — say so and we'll close it as such. -->
+<!-- Search existing issues and describe relevant session-peer or native agent features.
+     Use dummy values; omit secrets, conversation content and personal identifiers. -->
 
 ## Proposed behaviour
 
