@@ -15,6 +15,25 @@ into the main-target release PR. Candidate notes: `docs/releases/v0.9.0.md`. Tra
 open until artifact verification finishes.
 The plugin manifest retains its independent version (0.1.0).
 
+### Final integration after #90, #91 and #92
+
+The release-finalization branch starts at main `27b28dd`, which contains the
+v0.9 feature preparation (#90), support/security pilot (#91), and four-language
+README (#92). The latter includes the reconciled v0.9 feature descriptions and
+sdist contents. The package version is already `0.9.0`; do not bump it again for
+this documentation finalization. This base is not the eventual release commit:
+record the exact main commit after the finalization PR is merged.
+
+- Keep #89 open: merging preparation PRs is not publication or artifact verification.
+- Include all three translated READMEs, `docs/cli-reference.md`, the security
+  policy and v0.9 release notes in the sdist, alongside the optional relay files.
+- Retain the independent plugin version, frozen legacy updater, optional extras,
+  and experiments exclusion. Verify both wheel and sdist installation in CI.
+- The latest published release was v0.8.0 when this finalization was prepared.
+  Candidate wording must not be interpreted as a successful PyPI upload.
+- Only create a draft after merge; publishing the release still requires the
+  separate final approval described below. Do not auto-close #89 from this PR.
+
 The relay extra requires Unix and Python 3.11+. Validate `.[relay,mcp]` in
 addition to the dependency-free core, including the public pilot evidence in
 `docs/relay-public-pilot-2026-09-17.md`. A bounded live test is not a soak test:
