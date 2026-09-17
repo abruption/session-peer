@@ -9,8 +9,9 @@
 **Find and message Claude Code and Codex sessions, locally or over SSH, from one CLI.**
 
 Ask a session on another machine to review a change, report progress, or pick up
-a task. session-peer uses native agent inboxes and queues; the receiving agent
-controls how incoming messages are handled.
+a task. For example, ask `api-worker` on SSH host `worker` to review a change.
+session-peer uses native agent inboxes and queues; the receiving agent controls
+how incoming messages are handled.
 
 ## Quick start
 
@@ -22,13 +23,21 @@ pipx install session-peer
 
 session-peer list
 session-peer list --host worker
+```
+
+## Send your first message
+
+The names and UUID below are fictional examples. Discover your destination first,
+then replace them with a session from its listing.
+
+```bash
 session-peer send --to api-worker --message "Report progress"
-session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "Review the change"
+session-peer send --host worker --to 'codex:00000000-0000-4000-8000-000000000001' --message "Review the change"
 ```
 
 Replace `worker` with your SSH host or alias, `api-worker` with a discovered
-session name, and `<full-thread-uuid>` with the full ID from the destination's
-listing. The destination needs Python and the target agent's inbox or queue;
+session name, and the example UUID with the full ID from the destination's listing.
+The destination needs Python and the target agent's inbox or queue;
 session-peer itself need not be installed there for SSH list/send.
 
 **`posted` / `queued` means submitted, not read or completed.** Saved Codex
@@ -64,14 +73,14 @@ See [installation details](https://github.com/abruption/session-peer/blob/main/d
 
 ## Optional v0.9 features
 
-The v0.9 candidate adds [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md) through a bridge explicitly started inside an existing TUI; unfiltered `list` also includes live registered bridges.
+Available in v0.9.0: experimental [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md) through a bridge explicitly started inside an existing TUI; unfiltered `list` also includes live registered bridges.
 [Paired devices / encrypted relay](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md) require Unix, Python 3.11+ and the `[relay]` extra. Device identities are pinned and targets need explicit operator authorization. The self-hosted WSS relay cannot decrypt application messages; no NAT traversal or hosted public service is provided.
-These features are not in PyPI v0.8.0: use a reviewed candidate wheel as described in the guides until published. Ordinary local/SSH commands remain dependency-free.
+Install the relay beta with `pipx install 'session-peer[relay]'`. Antigravity and relay still need operational validation; release does not imply long-term stability. Ordinary local/SSH commands remain dependency-free.
 
 ## Before you send
 
-- Use the correct destination account and agent home. SSH access and receiver permissions still apply.
-- Plain sends do not activate inactive sessions. Explicit wake can start a turn and consume usage.
+- Use the correct destination account and agent home; for custom Codex homes, pass the listed `codexHome` path with `--codex-home`. SSH access and receiver permissions still apply.
+- Plain sends do not activate inactive sessions. Explicit wake can start a turn and consume usage; MCP requires separate wake permission.
 - Redact secrets, conversation text, session IDs, and personal paths before sharing diagnostics.
 
 ## Documentation

@@ -9,6 +9,7 @@
 **ひとつのCLIで、ローカルやSSH接続先のClaude Code・Codexセッションを検索し、メッセージを送信できます。**
 
 別のマシンのセッションに変更のレビュー、進捗報告、作業の引き継ぎを依頼できます。
+例えば、SSHホスト`worker`の`api-worker`セッションに変更のレビューを依頼します。
 各エージェントの標準の受信箱やキューを使い、受信したメッセージの扱いは受信側が決定します。
 
 ## クイックスタート
@@ -21,12 +22,19 @@ pipx install session-peer
 
 session-peer list
 session-peer list --host worker
+```
+
+## 最初のメッセージを送る
+
+以下の名前とUUIDは架空の例です。まず接続先を検索し、実際のセッションに置き換えてください。
+
+```bash
 session-peer send --to api-worker --message "進捗を教えてください"
-session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "変更をレビューしてください"
+session-peer send --host worker --to 'codex:00000000-0000-4000-8000-000000000001' --message "変更をレビューしてください"
 ```
 
 `worker`をSSHホストまたはエイリアス、`api-worker`を取得したセッション名に置き換えてください。
-`<full-thread-uuid>`には接続先で取得した完全なスレッドIDを指定します。
+例のUUIDは接続先で取得した完全なスレッドIDに置き換えてください。
 接続先にはPythonと対象エージェントの受信箱・キューが必要ですが、SSH経由の検索・送信のために
 session-peer自体をインストールする必要はありません。
 
@@ -63,14 +71,14 @@ cd session-peer
 
 ## オプションのv0.9機能
 
-v0.9候補の[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md)は、既存TUI内でブリッジを明示的に起動する必要があります。フィルターなしの`list`には稼働中の登録済みブリッジも表示されます。
+v0.9.0で提供する実験段階の[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md)は、既存TUI内でブリッジを明示的に起動する必要があります。フィルターなしの`list`には稼働中の登録済みブリッジも表示されます。
 [デバイスのペアリング・暗号化リレー](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md)にはUnix、Python 3.11以上、`[relay]`が必要です。デバイスの識別情報を固定し、接続対象は運用者が明示的に許可します。セルフホストのWSSリレーはメッセージを復号できません。NAT越えやホスト済み公開サービスは提供しません。
-PyPI v0.8.0には含まれません。公開まではガイドに従い、レビュー済みの候補wheelを使用してください。通常のローカル・SSHコマンドは外部依存なしで使えます。
+リレーのベータ版は`pipx install 'session-peer[relay]'`でインストールできます。Antigravityとリレーには追加の運用検証が必要で、公開は長期安定性の保証ではありません。通常のローカル・SSHコマンドは外部依存なしで使えます。
 
 ## 送信前の確認
 
-- 正しい接続先アカウントとエージェントのホームを指定してください。SSHと受信側の権限が適用されます。
-- 通常の送信は停止中のセッションを起動しません。明示的なwakeはエージェントを実行し、利用枠を消費する場合があります。
+- 正しい接続先アカウントとエージェントのホームを指定してください。独自のCodexホームには検索結果の`codexHome`パスを`--codex-home`で指定します。SSHと受信側の権限が適用されます。
+- 通常の送信は停止中のセッションを起動しません。明示的なwakeはエージェントを実行し、利用枠を消費する場合があります。MCPでは別のwake権限が必要です。
 - 診断結果を共有する前に、秘密情報・会話・セッションID・個人のパスを伏せてください。
 
 ## ドキュメント

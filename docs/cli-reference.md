@@ -59,10 +59,11 @@ not a `--agent` flag.
 running. Plain send does not activate a session; [explicit `--wake`](wake.md)
 is opt-in and does not confirm consumption or a reply.
 
-### Optional paired devices and Antigravity (v0.9 candidate)
+### Optional paired devices and Antigravity (v0.9)
 
-These features are not included in published PyPI v0.8.0. Until publication,
-use a reviewed candidate wheel as described in the guides.
+These features are available starting with PyPI v0.9.0. Antigravity remains
+experimental and the paired transport remains beta; operational validation
+is still required. Install the extra with `pipx install 'session-peer[relay]'`.
 The `[relay]` extra (Unix, Python 3.11+) enables authenticated paired-device
 delivery directly or through a self-hosted WSS relay. Pairing pins device
 identities; a separate operator policy permits individual agent targets and
@@ -74,7 +75,7 @@ Antigravity requires an explicitly started bridge inside the existing TUI; see
 [Antigravity setup](antigravity.md). It is opt-in and does not change
 Claude/Codex discovery; live Antigravity registrations also appear in unfiltered
 listing. Normal local and SSH commands retain their standard-library-only
-installation path. See the [v0.9 candidate release notes](releases/v0.9.0.md).
+installation path. See the [v0.9 release notes](releases/v0.9.0.md).
 
 ### Message input and result output
 

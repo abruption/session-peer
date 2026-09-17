@@ -1,6 +1,8 @@
 # Antigravity CLI adapter (experimental)
 
-This opt-in adapter is a v0.9.0 development candidate, not a released feature.
+This experimental opt-in adapter is available in session-peer v0.9.0.
+Install it with `pipx install session-peer` or `uv tool install session-peer`.
+Release availability does not establish long-term operational stability.
 It uses the internal adapter/transport refactor (#47), and can be authorized as
 a target for paired-device delivery (#69). Antigravity itself is never installed
 automatically. Unfiltered listing includes live bridge registrations.

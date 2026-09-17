@@ -1,4 +1,4 @@
-# Paired devices and private relay (v0.9 beta candidate)
+# Paired devices and private relay (v0.9 beta)
 
 This optional Unix/Python 3.11+ transport carries requests to operator-defined
 Claude, Codex or registered Antigravity endpoints. The usual local/SSH commands
@@ -7,15 +7,15 @@ NAT traversal, WireGuard tunnel or automatic public service is installed.
 
 ## Install
 
-Use the reviewed release artifact in an isolated environment on both devices:
+Install session-peer v0.9.0 or later from PyPI in an isolated environment on both devices:
 
 ```sh
 python3 -m venv ~/.local/share/session-peer-relay/venv
 ~/.local/share/session-peer-relay/venv/bin/pip install 'session-peer[relay]'
 ```
 
-During development, install the built wheel with `[relay]` instead of the public
-PyPI version: the published v0.8.0 does not contain this feature. Use the installed
+The relay extra is available on PyPI starting with v0.9.0 and remains beta;
+publication does not establish long-term operational stability. Use the installed
 `session-peer` executable below. Management commands (`device`/`relay`) emit JSON.
 Do not mix Python environments with different package versions.
 
