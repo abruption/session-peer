@@ -48,7 +48,7 @@ class UnifiedList(unittest.TestCase):
                 result = json.loads(output)
                 self.assertEqual(code, 0)
                 self.assertEqual([row["agent"] for row in result["sessions"]], expected)
-                self.assertEqual(list(result["discovery"]), expected)
+                self.assertEqual(list(result["discovery"]), expected + (["antigravity"] if agent is None else []))
                 self.assertEqual(claude.called, "claude" in expected)
                 self.assertEqual(codex.called, "codex" in expected)
 
