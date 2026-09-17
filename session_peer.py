@@ -42,7 +42,7 @@ try:
 except ImportError:  # Windows has no POSIX flock; activity stays unknown there.
     fcntl = None
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 GITHUB_REPO = "abruption/session-peer"
 
 # Claude Code refuses a same-machine message once its serialized form passes
@@ -2997,6 +2997,8 @@ def render_listing(payload: dict, where: str, selected: str | None) -> str:
 
 
 def cmd_list(args: argparse.Namespace) -> int:
+    if getattr(args, "device", None):
+        return optional_relay().invoke_core(args)
     selected = getattr(args, "agent", None)
     if not args.host:
         result = collect_listing(args)
@@ -3596,6 +3598,8 @@ def cmd_update(args: argparse.Namespace) -> int:
 
 
 def cmd_send(args: argparse.Namespace) -> int:
+    if getattr(args, "device", None):
+        return optional_relay().invoke_core(args)
     resolved_address = apply_reply_target(args)
     text = read_message(args)
     adapter = AGENTS.for_target(args.to)
@@ -3721,6 +3725,20 @@ def cmd_send(args: argparse.Namespace) -> int:
     return exit_code
 
 
+def optional_relay():
+    if sys.version_info < (3, 11) or os.name != 'posix':
+        raise CcPeerError('Paired devices require Python 3.11+ on macOS/Linux')
+    try:
+        from session_peer_relay import cli
+        return cli
+    except ImportError as exc:
+        raise CcPeerError('Install session-peer[relay] to use paired devices') from exc
+
+
+def cmd_optional_relay(args):
+    return optional_relay().main(args.command, ["--help"] if args.relay_help else args.relay_args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="session-peer",
@@ -3823,7 +3841,7 @@ def build_parser() -> argparse.ArgumentParser:
     for sub in (listing, sending, doctor):
         sub.add_argument('--antigravity-home', help='filter registered Antigravity home on the destination')
     sending.add_argument('--antigravity-generation', help='require this registered bridge generation')
-    sending.add_argument('--request-id', help='Antigravity UUID for duplicate suppression within one generation')
+    sending.add_argument('--request-id', help='attempt UUID for paired-device journaling or generation-pinned Antigravity deduplication')
     bridge = subparsers.add_parser('antigravity-bridge', help='opt-in bridge; start inside the target agy TUI tool environment')
     bridge.add_argument('action', choices=('serve', 'stop'))
     bridge.add_argument('--thread', required=True, help='exact existing Antigravity conversation UUID')
@@ -3832,6 +3850,16 @@ def build_parser() -> argparse.ArgumentParser:
     bridge.add_argument('--max-requests', type=int, choices=range(1, 10001), default=1000, metavar='COUNT')
     bridge.set_defaults(func=cmd_agy_bridge, json=False, no_update_notice=True)
 
+    for sub in (listing, sending):
+        sub.add_argument('--device', help='paired receiver fingerprint; exclusive with --host')
+        sub.add_argument('--device-state', help='local device state directory')
+        sub.add_argument('--device-route', choices=('auto', 'direct', 'relay'), default='auto')
+        sub.add_argument('--relay-admission-file', help='private client admission credential file')
+    for name in ('device', 'relay'):
+        sub = subparsers.add_parser(name, add_help=False, help='optional paired-device '+name+' management')
+        sub.add_argument('--help', '-h', dest='relay_help', action='store_true')
+        sub.add_argument('relay_args', nargs=argparse.REMAINDER)
+        sub.set_defaults(func=cmd_optional_relay, json=True, no_update_notice=True)
     return parser
 
 

@@ -109,3 +109,26 @@ jobs:
       - name: Verify optional module in distributions
         run: |
           python -c 'import glob,zipfile; z=zipfile.ZipFile(glob.glob("dist/*.whl")[0]); assert "session_peer_mcp.py" in z.namelist()'
+
+  relay:
+    name: optional relay (${{ matrix.os }}, python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ['3.11', '3.13']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install '.[relay,mcp]' build
+      - run: python -m unittest tests.test_native_relay tests.test_relay69 -v
+      - run: python -m build
+      - name: Verify optional transport packaging
+        run: |
+          python -c 'import glob,zipfile; z=zipfile.ZipFile(glob.glob("dist/*.whl")[0]); assert "session_peer_relay/cli.py" in z.namelist(); assert not any(n.startswith("experiments/") for n in z.namelist())'
+      - name: Optional management CLI smoke
+        run: |
+          session-peer device --help
+          session-peer relay --help

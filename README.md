@@ -1,6 +1,6 @@
 # session-peer
 
-Experimental development: [opt-in Antigravity CLI adapter](docs/antigravity.md) for existing TUI delivery (planned for v0.9.0; not yet released).
+v0.9.0 release candidate: [opt-in Antigravity CLI adapter](docs/antigravity.md) and [paired devices with an optional encrypted relay](docs/paired-devices.md). Publication follows release PR approval.
 
 [![PyPI](https://img.shields.io/pypi/v/session-peer)](https://pypi.org/project/session-peer/)
 [![CI](https://github.com/abruption/session-peer/actions/workflows/ci.yml/badge.svg)](https://github.com/abruption/session-peer/actions/workflows/ci.yml)
@@ -43,6 +43,20 @@ not a `--agent` flag.
 **Posted/queued is not acknowledged.** Saved Codex threads are not necessarily
 running. Plain send does not activate a session; [explicit `--wake`](docs/wake.md)
 is opt-in and does not confirm consumption or a reply.
+
+### Optional paired devices and Antigravity
+
+Install `pipx install 'session-peer[relay]'` (Unix, Python 3.11+) for authenticated
+paired-device delivery directly or through a self-hosted WSS relay. Pairing pins
+device identities; a separate operator policy permits individual agent targets
+and operations. The blind relay cannot decrypt application messages. Follow the
+[paired-device setup and operations guide](docs/paired-devices.md) before exposing
+an endpoint. The beta does not provide NAT traversal or a hosted public service.
+
+Antigravity requires an explicitly started bridge inside the existing TUI; see
+[Antigravity setup](docs/antigravity.md). It is opt-in and does not change the
+default Claude/Codex listing. Normal local and SSH commands retain their
+standard-library-only installation path.
 
 ### Message input and result output
 

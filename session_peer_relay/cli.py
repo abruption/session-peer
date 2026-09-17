@@ -1,0 +1,239 @@
+"""Explicit opt-in device/relay commands; no background service installation."""
+import argparse
+import asyncio
+import contextlib
+import hashlib
+import json
+import logging
+import os
+from pathlib import Path
+import re
+import secrets
+import signal
+import sys
+
+import session_peer as core
+from .app import Receiver, pair, exchange
+from .identity import private_read, private_write, private_path
+from .native import Policy
+from .relay import Relay
+from .store import Store, Rejected
+from .wire import validate_relay_url, direct_address
+
+
+def state_path(value):
+    return Path(value or '~/.local/share/session-peer/device').expanduser().resolve()
+
+
+def credential(path):
+    if not path:
+        return None
+    token = private_read(Path(path).expanduser(), 4096).strip()
+    if not re.fullmatch(r'[A-Za-z0-9_-]{32,128}', token):
+        raise Rejected('invalid_admission_file')
+    return token
+
+
+async def lifetime(seconds):
+    event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        loop.add_signal_handler(sig, event.set)
+    try:
+        if seconds:
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(event.wait(), seconds)
+        else:
+            await event.wait()
+    finally:
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            loop.remove_signal_handler(sig)
+
+
+def emit(value):
+    print(json.dumps({'schemaVersion': 1, **value}, ensure_ascii=False), flush=True)
+
+
+async def manage(kind, args):
+    if kind == 'relay':
+        if args.action == 'provision':
+            if not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}', args.room):
+                raise Rejected('invalid_room')
+            root = Path(args.out).expanduser()
+            root.mkdir(mode=0o700, parents=True, exist_ok=False)
+            accounts = []
+            for role in ('receiver', 'client'):
+                token = secrets.token_urlsafe(32)
+                private_write(root/(role+'.token'), token+'\n')
+                accounts.append({'role': role, 'room': args.room, 'hash': hashlib.sha256(token.encode()).hexdigest()})
+            private_write(root/'accounts.json', json.dumps(accounts))
+            return {'ok': True, 'provisioned': True, 'directory': str(root)}
+        accounts = json.loads(private_read(args.accounts, systemd_credentials=True))
+        if (not isinstance(accounts, list) or not 1 <= len(accounts) <= 128
+                or any(not isinstance(a, dict) or set(a) != {'role', 'room', 'hash'}
+                       or a['role'] not in ('receiver', 'client')
+                       or not isinstance(a['room'], str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}', a['room'])
+                       or not isinstance(a['hash'], str) or not re.fullmatch(r'[a-f0-9]{64}', a['hash']) for a in accounts)):
+            raise Rejected('invalid_admission_accounts')
+        relay = Relay(accounts)
+        server = await relay.start(args.bind, args.port)
+        emit({'ok': True, 'ready': True, 'port': server.sockets[0].getsockname()[1]})
+        try:
+            await lifetime(args.seconds)
+        finally:
+            server.close(); await server.wait_closed()
+        return {'ok': True, 'stopped': True, 'frames': relay.forwarded_frames, 'rejected': relay.rejected}
+    store = Store(state_path(args.state))
+    try:
+        if args.action == 'init':
+            return {'ok': True, 'device': store.device}
+        if args.action == 'peers':
+            return {'ok': True, 'device': store.device, 'peers': [
+                {'device': row[0], 'status': row[1]} for row in store.db.execute('SELECT id,status FROM peers ORDER BY id')]}
+        if args.action == 'revoke':
+            store.revoke(args.peer)
+            return {'ok': True, 'revoked': args.peer}
+        if args.action in ('invite', 'routes'):
+            routes = {}
+            if args.direct:
+                direct_address(args.direct)
+                routes['direct'] = args.direct
+            if args.relay:
+                validate_relay_url(args.relay); routes['relay'] = args.relay
+            if not routes:
+                raise Rejected('route_required')
+            if args.action == 'routes':
+                peer = store.peer(args.peer)
+                if not peer or peer['status'] != 'paired':
+                    raise Rejected('unpaired_device')
+                store.db.execute('UPDATE peers SET routes=? WHERE id=?', (json.dumps(routes), args.peer))
+                return {'ok': True, 'device': args.peer, 'routes': routes, 'identityChanged': False}
+            private_write(args.out, json.dumps(store.invite(routes)))
+            return {'ok': True, 'invitationSaved': True, 'device': store.device, 'expiresInSeconds': 600}
+        if args.action == 'pair':
+            invitation = json.loads(private_read(args.invite))
+            return await pair(store, invitation, args.route, credential(args.admission_file))
+        if args.action == 'status':
+            return await exchange(store, args.peer, 'status', args.request_id, route=args.route,
+                                  credential=credential(args.admission_file))
+        if args.action == 'serve':
+            policy = json.loads(private_read(args.policy))
+            receiver = Receiver(store, policy)
+            # Never create a public listener merely because a relay is configured.
+            server = await receiver.listen(args.bind, args.port)
+            task = None
+            try:
+                if args.relay:
+                    validate_relay_url(args.relay)
+                    token = credential(args.admission_file)
+                    if not token:
+                        raise Rejected('admission_file_required')
+                    task = asyncio.create_task(receiver.relay_listener(args.relay, token))
+                emit({'ok': True, 'ready': True, 'device': store.device,
+                      'directPort': server.sockets[0].getsockname()[1],
+                      'relayConfigured': bool(task), 'relayReadyConfirmed': False})
+                await lifetime(args.seconds)
+            finally:
+                if task:
+                    task.cancel(); await asyncio.gather(task, return_exceptions=True)
+                server.close(); await server.wait_closed(); await receiver.close()
+            return {'ok': True, 'stopped': True}
+        raise Rejected('invalid_command')
+    finally:
+        store.close()
+
+
+def parser(kind):
+    p = argparse.ArgumentParser(prog='session-peer '+kind)
+    sub = p.add_subparsers(dest='action', required=True)
+    def command(name, state=True):
+        item = sub.add_parser(name)
+        if state:
+            item.add_argument('--state')
+        return item
+    def server_options(item):
+        item.add_argument('--bind', default='127.0.0.1')
+        item.add_argument('--port', type=int, default=0)
+        item.add_argument('--seconds', type=int, choices=range(0, 86401), default=3600, metavar='SECONDS')
+    if kind == 'relay':
+        item = command('provision', False)
+        item.add_argument('--out', required=True); item.add_argument('--room', default='private')
+        item = command('serve', False)
+        item.add_argument('--accounts', required=True); server_options(item)
+        return p
+    command('init'); command('peers')
+    item = command('invite'); item.add_argument('--out', required=True)
+    item.add_argument('--direct'); item.add_argument('--relay')
+    item = command('routes'); item.add_argument('--peer', required=True)
+    item.add_argument('--direct'); item.add_argument('--relay')
+    item = command('serve'); item.add_argument('--policy', required=True)
+    item.add_argument('--relay'); item.add_argument('--admission-file'); server_options(item)
+    item = command('revoke'); item.add_argument('--peer', required=True)
+    for name in ('pair', 'status'):
+        item = command(name)
+        if name == 'pair':
+            item.add_argument('--invite', required=True)
+        else:
+            item.add_argument('--peer', required=True); item.add_argument('--request-id', required=True)
+        item.add_argument('--route', choices=('direct', 'relay') if name == 'pair' else ('auto', 'direct', 'relay'), default='direct' if name == 'pair' else 'auto')
+        item.add_argument('--admission-file')
+    return p
+
+
+def main(kind, argv):
+    args = parser(kind).parse_args(argv)
+    logging.getLogger('websockets').setLevel(logging.CRITICAL+1)
+    os.umask(0o077)
+    try:
+        result = asyncio.run(manage(kind, args))
+    except Exception as exc:
+        result = {'ok': False, 'reason': str(exc) if isinstance(exc, Rejected) else type(exc).__name__,
+                  'retryAllowed': False}
+    emit(result)
+    return 0 if result.get('ok') else 1
+
+
+async def core_exchange(args):
+    if any(getattr(args, key, None) for key in ('codex_home', 'codex_bin', 'antigravity_home', 'antigravity_generation', 'ssh_opt')):
+        raise Rejected('device_native_options_are_receiver_policy_only')
+    if args.host:
+        raise Rejected('device_and_ssh_are_mutually_exclusive')
+    if not re.fullmatch(r'[a-f0-9]{64}', args.device):
+        raise Rejected('invalid_device')
+    if args.command == 'send' and (args.wake or args.reply_to or args.b64):
+        raise Rejected('device_send_option_unsupported')
+    store = Store(state_path(args.device_state))
+    try:
+        body = None
+        if args.command == 'send':
+            text = core.read_message(args)
+            core.check_message(text, remote=False)
+            if not args.no_from:
+                text = core.wrap_message(text, with_from=True, with_reply=False, explicit_host=None)
+            body = {'target': args.to, 'message': text}
+        operation = 'resolve' if args.command == 'send' and args.dry_run else args.command
+        result = await exchange(store, args.device, operation, body,
+                                getattr(args, 'request_id', None), args.device_route,
+                                credential(args.relay_admission_file))
+        if args.command == 'list' and args.agent:
+            result['sessions'] = [row for row in result.get('sessions', []) if row.get('agent') == args.agent]
+        return result
+    finally:
+        store.close()
+
+
+def invoke_core(args):
+    os.umask(0o077)
+    try:
+        result = asyncio.run(core_exchange(args))
+    except Exception as exc:
+        result = {'ok': False, 'reason': str(exc) if isinstance(exc, Rejected) else type(exc).__name__,
+                  'retryAllowed': False, 'consumptionConfirmed': False}
+    result.update(device=args.device, host='device:'+args.device, transport='paired_device')
+    human = 'Device result: '+str(result.get('status', 'ok' if result.get('ok') else result.get('reason')))
+    if args.command == 'list':
+        human += '\nTARGET  AGENT  ID  STATUS\n' + '\n'.join(
+            str(row.get('target', ''))+'  '+str(row.get('agent', ''))+'  '+str(row.get('id', row.get('pid', '')))+'  '+str(row.get('status', 'unknown'))
+            for row in result.get('sessions', []))
+    core.emit(args.json, result, human, command=args.command)
+    return 0 if result.get('ok') else 1

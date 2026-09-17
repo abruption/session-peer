@@ -5,15 +5,20 @@ the tag and uploads it to PyPI through Trusted Publishing. A draft release does
 not publish. Keep release preparation, approval, publication, and verification as
 separate steps so the tag and uploaded artifacts always point at reviewed code.
 
-## Current candidate: v0.8.0
+## Current candidate: v0.9.0
 
-The v0.8.0 candidate contains #76, #77, #78, #80, and #82: unified agent
-listing, optional MCP tools and a Codex plugin, explicit bounded Codex wake,
-bounded multi-home Codex listing, and named message/output-format options.
-The version source is `session_peer.py`; Hatch reads it for wheel and sdist
-metadata. Candidate notes live in `docs/releases/v0.8.0.md`. Release tracking is
-#83; keep it open until publication verification finishes. The plugin manifest
-has its own version (0.1.0), independent of the Python package version.
+The v0.9.0 candidate integrates the approved #47 adapter/transport refactor,
+#69 relay lab and #85 Antigravity adapter, plus an optional product relay package
+that routes paired requests through native adapters. The earlier #87/#88 PRs
+merged into the dependency branch; their approved changes are explicitly carried
+into the main-target release PR. Candidate notes: `docs/releases/v0.9.0.md`. Track publication in #89; keep it
+open until artifact verification finishes.
+The plugin manifest retains its independent version (0.1.0).
+
+The relay extra requires Unix and Python 3.11+. Validate `.[relay,mcp]` in
+addition to the dependency-free core, including the public pilot evidence in
+`docs/relay-public-pilot-2026-09-17.md`. A bounded live test is not a soak test:
+actual operational validation remains a gate for v1.0.0-rc.
 
 The repository must continue to contain the frozen root `cc_peer.py` for legacy
 self-update URLs. It must remain outside the session-peer wheel and sdist.
@@ -54,7 +59,7 @@ that it has not changed.
    optional SDK tests. Do not enable live wake/model tests for release checks.
 
 4. Inspect both archives. `session_peer.py`, license, metadata, and README belong
-   in the sdist; the wheel contains `session_peer.py`, `session_peer_mcp.py`, and metadata.
+   in the sdist; the wheel contains `session_peer.py`, `session_peer_mcp.py`, the optional `session_peer_relay/` package, and metadata.
    The sdist also includes MCP/wake/multi-home documentation and plugin files. Neither
    archive may contain `cc_peer.py`, credentials, session databases, or local
    notes.
@@ -74,11 +79,11 @@ squash or merge commit changes the release commit:
 ```bash
 git fetch origin main --tags
 release_commit=$(git rev-parse origin/main)
-gh release create v0.8.0 \
+gh release create v0.9.0 \
   --repo abruption/session-peer \
   --target "$release_commit" \
-  --title "session-peer v0.8.0" \
-  --notes-file docs/releases/v0.8.0.md \
+  --title "session-peer v0.9.0" \
+  --notes-file docs/releases/v0.9.0.md \
   --draft --latest
 ```
 
@@ -92,7 +97,7 @@ Obtain final approval immediately before publication. Publishing is the action
 that makes the GitHub release public and starts the PyPI upload:
 
 ```bash
-gh release edit v0.8.0 --repo abruption/session-peer --draft=false --latest
+gh release edit v0.9.0 --repo abruption/session-peer --draft=false --latest
 ```
 
 Do not create a second release or retry with modified artifacts if the workflow
@@ -103,14 +108,14 @@ accepted by PyPI cannot be replaced.
 
 1. Confirm the release-triggered `publish.yml` run completed successfully and
    used the expected tag and commit.
-2. Confirm PyPI exposes exactly `session-peer==0.8.0`. Download the wheel and
+2. Confirm PyPI exposes exactly `session-peer==0.9.0`. Download the wheel and
    sdist, compare their filenames and SHA-256 hashes with the workflow artifacts,
    and inspect their contents again.
-3. Install 0.8.0 from PyPI into a fresh environment. Confirm the version and a
+3. Install 0.9.0 from PyPI into a fresh environment. Confirm the version and a
    local read-only listing. A no-submit dry-run may use an explicit temporary
    Codex home and executable; expected target failure is acceptable if it proves
    no queue command ran.
-4. Confirm GitHub marks v0.8.0 as latest and `session-peer update --check` reports
+4. Confirm GitHub marks v0.9.0 as latest and `session-peer update --check` reports
    it to an older standalone installation.
 5. Close the release issue only after GitHub, PyPI, fresh-install, and updater
    verification are recorded.
