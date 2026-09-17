@@ -16,6 +16,18 @@ and [GitHub](https://github.com/abruption/session-peer/releases); the old PyPI
 cc-peer project is archived after its final 0.5.1 release.
 See [Moving from cc-peer](#moving-from-cc-peer) for explicit migration steps.
 
+## Support and security
+
+- **Bugs and feature requests:** use the [issue templates](https://github.com/abruption/session-peer/issues/new/choose). Search existing issues first.
+- **Security vulnerabilities:** [report privately](https://github.com/abruption/session-peer/security/advisories/new). See [SECURITY.md](SECURITY.md).
+- **Private questions:** email [support@abruption.dev](mailto:support@abruption.dev?subject=%5Bsession-peer%5D%20Support) with `[session-peer]` in the subject. Email is also an alternative if you cannot use private vulnerability reporting.
+
+Public issues are visible to everyone. Share minimal, redacted reproductions;
+do not attach conversation histories, session databases, authentication files,
+tokens, or private keys. Emails are reviewed manually and are not automatically
+published as issues. Support is best effort with no guaranteed response time.
+English and Korean reports are welcome.
+
 ## Quick start
 
 Install the CLI with `pipx install session-peer` or `uv tool install session-peer`.

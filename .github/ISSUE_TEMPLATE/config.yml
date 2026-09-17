@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/abruption/session-peer/security/advisories/new
+    about: Please do not disclose vulnerabilities in public issues. See SECURITY.md.
+  - name: Private support (English / Korean)
+    url: "mailto:support@abruption.dev?subject=%5Bsession-peer%5D%20Support"
+    about: Include [session-peer] in the subject and send a redacted description. Best-effort support.
