@@ -9,6 +9,7 @@
 **하나의 CLI로 로컬 또는 SSH 원격의 Claude Code·Codex 세션을 찾고 메시지를 보내세요.**
 
 다른 머신의 세션에 변경 검토, 진행 상황 보고, 작업 인계를 요청할 수 있어요.
+예를 들어 SSH 호스트 `worker`의 `api-worker` 세션에 변경 검토를 요청해요.
 각 에이전트의 기본 수신함과 큐를 사용하며, 메시지 처리 방식은 수신 에이전트가 결정해요.
 
 ## 빠른 시작
@@ -21,12 +22,19 @@ pipx install session-peer
 
 session-peer list
 session-peer list --host worker
+```
+
+## 첫 메시지 보내기
+
+아래 이름과 UUID는 가상 예시예요. 먼저 목적지를 조회한 뒤 실제 세션으로 바꿔주세요.
+
+```bash
 session-peer send --to api-worker --message "진행 상황을 알려주세요"
-session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "변경 사항을 검토해주세요"
+session-peer send --host worker --to 'codex:00000000-0000-4000-8000-000000000001' --message "변경 사항을 검토해주세요"
 ```
 
 `worker`는 SSH 호스트 또는 별칭, `api-worker`는 조회한 세션 이름으로 바꿔주세요.
-`<full-thread-uuid>`에는 목적지에서 조회한 전체 스레드 ID를 넣어요.
+예시 UUID는 목적지에서 조회한 전체 스레드 ID로 바꿔주세요.
 목적지에는 Python과 대상 에이전트의 수신함·큐가 필요하지만, SSH 조회·전송을 위해
 session-peer를 별도로 설치할 필요는 없어요.
 
@@ -63,14 +71,14 @@ cd session-peer
 
 ## 선택형 v0.9 기능
 
-v0.9 후보의 [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md)는 기존 TUI 안에서 브리지를 명시적으로 시작해야 해요. 필터 없는 `list`에는 실행 중인 등록 브리지도 표시돼요.
+v0.9.0에서 제공하는 실험 상태의 [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md)는 기존 TUI 안에서 브리지를 명시적으로 시작해야 해요. 필터 없는 `list`에는 실행 중인 등록 브리지도 표시돼요.
 [기기 페어링·암호화 릴레이](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md)는 Unix·Python 3.11 이상·`[relay]` 확장이 필요해요. 기기 신원을 고정하며 대상은 운영자가 명시적으로 허용해야 해요. 자체 호스팅 WSS 릴레이는 메시지를 복호화할 수 없으며 NAT 통과나 호스팅된 공용 서비스는 제공하지 않아요.
-PyPI v0.8.0에는 없는 기능이에요. 게시 전에는 안내에 따라 검토된 후보 wheel을 사용하세요. 일반 로컬·SSH 명령은 외부 의존성 없이 유지돼요.
+릴레이 베타는 `pipx install 'session-peer[relay]'`로 설치해요. Antigravity와 릴레이는 추가 운영 검증이 필요하며 공개가 장기 안정성을 뜻하지는 않아요. 일반 로컬·SSH 명령은 외부 의존성 없이 유지돼요.
 
 ## 전송 전 확인
 
-- 올바른 목적지 계정과 에이전트 홈을 사용하세요. SSH 접근 권한과 수신 세션의 권한이 적용돼요.
-- 일반 전송은 비활성 세션을 깨우지 않아요. 명시적 wake는 에이전트 실행과 사용량 소비를 일으킬 수 있어요.
+- 올바른 목적지 계정과 에이전트 홈을 사용하세요. 사용자 지정 Codex 홈은 조회 결과의 `codexHome` 경로를 `--codex-home`으로 지정해요. SSH 접근 권한과 수신 세션의 권한이 적용돼요.
+- 일반 전송은 비활성 세션을 깨우지 않아요. 명시적 wake는 에이전트 실행과 사용량 소비를 일으킬 수 있으며, MCP에서는 별도 wake 권한이 필요해요.
 - 진단 결과를 공유하기 전에 비밀정보·대화·세션 ID·개인 경로를 가려주세요.
 
 ## 문서

@@ -9,6 +9,7 @@
 **通过一个CLI查找本机或SSH远程主机上的Claude Code与Codex会话，并向其发送消息。**
 
 你可以请另一台机器上的会话审查改动、汇报进度或接手任务。
+例如，请SSH主机`worker`上的`api-worker`会话审查改动。
 session-peer使用代理原生的收件箱和队列，由接收方决定如何处理收到的消息。
 
 ## 快速开始
@@ -21,12 +22,19 @@ pipx install session-peer
 
 session-peer list
 session-peer list --host worker
+```
+
+## 发送第一条消息
+
+以下名称和UUID均为虚构示例。请先查询目标，再替换为实际会话。
+
+```bash
 session-peer send --to api-worker --message "请汇报进度"
-session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "请审查改动"
+session-peer send --host worker --to 'codex:00000000-0000-4000-8000-000000000001' --message "请审查改动"
 ```
 
 将`worker`替换为SSH主机或别名，将`api-worker`替换为查到的会话名称。
-`<full-thread-uuid>`应填写从目标主机查询到的完整线程ID。
+请将示例UUID替换为从目标主机查询到的完整线程ID。
 目标主机需要Python以及目标代理的收件箱或队列，但通过SSH查询和发送消息时，
 无需在目标主机上安装session-peer本身。
 
@@ -63,14 +71,14 @@ Shell安装脚本需要POSIX环境。原生Windows请使用Python包管理器。
 
 ## 可选的v0.9功能
 
-v0.9候选版的[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md)需要在现有TUI内显式启动桥接。未筛选的`list`也会显示正在运行的已注册桥接。
+v0.9.0提供的实验性[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md)需要在现有TUI内显式启动桥接。未筛选的`list`也会显示正在运行的已注册桥接。
 [设备配对与加密中继](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md)需要Unix、Python 3.11以上及`[relay]`扩展。设备身份固定，目标需由维护者显式授权。自托管WSS中继无法解密应用消息；不提供NAT穿透或托管的公共服务。
-PyPI v0.8.0尚不包含这些功能。发布前请按指南使用已审查的候选wheel。普通本地与SSH命令仍不需要第三方依赖。
+使用`pipx install 'session-peer[relay]'`安装中继测试版。Antigravity和中继仍需进一步运行验证，发布并不保证长期稳定性。普通本地与SSH命令仍不需要第三方依赖。
 
 ## 发送前须知
 
-- 使用正确的目标账户和代理主目录。SSH访问权限和接收方权限仍然适用。
-- 普通发送不会启动未运行的会话。显式wake可能启动代理并消耗使用额度。
+- 使用正确的目标账户和代理主目录。自定义Codex主目录请通过`--codex-home`指定查询结果中的`codexHome`路径。SSH访问权限和接收方权限仍然适用。
+- 普通发送不会启动未运行的会话。显式wake可能启动代理并消耗使用额度；在MCP中需要单独的wake权限。
 - 分享诊断结果前，请隐去密钥等敏感信息、对话内容、会话ID和个人路径。
 
 ## 文档
