@@ -128,6 +128,7 @@ jobs:
       - name: Verify optional transport packaging
         run: |
           python -c 'import glob,zipfile; z=zipfile.ZipFile(glob.glob("dist/*.whl")[0]); assert "session_peer_relay/cli.py" in z.namelist(); assert not any(n.startswith("experiments/") for n in z.namelist())'
+          python -c 'import glob,tarfile; t=tarfile.open(glob.glob("dist/*.tar.gz")[0]); assert not any("/experiments/" in n for n in t.getnames())'
       - name: Optional management CLI smoke
         run: |
           session-peer device --help
