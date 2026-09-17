@@ -5,8 +5,6 @@
 [![CI](https://github.com/abruption/session-peer/actions/workflows/ci.yml/badge.svg)](https://github.com/abruption/session-peer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/abruption/session-peer/blob/main/LICENSE)
 
-[下载指标](https://github.com/abruption/session-peer/blob/main/docs/download-metrics.md)不代表用户数，可能包括CI和重复下载。
-
 [English](https://github.com/abruption/session-peer/blob/main/README.md) · [한국어](https://github.com/abruption/session-peer/blob/main/README.ko.md) · [日本語](https://github.com/abruption/session-peer/blob/main/README.ja.md) · **简体中文**
 
 **通过一个CLI查找本机或SSH远程主机上的Claude Code与Codex会话，并向其发送消息。**

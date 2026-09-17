@@ -5,8 +5,6 @@
 [![CI](https://github.com/abruption/session-peer/actions/workflows/ci.yml/badge.svg)](https://github.com/abruption/session-peer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/abruption/session-peer/blob/main/LICENSE)
 
-[ダウンロード指標](https://github.com/abruption/session-peer/blob/main/docs/download-metrics.md)は利用者数ではありません。CIや繰り返しのダウンロードも含まれる場合があります。
-
 [English](https://github.com/abruption/session-peer/blob/main/README.md) · [한국어](https://github.com/abruption/session-peer/blob/main/README.ko.md) · **日本語** · [简体中文](https://github.com/abruption/session-peer/blob/main/README.zh-CN.md)
 
 **ひとつのCLIで、ローカルやSSH接続先のClaude Code・Codexセッションを検索し、メッセージを送信できます。**

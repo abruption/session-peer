@@ -5,8 +5,6 @@
 [![CI](https://github.com/abruption/session-peer/actions/workflows/ci.yml/badge.svg)](https://github.com/abruption/session-peer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/abruption/session-peer/blob/main/LICENSE)
 
-[Download metrics](https://github.com/abruption/session-peer/blob/main/docs/download-metrics.md) count downloads, not users; CI and repeat downloads can contribute.
-
 **English** · [한국어](https://github.com/abruption/session-peer/blob/main/README.ko.md) · [日本語](https://github.com/abruption/session-peer/blob/main/README.ja.md) · [简体中文](https://github.com/abruption/session-peer/blob/main/README.zh-CN.md)
 
 **Find and message Claude Code and Codex sessions, locally or over SSH, from one CLI.**
