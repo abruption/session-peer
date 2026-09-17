@@ -61,6 +61,12 @@ cd session-peer
 オプションのMCPツールにはPython 3.10以上と`session-peer[mcp]`が必要です。
 [詳細な手順](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#install)を参照してください。
 
+## オプションのv0.9機能
+
+v0.9候補の[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md)は、既存TUI内でブリッジを明示的に起動する必要があります。フィルターなしの`list`には稼働中の登録済みブリッジも表示されます。
+[デバイスのペアリング・暗号化リレー](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md)にはUnix、Python 3.11以上、`[relay]`が必要です。デバイスの識別情報を固定し、接続対象は運用者が明示的に許可します。セルフホストのWSSリレーはメッセージを復号できません。NAT越えやホスト済み公開サービスは提供しません。
+PyPI v0.8.0には含まれません。公開まではガイドに従い、レビュー済みの候補wheelを使用してください。通常のローカル・SSHコマンドは外部依存なしで使えます。
+
 ## 送信前の確認
 
 - 正しい接続先アカウントとエージェントのホームを指定してください。SSHと受信側の権限が適用されます。

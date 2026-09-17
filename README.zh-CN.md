@@ -61,6 +61,12 @@ Shell安装脚本需要POSIX环境。原生Windows请使用Python包管理器。
 可选MCP工具需要Python 3.10或更高版本以及`session-peer[mcp]`。
 请参阅[安装详情](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#install)。
 
+## 可选的v0.9功能
+
+v0.9候选版的[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md)需要在现有TUI内显式启动桥接。未筛选的`list`也会显示正在运行的已注册桥接。
+[设备配对与加密中继](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md)需要Unix、Python 3.11以上及`[relay]`扩展。设备身份固定，目标需由维护者显式授权。自托管WSS中继无法解密应用消息；不提供NAT穿透或托管的公共服务。
+PyPI v0.8.0尚不包含这些功能。发布前请按指南使用已审查的候选wheel。普通本地与SSH命令仍不需要第三方依赖。
+
 ## 发送前须知
 
 - 使用正确的目标账户和代理主目录。SSH访问权限和接收方权限仍然适用。

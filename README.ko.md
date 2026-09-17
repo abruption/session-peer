@@ -61,6 +61,12 @@ cd session-peer
 선택형 MCP 도구는 Python 3.10 이상과 `session-peer[mcp]`가 필요해요.
 [설치 상세](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#install)를 참고하세요.
 
+## 선택형 v0.9 기능
+
+v0.9 후보의 [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md)는 기존 TUI 안에서 브리지를 명시적으로 시작해야 해요. 필터 없는 `list`에는 실행 중인 등록 브리지도 표시돼요.
+[기기 페어링·암호화 릴레이](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md)는 Unix·Python 3.11 이상·`[relay]` 확장이 필요해요. 기기 신원을 고정하며 대상은 운영자가 명시적으로 허용해야 해요. 자체 호스팅 WSS 릴레이는 메시지를 복호화할 수 없으며 NAT 통과나 호스팅된 공용 서비스는 제공하지 않아요.
+PyPI v0.8.0에는 없는 기능이에요. 게시 전에는 안내에 따라 검토된 후보 wheel을 사용하세요. 일반 로컬·SSH 명령은 외부 의존성 없이 유지돼요.
+
 ## 전송 전 확인
 
 - 올바른 목적지 계정과 에이전트 홈을 사용하세요. SSH 접근 권한과 수신 세션의 권한이 적용돼요.

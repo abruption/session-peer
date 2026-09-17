@@ -1,0 +1,33 @@
+[Unit]
+Description=session-peer private E2EE relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+ExecStart=/opt/session-peer-relay/venv/bin/session-peer relay serve --accounts %d/accounts.json --bind 127.0.0.1 --port 3769 --seconds 0
+LoadCredential=accounts.json:/etc/session-peer-relay/accounts.json
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+LockPersonality=yes
+RestrictSUIDSGID=yes
+MemoryMax=256M
+CPUQuota=50%
+TasksMax=64
+LimitNOFILE=256
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

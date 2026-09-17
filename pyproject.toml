@@ -37,6 +37,7 @@ Repository = "https://github.com/abruption/session-peer"
 Issues = "https://github.com/abruption/session-peer/issues"
 
 [project.optional-dependencies]
+relay = ["websockets>=17.1,<18; python_version >= '3.11'", "cryptography>=50,<51; python_version >= '3.11'"]
 mcp = ["mcp>=1.12,<2; python_version >= '3.10'"]
 
 [project.scripts]
@@ -48,7 +49,8 @@ path = "session_peer.py"
 pattern = '__version__ = "(?P<version>[^"]+)"'
 
 [tool.hatch.build.targets.sdist]
-include = ["session_peer.py", "session_peer_mcp.py", "LICENSE", "README.md", "README.ko.md", "README.ja.md", "README.zh-CN.md", "docs/cli-reference.md", "docs/mcp.md", "docs/wake.md", "docs/multi-home-list.md", "docs/agent-adapters.md", "docs/architecture/agent-transports.md", "plugins", ".agents/plugins/marketplace.json"]
+exclude = ["/experiments"]
+include = ["session_peer_relay", "session_peer.py", "session_peer_mcp.py", "LICENSE", "README.md", "README.ko.md", "README.ja.md", "README.zh-CN.md", "docs/cli-reference.md", "docs/mcp.md", "docs/wake.md", "docs/multi-home-list.md", "docs/agent-adapters.md", "docs/paired-devices.md", "docs/relay-development-plan.md", "docs/relay-public-pilot-2026-09-17.md", "deploy/session-peer-relay.service", "docs/antigravity.md", "docs/validation/85-antigravity.md", "docs/architecture/agent-transports.md", "plugins", ".agents/plugins/marketplace.json"]
 
 [tool.hatch.build.targets.wheel]
-only-include = ["session_peer.py", "session_peer_mcp.py"]
+only-include = ["session_peer_relay", "session_peer.py", "session_peer_mcp.py"]

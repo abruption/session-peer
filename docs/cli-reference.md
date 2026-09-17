@@ -38,7 +38,7 @@ Install the CLI with `pipx install session-peer` or `uv tool install session-pee
 For the standalone CLI plus Claude skill, see [Install](#install).
 
 ```bash
-session-peer list                              # Claude + Codex sessions (default)
+session-peer list                              # Claude, Codex + registered Antigravity
 session-peer list --agent claude                # Claude-only filter
 session-peer list --agent codex                 # saved Codex threads
 session-peer list --agent codex --host worker   # saved threads on an SSH host
@@ -49,7 +49,8 @@ session-peer send --host worker --to 'codex:<full-thread-uuid>' --dry-run -m "me
 ```
 
 Replace `<full-thread-uuid>` with a full ID from the destination's Codex listing.
-`list` includes both agents by default. **Use
+`list` includes all registered adapters by default. Antigravity lists only live,
+explicitly registered bridges. **Use
 `--agent codex` to filter, not `--codex`**: `--codex` is not a supported flag and is ambiguous
 with `--codex-home` and `--codex-bin`. `send` selects the agent from its target,
 not a `--agent` flag.
@@ -57,6 +58,23 @@ not a `--agent` flag.
 **Posted/queued is not acknowledged.** Saved Codex threads are not necessarily
 running. Plain send does not activate a session; [explicit `--wake`](wake.md)
 is opt-in and does not confirm consumption or a reply.
+
+### Optional paired devices and Antigravity (v0.9 candidate)
+
+These features are not included in published PyPI v0.8.0. Until publication,
+use a reviewed candidate wheel as described in the guides.
+The `[relay]` extra (Unix, Python 3.11+) enables authenticated paired-device
+delivery directly or through a self-hosted WSS relay. Pairing pins device
+identities; a separate operator policy permits individual agent targets and
+operations. The blind relay cannot decrypt application messages. Follow the
+[paired-device setup and operations guide](paired-devices.md) before exposing
+an endpoint. The beta does not provide NAT traversal or a hosted public service.
+
+Antigravity requires an explicitly started bridge inside the existing TUI; see
+[Antigravity setup](antigravity.md). It is opt-in and does not change
+Claude/Codex discovery; live Antigravity registrations also appear in unfiltered
+listing. Normal local and SSH commands retain their standard-library-only
+installation path. See the [v0.9 candidate release notes](releases/v0.9.0.md).
 
 ### Message input and result output
 

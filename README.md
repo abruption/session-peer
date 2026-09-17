@@ -62,6 +62,12 @@ The shell installer requires POSIX; on native Windows use a Python package
 manager. Optional MCP tools require Python 3.10+ and `session-peer[mcp]`.
 See [installation details](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#install).
 
+## Optional v0.9 features
+
+The v0.9 candidate adds [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md) through a bridge explicitly started inside an existing TUI; unfiltered `list` also includes live registered bridges.
+[Paired devices / encrypted relay](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md) require Unix, Python 3.11+ and the `[relay]` extra. Device identities are pinned and targets need explicit operator authorization. The self-hosted WSS relay cannot decrypt application messages; no NAT traversal or hosted public service is provided.
+These features are not in PyPI v0.8.0: use a reviewed candidate wheel as described in the guides until published. Ordinary local/SSH commands remain dependency-free.
+
 ## Before you send
 
 - Use the correct destination account and agent home. SSH access and receiver permissions still apply.
