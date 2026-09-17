@@ -13,8 +13,6 @@ Weekly: `https://api.pepy.tech/badge/session-peer/week` (last 7 days).
 
 ## Interpretation
 
-- Downloads are not unique installations, active users or successful deliveries.
-  CI and repeated downloads can contribute, while client caches reduce counts.
 - These are Pepy aggregates. The public badge documentation does not establish
   the same mirror/CI filtering as PyPI Stats; do not mix the two providers or
   claim excluded CI traffic. See the [PyPA guide](https://packaging.python.org/en/latest/guides/analyzing-pypi-package-downloads/)
@@ -45,8 +43,8 @@ and the original badge previously displayed an upstream-rate-limit error; an
 extra image-cache parameter does not remove the upstream dependency.
 Using curl, both Pepy public endpoints returned HTTP200 and SVG numeric badges
 for session-peer (rounded labels `2k` monthly and `1k` weekly at observation time).
-These observed values are not hardcoded into the README and do not establish
-unique users, exact integer counts or long-term service availability. Initial
+These rounded observations are not hardcoded into the README and do not establish
+exact integer counts or long-term service availability. Initial
 Python urllib requests returned403, so curl results must not be generalized to
 every client. Browser and GitHub image-proxy reachability remain distinct checks.
 
