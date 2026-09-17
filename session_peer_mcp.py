@@ -102,6 +102,19 @@ class Adapter:
     async def list_sessions(self, destination: str = "local", agent: str | None = None,
                             include_inactive: bool = False) -> dict:
         entry = self.authorize(destination, "list", agent)
+        if (agent is None and len(entry["agents"]) > 1
+                and set(entry["agents"]) != set(core.AGENTS.names())):
+            # Do not discover newly registered adapters outside this allowlist.
+            parts = [await self.list_sessions(destination, name, include_inactive)
+                     for name in entry["agents"]]
+            combined = {**parts[0], "ok": all(part.get("ok") is True for part in parts),
+                        "sessions": [row for part in parts for row in part.get("sessions", [])],
+                        "discovery": {name: info for part in parts
+                                      for name, info in part.get("discovery", {}).items()}}
+            errors = [part["error"] for part in parts if part.get("error")]
+            if errors:
+                combined["error"] = "; ".join(errors)
+            return combined
         argv = ["list", *self.route(entry)]
         if agent is None and len(entry["agents"]) == 1:
             agent = entry["agents"][0]
@@ -174,7 +187,7 @@ def create_server(adapter: Adapter):
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
     async def list_sessions(destination: str = "local", agent: str | None = None,
                             include_inactive: bool = False):
-        """List sessions on an operator-configured destination; agent is claude or codex."""
+        """List sessions on an operator-configured destination; agent must be permitted by the destination policy."""
         return await result(adapter.list_sessions(destination, agent, include_inactive))
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,

@@ -1,5 +1,7 @@
 # session-peer
 
+Experimental development: [opt-in Antigravity CLI adapter](docs/antigravity.md) for existing TUI delivery (planned for v0.9.0; not yet released).
+
 [![PyPI](https://img.shields.io/pypi/v/session-peer)](https://pypi.org/project/session-peer/)
 [![CI](https://github.com/abruption/session-peer/actions/workflows/ci.yml/badge.svg)](https://github.com/abruption/session-peer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
