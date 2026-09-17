@@ -17,7 +17,7 @@ class PolicyError(ValueError):
 
 def load_policy(path: str | None) -> dict:
     if path is None:
-        return {"local": {"capabilities": ["list"], "agents": ["claude", "codex"],
+        return {"local": {"capabilities": ["list"], "agents": list(core.AGENTS.names()),
                           "codexHome": str(Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser().resolve())}}
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw, dict) or set(raw) != {"schemaVersion", "destinations"} or raw["schemaVersion"] != 1:
@@ -30,7 +30,7 @@ def load_policy(path: str | None) -> dict:
             raise PolicyError("Invalid destination")
         if set(entry) - {"host", "codexHome", "agents", "capabilities"}:
             raise PolicyError(f"Unknown settings for {name}")
-        for key, allowed in (("agents", {"claude", "codex"}), ("capabilities", {"list", "send", "wake"})):
+        for key, allowed in (("agents", set(core.AGENTS.names())), ("capabilities", {"list", "send", "wake"})):
             values = entry.get(key)
             if not isinstance(values, list) or not values or any(not isinstance(v, str) or v not in allowed for v in values):
                 raise PolicyError(f"Invalid {key} for {name}")
@@ -114,11 +114,11 @@ class Adapter:
     async def send_message(self, destination: str, target: str, message: str,
                            dry_run: bool = False, wake: bool = False, wake_timeout: int = 30) -> dict:
         address = core.parse_reply_address(target)
-        agent = address["agent"] if address else ("codex" if target.startswith("codex:") else "claude")
+        agent = address["agent"] if address else core.AGENTS.for_target(target).name
         entry = self.authorize(destination, "send", agent)
         if wake:
             self.authorize(destination, "wake", agent)
-            if agent != "codex":
+            if not core.AGENTS.get(agent).capabilities.wake:
                 raise PolicyError("wake requires a Codex target")
         if not 1 <= wake_timeout <= 60:
             raise PolicyError("wake_timeout must be between 1 and 60")
@@ -130,12 +130,12 @@ class Adapter:
             if address.get("codexHome") not in (None, entry.get("codexHome")):
                 raise PolicyError("Reply URI home does not match configured destination")
             target = address["target"]
-            if ("codex" if target.startswith("codex:") else "claude") != agent:
+            if core.AGENTS.for_target(target).name != agent:
                 raise PolicyError("Reply URI agent conflicts with target")
         if not target or target.startswith("-") or target.startswith("session-peer:"):
             raise PolicyError("Invalid target")
-        if agent == "codex":
-            core.codex_thread(target)
+        core.AGENTS.get(agent).identity(target, core.ExecutionContext(
+            entry.get("host", "local"), argparse.Namespace(codex_home=entry.get("codexHome"))))
         core.check_message(message, remote=bool(entry.get("host")))
         # Keep the validated URI intact so the CLI retains its self-host
         # normalization and addressResolution metadata. Its host is already

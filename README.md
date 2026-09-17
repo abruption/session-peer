@@ -791,3 +791,11 @@ For opt-in activation of queued Codex sessions, see [explicit wake](docs/wake.md
 
 See [multi-home Codex listing](docs/multi-home-list.md) for candidate sources,
 per-home errors, duplicate UUIDs, and selecting the exact home for send.
+
+### Internal extension architecture
+
+Agent adapters and local/SSH execution share an internal versioned contract while
+retaining the single-file CLI. See [adapter development](docs/agent-adapters.md)
+and the [architecture decision](docs/architecture/agent-transports.md). External
+plugin loading is not available. `doctor.capabilities.agents` describes implemented
+list/send/wake/wait/ack support; it does not grant permission or prove readiness.
