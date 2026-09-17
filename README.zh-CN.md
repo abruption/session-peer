@@ -1,8 +1,11 @@
 # session-peer
 
 [![PyPI](https://img.shields.io/pypi/v/session-peer)](https://pypi.org/project/session-peer/)
+[![PyPI每月下载量](https://img.shields.io/pypi/dm/session-peer?label=PyPI%20downloads%2Fmonth&cacheSeconds=86400)](https://pypistats.org/packages/session-peer)
 [![CI](https://github.com/abruption/session-peer/actions/workflows/ci.yml/badge.svg)](https://github.com/abruption/session-peer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/abruption/session-peer/blob/main/LICENSE)
+
+[下载指标](https://github.com/abruption/session-peer/blob/main/docs/download-metrics.md)不代表用户数，可能包括CI和重复下载。
 
 [English](https://github.com/abruption/session-peer/blob/main/README.md) · [한국어](https://github.com/abruption/session-peer/blob/main/README.ko.md) · [日本語](https://github.com/abruption/session-peer/blob/main/README.ja.md) · **简体中文**
 
