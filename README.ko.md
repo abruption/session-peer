@@ -1,6 +1,8 @@
 # session-peer
 
 [![PyPI](https://img.shields.io/pypi/v/session-peer)](https://pypi.org/project/session-peer/)
+[![PyPI 주간 다운로드](https://api.pepy.tech/badge/session-peer/week)](https://pepy.tech/projects/session-peer)
+[![PyPI 월간 다운로드](https://api.pepy.tech/badge/session-peer/month)](https://pepy.tech/projects/session-peer)
 [![CI](https://github.com/abruption/session-peer/actions/workflows/ci.yml/badge.svg)](https://github.com/abruption/session-peer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/abruption/session-peer/blob/main/LICENSE)
 
