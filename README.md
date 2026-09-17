@@ -1,7 +1,7 @@
 # session-peer
 
 [![PyPI](https://img.shields.io/pypi/v/session-peer)](https://pypi.org/project/session-peer/)
-[![PyPI downloads per month](https://img.shields.io/pypi/dm/session-peer?label=PyPI%20downloads%2Fmonth&cacheSeconds=86400)](https://pypistats.org/packages/session-peer)
+[![PyPI downloads per month](https://api.pepy.tech/badge/session-peer/month)](https://pepy.tech/projects/session-peer)
 [![CI](https://github.com/abruption/session-peer/actions/workflows/ci.yml/badge.svg)](https://github.com/abruption/session-peer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/abruption/session-peer/blob/main/LICENSE)
 
