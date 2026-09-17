@@ -24,7 +24,7 @@ Install the CLI with `pipx install session-peer` or `uv tool install session-pee
 For the standalone CLI plus Claude skill, see [Install](#install).
 
 ```bash
-session-peer list                              # Claude + Codex sessions (default)
+session-peer list                              # Claude, Codex + registered Antigravity
 session-peer list --agent claude                # Claude-only filter
 session-peer list --agent codex                 # saved Codex threads
 session-peer list --agent codex --host worker   # saved threads on an SSH host
@@ -35,7 +35,8 @@ session-peer send --host worker --to 'codex:<full-thread-uuid>' --dry-run -m "me
 ```
 
 Replace `<full-thread-uuid>` with a full ID from the destination's Codex listing.
-`list` includes both agents by default. **Use
+`list` includes all registered adapters by default. Antigravity lists only live,
+explicitly registered bridges. **Use
 `--agent codex` to filter, not `--codex`**: `--codex` is not a supported flag and is ambiguous
 with `--codex-home` and `--codex-bin`. `send` selects the agent from its target,
 not a `--agent` flag.
@@ -55,7 +56,7 @@ an endpoint. The beta does not provide NAT traversal or a hosted public service.
 
 Antigravity requires an explicitly started bridge inside the existing TUI; see
 [Antigravity setup](docs/antigravity.md). It is opt-in and does not change the
-default Claude/Codex listing. Normal local and SSH commands retain their
+Claude/Codex discovery; live Antigravity registrations also appear in unfiltered listing. Normal local and SSH commands retain their
 standard-library-only installation path.
 
 ### Message input and result output

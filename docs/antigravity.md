@@ -1,8 +1,9 @@
 # Antigravity CLI adapter (experimental)
 
 This opt-in adapter is a v0.9.0 development candidate, not a released feature.
-It depends on the internal adapter/transport refactor (#47). Relay work (#69)
-is separate. No version bump or automatic Antigravity installation is included.
+It uses the internal adapter/transport refactor (#47), and can be authorized as
+a target for paired-device delivery (#69). Antigravity itself is never installed
+automatically. Unfiltered listing includes live bridge registrations.
 
 It delivers to an **existing TUI** using a user-started local bridge and the
 [official agentapi interface](https://antigravity.google/docs/sidecars/).
