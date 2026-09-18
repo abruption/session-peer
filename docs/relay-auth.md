@@ -77,7 +77,8 @@ the limit fails closed, including pending operations.
 
 `principal` is a fixed random 64-character lowercase hex device identity, separate
 from the certificate. `operationId` is a UUID v4 retained until the result is
-known. Initial registration requires an absent principal, `keyGeneration=0`,
+known. Initial registration requires a principal equal to the initial certificate DER
+SHA256, an absent device, `keyGeneration=0`,
 and omission of `expectedGeneration`. Renewal requires the existing active same-owner principal,
 `expectedGeneration=current generation` and `keyGeneration=expectedGeneration+1`.
 The server computes/checks the increment; clients cannot choose a jump or rollback.
@@ -245,7 +246,9 @@ The final contract supersedes unpublished candidates 55ff3bb/6815e1e/fae9029
 (SPKI device hash, millisecond challenges, distinct-domain rotate endpoint, 2s/10s
 state). Do not mix old artifacts/clients with this verifier. Startup refuses stored
 SPKI device rows with `contract_migration_required`; it never silently reinterprets
-old device fingerprints or operation history. Use a new isolated candidate state
+old device fingerprints or operation history. A registration schema marker also
+refuses older populated candidate databases without renumbering generations or
+discarding receipts. Use a new isolated candidate state
 or plan an explicit operator-reviewed migration preserving old state. No automatic
 credential/device-state deletion is performed here.
 

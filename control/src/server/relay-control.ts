@@ -84,6 +84,13 @@ export class RelayControl {
       )
       .get() as { n: number };
     assert(legacy.n === 0, "contract_migration_required", 503);
+    db.exec("CREATE TABLE IF NOT EXISTS relay_contract_metadata (name TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    const schema = db.prepare("SELECT value FROM relay_contract_metadata WHERE name='registration'").get() as { value: string } | undefined;
+    if (!schema) {
+      const existing = db.prepare("SELECT (SELECT count(*) FROM relay_devices) + (SELECT count(*) FROM relay_operations) AS n").get() as { n: number };
+      assert(existing.n === 0, "contract_migration_required", 503);
+      db.prepare("INSERT INTO relay_contract_metadata VALUES ('registration','zero_based_v1')").run();
+    } else assert(schema.value === "zero_based_v1", "contract_migration_required", 503);
     const privateDir = privateDirectory(config.dataDir);
     const keyPath = join(privateDir, "signing-key.pem");
     try {
@@ -304,6 +311,7 @@ export class RelayControl {
       );
     } else assert(p.expectedGeneration === undefined && p.keyGeneration === 0, "generation_conflict", 409);
     const next = certificate(p.certificatePEM, this.now());
+    assert(current || p.principal === next.certificateFingerprint, "invalid_initial_principal");
     assert(
       !current ||
         next.certificateFingerprint !== current.certificateFingerprint,
