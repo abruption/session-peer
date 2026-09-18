@@ -1,0 +1,39 @@
+[Unit]
+Description=session-peer control readiness gate (staging candidate)
+Requires=session-peer-control.service
+After=session-peer-control.service
+PartOf=session-peer-control.service session-peer-stack.target
+BindsTo=session-peer-control.service
+
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+DynamicUser=yes
+User=session-peer-readiness
+ExecStart=/usr/bin/python3 /opt/session-peer-infra/check-control-ready.py --state /run/session-peer-auth/state.json --origin https://relay.abruption.dev --port 3770
+BindReadOnlyPaths=/var/lib/private/session-peer-control/relay-public:/run/session-peer-auth
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET
+CapabilityBoundingSet=
+UMask=0077
+MemoryMax=64M
+TasksMax=8
+LimitNOFILE=64
+LimitCORE=0
+TimeoutStartSec=40
+Restart=no
+StandardOutput=journal
+StandardError=journal
+# This separate gate needs loopback connect; do not inherit blind-relay seccomp.
+# No Install section: manual coordinated activation only.
