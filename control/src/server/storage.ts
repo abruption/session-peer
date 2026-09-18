@@ -32,6 +32,7 @@ export function openDatabase(dataDir: string) {
   const db = new Database(path);
   chmodSync(path, 0o600);
   db.pragma("journal_mode = WAL");
+  db.pragma("synchronous = FULL");
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 3000");
   return db;

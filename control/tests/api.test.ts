@@ -365,8 +365,8 @@ it("routes same-principal rotation through authenticated ownership and CSRF guar
   );
   const payload = {
     ...old.payload,
-    expectedGeneration: 1,
-    keyGeneration: 2,
+    expectedGeneration: 0,
+    keyGeneration: 1,
     certificatePEM: next.payload.certificatePEM,
     operationId: randomUUID(),
   };
@@ -386,7 +386,7 @@ it("routes same-principal rotation through authenticated ownership and CSRF guar
   ).toBe(403);
   const result = await f.request(path, req);
   expect(result.status).toBe(201);
-  expect((await result.json()).keyGeneration).toBe(2);
+  expect((await result.json()).keyGeneration).toBe(1);
   expect((await f.request(path, req)).status).toBe(201);
   const op = "/api/relay/operations/" + payload.operationId;
   expect((await f.request(op, undefined, {})).status).toBe(401);
@@ -405,7 +405,7 @@ it("routes same-principal rotation through authenticated ownership and CSRF guar
   expect(await own.json()).toMatchObject({
     operationId: payload.operationId,
     committed: true,
-    keyGeneration: 2,
+    keyGeneration: 1,
   });
   expect(
     (

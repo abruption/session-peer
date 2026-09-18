@@ -87,6 +87,23 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(Rejected, 'device_state_busy'):
             Store(self.client.root, exclusive=True)
 
+    async def test_invalid_receiver_config_releases_lock_even_with_retained_traceback(self):
+        from types import SimpleNamespace
+        from session_peer_relay.cli import manage
+        from session_peer_relay.identity import private_write
+        policy = self.root/'invalid-policy.json'
+        private_write(policy, 'invalid json')
+        args = SimpleNamespace(action='serve', state=str(self.root/'failed-receiver'),
+                               policy=str(policy), bind='127.0.0.1', port=0, relay=None)
+        errors = []
+        for _ in range(2):
+            try:
+                await manage('device', args)
+            except Exception as error:
+                errors.append(error)
+        self.assertEqual(len(errors), 2)
+        self.assertTrue(all(isinstance(e, json.JSONDecodeError) for e in errors))
+
     async def test_backup_restore_is_quarantined_and_keeps_receipts(self):
         from session_peer_relay.lifecycle import backup, restore, diagnostics
         from session_peer_relay.identity import private_write

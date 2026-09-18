@@ -13,7 +13,7 @@ import webbrowser
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from .identity import private_read, private_write
+from .identity import fingerprint, private_read, private_write
 from .store import Rejected
 
 CLIENT_ID = 'session-peer-cli'
@@ -59,7 +59,9 @@ def call(server, path, body=None, token=None):
     if status >= 400:
         error = value.get('error', value.get('code', 'control_request_refused'))
         # Only known protocol errors may reach logs/output; server strings may contain secrets.
-        known = {'authorization_pending', 'slow_down', 'access_denied', 'expired_token', 'invalid_grant', 'invalid_client'}
+        known = {'authorization_pending', 'slow_down', 'access_denied', 'expired_token',
+                 'invalid_grant', 'invalid_client', 'operation_already_committed',
+                 'operation_conflict', 'operation_not_found'}
         raise Rejected(error if error in known else 'control_request_refused')
     return value
 
@@ -126,7 +128,21 @@ def sign(store, message, *, directory=None):
 
 def prove(store, operation, payload, path, previous_directory=None):
     login_state = session(store)
-    challenge = call(login_state['server'], '/api/relay/challenge', {'operation': operation, 'payload': payload}, login_state['token'])
+    try:
+        challenge = call(login_state['server'], '/api/relay/challenge', {'operation': operation, 'payload': payload}, login_state['token'])
+    except Rejected as exc:
+        if operation != 'register' or str(exc) != 'operation_already_committed':
+            raise
+        # The challenge endpoint checks the full original payload digest before
+        # returning this code. Query its durable result instead of signing again.
+        result = call(login_state['server'], '/api/relay/operations/'+payload['operationId'], token=login_state['token'])
+        expected = {'operationId': payload['operationId'], 'principal': payload['principal'],
+                    'keyFingerprint': fingerprint(payload['certificatePEM']),
+                    'keyGeneration': payload['keyGeneration'], 'committed': True}
+        if (result.get("committed") is not True or type(result.get("keyGeneration")) is not int
+                or any(result.get(key) != value for key, value in expected.items())):
+            raise Rejected('invalid_operation_receipt')
+        return result
     message = challenge.get('proofMessage')
     if not isinstance(message, str) or not message.startswith('session-peer-control-v1:') or len(message) > 8192:
         raise Rejected('invalid_control_challenge')
@@ -149,7 +165,9 @@ def enroll(store, name, operation_id=None):
             raise Rejected('previous_key_unavailable')
         previous = store.root/json.loads(row[0])['previousDirectory']
         payload['expectedGeneration'] = store.generation-1
-    return prove(store, 'register', payload, '/api/relay/devices', previous)
+    result = prove(store, 'register', payload, '/api/relay/devices', previous)
+    store.db.execute('INSERT OR REPLACE INTO metadata VALUES("control_name",?)', (name,))
+    return result
 
 
 class DeviceCredential:
@@ -181,7 +199,7 @@ def rotation_credential(store, saved):
         identity_root=store.root/saved['directory'], cert=proposal['certificate'],
         generation=proposal['generation'])
     payload = {'principal': store.device, 'certificatePEM': proposal['certificate'],
-               'keyGeneration': proposal['generation'], 'name': 'session-peer-device',
+               'keyGeneration': proposal['generation'], 'name': saved.get('controlName', 'session-peer-device'),
                'operationId': proposal['id'], 'expectedGeneration': proposal['generation']-1}
     prove(next_identity, 'register', payload, '/api/relay/devices', store.root/saved['previousDirectory'])
     return DeviceCredential(next_identity, None, 'client')

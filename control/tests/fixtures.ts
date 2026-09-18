@@ -44,10 +44,9 @@ export function identity(
   const payload: Registration = {
     principal: character.repeat(64),
     certificatePEM: readFileSync(cert, "utf8"),
-    keyGeneration: 1,
+    keyGeneration: 0,
     name,
     operationId: randomUUID(),
-    expectedGeneration: 0,
   };
   return { payload, privateKey };
 }

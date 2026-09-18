@@ -170,35 +170,35 @@ async def manage(kind, args):
         if args.action == 'serve':
             import fcntl
             lock_fd = os.open(store.root/'receiver.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-            receiver_lock = os.fdopen(lock_fd, 'w')
-            private_path(store.root/'receiver.lock')
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                receiver_lock.close()
-                raise Rejected('receiver_already_running') from None
-            policy = json.loads(private_read(args.policy))
-            receiver = Receiver(store, policy)
-            # Never create a public listener merely because a relay is configured.
-            server = await receiver.listen(args.bind, args.port)
-            task = None
-            try:
-                if args.relay:
-                    validate_relay_url(args.relay)
-                    token = device_credential(args, store, store.device, 'receiver')
-                    if not token:
-                        raise Rejected('admission_file_required')
-                    task = asyncio.create_task(receiver.relay_listener(args.relay, token))
-                emit({'ok': True, 'ready': True, 'device': store.device,
-                      'directPort': server.sockets[0].getsockname()[1],
-                      'relayConfigured': bool(task), 'relayReadyConfirmed': False})
-                await lifetime(args.seconds)
-            finally:
-                if task:
-                    task.cancel(); await asyncio.gather(task, return_exceptions=True)
-                server.close(); await server.wait_closed(); await receiver.close()
-                receiver_lock.close()
-            return {'ok': True, 'stopped': True}
+            with os.fdopen(lock_fd, 'w') as receiver_lock:
+                private_path(store.root/'receiver.lock')
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    receiver_lock.close()
+                    raise Rejected('receiver_already_running') from None
+                policy = json.loads(private_read(args.policy))
+                receiver = Receiver(store, policy)
+                # Never create a public listener merely because a relay is configured.
+                server = await receiver.listen(args.bind, args.port)
+                task = None
+                try:
+                    if args.relay:
+                        validate_relay_url(args.relay)
+                        token = device_credential(args, store, store.device, 'receiver')
+                        if not token:
+                            raise Rejected('admission_file_required')
+                        task = asyncio.create_task(receiver.relay_listener(args.relay, token))
+                    emit({'ok': True, 'ready': True, 'device': store.device,
+                          'directPort': server.sockets[0].getsockname()[1],
+                          'relayConfigured': bool(task), 'relayReadyConfirmed': False})
+                    await lifetime(args.seconds)
+                finally:
+                    if task:
+                        task.cancel(); await asyncio.gather(task, return_exceptions=True)
+                    server.close(); await server.wait_closed(); await receiver.close()
+                    receiver_lock.close()
+                return {'ok': True, 'stopped': True}
         raise Rejected('invalid_command')
     finally:
         store.close()

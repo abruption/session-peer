@@ -12,6 +12,7 @@ import {
   openSync,
   closeSync,
   fsyncSync,
+  fchmodSync,
   renameSync,
   unlinkSync,
   readFileSync,
@@ -62,6 +63,7 @@ export class RelayControl {
   private kid: string;
   private publicJwk: JsonWebKey;
   private publicDir: string;
+  private publicationFloor = 0;
   healthy = true;
   constructor(
     private db: Database.Database,
@@ -129,9 +131,45 @@ export class RelayControl {
         !(st.mode & 0o022),
       "unsafe_public_directory",
     );
+    chmodSync(this.publicDir, 0o755);
+    this.db.exec("CREATE TABLE IF NOT EXISTS relay_public_revision (id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL)");
+    const revision = this.db.prepare("SELECT revision FROM relay_public_revision WHERE id=1").get() as { revision: number } | undefined;
+    if (!revision) {
+      const count = this.db.prepare("SELECT COUNT(*) AS n FROM relay_devices").get() as { n: number };
+      assert(count.n === 0, "contract_migration_required");
+      this.db.prepare("INSERT INTO relay_public_revision VALUES(1,0)").run();
+    }
+    const previous = join(this.publicDir, "state.json");
+    try {
+      const st = lstatSync(previous);
+      assert(st.isFile() && !st.isSymbolicLink() && st.size <= 1024*1024, "unsafe_public_state");
+      const old = JSON.parse(readFileSync(previous, "utf8"));
+      assert(old.schemaVersion === 1 && old.issuer === config.origin && old.audience === config.origin,
+        "control_state_identity_changed");
+      assert(Number.isSafeInteger(old.revision) && old.revision >= 1
+        && old.revision <= (revision?.revision ?? 0), "control_state_rollback");
+      this.publicationFloor = old.revision;
+    } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
     this.publish();
   }
-  publish() {
+  private reserveRevision() {
+    // Autocommit before any mutation or publication: a later rollback must
+    // never reuse a revision that another process may already have observed.
+    try {
+      assert(!this.db.inTransaction, "revision_requires_autocommit");
+      const row = this.db.prepare("UPDATE relay_public_revision SET revision=revision+1 WHERE id=1 AND revision>=0 AND revision<9007199254740991 RETURNING revision").get() as { revision: number } | undefined;
+      assert(row && Number.isSafeInteger(row.revision), "revision_exhausted");
+      return row.revision;
+    } catch {
+      this.healthy = false;
+      throw new ControlError("state_publication_failed", 503);
+    }
+  }
+  publish(reservedRevision?: number) {
+    const revision = reservedRevision ?? this.reserveRevision();
+    const current = this.db.prepare("SELECT revision FROM relay_public_revision WHERE id=1").get() as { revision: number };
+    assert(revision === current.revision && revision > this.publicationFloor, "stale_publication_revision");
+    this.publicationFloor = revision;
     const devices: Record<string, unknown> = {};
     for (const d of this.db
       .prepare("SELECT * FROM relay_devices ORDER BY principal")
@@ -145,6 +183,7 @@ export class RelayControl {
     const now = Math.floor(this.now() / 1000);
     const snapshot = {
       schemaVersion: 1,
+      revision,
       issuer: this.config.origin,
       audience: this.config.origin,
       issuedAt: now,
@@ -165,11 +204,11 @@ export class RelayControl {
       const fd = openSync(temp, "wx", 0o644);
       try {
         writeFileSync(fd, JSON.stringify(snapshot));
+        fchmodSync(fd, 0o644);
         fsyncSync(fd);
       } finally {
         closeSync(fd);
       }
-      chmodSync(temp, 0o644);
       renameSync(temp, path);
       const dirfd = openSync(this.publicDir, "r");
       try {
@@ -251,19 +290,19 @@ export class RelayControl {
       : JSON.parse(row.result);
   }
   private validateRegistration(userId: string, p: Registration) {
-    assert(p.keyGeneration === p.expectedGeneration + 1, "invalid_generation");
     const current = this.db
       .prepare("SELECT * FROM relay_devices WHERE principal=?")
       .get(p.principal) as DeviceRow | undefined;
     if (current) {
       assert(current.userId === userId, "device_not_found", 404);
       assert(!current.revoked, "device_revoked", 403);
+      assert(typeof p.expectedGeneration === "number" && p.keyGeneration === p.expectedGeneration + 1, "invalid_generation");
       assert(
         current.keyGeneration === p.expectedGeneration,
         "generation_conflict",
         409,
       );
-    } else assert(p.expectedGeneration === 0, "generation_conflict", 409);
+    } else assert(p.expectedGeneration === undefined && p.keyGeneration === 0, "generation_conflict", 409);
     const next = certificate(p.certificatePEM, this.now());
     assert(
       !current ||
@@ -373,7 +412,7 @@ export class RelayControl {
       "keyGeneration",
       "name",
       "operationId",
-      "expectedGeneration",
+      ...(Object.hasOwn(o, "expectedGeneration") ? ["expectedGeneration"] : []),
       "challengeId",
       "proof",
       ...(Object.hasOwn(o, "previousKeyProof") ? ["previousKeyProof"] : []),
@@ -392,6 +431,10 @@ export class RelayControl {
           typeof o.previousKeyProof === "string"),
       "invalid_proof",
     );
+    const existing = this.operationRecord(userId, p);
+    assert(existing, "operation_not_found", 404);
+    if (existing.result !== null) return JSON.parse(existing.result);
+    const revision = this.reserveRevision();
     return this.db.transaction(() => {
       const row = this.operationRecord(userId, p);
       assert(row, "operation_not_found", 404);
@@ -418,7 +461,7 @@ export class RelayControl {
             p.certificatePEM,
             next.certificateFingerprint,
             next.keyFingerprint,
-            p.expectedGeneration + 1,
+            p.keyGeneration,
             p.principal,
             userId,
             p.expectedGeneration,
@@ -444,7 +487,7 @@ export class RelayControl {
             next.keyFingerprint,
             next.certificateFingerprint,
             p.certificatePEM,
-            1,
+            0,
             p.name,
           );
         this.db
@@ -456,14 +499,14 @@ export class RelayControl {
         committed: true,
         principal: p.principal,
         keyFingerprint: next.keyFingerprint,
-        keyGeneration: p.expectedGeneration + 1,
+        keyGeneration: p.keyGeneration,
       };
       this.db
         .prepare(
           "UPDATE relay_operations SET result=? WHERE operationId=? AND userId=?",
         )
         .run(JSON.stringify(result), p.operationId, userId);
-      this.publish();
+      this.publish(revision);
       return result;
     })();
   }
@@ -514,6 +557,8 @@ export class RelayControl {
   revoke(userId: string, id: string) {
     principal(id);
     assert(this.healthy, "state_unavailable", 503);
+    this.device(id, userId, false);
+    const revision = this.reserveRevision();
     return this.db.transaction(() => {
       this.device(id, userId, false);
       this.db
@@ -524,7 +569,7 @@ export class RelayControl {
       this.db
         .prepare("DELETE FROM relay_challenges WHERE userId=?")
         .run(userId);
-      this.publish();
+      this.publish(revision);
       return { principal: id, revoked: true };
     })();
   }

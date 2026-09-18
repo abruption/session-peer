@@ -77,8 +77,8 @@ the limit fails closed, including pending operations.
 
 `principal` is a fixed random 64-character lowercase hex device identity, separate
 from the certificate. `operationId` is a UUID v4 retained until the result is
-known. Initial registration requires an absent principal, `expectedGeneration=0`
-and `keyGeneration=1`. Renewal requires the existing active same-owner principal,
+known. Initial registration requires an absent principal, `keyGeneration=0`,
+and omission of `expectedGeneration`. Renewal requires the existing active same-owner principal,
 `expectedGeneration=current generation` and `keyGeneration=expectedGeneration+1`.
 The server computes/checks the increment; clients cannot choose a jump or rollback.
 Maximum generation is 2147483647. Owner, principal and existing name are preserved
@@ -121,7 +121,7 @@ Completed registration and `GET /api/relay/operations/:id` return:
   "committed": true,
   "principal": "<unchanged ID>",
   "keyFingerprint": "<SHA256 certificate DER>",
-  "keyGeneration": 2
+  "keyGeneration": 1
 }
 ```
 
@@ -207,7 +207,7 @@ OAuth login/registration does not replace endpoint E2EE pairing/pin policy.
 ### Atomic public state and contract transition
 
 ```text
-{ schemaVersion: 1, issuer, audience, issuedAt, expiresAt,
+{ schemaVersion: 1, revision, issuer, audience, issuedAt, expiresAt,
   jwks: { keys: [public signing JWK with kid/alg/use] },
   devices: { principal: { userId, keyFingerprint, generation, revoked } } }
 ```
@@ -217,6 +217,19 @@ pseudonymous ownership metadata. No public HTTP route serves the directory.
 Read-only **directory bind**, not a single-file bind, exposes atomic replacements
 without granting access to private DB/signing key/ontology/other service files.
 Do not broaden a DynamicUser parent directory to expose private siblings.
+
+Every publication durably reserves a new safe-integer `revision` in the control
+SQLite database before any device mutation transaction or file replacement.
+Reservations survive mutation rollback; gaps are allowed, reuse is not. SQLite
+uses WAL with synchronous FULL. Startup refuses a counter older than the existing
+public file. Python additionally persists its highest revision and content hash.
+A complete host rollback still needs external recovery fencing; waiting for a
+restored counter to catch up must never be used to revive revoked devices.
+
+The public directory is explicitly 0755, even under umask 0077. Each new state
+file is fchmod 0644 before fsync/rename/directory fsync; its private parent and
+private database/signing material remain protected. Directory bind mounts see
+atomic file replacement without a directory replacement.
 
 State republishes every **60 seconds**, expires at **issuedAt+180 seconds**, and
 publishes immediately on mutation. Python fails closed for missing/malformed/
@@ -330,283 +343,34 @@ Official references (implementation verified against installed 1.7.5 source):
 - https://better-auth.com/docs/plugins/bearer
 - https://better-auth.com/docs/concepts/users-accounts
 
-## Final contract examples — synthetic only
+## Registration examples
 
-사용자 확정 계약에 따른 합성 예제다. 토큰/시간/ID는 합성값이며 운영 인증 응답으로 보고하지 않는다. BetterAuth 1.7.5 설치 소스와 기존 실제 fixture 테스트의 API shape를 기준으로 작성했다. 모든 코드·token·시간·ID는 합성값이다. public certificate와 signature만 격리 fixture에서 생성했으며 private key는 삭제했다. 운영 자격, 실제 JWT, OAuth secret을 포함하지 않는다.
+These abbreviated shapes are illustrative. Obtain a fresh challenge and sign its
+exact returned `proofMessage`; certificate, signature and challenge placeholders
+are not runnable credentials.
 
-모든 issuedAt/expiresAt은 UNIX 초 number다. 초기 expectedGeneration=0/keyGeneration=1; 갱신은 expectedGeneration=current/keyGeneration=current+1. keyGeneration은 서버가 계산/검사한다. 두 경우 operation=register 및 POST /api/relay/devices를 사용한다. operationId는 UUID v4이며 결과 확인까지 고정한다. 갱신 시 previousKeyProof(구키)와 proof(신키)가 동일 서버 proofMessage를 서명한다. 이전 rotate/oldProof/newProof domain API는 최종 계약에서 사용하지 않는다.
+Initial challenge payload (`operation: "register"`):
 
-### 1. BetterAuth device code
-
-```http
-POST /api/auth/device/code
-Content-Type: application/json
-```
-
-Request:
 ```json
 {
-  "client_id": "session-peer-cli"
+  "principal": "<initial certificate DER SHA256>",
+  "certificatePEM": "<device certificate>",
+  "keyGeneration": 0,
+  "name": "laptop",
+  "operationId": "11111111-1111-4111-8111-111111111111"
 }
 ```
 
-Response (200):
-```json
-{
-  "device_code": "SYNTHETIC_DEVICE_CODE_NOT_VALID",
-  "user_code": "ABCD-EFGH",
-  "verification_uri": "https://relay.abruption.dev/device",
-  "verification_uri_complete": "https://relay.abruption.dev/device?user_code=ABCD-EFGH",
-  "expires_in": 300,
-  "interval": 5
-}
-```
+Send that payload plus `challengeId` and new-key `proof` to
+`POST /api/relay/devices`. To rotate for the first time, keep the same principal,
+set `expectedGeneration: 0` and `keyGeneration: 1`, supply the replacement
+certificate and a new, stable rotation operation UUID. Add `previousKeyProof`
+from the old key over the same challenge message. Preserve that operation ID
+through uncertain responses and query its owner-only historical receipt with
+`GET /api/relay/operations/<operationId>`.
 
-### 2. CLI poll (browser login/code 확인 후 명시 승인 필요)
-
-```http
-POST /api/auth/device/token
-Content-Type: application/json
-```
-
-Request:
-```json
-{
-  "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-  "device_code": "SYNTHETIC_DEVICE_CODE_NOT_VALID",
-  "client_id": "session-peer-cli"
-}
-```
-
-Response (200):
-```json
-{
-  "access_token": "SYNTHETIC_SESSION_TOKEN_NOT_VALID",
-  "token_type": "Bearer",
-  "expires_in": 86399,
-  "scope": ""
-}
-```
-
-미승인 poll은 `authorization_pending`, 거절은 `access_denied`, 만료는 `expired_token`; 성공 expires_in은 실제 세션 잔여 초이며 고정86399가 아니다. 반환 access_token은 first-party BetterAuth session token이다.
-
-### 3. 초기 register challenge
-
-```http
-POST /api/relay/challenge
-Content-Type: application/json
-Authorization: Bearer SYNTHETIC_SESSION_TOKEN_NOT_VALID
-```
-
-Request:
-```json
-{
-  "operation": "register",
-  "payload": {
-    "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "certificatePEM": "-----BEGIN CERTIFICATE-----\nMIIBpzCCAU2gAwIBAgIUKa49Xo+kLwTPu8Br3SJKHOs6tnEwCgYIKoZIzj0EAwIw\nKTEnMCUGA1UEAwwec2Vzc2lvbi1wZWVyLXN5bnRoZXRpYy1maXh0dXJlMB4XDTI2\nMDkxODA2NTIyN1oXDTI2MDkyODA2NTIyN1owKTEnMCUGA1UEAwwec2Vzc2lvbi1w\nZWVyLXN5bnRoZXRpYy1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\n92HBlKOEAbVrDiu11KLa+ogz5Ux1EFs0tVxHGZ8RSTXMZbXogQfp6iSu3CQAT1k6\nrMzvQQEQVfnSFA0Nq2ccj6NTMFEwHQYDVR0OBBYEFA6U04cTyhBfA0KJGiRRo12D\nctKpMB8GA1UdIwQYMBaAFA6U04cTyhBfA0KJGiRRo12DctKpMA8GA1UdEwEB/wQF\nMAMBAf8wCgYIKoZIzj0EAwIDSAAwRQIgO7Or4Jqa2uEdzyJuu7ptCcx1+sjECC7I\n2YJohffcZEkCIQCDjCQ27Sul9tUROKwIe0CgA4sYCRXDc8qVBLpglaJqiA==\n-----END CERTIFICATE-----\n",
-    "keyGeneration": 1,
-    "name": "fixture-device",
-    "operationId": "11111111-1111-4111-8111-111111111111",
-    "expectedGeneration": 0
-  }
-}
-```
-
-Response (200):
-```json
-{
-  "challengeId": "22222222-2222-4222-8222-222222222222",
-  "nonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
-  "issuedAt": 1800000000,
-  "expiresAt": 1800000060,
-  "proofMessage": "session-peer-control-v1:\nhttps://relay.abruption.dev\nregister\n22222222-2222-4222-8222-222222222222\nAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\n065ac9504e5651509919860a9e9005d6fefd3ac8290bfa5846e3ebbc2757bfab"
-}
-```
-
-### 4. 초기 register (previousKeyProof 없이)
-
-```http
-POST /api/relay/devices
-Content-Type: application/json
-Authorization: Bearer SYNTHETIC_SESSION_TOKEN_NOT_VALID
-```
-
-Request:
-```json
-{
-  "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "certificatePEM": "-----BEGIN CERTIFICATE-----\nMIIBpzCCAU2gAwIBAgIUKa49Xo+kLwTPu8Br3SJKHOs6tnEwCgYIKoZIzj0EAwIw\nKTEnMCUGA1UEAwwec2Vzc2lvbi1wZWVyLXN5bnRoZXRpYy1maXh0dXJlMB4XDTI2\nMDkxODA2NTIyN1oXDTI2MDkyODA2NTIyN1owKTEnMCUGA1UEAwwec2Vzc2lvbi1w\nZWVyLXN5bnRoZXRpYy1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\n92HBlKOEAbVrDiu11KLa+ogz5Ux1EFs0tVxHGZ8RSTXMZbXogQfp6iSu3CQAT1k6\nrMzvQQEQVfnSFA0Nq2ccj6NTMFEwHQYDVR0OBBYEFA6U04cTyhBfA0KJGiRRo12D\nctKpMB8GA1UdIwQYMBaAFA6U04cTyhBfA0KJGiRRo12DctKpMA8GA1UdEwEB/wQF\nMAMBAf8wCgYIKoZIzj0EAwIDSAAwRQIgO7Or4Jqa2uEdzyJuu7ptCcx1+sjECC7I\n2YJohffcZEkCIQCDjCQ27Sul9tUROKwIe0CgA4sYCRXDc8qVBLpglaJqiA==\n-----END CERTIFICATE-----\n",
-  "keyGeneration": 1,
-  "name": "fixture-device",
-  "operationId": "11111111-1111-4111-8111-111111111111",
-  "expectedGeneration": 0,
-  "challengeId": "22222222-2222-4222-8222-222222222222",
-  "proof": "MEUCIEoLzPVGLD6C4L4qf3hyF0k08pulV-WpeLw6Gr-ruRrBAiEAgc_eYG7iXI8t65rA6I0WYXlzDaAuhnBh74Xdh3hdmBc"
-}
-```
-
-Response (201):
-```json
-{
-  "operationId": "11111111-1111-4111-8111-111111111111",
-  "committed": true,
-  "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "keyFingerprint": "7c9d073898577eb39a163275f7c227aa24e0fb0dab478fd8f3f1d17bdc8dbdae",
-  "keyGeneration": 1
-}
-```
-
-### 5. owner operation 조회
-
-```http
-GET /api/relay/operations/11111111-1111-4111-8111-111111111111
-Content-Type: application/json
-Authorization: Bearer SYNTHETIC_SESSION_TOKEN_NOT_VALID
-```
-
-Response (200):
-```json
-{
-  "operationId": "11111111-1111-4111-8111-111111111111",
-  "committed": true,
-  "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "keyFingerprint": "7c9d073898577eb39a163275f7c227aa24e0fb0dab478fd8f3f1d17bdc8dbdae",
-  "keyGeneration": 1
-}
-```
-
-challenge가 등록한 owner operation의 mutation 전 조회는 `{operationId, committed:false}`다. 없는 ID와 타인의 ID는 모두404다. `committed:true` receipt는 과거 결과이며 현재 폐기/세대는 GET devices로 확인한다. 동일ID 다른payload는409 operation_conflict, tombstone은 부활하지 않는다.
-
-### 6. same principal key 갱신 challenge
-
-```http
-POST /api/relay/challenge
-Content-Type: application/json
-Authorization: Bearer SYNTHETIC_SESSION_TOKEN_NOT_VALID
-```
-
-Request:
-```json
-{
-  "operation": "register",
-  "payload": {
-    "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "certificatePEM": "-----BEGIN CERTIFICATE-----\nMIIBpjCCAU2gAwIBAgIUKQc0iqYoQiyaCmoNO6Qux5zGAvkwCgYIKoZIzj0EAwIw\nKTEnMCUGA1UEAwwec2Vzc2lvbi1wZWVyLXN5bnRoZXRpYy1maXh0dXJlMB4XDTI2\nMDkxODA2NTIyN1oXDTI2MDkyODA2NTIyN1owKTEnMCUGA1UEAwwec2Vzc2lvbi1w\nZWVyLXN5bnRoZXRpYy1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\nV3dkiUlLJLKl/AKNG50R5UgwFj0RDisR7IA2uNClrZxZbKud8Fi8Dt2HaHyycY9E\ntJTrcXsmmk6YfxrgLRWRGqNTMFEwHQYDVR0OBBYEFD+pnfUEswoSaYfpeRSt+bqE\nl4z8MB8GA1UdIwQYMBaAFD+pnfUEswoSaYfpeRSt+bqEl4z8MA8GA1UdEwEB/wQF\nMAMBAf8wCgYIKoZIzj0EAwIDRwAwRAIgYd388lDAsfqrP2MwvyeSHSTgJOlTC52o\nWxd/XSw4l2QCIECk7pesSkht4ULje415Yv48oMjp7Gx5VJnydjW6tHrd\n-----END CERTIFICATE-----\n",
-    "keyGeneration": 2,
-    "name": "fixture-device",
-    "operationId": "33333333-3333-4333-8333-333333333333",
-    "expectedGeneration": 1
-  }
-}
-```
-
-Response (200):
-```json
-{
-  "challengeId": "44444444-4444-4444-8444-444444444444",
-  "nonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
-  "issuedAt": 1800000000,
-  "expiresAt": 1800000060,
-  "proofMessage": "session-peer-control-v1:\nhttps://relay.abruption.dev\nregister\n44444444-4444-4444-8444-444444444444\nAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\n21a005eb78a3bf35c35c5c38e60214e6c9d9ecfd810f6c5b9ae03784a614463b"
-}
-```
-
-### 7. same message에 구키·신키 proof 제출
-
-```http
-POST /api/relay/devices
-Content-Type: application/json
-Authorization: Bearer SYNTHETIC_SESSION_TOKEN_NOT_VALID
-```
-
-Request:
-```json
-{
-  "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "certificatePEM": "-----BEGIN CERTIFICATE-----\nMIIBpjCCAU2gAwIBAgIUKQc0iqYoQiyaCmoNO6Qux5zGAvkwCgYIKoZIzj0EAwIw\nKTEnMCUGA1UEAwwec2Vzc2lvbi1wZWVyLXN5bnRoZXRpYy1maXh0dXJlMB4XDTI2\nMDkxODA2NTIyN1oXDTI2MDkyODA2NTIyN1owKTEnMCUGA1UEAwwec2Vzc2lvbi1w\nZWVyLXN5bnRoZXRpYy1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\nV3dkiUlLJLKl/AKNG50R5UgwFj0RDisR7IA2uNClrZxZbKud8Fi8Dt2HaHyycY9E\ntJTrcXsmmk6YfxrgLRWRGqNTMFEwHQYDVR0OBBYEFD+pnfUEswoSaYfpeRSt+bqE\nl4z8MB8GA1UdIwQYMBaAFD+pnfUEswoSaYfpeRSt+bqEl4z8MA8GA1UdEwEB/wQF\nMAMBAf8wCgYIKoZIzj0EAwIDRwAwRAIgYd388lDAsfqrP2MwvyeSHSTgJOlTC52o\nWxd/XSw4l2QCIECk7pesSkht4ULje415Yv48oMjp7Gx5VJnydjW6tHrd\n-----END CERTIFICATE-----\n",
-  "keyGeneration": 2,
-  "name": "fixture-device",
-  "operationId": "33333333-3333-4333-8333-333333333333",
-  "expectedGeneration": 1,
-  "challengeId": "44444444-4444-4444-8444-444444444444",
-  "previousKeyProof": "MEQCIA5Zy17iMSNDbkyMOO4bBePq5C8iDjNk_Eok604QM3imAiAFjrGDCTd0HPmmZrRaiJ05EaWm4TtMa_E12Z7lQMlr1w",
-  "proof": "MEUCIFzIQwVYkOvqVP8PGf2dJrapd3uXpIqCKpzt-Xq0ixhpAiEA8fq_jf3DTllk43eR3GS-cYlfV4jDKle5e1yf0wBWq30"
-}
-```
-
-Response (201):
-```json
-{
-  "operationId": "33333333-3333-4333-8333-333333333333",
-  "committed": true,
-  "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "keyFingerprint": "3b2bde1e4f2c4b605850afad06655e7619402feb71fa3c28d739bc02f89aed8d",
-  "keyGeneration": 2
-}
-```
-
-### 8. admission challenge
-
-```http
-POST /api/relay/challenge
-Content-Type: application/json
-Authorization: Bearer SYNTHETIC_SESSION_TOKEN_NOT_VALID
-```
-
-Request:
-```json
-{
-  "operation": "admission",
-  "payload": {
-    "role": "receiver",
-    "devicePrincipal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "receiverPrincipal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  }
-}
-```
-
-Response (200):
-```json
-{
-  "challengeId": "55555555-5555-4555-8555-555555555555",
-  "nonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
-  "issuedAt": 1800000000,
-  "expiresAt": 1800000060,
-  "proofMessage": "session-peer-control-v1:\nhttps://relay.abruption.dev\nadmission\n55555555-5555-4555-8555-555555555555\nAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\nd9816e1974bfdff446236e3db7c6b305be75a17978f58c0cb3873267eb83f789"
-}
-```
-
-### 9. admission JWT 발급
-
-```http
-POST /api/relay/admission
-Content-Type: application/json
-Authorization: Bearer SYNTHETIC_SESSION_TOKEN_NOT_VALID
-```
-
-Request:
-```json
-{
-  "role": "receiver",
-  "devicePrincipal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "receiverPrincipal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "challengeId": "55555555-5555-4555-8555-555555555555",
-  "proof": "MEUCIFjtvXtaIzRSp71RB5N31qV1HDQ7cb7yu_d6W-kUzedYAiEA9r-3Xq1qzucZuneFEJkRaeUCkIcb4GmANffMVNOcgZc"
-}
-```
-
-Response (200):
-```json
-{
-  "token": "SYNTHETIC_JWT_NOT_VALID",
-  "expiresAt": 1800000060,
-  "room": "f8f3367b6f76880e8101074990ee03a28af5e301a202ffa5f61f779f3192038d"
-}
-```
-
-JWT 실제본문은 예제/로그로 출력하지 않는다. claims: iss/aud=origin, sub=내부userID, devicePrincipal/receiverPrincipal, keyFingerprint=SHA256(certificate DER), keyGeneration, role, room, iat, exp<=iat+60, jti, cnf.jwk=certificate public EC P256 key. Signing kid는 별도 signing public key 식별자다.
-
-Relay exchange: Bearer JWT + X-Session-Peer-Proof=ECDSA/SHA256 DER base64url of exact UTF8 `session-peer-admission-v1:`+JWT. 이 proof는 control nonce proof와 별개다.
-
-State: schemaVersion1/issuer/audience/jwks/devices 구조 유지. issuedAt UNIX 초, expiresAt=issuedAt+180; 60초마다 atomic 재발행하고 mutation 즉시 발행. Python은 issuedAt>now+5 / expired / malformed / missing을 fail-closed하고 기존 socket을1초마다 재검사한다.
+Initial registration must omit `expectedGeneration`; it is required for rotation.
+Do not infer or silently convert the generation used by older candidates.
+The executable Node/Python fixture in `tests/test_control_integration.py` covers
+registration, admission, revoked credentials, cross-owner rejection and rotation
+with response loss. Seeded fixture sessions are not evidence of actual OAuth.

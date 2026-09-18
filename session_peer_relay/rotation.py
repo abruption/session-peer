@@ -149,6 +149,9 @@ def local_prepare(store, ident):
     proposal['proof'] = base64.b64encode(private.sign(canonical(proposal), ec.ECDSA(hashes.SHA256()))).decode()
     saved = {'proposal': proposal, 'directory': directory, 'status': 'prepared',
              'previousDirectory': str(store.identity_root.relative_to(store.root))}
+    control_name = store.db.execute('SELECT value FROM metadata WHERE key="control_name"').fetchone()
+    if control_name:
+        saved['controlName'] = control_name[0]
     store.db.execute('INSERT OR REPLACE INTO metadata VALUES("local_rotation",?)', (json.dumps(saved),))
     return saved
 

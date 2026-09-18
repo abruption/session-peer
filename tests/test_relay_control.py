@@ -66,3 +66,22 @@ class ControlClient(unittest.IsolatedAsyncioTestCase):
         credential = DeviceCredential(self.store, 'f'*64, 'client')
         with self.assertRaisesRegex(Rejected, 'control_relay_origin_mismatch'):
             credential.headers('wss://different.test/v1/connect')
+
+    async def test_committed_enrollment_queries_receipt_without_new_signature(self):
+        import uuid
+        ident = str(uuid.uuid4())
+        private_write(self.store.root/'login.json', json.dumps({'server': self.server, 'token': 'secret', 'expiresAt': time.time()+600}))
+        receipt = {'operationId': ident, 'committed': True, 'principal': self.store.device,
+                   'keyGeneration': 0, 'keyFingerprint': self.store.key_id}
+        with patch('session_peer_relay.control.call', side_effect=[Rejected('operation_already_committed'), receipt]) as call, \
+             patch('session_peer_relay.control.sign') as sign:
+            self.assertEqual(enroll(self.store, 'test', ident), receipt)
+            self.assertEqual(call.call_args.args[1], '/api/relay/operations/'+ident)
+            sign.assert_not_called()
+        with patch('session_peer_relay.control.call', side_effect=[Rejected('operation_already_committed'), {**receipt, 'keyGeneration': 1}]):
+            with self.assertRaisesRegex(Rejected, 'invalid_operation_receipt'):
+                enroll(self.store, 'test', ident)
+        with patch('session_peer_relay.control.call', side_effect=Rejected('operation_conflict')) as call:
+            with self.assertRaisesRegex(Rejected, 'operation_conflict'):
+                enroll(self.store, 'changed-name', ident)
+            self.assertEqual(call.call_count, 1)

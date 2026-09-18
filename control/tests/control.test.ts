@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   randomUUID,
   sign,
@@ -7,7 +7,7 @@ import {
   createPublicKey,
   X509Certificate,
 } from "node:crypto";
-import { readFileSync, renameSync } from "node:fs";
+import { readFileSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { importJWK, jwtVerify } from "jose";
 import { fixture, identity } from "./fixtures.js";
@@ -15,11 +15,120 @@ import { RelayControl } from "../src/server/relay-control.js";
 import { openDatabase } from "../src/server/storage.js";
 import { certificate, room } from "../src/server/protocol.js";
 let f: Awaited<ReturnType<typeof fixture>> | undefined;
+const publicationFault = vi.hoisted(() => ({ directorySync: false }));
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...fs,
+    fsyncSync(fd: number) {
+      if (publicationFault.directorySync && fs.fstatSync(fd).isDirectory())
+        throw new Error("fixture_directory_sync_failure");
+      fs.fsyncSync(fd);
+    },
+  };
+});
 afterEach(() => {
+  publicationFault.directorySync = false;
   f?.cleanup();
   f = undefined;
 });
 describe("relay device boundary", () => {
+  it("persists increasing state revisions across heartbeats, mutations and new publisher instances", async () => {
+    f = await fixture();
+    const state = () => JSON.parse(readFileSync(join(f!.config.publicDir, "state.json"), "utf8"));
+    expect(state().revision).toBe(1);
+    f.control.publish();
+    expect(state().revision).toBe(2);
+    const d = identity(f.root, "Device", "a");
+    const req = f.proven(f.owner.id, "register", d.payload, d.privateKey);
+    f.control.register(f.owner.id, req);
+    expect(state().revision).toBe(3);
+    f.control.register(f.owner.id, req);
+    expect(state().revision).toBe(3);
+    f.control.revoke(f.owner.id, d.payload.principal);
+    expect(state().revision).toBe(4);
+    const second = openDatabase(f.config.dataDir);
+    try {
+      const restarted = new RelayControl(second, f.config);
+      expect(state().revision).toBe(5);
+      expect(state().devices[d.payload.principal].revoked).toBe(true);
+      restarted.publish();
+      expect(state().revision).toBe(6);
+      expect(second.prepare("SELECT revision FROM relay_public_revision WHERE id=1").get()).toEqual({revision: 6});
+    } finally {
+      second.close();
+    }
+  });
+  it("never reuses a visible revision when directory fsync fails and the device mutation rolls back", async () => {
+    f = await fixture();
+    const d = identity(f.root, "Device", "a");
+    f.control.register(f.owner.id, f.proven(f.owner.id, "register", d.payload, d.privateKey));
+    const path = join(f.config.publicDir, "state.json");
+    const before = JSON.parse(readFileSync(path, "utf8"));
+    publicationFault.directorySync = true;
+    expect(() => f!.control.revoke(f!.owner.id, d.payload.principal)).toThrow("state_publication_failed");
+    const visible = JSON.parse(readFileSync(path, "utf8"));
+    expect(visible.revision).toBe(before.revision + 1);
+    expect(visible.devices[d.payload.principal].revoked).toBe(true);
+    expect(f.control.list(f.owner.id)[0].revoked).toBe(false);
+    expect(f.control.healthy).toBe(false);
+    expect(f.db.prepare("SELECT revision FROM relay_public_revision WHERE id=1").get()).toEqual({revision: visible.revision});
+    publicationFault.directorySync = false;
+    const second = openDatabase(f.config.dataDir);
+    try {
+      new RelayControl(second, f.config);
+      const recovered = JSON.parse(readFileSync(path, "utf8"));
+      expect(recovered.revision).toBeGreaterThan(visible.revision);
+      expect(recovered.devices[d.payload.principal].revoked).toBe(false);
+    } finally {
+      second.close();
+    }
+  });
+  it("fails closed at revision exhaustion without publishing a repeated or unsafe JSON integer", async () => {
+    f = await fixture();
+    const path = join(f.config.publicDir, "state.json");
+    const before = readFileSync(path, "utf8");
+    f.db.prepare("UPDATE relay_public_revision SET revision=? WHERE id=1").run(Number.MAX_SAFE_INTEGER);
+    expect(() => f!.control.publish()).toThrow("state_publication_failed");
+    expect(f.control.healthy).toBe(false);
+    expect(readFileSync(path, "utf8")).toBe(before);
+  });
+  it("publishes cross-UID readable state under umask 0077 without replacing the directory or exposing private state", async () => {
+    const previous = process.umask(0o077);
+    try {
+      f = await fixture();
+      const directory = statSync(f.config.publicDir);
+      const statePath = join(f.config.publicDir, "state.json");
+      const firstFile = statSync(statePath);
+      expect(directory.mode & 0o777).toBe(0o755);
+      expect(firstFile.mode & 0o777).toBe(0o644);
+      expect(statSync(f.config.dataDir).mode & 0o777).toBe(0o700);
+      expect(statSync(join(f.config.dataDir, "control.sqlite")).mode & 0o777).toBe(0o600);
+      expect(statSync(join(f.config.dataDir, "signing-key.pem")).mode & 0o777).toBe(0o600);
+      f.advance(60000);
+      f.control.publish();
+      expect(statSync(f.config.publicDir).ino).toBe(directory.ino);
+      expect(statSync(statePath).ino).not.toBe(firstFile.ino);
+      expect(statSync(statePath).mode & 0o777).toBe(0o644);
+      const state = JSON.parse(readFileSync(statePath, "utf8"));
+      expect(state.expiresAt - state.issuedAt).toBe(180);
+    } finally {
+      process.umask(previous);
+    }
+  });
+  it("refuses a rolled-back or missing database revision instead of overwriting newer public state", async () => {
+    f = await fixture();
+    f.control.publish();
+    const path = join(f.config.publicDir, "state.json");
+    const before = readFileSync(path, "utf8");
+    expect(f.db.pragma("synchronous", { simple: true })).toBe(2);
+    f.db.prepare("UPDATE relay_public_revision SET revision=0 WHERE id=1").run();
+    expect(() => new RelayControl(f!.db, f!.config)).toThrow("control_state_rollback");
+    expect(readFileSync(path, "utf8")).toBe(before);
+    f.db.prepare("DELETE FROM relay_public_revision").run();
+    expect(() => new RelayControl(f!.db, f!.config)).toThrow("control_state_rollback");
+    expect(readFileSync(path, "utf8")).toBe(before);
+  });
   it("registers proof-bound P256 devices and signs a 60s owner/room admission", async () => {
     f = await fixture();
     const d = identity(f.root, "Device", "a");
@@ -171,8 +280,8 @@ describe("relay device boundary", () => {
     const replacement = {
       ...alternate.payload,
       principal: d.payload.principal,
-      keyGeneration: 2,
-      expectedGeneration: 1,
+      keyGeneration: 1,
+      expectedGeneration: 0,
       operationId: randomUUID(),
     };
     expect(() =>
@@ -239,7 +348,7 @@ describe("relay device boundary", () => {
     expect(() =>
       f!.control.challenge(f!.owner.id, {
         operation: "register",
-        payload: { ...d.payload, keyGeneration: 0 },
+        payload: { ...d.payload, keyGeneration: -1 },
       }),
     ).toThrow("invalid_generation");
     expect(() =>
@@ -274,8 +383,8 @@ describe("journaled registration and renewal", () => {
     const payload = {
       ...old.payload,
       certificatePEM: next.payload.certificatePEM,
-      expectedGeneration: 1,
-      keyGeneration: 2,
+      expectedGeneration: 0,
+      keyGeneration: 1,
       operationId: randomUUID(),
     };
     return { old, next, payload };
@@ -301,7 +410,7 @@ describe("journaled registration and renewal", () => {
     const receipt = f!.control.register(f!.owner.id, req);
     expect(receipt).toMatchObject({
       committed: true,
-      keyGeneration: 2,
+      keyGeneration: 1,
       principal: payload.principal,
     });
     expect(f!.control.operation(f!.owner.id, payload.operationId)).toEqual(
@@ -310,7 +419,7 @@ describe("journaled registration and renewal", () => {
     expect(f!.control.register(f!.owner.id, req)).toEqual(receipt);
     expect(f!.control.list(f!.owner.id)[0]).toMatchObject({
       name: "Old",
-      keyGeneration: 2,
+      keyGeneration: 1,
       revoked: false,
       keyFingerprint: certificate(next.payload.certificatePEM).keyFingerprint,
     });
@@ -327,7 +436,7 @@ describe("journaled registration and renewal", () => {
     const state = JSON.parse(
       readFileSync(join(f!.config.publicDir, "state.json"), "utf8"),
     );
-    expect(state.devices[payload.principal].generation).toBe(2);
+    expect(state.devices[payload.principal].generation).toBe(1);
     const a = {
       role: "receiver",
       devicePrincipal: payload.principal,
@@ -347,7 +456,7 @@ describe("journaled registration and renewal", () => {
       accepted.token,
       await importJWK(state.jwks.keys[0], "ES256"),
     );
-    expect(verified.payload.keyGeneration).toBe(2);
+    expect(verified.payload.keyGeneration).toBe(1);
   });
   it("requires the old key and rejects wrong proofs/payloads/owner without committing", async () => {
     const { old, next, payload } = await setup();
@@ -381,7 +490,7 @@ describe("journaled registration and renewal", () => {
     expect(
       f!.control.operation(f!.owner.id, payload.operationId).committed,
     ).toBe(false);
-    expect(f!.control.list(f!.owner.id)[0].keyGeneration).toBe(1);
+    expect(f!.control.list(f!.owner.id)[0].keyGeneration).toBe(0);
   });
   it("rejects stale generation/operation collisions and never revives revoked identities", async () => {
     const { old, next, payload } = await setup();
@@ -395,8 +504,8 @@ describe("journaled registration and renewal", () => {
     expect(() =>
       f!.control.register(f!.owner.id, {
         ...req,
-        expectedGeneration: 2,
-        keyGeneration: 3,
+        expectedGeneration: 1,
+        keyGeneration: 2,
       }),
     ).toThrow("operation_conflict");
     expect(() =>
@@ -407,8 +516,8 @@ describe("journaled registration and renewal", () => {
     ).toThrow("generation_conflict");
     const later = {
       ...payload,
-      expectedGeneration: 2,
-      keyGeneration: 3,
+      expectedGeneration: 1,
+      keyGeneration: 2,
       certificatePEM: old.payload.certificatePEM,
       operationId: randomUUID(),
     };
@@ -454,7 +563,7 @@ describe("journaled registration and renewal", () => {
     expect(() =>
       f!.control.challenge(f!.owner.id, {
         operation: "register",
-        payload: { ...payload, expectedGeneration: 0 },
+        payload: { ...payload, expectedGeneration: 1 },
       }),
     ).toThrow("invalid_generation");
     expect(
@@ -462,7 +571,7 @@ describe("journaled registration and renewal", () => {
         f!.owner.id,
         f!.rotated(f!.owner.id, payload, old.privateKey, next.privateKey),
       ).keyGeneration,
-    ).toBe(2);
+    ).toBe(1);
   });
   it("invalidates old outstanding proofs and refuses tokens issued across a generation change", async () => {
     const { old, next, payload } = await setup();
@@ -497,7 +606,7 @@ describe("journaled registration and renewal", () => {
     expect(() => f!.control.register(f!.owner.id, req)).toThrow(
       "state_publication_failed",
     );
-    expect(f!.control.list(f!.owner.id)[0].keyGeneration).toBe(1);
+    expect(f!.control.list(f!.owner.id)[0].keyGeneration).toBe(0);
     expect(
       f!.control.operation(f!.owner.id, payload.operationId).committed,
     ).toBe(false);

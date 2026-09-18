@@ -70,7 +70,7 @@ export interface Registration {
   keyGeneration: number;
   name: string;
   operationId: string;
-  expectedGeneration: number;
+  expectedGeneration?: number;
 }
 export interface Admission {
   role: "client" | "receiver";
@@ -85,10 +85,10 @@ export function registration(value: unknown): Registration {
     "keyGeneration",
     "name",
     "operationId",
-    "expectedGeneration",
+    ...(Object.hasOwn(o, "expectedGeneration") ? ["expectedGeneration"] : []),
   ]);
   operationId(o.operationId);
-  assert(
+  if (Object.hasOwn(o, "expectedGeneration")) assert(
     Number.isSafeInteger(o.expectedGeneration) &&
       (o.expectedGeneration as number) >= 0 &&
       (o.expectedGeneration as number) < 2147483647,
@@ -101,7 +101,7 @@ export function registration(value: unknown): Registration {
   );
   assert(
     Number.isSafeInteger(o.keyGeneration) &&
-      (o.keyGeneration as number) >= 1 &&
+      (o.keyGeneration as number) >= 0 &&
       (o.keyGeneration as number) <= 2147483647,
     "invalid_generation",
   );
