@@ -67,7 +67,8 @@ export function verifiedGoogleUserInfo(config: Config): GoogleOptions["getUserIn
     if (!profile || profile.data.sub !== verified.sub || profile.user.email !== verified.email
         || profile.user.emailVerified !== verified.email_verified) return null;
     const discovery = config.googleDiscovery;
-    if (!discovery) return profile;
+    if (!discovery) return config.allowlist.some(account =>
+      account.provider === "google" && account.accountId === verified.sub) ? profile : null;
 
     // Request-scoped context, reached only after native state/PKCE code exchange.
     // Direct sign-in with an ID token must never write an operator discovery file.

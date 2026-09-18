@@ -163,11 +163,13 @@ it("rejects tampered OAuth state before token exchange", async () => {
     ).status,
   ).toBe(401);
 });
-it("denies an unallowlisted provider subject without creating a control session", async () => {
+it.each(["github", "google"] as const)("denies an unallowlisted %s subject before creating any user, account or session", async (provider) => {
   await setup("not-allowed");
-  const started = await authorize("github");
+  const before = ["user", "account", "session"].map(table =>
+    f!.db.prepare(`SELECT COUNT(*) AS count FROM "${table}"`).get());
+  const started = await authorize(provider);
   const callback = await f!.request(
-    "/api/auth/callback/github?code=fixture-code&state=" +
+    "/api/auth/callback/"+provider+"?code=fixture-code&state=" +
       encodeURIComponent(started.state),
     undefined,
     { cookie: started.cookie },
@@ -176,6 +178,9 @@ it("denies an unallowlisted provider subject without creating a control session"
   expect(
     f!.db.prepare("SELECT * FROM account WHERE accountId='not-allowed'").get(),
   ).toBeUndefined();
+  expect(f!.db.prepare("SELECT id FROM user WHERE email='oauth@test.invalid'").get()).toBeUndefined();
+  expect(["user", "account", "session"].map(table =>
+    f!.db.prepare(`SELECT COUNT(*) AS count FROM "${table}"`).get())).toEqual(before);
   expect(
     (
       await f!.request("/api/relay/devices", undefined, {

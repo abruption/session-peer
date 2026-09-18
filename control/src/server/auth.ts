@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { betterAuth } from "better-auth";
+import { github } from "@better-auth/core/social-providers";
 import { bearer, deviceAuthorization } from "better-auth/plugins";
 import type { Config } from "./config.js";
 import { verifiedGoogleUserInfo } from "./google-discovery.js";
@@ -25,6 +26,7 @@ export function allowedUser(
   );
 }
 export function createAuth(db: Database.Database, config: Config) {
+  const githubProvider = config.providers.github ? github(config.providers.github) : undefined;
   return betterAuth({
     appName: "session-peer",
     database: db,
@@ -33,7 +35,14 @@ export function createAuth(db: Database.Database, config: Config) {
     secret: config.secret,
     trustedOrigins: [config.origin],
     emailAndPassword: { enabled: false },
-    socialProviders: { ...config.providers, ...(config.providers.google ? {
+    socialProviders: { ...config.providers, ...(githubProvider ? {
+      github: { ...config.providers.github!, getUserInfo: async (tokens: Parameters<typeof githubProvider.getUserInfo>[0]) => {
+        const profile = await githubProvider.getUserInfo(tokens);
+        // Reject before Better Auth creates a user. A denied account-create hook
+        // alone can leave an orphan user (and consume its unique email address).
+        return profile && allowedAccount(config, "github", String(profile.data.id)) ? profile : null;
+      } },
+    } : {}), ...(config.providers.google ? {
       google: { ...config.providers.google, getUserInfo: verifiedGoogleUserInfo(config) },
     } : {}) },
     account: {
