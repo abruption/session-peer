@@ -307,7 +307,7 @@ export class RelayControl {
     const expiresAt = issuedAt + 60;
     const body = canonical(payload);
     const proofMessage = [
-      "session-peer-control-v1",
+      "session-peer-control-v1:",
       this.config.origin,
       o.operation,
       challengeId,
