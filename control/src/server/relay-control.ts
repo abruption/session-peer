@@ -33,7 +33,7 @@ import {
   object,
   principal,
   registration,
-  rotation,
+  operationId,
   room,
   sha256,
   verifyProof,
@@ -72,8 +72,16 @@ export class RelayControl {
    CREATE INDEX IF NOT EXISTS relay_devices_owner ON relay_devices(userId);
    CREATE TABLE IF NOT EXISTS relay_challenges (id TEXT PRIMARY KEY,userId TEXT NOT NULL,operation TEXT NOT NULL,payload TEXT NOT NULL,message TEXT NOT NULL,expiresAt INTEGER NOT NULL);
    CREATE INDEX IF NOT EXISTS relay_challenge_expiry ON relay_challenges(expiresAt);
-   CREATE TABLE IF NOT EXISTS relay_rotation_receipts (operationId TEXT PRIMARY KEY,userId TEXT NOT NULL,requestHash TEXT NOT NULL,result TEXT NOT NULL);
-   CREATE INDEX IF NOT EXISTS relay_rotation_owner ON relay_rotation_receipts(userId);`);
+   CREATE TABLE IF NOT EXISTS relay_operations (operationId TEXT PRIMARY KEY,userId TEXT NOT NULL,requestHash TEXT NOT NULL,result TEXT);
+   CREATE INDEX IF NOT EXISTS relay_operations_owner ON relay_operations(userId);`);
+    // Earlier unpublished candidates stored an SPKI hash under keyFingerprint.
+    // Never reinterpret old live state/receipts silently as certificate DER.
+    const legacy = db
+      .prepare(
+        "SELECT count(*) AS n FROM relay_devices WHERE keyFingerprint<>certificateFingerprint",
+      )
+      .get() as { n: number };
+    assert(legacy.n === 0, "contract_migration_required", 503);
     const privateDir = privateDirectory(config.dataDir);
     const keyPath = join(privateDir, "signing-key.pem");
     try {
@@ -140,7 +148,7 @@ export class RelayControl {
       issuer: this.config.origin,
       audience: this.config.origin,
       issuedAt: now,
-      expiresAt: now + 10,
+      expiresAt: now + 180,
       jwks: {
         keys: [{ ...this.publicJwk, kid: this.kid, alg: "ES256", use: "sig" }],
       },
@@ -201,31 +209,86 @@ export class RelayControl {
     assert(!active || !d.revoked, "device_revoked", 403);
     return d;
   }
+  private operationRecord(userId: string, p: Registration) {
+    const row = this.db
+      .prepare("SELECT * FROM relay_operations WHERE operationId=?")
+      .get(p.operationId) as
+      | { userId: string; requestHash: string; result: string | null }
+      | undefined;
+    if (row)
+      assert(
+        row.userId === userId && row.requestHash === sha256(canonical(p)),
+        "operation_conflict",
+        409,
+      );
+    return row;
+  }
+  private reserveOperation(userId: string, p: Registration) {
+    const row = this.operationRecord(userId, p);
+    if (row) {
+      assert(row.result === null, "operation_already_committed", 409);
+      return;
+    }
+    const count = this.db
+      .prepare("SELECT count(*) AS n FROM relay_operations WHERE userId=?")
+      .get(userId) as { n: number };
+    assert(count.n < 4096, "operation_limit", 409);
+    this.db
+      .prepare("INSERT INTO relay_operations VALUES (?,?,?,NULL)")
+      .run(p.operationId, userId, sha256(canonical(p)));
+  }
+  operation(userId: string, id: string) {
+    operationId(id);
+    const row = this.db
+      .prepare(
+        "SELECT result FROM relay_operations WHERE operationId=? AND userId=?",
+      )
+      .get(id, userId) as { result: string | null } | undefined;
+    // Identical response for an absent ID and another owner's ID.
+    assert(row, "operation_not_found", 404);
+    return row.result === null
+      ? { operationId: id, committed: false }
+      : JSON.parse(row.result);
+  }
+  private validateRegistration(userId: string, p: Registration) {
+    assert(p.keyGeneration === p.expectedGeneration + 1, "invalid_generation");
+    const current = this.db
+      .prepare("SELECT * FROM relay_devices WHERE principal=?")
+      .get(p.principal) as DeviceRow | undefined;
+    if (current) {
+      assert(current.userId === userId, "device_not_found", 404);
+      assert(!current.revoked, "device_revoked", 403);
+      assert(
+        current.keyGeneration === p.expectedGeneration,
+        "generation_conflict",
+        409,
+      );
+    } else assert(p.expectedGeneration === 0, "generation_conflict", 409);
+    const next = certificate(p.certificatePEM, this.now());
+    assert(
+      !current ||
+        next.certificateFingerprint !== current.certificateFingerprint,
+      "unchanged_certificate",
+      409,
+    );
+    return { current, next };
+  }
   challenge(userId: string, input: unknown) {
     const o = object(input);
     fields(o, ["operation", "payload"]);
     assert(
-      o.operation === "register" ||
-        o.operation === "admission" ||
-        o.operation === "rotate",
+      o.operation === "register" || o.operation === "admission",
       "invalid_operation",
     );
     const payload =
       o.operation === "register"
         ? registration(o.payload)
-        : o.operation === "rotate"
-          ? rotation(o.payload)
-          : admission(o.payload);
-    if (o.operation === "register")
-      certificate((payload as Registration).certificatePEM, this.now());
-    else if (o.operation === "rotate") {
-      const p = rotation(payload);
-      this.validateRotation(userId, p);
-      assert(
-        !this.rotationReceipt(userId, p),
-        "operation_already_completed",
-        409,
-      );
+        : admission(o.payload);
+    if (o.operation === "register") {
+      const p = registration(payload);
+      const row = this.operationRecord(userId, p);
+      assert(!row?.result, "operation_already_committed", 409);
+      this.validateRegistration(userId, p);
     } else {
       const a = admission(payload);
       this.device(a.devicePrincipal, userId);
@@ -240,7 +303,8 @@ export class RelayControl {
     assert(count.n < 16, "too_many_challenges", 429);
     const challengeId = randomUUID();
     const nonce = randomBytes(32).toString("base64url");
-    const expiresAt = this.now() + 60000;
+    const issuedAt = Math.floor(this.now() / 1000);
+    const expiresAt = issuedAt + 60;
     const body = canonical(payload);
     const proofMessage = [
       "session-peer-control-v1",
@@ -250,19 +314,21 @@ export class RelayControl {
       nonce,
       sha256(body),
     ].join("\n");
-    this.db
-      .prepare("INSERT INTO relay_challenges VALUES (?,?,?,?,?,?)")
-      .run(challengeId, userId, o.operation, body, proofMessage, expiresAt);
-    return o.operation === "rotate"
-      ? {
+    this.db.transaction(() => {
+      if (o.operation === "register")
+        this.reserveOperation(userId, registration(payload));
+      this.db
+        .prepare("INSERT INTO relay_challenges VALUES (?,?,?,?,?,?)")
+        .run(
           challengeId,
-          nonce,
-          expiresAt,
+          userId,
+          o.operation,
+          body,
           proofMessage,
-          oldProofMessage: proofMessage + "\nold-key",
-          newProofMessage: proofMessage + "\nnew-key",
-        }
-      : { challengeId, nonce, expiresAt, proofMessage };
+          expiresAt * 1000,
+        );
+    })();
+    return { challengeId, nonce, issuedAt, expiresAt, proofMessage };
   }
   private consume(userId: string, operation: string, input: unknown) {
     const o = object(input);
@@ -270,8 +336,12 @@ export class RelayControl {
       typeof o.challengeId === "string" && typeof o.proof === "string",
       "invalid_proof",
     );
+    const excluded =
+      operation === "register"
+        ? ["challengeId", "proof", "previousKeyProof"]
+        : ["challengeId", "proof"];
     const payload = Object.fromEntries(
-      Object.entries(o).filter(([k]) => k !== "challengeId" && k !== "proof"),
+      Object.entries(o).filter(([k]) => !excluded.includes(k)),
     );
     operation === "register" ? registration(payload) : admission(payload);
     const c = this.db
@@ -292,27 +362,76 @@ export class RelayControl {
             .certificatePEM;
     const cert = certificate(pem, this.now());
     verifyProof(c.message, o.proof, cert.key);
-    return { payload, cert, challengeId: c.id };
+    return { payload, cert, challengeId: c.id, proofMessage: c.message };
   }
   register(userId: string, input: unknown) {
     assert(this.healthy, "state_unavailable", 503);
+    const o = object(input);
+    fields(o, [
+      "principal",
+      "certificatePEM",
+      "keyGeneration",
+      "name",
+      "operationId",
+      "expectedGeneration",
+      "challengeId",
+      "proof",
+      ...(Object.hasOwn(o, "previousKeyProof") ? ["previousKeyProof"] : []),
+    ]);
+    const p = registration(
+      Object.fromEntries(
+        Object.entries(o).filter(
+          ([k]) => !["challengeId", "proof", "previousKeyProof"].includes(k),
+        ),
+      ),
+    );
+    assert(
+      typeof o.challengeId === "string" &&
+        typeof o.proof === "string" &&
+        (!Object.hasOwn(o, "previousKeyProof") ||
+          typeof o.previousKeyProof === "string"),
+      "invalid_proof",
+    );
     return this.db.transaction(() => {
-      const proof = this.consume(userId, "register", input);
-      const p = registration(proof.payload);
-      const current = this.db
-        .prepare("SELECT * FROM relay_devices WHERE principal=?")
-        .get(p.principal) as DeviceRow | undefined;
-      if (current)
+      const row = this.operationRecord(userId, p);
+      assert(row, "operation_not_found", 404);
+      // Historical receipt only: no new mutation, proof reexecution or revival.
+      if (row.result !== null) return JSON.parse(row.result);
+      const { current, next } = this.validateRegistration(userId, p);
+      const proof = this.consume(userId, "register", o);
+      if (current) {
         assert(
-          current.userId === userId &&
-            !current.revoked &&
-            current.keyGeneration === p.keyGeneration &&
-            current.certificateFingerprint ===
-              proof.cert.certificateFingerprint,
-          "principal_conflict",
-          409,
+          typeof o.previousKeyProof === "string",
+          "previous_key_proof_required",
         );
-      else {
+        // Only the old stored certificate possession check ignores expiry.
+        verifyProof(
+          proof.proofMessage,
+          o.previousKeyProof,
+          certificate(current.certificatePEM, this.now(), false).key,
+        );
+        const changed = this.db
+          .prepare(
+            "UPDATE relay_devices SET certificatePEM=?,certificateFingerprint=?,keyFingerprint=?,keyGeneration=? WHERE principal=? AND userId=? AND keyGeneration=? AND revoked=0",
+          )
+          .run(
+            p.certificatePEM,
+            next.certificateFingerprint,
+            next.keyFingerprint,
+            p.expectedGeneration + 1,
+            p.principal,
+            userId,
+            p.expectedGeneration,
+          );
+        assert(changed.changes === 1, "generation_conflict", 409);
+        this.db
+          .prepare("DELETE FROM relay_challenges WHERE userId=?")
+          .run(userId);
+      } else {
+        assert(
+          !Object.hasOwn(o, "previousKeyProof"),
+          "unexpected_previous_key_proof",
+        );
         const n = this.db
           .prepare("SELECT count(*) AS n FROM relay_devices WHERE userId=?")
           .get(userId) as { n: number };
@@ -322,150 +441,28 @@ export class RelayControl {
           .run(
             p.principal,
             userId,
-            proof.cert.keyFingerprint,
-            proof.cert.certificateFingerprint,
+            next.keyFingerprint,
+            next.certificateFingerprint,
             p.certificatePEM,
-            p.keyGeneration,
+            1,
             p.name,
           );
+        this.db
+          .prepare("DELETE FROM relay_challenges WHERE id=?")
+          .run(proof.challengeId);
       }
-      this.db
-        .prepare("DELETE FROM relay_challenges WHERE id=?")
-        .run(proof.challengeId);
-      this.publish();
-      return {
-        principal: p.principal,
-        keyFingerprint: proof.cert.keyFingerprint,
-        keyGeneration: p.keyGeneration,
-        revoked: false,
-      };
-    })();
-  }
-  private rotationReceipt(userId: string, p: ReturnType<typeof rotation>) {
-    const row = this.db
-      .prepare("SELECT * FROM relay_rotation_receipts WHERE operationId=?")
-      .get(p.operationId) as
-      { userId: string; requestHash: string; result: string } | undefined;
-    if (!row) return undefined;
-    assert(
-      row.userId === userId && row.requestHash === sha256(canonical(p)),
-      "operation_conflict",
-      409,
-    );
-    return JSON.parse(row.result) as {
-      operationId: string;
-      principal: string;
-      keyFingerprint: string;
-      keyGeneration: number;
-      completed: true;
-    };
-  }
-  private validateRotation(userId: string, p: ReturnType<typeof rotation>) {
-    const current = this.device(p.principal, userId);
-    assert(
-      current.keyGeneration === p.expectedGeneration,
-      "generation_conflict",
-      409,
-    );
-    const next = certificate(p.newCertificatePEM, this.now());
-    assert(
-      next.certificateFingerprint !== current.certificateFingerprint,
-      "unchanged_certificate",
-      409,
-    );
-    return { current, next };
-  }
-  rotate(userId: string, id: string, input: unknown) {
-    principal(id);
-    assert(this.healthy, "state_unavailable", 503);
-    const o = object(input);
-    fields(o, [
-      "principal",
-      "expectedGeneration",
-      "newCertificatePEM",
-      "operationId",
-      "challengeId",
-      "oldProof",
-      "newProof",
-    ]);
-    const p = rotation(
-      Object.fromEntries(
-        Object.entries(o).filter(
-          ([k]) => !["challengeId", "oldProof", "newProof"].includes(k),
-        ),
-      ),
-    );
-    assert(p.principal === id, "principal_mismatch");
-    assert(
-      typeof o.challengeId === "string" &&
-        typeof o.oldProof === "string" &&
-        typeof o.newProof === "string",
-      "invalid_proof",
-    );
-    return this.db.transaction(() => {
-      // A completed retry returns a historical receipt only. It cannot modify a
-      // device, revive a tombstone, or require reexecution after a lost response.
-      this.device(id, userId, false);
-      const receipt = this.rotationReceipt(userId, p);
-      if (receipt) return receipt;
-      const { current, next } = this.validateRotation(userId, p);
-      const c = this.db
-        .prepare("SELECT * FROM relay_challenges WHERE id=?")
-        .get(o.challengeId) as ChallengeRow | undefined;
-      assert(
-        c &&
-          c.userId === userId &&
-          c.operation === "rotate" &&
-          c.expiresAt > this.now() &&
-          c.payload === canonical(p),
-        "invalid_or_expired_challenge",
-      );
-      // An expired stored certificate still identifies the old key for renewal;
-      // only this possession check ignores dates. New certs/admission do not.
-      verifyProof(
-        c.message + "\nold-key",
-        o.oldProof,
-        certificate(current.certificatePEM, this.now(), false).key,
-      );
-      verifyProof(c.message + "\nnew-key", o.newProof, next.key);
-      const count = this.db
-        .prepare(
-          "SELECT count(*) AS n FROM relay_rotation_receipts WHERE userId=?",
-        )
-        .get(userId) as { n: number };
-      assert(count.n < 4096, "rotation_receipt_limit", 409);
       const result = {
         operationId: p.operationId,
-        principal: id,
+        committed: true,
+        principal: p.principal,
         keyFingerprint: next.keyFingerprint,
-        keyGeneration: current.keyGeneration + 1,
-        completed: true as const,
+        keyGeneration: p.expectedGeneration + 1,
       };
       this.db
         .prepare(
-          "UPDATE relay_devices SET certificatePEM=?,certificateFingerprint=?,keyFingerprint=?,keyGeneration=? WHERE principal=? AND userId=? AND keyGeneration=? AND revoked=0",
+          "UPDATE relay_operations SET result=? WHERE operationId=? AND userId=?",
         )
-        .run(
-          p.newCertificatePEM,
-          next.certificateFingerprint,
-          next.keyFingerprint,
-          result.keyGeneration,
-          id,
-          userId,
-          p.expectedGeneration,
-        );
-      this.db
-        .prepare("INSERT INTO relay_rotation_receipts VALUES (?,?,?,?)")
-        .run(
-          p.operationId,
-          userId,
-          sha256(canonical(p)),
-          JSON.stringify(result),
-        );
-      // Invalidate outstanding proofs from the old generation, including races.
-      this.db
-        .prepare("DELETE FROM relay_challenges WHERE userId=?")
-        .run(userId);
+        .run(JSON.stringify(result), p.operationId, userId);
       this.publish();
       return result;
     })();

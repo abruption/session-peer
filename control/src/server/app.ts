@@ -172,6 +172,9 @@ export function createApp(
       const userId = session.user.id;
       if (path === "/api/relay/devices" && request.method === "GET")
         return json({ devices: control.list(userId) });
+      const operation = /^\/api\/relay\/operations\/([a-f0-9-]+)$/.exec(path);
+      if (operation && request.method === "GET")
+        return json(control.operation(userId, operation[1]));
       if (request.method === "POST") {
         assert(
           request.headers.get("content-type")?.split(";")[0] ===
@@ -193,10 +196,6 @@ export function createApp(
           return json(control.register(userId, body), 201);
         if (path === "/api/relay/admission")
           return json(await control.admit(userId, body));
-        const rotate = /^\/api\/relay\/devices\/([a-f0-9]{64})\/rotate$/.exec(
-          path,
-        );
-        if (rotate) return json(control.rotate(userId, rotate[1], body));
         const revoke = /^\/api\/relay\/devices\/([a-f0-9]{64})\/revoke$/.exec(
           path,
         );

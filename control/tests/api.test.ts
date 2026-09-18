@@ -59,6 +59,16 @@ it("issues first-party device session only after code verification and explicit 
   );
   expect(issued.status).toBe(200);
   const code = await issued.json();
+  expect(Object.keys(code).sort()).toEqual([
+    "device_code",
+    "expires_in",
+    "interval",
+    "user_code",
+    "verification_uri",
+    "verification_uri_complete",
+  ]);
+  expect(code.expires_in).toBe(300);
+  expect(code.interval).toBe(5);
   const poll = {
     grant_type: "urn:ietf:params:oauth:grant-type:device_code",
     device_code: code.device_code,
@@ -88,6 +98,14 @@ it("issues first-party device session only after code verification and explicit 
   const tokenResponse = await f.request("/api/auth/device/token", poll, {});
   expect(tokenResponse.status).toBe(200);
   const token = await tokenResponse.json();
+  expect(Object.keys(token).sort()).toEqual([
+    "access_token",
+    "expires_in",
+    "scope",
+    "token_type",
+  ]);
+  expect(token.token_type).toBe("Bearer");
+  expect(Number.isSafeInteger(token.expires_in)).toBe(true);
   expect(token.access_token).toBeTruthy();
   expect(
     (
@@ -332,17 +350,18 @@ it("routes same-principal rotation through authenticated ownership and CSRF guar
     f.proven(f.owner.id, "register", old.payload, old.privateKey),
   );
   const payload = {
-    principal: old.payload.principal,
+    ...old.payload,
     expectedGeneration: 1,
-    newCertificatePEM: next.payload.certificatePEM,
+    keyGeneration: 2,
+    certificatePEM: next.payload.certificatePEM,
     operationId: randomUUID(),
   };
   const req = f.rotated(f.owner.id, payload, old.privateKey, next.privateKey);
-  const path = "/api/relay/devices/" + payload.principal + "/rotate";
+  const path = "/api/relay/devices";
   expect((await f.request(path, req, { origin: f.config.origin })).status).toBe(
     401,
   );
-  expect((await f.request(path, req, f.otherHeaders)).status).toBe(404);
+  expect((await f.request(path, req, f.otherHeaders)).status).toBe(409);
   expect(
     (
       await f.request(path, req, {
@@ -352,7 +371,34 @@ it("routes same-principal rotation through authenticated ownership and CSRF guar
     ).status,
   ).toBe(403);
   const result = await f.request(path, req);
-  expect(result.status).toBe(200);
+  expect(result.status).toBe(201);
   expect((await result.json()).keyGeneration).toBe(2);
-  expect((await f.request(path, req)).status).toBe(200);
+  expect((await f.request(path, req)).status).toBe(201);
+  const op = "/api/relay/operations/" + payload.operationId;
+  expect((await f.request(op, undefined, {})).status).toBe(401);
+  expect((await f.request(op, undefined, f.otherHeaders)).status).toBe(404);
+  expect(
+    (
+      await f.request(
+        "/api/relay/operations/" + randomUUID(),
+        undefined,
+        f.otherHeaders,
+      )
+    ).status,
+  ).toBe(404);
+  const own = await f.request(op);
+  expect(own.status).toBe(200);
+  expect(await own.json()).toMatchObject({
+    operationId: payload.operationId,
+    committed: true,
+    keyGeneration: 2,
+  });
+  expect(
+    (
+      await f.request(
+        "/api/relay/devices/" + payload.principal + "/rotate",
+        req,
+      )
+    ).status,
+  ).toBe(404);
 });

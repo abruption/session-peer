@@ -5,11 +5,14 @@ import {
   verify,
   createHash,
   createPublicKey,
+  X509Certificate,
 } from "node:crypto";
 import { readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { importJWK, jwtVerify } from "jose";
 import { fixture, identity } from "./fixtures.js";
+import { RelayControl } from "../src/server/relay-control.js";
+import { openDatabase } from "../src/server/storage.js";
 import { certificate, room } from "../src/server/protocol.js";
 let f: Awaited<ReturnType<typeof fixture>> | undefined;
 afterEach(() => {
@@ -93,9 +96,17 @@ describe("relay device boundary", () => {
         Buffer.from(relayProof, "base64url"),
       ),
     ).toBe(false);
+    const cert = new X509Certificate(d.payload.certificatePEM);
     expect(state.devices[d.payload.principal].keyFingerprint).toBe(
-      certificate(d.payload.certificatePEM).keyFingerprint,
+      createHash("sha256").update(cert.raw).digest("hex"),
     );
+    expect(state.devices[d.payload.principal].keyFingerprint).not.toBe(
+      createHash("sha256")
+        .update(cert.publicKey.export({ format: "der", type: "spki" }))
+        .digest("hex"),
+    );
+    expect(state.expiresAt - state.issuedAt).toBe(180);
+    expect(state.issuedAt).toBeLessThan(100000000000);
     expect(JSON.stringify(state)).not.toMatch(
       /email|certificatePEM|PRIVATE KEY|token/i,
     );
@@ -106,18 +117,22 @@ describe("relay device boundary", () => {
     const req = f.proven(f.owner.id, "register", d.payload, d.privateKey);
     expect(() =>
       f!.control.register(f!.owner.id, { ...req, name: "changed" }),
-    ).toThrow("invalid_or_expired_challenge");
+    ).toThrow("operation_conflict");
     expect(() => f!.control.register(f!.other.id, req)).toThrow(
-      "invalid_or_expired_challenge",
+      "operation_conflict",
     );
     expect(() =>
       f!.control.register(f!.owner.id, { ...req, proof: "bad" }),
     ).toThrow("invalid_proof");
     f.control.register(f.owner.id, req);
-    expect(() => f!.control.register(f!.owner.id, req)).toThrow(
-      "invalid_or_expired_challenge",
+    expect(f.control.register(f.owner.id, req).committed).toBe(true);
+    const expired = identity(f.root, "Expired", "c");
+    const late = f.proven(
+      f.owner.id,
+      "register",
+      expired.payload,
+      expired.privateKey,
     );
-    const late = f.proven(f.owner.id, "register", d.payload, d.privateKey);
     f.advance(60001);
     expect(() => f!.control.register(f!.owner.id, late)).toThrow(
       "invalid_or_expired_challenge",
@@ -145,20 +160,27 @@ describe("relay device boundary", () => {
     expect(() =>
       f!.control.register(
         f!.other.id,
-        f!.proven(f!.other.id, "register", d.payload, d.privateKey),
+        f!.proven(
+          f!.other.id,
+          "register",
+          { ...d.payload, operationId: randomUUID() },
+          d.privateKey,
+        ),
       ),
-    ).toThrow("principal_conflict");
+    ).toThrow("device_not_found");
     const replacement = {
       ...alternate.payload,
       principal: d.payload.principal,
       keyGeneration: 2,
+      expectedGeneration: 1,
+      operationId: randomUUID(),
     };
     expect(() =>
       f!.control.register(
         f!.owner.id,
         f!.proven(f!.owner.id, "register", replacement, alternate.privateKey),
       ),
-    ).toThrow("principal_conflict");
+    ).toThrow("previous_key_proof_required");
   });
   it("revokes without the lost key, retains a tombstone and rejects future admission/re-register", async () => {
     f = await fixture();
@@ -188,9 +210,14 @@ describe("relay device boundary", () => {
     expect(() =>
       f!.control.register(
         f!.owner.id,
-        f!.proven(f!.owner.id, "register", d.payload, d.privateKey),
+        f!.proven(
+          f!.owner.id,
+          "register",
+          { ...d.payload, operationId: randomUUID() },
+          d.privateKey,
+        ),
       ),
-    ).toThrow("principal_conflict");
+    ).toThrow("device_revoked");
   });
   it("rolls back revocation if atomic state publication fails and returns failure", async () => {
     f = await fixture();
@@ -235,7 +262,7 @@ describe("relay device boundary", () => {
   });
 });
 
-describe("same-principal rotation", () => {
+describe("journaled registration and renewal", () => {
   async function setup() {
     f = await fixture();
     const old = identity(f.root, "Old", "a");
@@ -245,14 +272,15 @@ describe("same-principal rotation", () => {
       f.proven(f.owner.id, "register", old.payload, old.privateKey),
     );
     const payload = {
-      principal: old.payload.principal,
+      ...old.payload,
+      certificatePEM: next.payload.certificatePEM,
       expectedGeneration: 1,
-      newCertificatePEM: next.payload.certificatePEM,
+      keyGeneration: 2,
       operationId: randomUUID(),
     };
     return { old, next, payload };
   }
-  it("requires both keys, increments once, keeps identity/owner/name and reconciles a lost response", async () => {
+  it("increments once with same-message old/new proofs and exposes owner-only durable receipts", async () => {
     const { old, next, payload } = await setup();
     const req = f!.rotated(
       f!.owner.id,
@@ -260,26 +288,42 @@ describe("same-principal rotation", () => {
       old.privateKey,
       next.privateKey,
     );
-    const receipt = f!.control.rotate(f!.owner.id, payload.principal, req);
-    expect(receipt.keyGeneration).toBe(2);
-    expect(f!.control.rotate(f!.owner.id, payload.principal, req)).toEqual(
+    expect(f!.control.operation(f!.owner.id, payload.operationId)).toEqual({
+      operationId: payload.operationId,
+      committed: false,
+    });
+    expect(() =>
+      f!.control.operation(f!.other.id, payload.operationId),
+    ).toThrow("operation_not_found");
+    expect(() => f!.control.operation(f!.other.id, randomUUID())).toThrow(
+      "operation_not_found",
+    );
+    const receipt = f!.control.register(f!.owner.id, req);
+    expect(receipt).toMatchObject({
+      committed: true,
+      keyGeneration: 2,
+      principal: payload.principal,
+    });
+    expect(f!.control.operation(f!.owner.id, payload.operationId)).toEqual(
       receipt,
     );
+    expect(f!.control.register(f!.owner.id, req)).toEqual(receipt);
     expect(f!.control.list(f!.owner.id)[0]).toMatchObject({
-      principal: payload.principal,
       name: "Old",
       keyGeneration: 2,
       revoked: false,
       keyFingerprint: certificate(next.payload.certificatePEM).keyFingerprint,
     });
-    expect(f!.control.list(f!.other.id)).toEqual([]);
-    expect(
-      (
-        f!.db
-          .prepare("SELECT count(*) n FROM relay_rotation_receipts")
-          .get() as any
-      ).n,
-    ).toBe(1);
+    const secondDb = openDatabase(f!.config.dataDir);
+    try {
+      const restarted = new RelayControl(secondDb, f!.config);
+      expect(restarted.operation(f!.owner.id, payload.operationId)).toEqual(
+        receipt,
+      );
+      expect(restarted.register(f!.owner.id, req)).toEqual(receipt);
+    } finally {
+      secondDb.close();
+    }
     const state = JSON.parse(
       readFileSync(join(f!.config.publicDir, "state.json"), "utf8"),
     );
@@ -289,10 +333,12 @@ describe("same-principal rotation", () => {
       devicePrincipal: payload.principal,
       receiverPrincipal: payload.principal,
     };
-    const wrong = f!.proven(f!.owner.id, "admission", a, old.privateKey);
-    await expect(f!.control.admit(f!.owner.id, wrong)).rejects.toThrow(
-      "invalid_proof",
-    );
+    await expect(
+      f!.control.admit(
+        f!.owner.id,
+        f!.proven(f!.owner.id, "admission", a, old.privateKey),
+      ),
+    ).rejects.toThrow("invalid_proof");
     const accepted = await f!.control.admit(
       f!.owner.id,
       f!.proven(f!.owner.id, "admission", a, next.privateKey),
@@ -303,53 +349,41 @@ describe("same-principal rotation", () => {
     );
     expect(verified.payload.keyGeneration).toBe(2);
   });
-  it("rejects login-only replacement, swapped proof domains, payload changes, wrong owner and route", async () => {
+  it("requires the old key and rejects wrong proofs/payloads/owner without committing", async () => {
     const { old, next, payload } = await setup();
     const req = f!.rotated(
       f!.owner.id,
       payload,
       old.privateKey,
       next.privateKey,
+    );
+    const { previousKeyProof, ...loginOnly } = req;
+    expect(() => f!.control.register(f!.owner.id, loginOnly)).toThrow(
+      "previous_key_proof_required",
     );
     for (const bad of [
-      { ...req, oldProof: "bad" },
-      { ...req, newProof: "bad" },
-      { ...req, oldProof: req.newProof, newProof: req.oldProof },
+      { ...req, previousKeyProof: "bad" },
+      { ...req, proof: "bad" },
+      { ...req, previousKeyProof: req.proof },
     ])
-      expect(() =>
-        f!.control.rotate(f!.owner.id, payload.principal, bad),
-      ).toThrow("invalid_proof");
+      expect(() => f!.control.register(f!.owner.id, bad)).toThrow(
+        "invalid_proof",
+      );
+    expect(() => f!.control.register(f!.other.id, req)).toThrow(
+      "operation_conflict",
+    );
     expect(() =>
-      f!.control.rotate(f!.other.id, payload.principal, req),
-    ).toThrow("device_not_found");
+      f!.control.register(f!.owner.id, { ...req, name: "changed" }),
+    ).toThrow("operation_conflict");
     expect(() =>
-      f!.control.rotate(f!.owner.id, next.payload.principal, req),
-    ).toThrow("principal_mismatch");
-    expect(() =>
-      f!.control.rotate(f!.owner.id, payload.principal, {
-        ...req,
-        operationId: randomUUID(),
-      }),
-    ).toThrow("invalid_or_expired_challenge");
-    const c = f!.control.challenge(f!.owner.id, {
-      operation: "rotate",
-      payload,
-    });
-    const undomained = sign(
-      "sha256",
-      Buffer.from(c.proofMessage),
-      old.privateKey,
-    ).toString("base64url");
-    expect(() =>
-      f!.control.rotate(f!.owner.id, payload.principal, {
-        ...req,
-        challengeId: c.challengeId,
-        oldProof: undomained,
-      }),
-    ).toThrow("invalid_proof");
+      f!.control.register(f!.owner.id, { ...req, operationId: randomUUID() }),
+    ).toThrow("operation_not_found");
+    expect(
+      f!.control.operation(f!.owner.id, payload.operationId).committed,
+    ).toBe(false);
     expect(f!.control.list(f!.owner.id)[0].keyGeneration).toBe(1);
   });
-  it("rejects stale generation, conflicting operation ID, expired challenges and revoked retries without revival", async () => {
+  it("rejects stale generation/operation collisions and never revives revoked identities", async () => {
     const { old, next, payload } = await setup();
     const req = f!.rotated(
       f!.owner.id,
@@ -357,23 +391,25 @@ describe("same-principal rotation", () => {
       old.privateKey,
       next.privateKey,
     );
-    const receipt = f!.control.rotate(f!.owner.id, payload.principal, req);
+    const receipt = f!.control.register(f!.owner.id, req);
     expect(() =>
-      f!.control.rotate(f!.owner.id, payload.principal, {
+      f!.control.register(f!.owner.id, {
         ...req,
         expectedGeneration: 2,
+        keyGeneration: 3,
       }),
     ).toThrow("operation_conflict");
     expect(() =>
       f!.control.challenge(f!.owner.id, {
-        operation: "rotate",
+        operation: "register",
         payload: { ...payload, operationId: randomUUID() },
       }),
     ).toThrow("generation_conflict");
     const later = {
       ...payload,
       expectedGeneration: 2,
-      newCertificatePEM: old.payload.certificatePEM,
+      keyGeneration: 3,
+      certificatePEM: old.payload.certificatePEM,
       operationId: randomUUID(),
     };
     const late = f!.rotated(
@@ -383,48 +419,52 @@ describe("same-principal rotation", () => {
       old.privateKey,
     );
     f!.advance(60001);
-    expect(() =>
-      f!.control.rotate(f!.owner.id, payload.principal, late),
-    ).toThrow("invalid_or_expired_challenge");
+    expect(() => f!.control.register(f!.owner.id, late)).toThrow(
+      "invalid_or_expired_challenge",
+    );
     f!.control.revoke(f!.owner.id, payload.principal);
-    expect(f!.control.rotate(f!.owner.id, payload.principal, req)).toEqual(
+    expect(f!.control.register(f!.owner.id, req)).toEqual(receipt);
+    expect(f!.control.operation(f!.owner.id, payload.operationId)).toEqual(
       receipt,
     );
     expect(f!.control.list(f!.owner.id)[0].revoked).toBe(true);
-    expect(() =>
-      f!.control.rotate(f!.owner.id, payload.principal, late),
-    ).toThrow("device_revoked");
+    expect(() => f!.control.register(f!.owner.id, late)).toThrow(
+      "device_revoked",
+    );
     expect(() =>
       f!.control.challenge(f!.owner.id, {
-        operation: "rotate",
+        operation: "register",
         payload: later,
       }),
     ).toThrow("device_revoked");
-    const state = JSON.parse(
-      readFileSync(join(f!.config.publicDir, "state.json"), "utf8"),
-    );
-    expect(state.devices[payload.principal].revoked).toBe(true);
+    expect(
+      JSON.parse(readFileSync(join(f!.config.publicDir, "state.json"), "utf8"))
+        .devices[payload.principal].revoked,
+    ).toBe(true);
   });
-  it("renews an expired stored certificate using its old key but requires a valid replacement", async () => {
+  it("renews expired old certificates but keeps new certificate validity and generation checks", async () => {
     const { old, next, payload } = await setup();
     f!.advance(3 * 86400000);
     expect(() =>
       f!.control.challenge(f!.owner.id, {
-        operation: "rotate",
-        payload: { ...payload, newCertificatePEM: old.payload.certificatePEM },
+        operation: "register",
+        payload: { ...payload, certificatePEM: old.payload.certificatePEM },
       }),
     ).toThrow("certificate_expired_or_not_valid");
-    const req = f!.rotated(
-      f!.owner.id,
-      payload,
-      old.privateKey,
-      next.privateKey,
-    );
+    expect(() =>
+      f!.control.challenge(f!.owner.id, {
+        operation: "register",
+        payload: { ...payload, expectedGeneration: 0 },
+      }),
+    ).toThrow("invalid_generation");
     expect(
-      f!.control.rotate(f!.owner.id, payload.principal, req).keyGeneration,
+      f!.control.register(
+        f!.owner.id,
+        f!.rotated(f!.owner.id, payload, old.privateKey, next.privateKey),
+      ).keyGeneration,
     ).toBe(2);
   });
-  it("invalidates old outstanding challenges and refuses admission issued across a rotation", async () => {
+  it("invalidates old outstanding proofs and refuses tokens issued across a generation change", async () => {
     const { old, next, payload } = await setup();
     const a = {
       role: "receiver",
@@ -436,9 +476,8 @@ describe("same-principal rotation", () => {
       f!.owner.id,
       f!.proven(f!.owner.id, "admission", a, old.privateKey),
     );
-    f!.control.rotate(
+    f!.control.register(
       f!.owner.id,
-      payload.principal,
       f!.rotated(f!.owner.id, payload, old.privateKey, next.privateKey),
     );
     await expect(racing).rejects.toThrow("generation_conflict");
@@ -446,7 +485,7 @@ describe("same-principal rotation", () => {
       "invalid_or_expired_challenge",
     );
   });
-  it("rolls back rotation and its receipt on publication failure", async () => {
+  it("keeps the operation uncommitted and rolls back generation if publication fails", async () => {
     const { old, next, payload } = await setup();
     const req = f!.rotated(
       f!.owner.id,
@@ -455,17 +494,41 @@ describe("same-principal rotation", () => {
       next.privateKey,
     );
     renameSync(f!.config.publicDir, f!.config.publicDir + "-away");
-    expect(() =>
-      f!.control.rotate(f!.owner.id, payload.principal, req),
-    ).toThrow("state_publication_failed");
+    expect(() => f!.control.register(f!.owner.id, req)).toThrow(
+      "state_publication_failed",
+    );
     expect(f!.control.list(f!.owner.id)[0].keyGeneration).toBe(1);
     expect(
-      (
-        f!.db
-          .prepare("SELECT count(*) n FROM relay_rotation_receipts")
-          .get() as any
-      ).n,
-    ).toBe(0);
+      f!.control.operation(f!.owner.id, payload.operationId).committed,
+    ).toBe(false);
     expect(f!.control.healthy).toBe(false);
+  });
+  it("returns second-based nonce times, retains pending outcomes after expiry and refuses old SPKI data", async () => {
+    f = await fixture();
+    const d = identity(f.root, "Device", "a");
+    const c = f.control.challenge(f.owner.id, {
+      operation: "register",
+      payload: d.payload,
+    });
+    expect(c.expiresAt - c.issuedAt).toBe(60);
+    expect(
+      Math.abs(c.issuedAt - Math.floor(Date.now() / 1000)),
+    ).toBeLessThanOrEqual(1);
+    expect(c.expiresAt).toBeLessThan(100000000000);
+    f.advance(60001);
+    expect(
+      f.control.operation(f.owner.id, d.payload.operationId).committed,
+    ).toBe(false);
+    const fresh = f.proven(f.owner.id, "register", d.payload, d.privateKey);
+    f.control.register(f.owner.id, fresh);
+    const cert = new X509Certificate(d.payload.certificatePEM);
+    f.db.prepare("UPDATE relay_devices SET keyFingerprint=?").run(
+      createHash("sha256")
+        .update(cert.publicKey.export({ type: "spki", format: "der" }))
+        .digest("hex"),
+    );
+    expect(() => new RelayControl(f!.db, f!.config)).toThrow(
+      "contract_migration_required",
+    );
   });
 });
