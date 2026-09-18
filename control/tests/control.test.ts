@@ -7,7 +7,7 @@ import {
   createPublicKey,
   X509Certificate,
 } from "node:crypto";
-import { readFileSync, renameSync } from "node:fs";
+import { readFileSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { importJWK, jwtVerify } from "jose";
 import { fixture, identity } from "./fixtures.js";
@@ -20,6 +20,29 @@ afterEach(() => {
   f = undefined;
 });
 describe("relay device boundary", () => {
+  it("publishes cross-UID readable state under umask 0077 without replacing the directory or exposing private state", async () => {
+    const previous = process.umask(0o077);
+    try {
+      f = await fixture();
+      const directory = statSync(f.config.publicDir);
+      const statePath = join(f.config.publicDir, "state.json");
+      const firstFile = statSync(statePath);
+      expect(directory.mode & 0o777).toBe(0o755);
+      expect(firstFile.mode & 0o777).toBe(0o644);
+      expect(statSync(f.config.dataDir).mode & 0o777).toBe(0o700);
+      expect(statSync(join(f.config.dataDir, "control.sqlite")).mode & 0o777).toBe(0o600);
+      expect(statSync(join(f.config.dataDir, "signing-key.pem")).mode & 0o777).toBe(0o600);
+      f.advance(60000);
+      f.control.publish();
+      expect(statSync(f.config.publicDir).ino).toBe(directory.ino);
+      expect(statSync(statePath).ino).not.toBe(firstFile.ino);
+      expect(statSync(statePath).mode & 0o777).toBe(0o644);
+      const state = JSON.parse(readFileSync(statePath, "utf8"));
+      expect(state.expiresAt - state.issuedAt).toBe(180);
+    } finally {
+      process.umask(previous);
+    }
+  });
   it("registers proof-bound P256 devices and signs a 60s owner/room admission", async () => {
     f = await fixture();
     const d = identity(f.root, "Device", "a");

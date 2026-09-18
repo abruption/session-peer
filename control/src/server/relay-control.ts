@@ -18,6 +18,7 @@ import {
   lstatSync,
   mkdirSync,
   chmodSync,
+  fchmodSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { SignJWT } from "jose";
@@ -129,6 +130,9 @@ export class RelayControl {
         !(st.mode & 0o022),
       "unsafe_public_directory",
     );
+    // mkdir's mode is filtered by the service umask. Only this validated
+    // public directory is readable across DynamicUser identities.
+    chmodSync(this.publicDir, 0o755);
     this.publish();
   }
   publish() {
@@ -165,11 +169,11 @@ export class RelayControl {
       const fd = openSync(temp, "wx", 0o644);
       try {
         writeFileSync(fd, JSON.stringify(snapshot));
+        fchmodSync(fd, 0o644);
         fsyncSync(fd);
       } finally {
         closeSync(fd);
       }
-      chmodSync(temp, 0o644);
       renameSync(temp, path);
       const dirfd = openSync(this.publicDir, "r");
       try {

@@ -217,6 +217,15 @@ pseudonymous ownership metadata. No public HTTP route serves the directory.
 Read-only **directory bind**, not a single-file bind, exposes atomic replacements
 without granting access to private DB/signing key/ontology/other service files.
 Do not broaden a DynamicUser parent directory to expose private siblings.
+The writer explicitly sets only the validated public directory to 0755 and
+each temporary state file to 0644 even under umask 0077. It sets the file mode
+before file fsync, renames within that same directory, then fsyncs the directory.
+Never rename/recreate the public directory while a relay directory bind is active;
+consumers must reopen state.json to observe each replacement. Private data stays
+0700 with DB/signing key files 0600. Initial publication completes synchronously
+before the HTTP listener starts, but systemd Type=simple/After is not readiness.
+Gate relay launch on validated fresh state and control health, and test coordinated
+control/relay restarts separately. File presence alone is not semantic validation.
 
 State republishes every **60 seconds**, expires at **issuedAt+180 seconds**, and
 publishes immediately on mutation. Python fails closed for missing/malformed/
