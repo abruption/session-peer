@@ -193,6 +193,10 @@ export function createApp(
           return json(control.register(userId, body), 201);
         if (path === "/api/relay/admission")
           return json(await control.admit(userId, body));
+        const rotate = /^\/api\/relay\/devices\/([a-f0-9]{64})\/rotate$/.exec(
+          path,
+        );
+        if (rotate) return json(control.rotate(userId, rotate[1], body));
         const revoke = /^\/api\/relay\/devices\/([a-f0-9]{64})\/revoke$/.exec(
           path,
         );

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { it, expect, afterEach } from "vitest";
 import { fixture, identity } from "./fixtures.js";
 let f: Awaited<ReturnType<typeof fixture>> | undefined;
@@ -320,4 +321,38 @@ it("does not enable password signup, fake OAuth or automatic email linking", asy
     accountId: "unlisted",
   });
   expect(other).toBeNull();
+});
+
+it("routes same-principal rotation through authenticated ownership and CSRF guards", async () => {
+  f = await fixture();
+  const old = identity(f.root, "Old", "a");
+  const next = identity(f.root, "New", "b");
+  f.control.register(
+    f.owner.id,
+    f.proven(f.owner.id, "register", old.payload, old.privateKey),
+  );
+  const payload = {
+    principal: old.payload.principal,
+    expectedGeneration: 1,
+    newCertificatePEM: next.payload.certificatePEM,
+    operationId: randomUUID(),
+  };
+  const req = f.rotated(f.owner.id, payload, old.privateKey, next.privateKey);
+  const path = "/api/relay/devices/" + payload.principal + "/rotate";
+  expect((await f.request(path, req, { origin: f.config.origin })).status).toBe(
+    401,
+  );
+  expect((await f.request(path, req, f.otherHeaders)).status).toBe(404);
+  expect(
+    (
+      await f.request(path, req, {
+        cookie: f.cookie,
+        origin: "https://attacker.invalid",
+      })
+    ).status,
+  ).toBe(403);
+  const result = await f.request(path, req);
+  expect(result.status).toBe(200);
+  expect((await result.json()).keyGeneration).toBe(2);
+  expect((await f.request(path, req)).status).toBe(200);
 });
