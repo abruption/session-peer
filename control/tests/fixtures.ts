@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { sign, createPrivateKey, createHmac } from "node:crypto";
+import { sign, createPrivateKey, randomUUID } from "node:crypto";
 import { serializeSignedCookie } from "better-call";
 import { getMigrations } from "better-auth/db/migration";
 import { openDatabase } from "../src/server/storage.js";
@@ -46,6 +46,8 @@ export function identity(
     certificatePEM: readFileSync(cert, "utf8"),
     keyGeneration: 1,
     name,
+    operationId: randomUUID(),
+    expectedGeneration: 0,
   };
   return { payload, privateKey };
 }
@@ -143,20 +145,18 @@ export async function fixture(overrides: Partial<Config> = {}) {
     oldKey: Parameters<typeof sign>[2],
     newKey: Parameters<typeof sign>[2],
   ) {
-    const c = control.challenge(userId, { operation: "rotate", payload });
+    const c = control.challenge(userId, { operation: "register", payload });
     return {
       ...(payload as object),
       challengeId: c.challengeId,
-      oldProof: sign(
+      previousKeyProof: sign(
         "sha256",
-        Buffer.from(c.oldProofMessage!),
+        Buffer.from(c.proofMessage),
         oldKey,
       ).toString("base64url"),
-      newProof: sign(
-        "sha256",
-        Buffer.from(c.newProofMessage!),
-        newKey,
-      ).toString("base64url"),
+      proof: sign("sha256", Buffer.from(c.proofMessage), newKey).toString(
+        "base64url",
+      ),
     };
   }
   return {

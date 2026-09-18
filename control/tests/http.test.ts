@@ -114,7 +114,7 @@ it("starts real compiled server only on loopback; enforces host, body limit and 
     const state = JSON.parse(
       readFileSync(join(root, "public", "state.json"), "utf8"),
     );
-    expect(state.expiresAt - state.issuedAt).toBe(10);
+    expect(state.expiresAt - state.issuedAt).toBe(180);
     expect(state.devices).toEqual({});
     expect(logs).not.toContain(env.BETTER_AUTH_SECRET);
   } finally {

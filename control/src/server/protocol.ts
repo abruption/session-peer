@@ -69,6 +69,8 @@ export interface Registration {
   certificatePEM: string;
   keyGeneration: number;
   name: string;
+  operationId: string;
+  expectedGeneration: number;
 }
 export interface Admission {
   role: "client" | "receiver";
@@ -77,7 +79,21 @@ export interface Admission {
 }
 export function registration(value: unknown): Registration {
   const o = object(value);
-  fields(o, ["principal", "certificatePEM", "keyGeneration", "name"]);
+  fields(o, [
+    "principal",
+    "certificatePEM",
+    "keyGeneration",
+    "name",
+    "operationId",
+    "expectedGeneration",
+  ]);
+  operationId(o.operationId);
+  assert(
+    Number.isSafeInteger(o.expectedGeneration) &&
+      (o.expectedGeneration as number) >= 0 &&
+      (o.expectedGeneration as number) < 2147483647,
+    "invalid_generation",
+  );
   principal(o.principal);
   assert(
     typeof o.certificatePEM === "string" && o.certificatePEM.length <= 8192,
@@ -110,40 +126,14 @@ export function admission(value: unknown): Admission {
   );
   return o as unknown as Admission;
 }
-export interface Rotation {
-  principal: string;
-  expectedGeneration: number;
-  newCertificatePEM: string;
-  operationId: string;
-}
-export function rotation(value: unknown): Rotation {
-  const o = object(value);
-  fields(o, [
-    "principal",
-    "expectedGeneration",
-    "newCertificatePEM",
-    "operationId",
-  ]);
-  principal(o.principal);
+export function operationId(value: unknown): asserts value is string {
   assert(
-    Number.isSafeInteger(o.expectedGeneration) &&
-      (o.expectedGeneration as number) >= 1 &&
-      (o.expectedGeneration as number) < 2147483647,
-    "invalid_generation",
-  );
-  assert(
-    typeof o.newCertificatePEM === "string" &&
-      o.newCertificatePEM.length <= 8192,
-    "invalid_certificate",
-  );
-  assert(
-    typeof o.operationId === "string" &&
+    typeof value === "string" &&
       /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
-        o.operationId,
+        value,
       ),
     "invalid_operation_id",
   );
-  return o as unknown as Rotation;
 }
 export function certificate(
   pem: string,
@@ -178,10 +168,9 @@ export function certificate(
         Date.parse(cert.validTo) > now + 60000),
     "certificate_expired_or_not_valid",
   );
-  const spki = cert.publicKey.export({ type: "spki", format: "der" });
   return {
     key: cert.publicKey,
-    keyFingerprint: sha256(spki),
+    keyFingerprint: sha256(cert.raw),
     certificateFingerprint: sha256(cert.raw),
     jwk: cert.publicKey.export({ format: "jwk" }),
   };

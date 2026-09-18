@@ -1,8 +1,8 @@
 # Private relay control and authentication (RC candidate)
 
 Status: implementation candidate for #69, not a deployed production service.
-The control-to-relay contract below is proposed to the Python relay owner and
-must be jointly verified before integration. This project adds no listeners,
+The control-to-relay contract below incorporates the Python owner's final
+interface instruction; actual cross-service integration remains a separate gate. This project adds no listeners,
 OAuth accounts, or Node dependency to a normal Python installation.
 
 ## Trust boundaries
@@ -52,120 +52,99 @@ https://relay.abruption.dev/api/auth/callback/github
 https://relay.abruption.dev/api/auth/callback/google
 ```
 
-## Candidate control API
+## Final control API (unreleased candidate)
 
-JSON bodies only; 16 KiB maximum. Unknown fields are rejected in protocol payloads.
-Authenticated API requests have a per-user 60/minute limit. Each user has at most
-16 active challenges and 32 total device identities, including revoked tombstones.
-Each owner has at most 4096 durable rotation receipts; the limit fails closed
-rather than deleting records needed to reconcile ambiguous responses.
-Do not retry a potentially accepted native session submission automatically.
+JSON bodies only; 16 KiB maximum. Unknown protocol fields are rejected.
+Authenticated API requests are limited to 60/user/minute. Limits are 16 active
+challenges, 32 total device identities including tombstones, and 4096 durable
+operations per owner. Operation records are never silently deleted to make space;
+the limit fails closed, including pending operations.
 
 | Endpoint | Result / checks |
 | --- | --- |
 | `GET /api/relay/devices` | Only caller-owned devices; no certificates/secrets |
-| `POST /api/relay/challenge` | `{operation: "register" | "admission" | "rotate", payload: …}`; nonce bound to caller/operation/full payload, 60s lifetime |
-| `POST /api/relay/devices` | Registration payload plus `challengeId`, `proof` |
-| `POST /api/relay/admission` | Admission payload plus `challengeId`, `proof`; short-lived ES256 relay token |
-| `POST /api/relay/devices/:principal/rotate` | Owner, exact generation, old/new key proofs and durable operation ID; historical receipt |
-| `POST /api/relay/devices/:principal/revoke` | Owner session only; no lost-device key requirement; tombstone persists |
+| `POST /api/relay/challenge` | `{operation: "register" | "admission", payload}`; owner/operation/full-payload bound nonce, 60-second window |
+| `POST /api/relay/devices` | Initial registration or key renewal; payload + `challengeId`, new-key `proof`, old-key `previousKeyProof` for renewal |
+| `GET /api/relay/operations/:id` | Owner-only pending/committed result, for lost-response reconciliation |
+| `POST /api/relay/admission` | Admission payload + `challengeId`, `proof`; short-lived ES256 relay JWT |
+| `POST /api/relay/devices/:principal/revoke` | Owner session; no lost-device key requirement; permanent tombstone |
 
-Registration payload:
+### Registration and certificate renewal
 
+```text
+{ principal, certificatePEM, keyGeneration, name, operationId, expectedGeneration }
 ```
-{ principal, certificatePEM, keyGeneration, name }
-```
 
-`principal` is a fixed random 64-character lowercase hex identity, separate from
-the key. Generation is a positive safe integer <= 2147483647. Names are 1–80
-characters with no control characters. Certificate input is exactly one public
-PEM certificate, <= 8192 bytes, with a P-256 key and current validity extending
-beyond the admission lifetime. Possession is established by the nonce signature;
-registration is **not** public-CA verification or a replacement for inner TLS
-certificate pinning. Private keys are never submitted.
+`principal` is a fixed random 64-character lowercase hex device identity, separate
+from the certificate. `operationId` is a UUID v4 retained until the result is
+known. Initial registration requires an absent principal, `expectedGeneration=0`
+and `keyGeneration=1`. Renewal requires the existing active same-owner principal,
+`expectedGeneration=current generation` and `keyGeneration=expectedGeneration+1`.
+The server computes/checks the increment; clients cannot choose a jump or rollback.
+Maximum generation is 2147483647. Owner, principal and existing name are preserved
+on renewal; `name` is used for initial registration (send the existing name when
+renewing). Names are 1–80 characters with no control characters.
 
-A repeated registration must have the same owner/generation/certificate and an
-active principal. Other-owner takeover, generation rollback and key replacement
-through registration are rejected. Existing principals can only renew/rotate via
-the explicit dual-proof operation below. Revoked principals cannot be resurrected;
-a lost old key requires owner revocation and a new principal, not a login-only
-replacement. OAuth login never replaces endpoint E2EE pairing authorization.
+Certificate input is exactly one public PEM certificate, <=8192 bytes, with a
+P-256 key and current validity extending beyond 60 seconds. New certificates
+must differ from the stored certificate. Same-key certificate renewal is allowed.
+Possession is established by signature, not public-CA verification; registration
+never replaces endpoint E2EE pairing/pin authorization. Never submit a private key.
 
-### Certificate renewal / key rotation
+Both initial registration and renewal use challenge operation **register**, then
+`POST /api/relay/devices`. New-key `proof` signs the exact returned `proofMessage`.
+Renewal additionally requires old-key `previousKeyProof` over the **same message**.
+No login-only replacement is allowed. Only possession of the stored old key ignores
+old certificate validity dates, permitting renewal of an expired certificate;
+new certificate validity and ordinary admission validity remain enforced. A lost
+old key requires owner revocation and a new principal. Revoked identities never
+revive via registration, renewal or retries.
 
-Generate a UUID v4 `operationId` once and retain it with the exact payload until
-its result is known. Challenge operation `rotate` binds:
+Mutation, challenge consumption and committed receipt are one SQLite transaction.
+Renewal invalidates outstanding owner challenges, republishes state immediately,
+and rejects admission signing that spans a generation change.
+
+### Operation result / retry boundaries
+
+A registration challenge durably reserves owner/operationId/payload digest before
+returning. Owner lookup before mutation returns:
 
 ```json
-{
-  "principal": "<existing 64 lowercase hex ID>",
-  "expectedGeneration": 1,
-  "newCertificatePEM": "<new public P-256 certificate>",
-  "operationId": "<fixed UUID v4>"
-}
+{ "operationId": "<fixed UUID v4>", "committed": false }
 ```
 
-The response also supplies `oldProofMessage` and `newProofMessage`. They are the
-base `proofMessage` followed by `\nold-key` and `\nnew-key`, respectively,
-without a trailing newline. Sign each **exact returned string** with the respective
-old/new P-256 key (ECDSA SHA256 DER, unpadded base64url). Submit the payload plus
-`challengeId`, `oldProof`, `newProof` to
-`POST /api/relay/devices/:principal/rotate`; path and payload principal must match.
-A browser/CLI owner session alone is insufficient. The existing device must be
-active, same owner, and at the expected generation. New generation is computed by
-the server as `expectedGeneration + 1`. Owner, principal and name are preserved.
-The new certificate must be valid for more than 60 seconds and differ from the
-stored certificate; same-key certificate renewal is allowed with both proof domains.
-Only the **stored old certificate's possession check** ignores certificate dates,
-so expired certificates can be renewed if the old private key remains available.
-New certificates and normal admission continue to enforce validity.
-
-Mutation, consumed challenges and receipt journal are one SQLite transaction.
-Outstanding owner challenges are invalidated, public state is republished, and
-admission signing that spans a generation change fails rather than returning an
-old-generation token. The result is a historical receipt:
+Completed registration and `GET /api/relay/operations/:id` return:
 
 ```json
 {
   "operationId": "<fixed UUID v4>",
+  "committed": true,
   "principal": "<unchanged ID>",
-  "keyFingerprint": "<new SHA256 SPKI DER>",
-  "keyGeneration": 2,
-  "completed": true
+  "keyFingerprint": "<SHA256 certificate DER>",
+  "keyGeneration": 2
 }
 ```
 
-An authenticated same-owner retry of the **identical payload/operationId** returns
-the saved receipt even if its challenge expired or its device was subsequently
-revoked. It does not reverify consumed proofs or perform a second mutation. Reuse
-with a changed payload or another owner is rejected. The receipt is **not current
-device status**; query `GET /api/relay/devices` for that. No retry can revive a
-revoked tombstone. New rotations of revoked devices fail. Do not discard the ID
-or automatically create a new operation on timeout/unknown outcome.
+Unknown IDs and another owner's IDs both return 404. Pending reservations persist
+after challenge expiry. Identical completed owner/payload/operationId retries
+return the stored historical receipt without another mutation or proof execution,
+even if the challenge expired or the device was later revoked. Changed-payload
+or different-owner operationId reuse is rejected. A receipt is **not current device
+status**; use the device list for current generation/revocation. A revoked receipt
+retry cannot resurrect a device. Publication failure rolls back the mutation and
+leaves its operation uncommitted, while health blocks admission until publication
+recovers. Retain the ID and query status on lost responses; do not create a new
+operation or automatically retry a potentially accepted native agent submission.
 
-Python must check the current generation/fingerprint at admission and while
-connections remain active. Control login/rotation does not approve a new peer
-certificate pin; endpoints still apply their independent E2EE pairing/pin policy.
+### Challenge proof and time units
 
-Admission payload:
+Response: `{challengeId, nonce, issuedAt, expiresAt, proofMessage}`. All control
+API and public-state `issuedAt`/`expiresAt` values are UNIX **seconds** numbers.
+BetterAuth's native auth API retains its installed SDK shape; `expires_in` and
+`interval` are relative seconds. Clients sign the exact returned UTF-8 message
+with P-256 ECDSA/SHA256, DER signature encoded as unpadded base64url:
 
-```
-{ role: "client" | "receiver", devicePrincipal, receiverPrincipal }
-```
-
-Both devices must be active and owned by the same **internal user ID**. A receiver
-must identify itself. The server computes the room; callers cannot supply an
-arbitrary room/user/issuer/audience/expiry. Room = SHA256 UTF-8 of
-internal user ID + `\0` + receiver principal (no domain prefix).
-
-### Device proof
-
-Challenge response includes `{challengeId, nonce, expiresAt, proofMessage}`.
-`expiresAt` is UNIX milliseconds. The client signs the **exact returned UTF-8
-proofMessage**, with ECDSA P-256 / SHA-256, encoded as a DER signature in unpadded
-base64url. No client JSON-canonicalization implementation is necessary.
-
-```
+```text
 session-peer-control-v1
 <origin>
 <operation>
@@ -174,85 +153,87 @@ session-peer-control-v1
 <SHA256 of server-canonical payload JSON>
 ```
 
-No trailing newline. The control server compares the submitted payload with the
-stored normalized JSON, checks owner/operation/expiry, verifies the signature,
-and deletes the challenge transactionally. Replayed, altered or cross-user
-requests fail. Register proof uses the submitted certificate; admission proof
-uses the registered current certificate. Name/payload strings are data only.
+No final newline. Server canonicalization binds every registration field,
+including operationId/expectedGeneration; clients need no JSON canonicalization.
+Admission proof uses the registered certificate's current key. Register proof
+uses the submitted certificate; renewal's previousKeyProof uses the stored old key.
 
-`keyFingerprint` is lowercase **SHA256(SPKI DER)**. Existing Python
-`identity.fingerprint()` uses certificate DER; these are different values.
-Control stores a separate private `certificateFingerprint` for exact registration
-matching. Python integration must agree on the SPKI meaning before using the
-new claim; do not relabel an existing certificate fingerprint as a key hash.
+`keyFingerprint` is lowercase **SHA256(certificate DER)**, matching the existing
+Python fingerprint/keyId meaning. `cnf.jwk` is extracted from that certificate's
+public key. It is **not SHA256(SPKI DER)**. JWK alone cannot reconstruct certificate
+DER; the relay compares the signed certificate fingerprint with current state and
+trusts the authenticated control issuer's signed binding to cnf, then verifies
+possession using cnf. Do not compute a JWK/SPKI hash and compare it to this field.
+Signing `kid` identifies the separate control signing key (currently SPKI hash);
+it is not the device certificate fingerprint.
 
-### Admission token and state
+### Admission token and relay exchange
 
-JWT algorithm is pinned **ES256**; `kid` identifies the persisted control signing
-public key. Claims: `iss` and `aud` = configured relay origin, `sub` = internal
-opaque user ID, `devicePrincipal`, `receiverPrincipal`, `keyFingerprint`, `keyGeneration`, `role`,
-server-computed `room`, `iat`, `exp` (60 seconds), `jti`, `cnf.jwk` (device public
-P-256 key only). Neither OAuth provider tokens nor the first-party session token
-are forwarded to the relay. API response includes `{token, expiresAt, room}`;
-this `expiresAt` is UNIX **seconds**, consistent with JWT expiry.
+Admission payload:
 
-The relay must independently verify algorithm/signature, issuer/audience, exact
-claim shape and lifetime, JTI/proof replay protection, device key possession,
-owner/generation/fingerprint/current revocation state, both members' ownership,
-and room derivation before exchanging for its existing short-lived cookie.
-For the Python relay's admission exchange (not the control API), send:
+```text
+{ role: "client" | "receiver", devicePrincipal, receiverPrincipal }
+```
+
+Both principals must be active and owned by the same internal user ID; receiver
+role must identify itself. Room = SHA256(UTF8(userId + NUL + receiverPrincipal)),
+without a domain prefix. Callers cannot set room/user/issuer/audience/TTL.
+
+JWT uses **ES256**, recognized signing `kid`, `typ=JWT`. Claims are `iss`/`aud` =
+configured relay origin, `sub` = internal opaque user ID, `devicePrincipal`,
+`receiverPrincipal`, `keyFingerprint`, `keyGeneration`, `role`, `room`, `iat`,
+`exp` (iat+60 seconds), `jti`, `cnf.jwk` (public EC P-256 only, no private material).
+Response `{token, expiresAt, room}` uses UNIX-second expiry. Neither provider
+access tokens nor first-party session tokens go to the Python relay.
+
+Relay exchange:
 
 ```http
 Authorization: Bearer <JWT>
 X-Session-Peer-Proof: <unpadded base64url DER ECDSA signature>
 ```
 
-The device signs exact UTF-8 `session-peer-admission-v1:` + the **entire JWT**, with
-P-256 ECDSA/SHA256; no final newline. This is a separate signature from the control
-challenge proof. The relay checks its signature against `cnf.jwk`, which must
-contain only a public EC P-256 key matching the current device SPKI fingerprint.
-It validates `receiverPrincipal`/role/ownership and room derivation independently.
-Pin ES256 and a recognized signing `kid`; require `exp - iat <= 60` seconds and
-valid issue/expiry time bounds. Do not consume a JTI until all checks and device
-proof succeed. Atomic single-use JTI consumption precedes cookie issuance and
-must survive process restart/multiple workers through at least JWT expiration;
-failed device proof must not burn somebody else's JTI. The Python owner must
-validate those concurrency/durability gates in the actual receiver.
+The device signs exact UTF-8 `session-peer-admission-v1:` + the **whole JWT**, with
+P-256 ECDSA/SHA256 and no final newline. This is separate from the control nonce
+proof. Python must verify signature/issuer/audience/time/lifetime<=60/recognizedkid,
+public P256 cnf, current state/owner/generation/fingerprint/role/receiver/room and
+possession before atomic single-use jti consumption and cookie issuance. Failed
+proof must not burn another device's jti. Replay storage must be verified across
+restart/multiple workers through JWT expiration. These are Python integration gates;
+control format tests do not establish that the Python receiver implements them.
+OAuth login/registration does not replace endpoint E2EE pairing/pin policy.
 
-The agreed room derivation supersedes the unpublished 55ff3bb/6815e1e control
-candidates, which used a domain prefix and omitted the receiver claim. Do not mix
-those older artifacts with the new Python verifier. Control issuing a token and
-its local proof-format checks do not demonstrate Python gates are implemented.
-E2EE payload remains inside pinned inner TLS, not the control API.
+### Atomic public state and contract transition
 
-Atomic `relay-public/state.json` contains:
-
-```
+```text
 { schemaVersion: 1, issuer, audience, issuedAt, expiresAt,
   jwks: { keys: [public signing JWK with kid/alg/use] },
   devices: { principal: { userId, keyFingerprint, generation, revoked } } }
 ```
 
-No emails, names, certificates, session/OAuth tokens or private keys are exported.
-User IDs are pseudonymous ownership identifiers, not an assertion that the file
-has no privacy-sensitive metadata. No public HTTP endpoint serves this directory.
-The relay receives a **read-only directory bind**, not an individual-file bind,
-so atomic rename updates are visible. Its service must not read the private DB,
-signing key, ontology DB or other homes/services. With a DynamicUser parent
-0700 directory, mount the `relay-public` directory inside the relay namespace;
-do not broaden parent permissions to expose the private sibling.
+No names, emails, certificates, session/OAuth tokens or private keys. User IDs are
+pseudonymous ownership metadata. No public HTTP route serves the directory.
+Read-only **directory bind**, not a single-file bind, exposes atomic replacements
+without granting access to private DB/signing key/ontology/other service files.
+Do not broaden a DynamicUser parent directory to expose private siblings.
 
-State refreshes every 2 seconds with 10-second freshness. The Python reader must
-fail closed on missing, malformed or stale state and reopen after replacement.
-Successful revocation publishes a tombstone before returning. Active websocket
-connections use the Python owner's proposed 1-second state recheck/closure;
-JWT TTL alone is **not immediate active-session revocation**. No such integration
-claim is made by these control tests. Publication failure rolls back the DB
-mutation, marks health failed and blocks admissions until a successful refresh.
-An already-issued token can only be judged against the relay's current state.
-SQLite and filesystem do not form a distributed atomic transaction: a file
-published before a DB commit failure may temporarily deny access, but the failed
-operation is never reported as successful. Stale-state denial remains required.
+State republishes every **60 seconds**, expires at **issuedAt+180 seconds**, and
+publishes immediately on mutation. Python fails closed for missing/malformed/
+expired state or issuedAt>now+5 seconds. It rereads every admission and rechecks
+existing connections every second, closing revoked/rotated sessions. JWT TTL
+alone is not active-session revocation. Actual connection/clock/restart behavior
+requires Python/staging verification. Publication failures roll back DB mutations
+and mark health failed; SQLite and a file are not a distributed atomic transaction.
+A publication followed by DB commit failure can temporarily deny access; never
+report that failed operation as success or bypass stale-state checks.
+
+The final contract supersedes unpublished candidates 55ff3bb/6815e1e/fae9029
+(SPKI device hash, millisecond challenges, distinct-domain rotate endpoint, 2s/10s
+state). Do not mix old artifacts/clients with this verifier. Startup refuses stored
+SPKI device rows with `contract_migration_required`; it never silently reinterprets
+old device fingerprints or operation history. Use a new isolated candidate state
+or plan an explicit operator-reviewed migration preserving old state. No automatic
+credential/device-state deletion is performed here.
 
 ## Build, secrets and operation
 
@@ -333,7 +314,8 @@ state/PKCE/callback/allowlist/account-linking paths. No provider request is sent
 There is **no production fake OAuth endpoint or auth bypass**. OpenSSL is test-only.
 Tests cover owner isolation, policy revocation, CSRF, exact browser-session claim,
 code approval/denial/expiry/redemption, challenge expiry/replay/alteration, key
-replacement denial, dual-key rotation, generation races, durable receipt retry,
+replacement denial, dual-key rotation, generation races, same-message previousKeyProof, owner-only durable operation
+lookup/pending/committed/reopened-DB retry,
 expired-certificate renewal, revoked tombstones, atomic state publication failure
 and non-secret state,
 loopback/static/Host/body-limit behavior, rejected forged Google ID tokens and
@@ -346,3 +328,285 @@ Official references (implementation verified against installed 1.7.5 source):
 - https://better-auth.com/docs/plugins/device-authorization
 - https://better-auth.com/docs/plugins/bearer
 - https://better-auth.com/docs/concepts/users-accounts
+
+
+## Final contract examples — synthetic only
+
+사용자 확정 계약에 따른 합성 예제다. 토큰/시간/ID는 합성값이며 완성된 실행 응답이나 운영 인증 증거로 보고하지 않는다. BetterAuth 1.7.5 설치 소스와 기존 실제 fixture 테스트의 API shape를 기준으로 작성했다. 모든 코드·token·시간·ID는 합성값이다. public certificate와 signature만 격리 fixture에서 생성했으며 private key는 삭제했다. 운영 자격, 실제 JWT, OAuth secret을 포함하지 않는다.
+
+모든 issuedAt/expiresAt은 UNIX 초 number다. 초기 expectedGeneration=0/keyGeneration=1; 갱신은 expectedGeneration=current/keyGeneration=current+1. keyGeneration은 서버가 계산/검사한다. 두 경우 operation=register 및 POST /api/relay/devices를 사용한다. operationId는 UUID v4이며 결과 확인까지 고정한다. 갱신 시 previousKeyProof(구키)와 proof(신키)가 동일 서버 proofMessage를 서명한다. 이전 rotate/oldProof/newProof domain API는 최종 계약에서 사용하지 않는다.
+
+### 1. BetterAuth device code
+
+```http
+POST /api/auth/device/code
+Content-Type: application/json
+```
+
+Request:
+```json
+{
+  "client_id": "session-peer-cli"
+}
+```
+
+Response (200):
+```json
+{
+  "device_code": "SYNTHETIC_DEVICE_CODE_NOT_VALID",
+  "user_code": "ABCD-EFGH",
+  "verification_uri": "https://relay.abruption.dev/device",
+  "verification_uri_complete": "https://relay.abruption.dev/device?user_code=ABCD-EFGH",
+  "expires_in": 300,
+  "interval": 5
+}
+```
+
+### 2. CLI poll (browser login/code 확인 후 명시 승인 필요)
+
+```http
+POST /api/auth/device/token
+Content-Type: application/json
+```
+
+Request:
+```json
+{
+  "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+  "device_code": "SYNTHETIC_DEVICE_CODE_NOT_VALID",
+  "client_id": "session-peer-cli"
+}
+```
+
+Response (200):
+```json
+{
+  "access_token": "SYNTHETIC_SESSION_TOKEN_NOT_VALID",
+  "token_type": "Bearer",
+  "expires_in": 86399,
+  "scope": ""
+}
+```
+
+미승인 poll은 `authorization_pending`, 거절은 `access_denied`, 만료는 `expired_token`; 성공 expires_in은 실제 세션 잔여 초이며 고정86399가 아니다. 반환 access_token은 first-party BetterAuth session token이다.
+
+### 3. 초기 register challenge
+
+```http
+POST /api/relay/challenge
+Content-Type: application/json
+Authorization: Bearer SYNTHETIC_SESSION_TOKEN_NOT_VALID
+```
+
+Request:
+```json
+{
+  "operation": "register",
+  "payload": {
+    "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "certificatePEM": "-----BEGIN CERTIFICATE-----\nMIIBqDCCAU2gAwIBAgIUbV3+cew1ClSo4ScWGH2arUNrt+IwCgYIKoZIzj0EAwIw\nKTEnMCUGA1UEAwwec2Vzc2lvbi1wZWVyLXN5bnRoZXRpYy1maXh0dXJlMB4XDTI2\nMDkxODA2NDEyNFoXDTI2MDkyODA2NDEyNFowKTEnMCUGA1UEAwwec2Vzc2lvbi1w\nZWVyLXN5bnRoZXRpYy1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\nJPtwLc11hxRmc5x6fEnl+/l64MC0tOXDZztmCepvJlkxAQ4yrp1SYM96jgpYHDJW\na3Xb4R6GsIA3rJEwahmGBaNTMFEwHQYDVR0OBBYEFFDDrCULDx2NC2ijgPVCt9cU\nceSvMB8GA1UdIwQYMBaAFFDDrCULDx2NC2ijgPVCt9cUceSvMA8GA1UdEwEB/wQF\nMAMBAf8wCgYIKoZIzj0EAwIDSQAwRgIhAMh/1hIWGUHnJ8vrwhLe9XEpA77niZ8q\nekZEPFSNqc6mAiEAqWUtrpElB3CycNX9N+HkyZwmOgTI4AKG3WAvMqELatE=\n-----END CERTIFICATE-----\n",
+    "keyGeneration": 1,
+    "name": "fixture-device",
+    "operationId": "11111111-1111-4111-8111-111111111111",
+    "expectedGeneration": 0
+  }
+}
+```
+
+Response (200):
+```json
+{
+  "challengeId": "22222222-2222-4222-8222-222222222222",
+  "nonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+  "issuedAt": 1800000000,
+  "expiresAt": 1800000060,
+  "proofMessage": "session-peer-control-v1\nhttps://relay.abruption.dev\nregister\n22222222-2222-4222-8222-222222222222\nAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\n8dc2635b4d178df6b36c5bb5ff9b188c440e0e3a74b084c8e299904e6e9e0329"
+}
+```
+
+### 4. 초기 register (previousKeyProof 없이)
+
+```http
+POST /api/relay/devices
+Content-Type: application/json
+Authorization: Bearer SYNTHETIC_SESSION_TOKEN_NOT_VALID
+```
+
+Request:
+```json
+{
+  "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "certificatePEM": "-----BEGIN CERTIFICATE-----\nMIIBqDCCAU2gAwIBAgIUbV3+cew1ClSo4ScWGH2arUNrt+IwCgYIKoZIzj0EAwIw\nKTEnMCUGA1UEAwwec2Vzc2lvbi1wZWVyLXN5bnRoZXRpYy1maXh0dXJlMB4XDTI2\nMDkxODA2NDEyNFoXDTI2MDkyODA2NDEyNFowKTEnMCUGA1UEAwwec2Vzc2lvbi1w\nZWVyLXN5bnRoZXRpYy1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\nJPtwLc11hxRmc5x6fEnl+/l64MC0tOXDZztmCepvJlkxAQ4yrp1SYM96jgpYHDJW\na3Xb4R6GsIA3rJEwahmGBaNTMFEwHQYDVR0OBBYEFFDDrCULDx2NC2ijgPVCt9cU\nceSvMB8GA1UdIwQYMBaAFFDDrCULDx2NC2ijgPVCt9cUceSvMA8GA1UdEwEB/wQF\nMAMBAf8wCgYIKoZIzj0EAwIDSQAwRgIhAMh/1hIWGUHnJ8vrwhLe9XEpA77niZ8q\nekZEPFSNqc6mAiEAqWUtrpElB3CycNX9N+HkyZwmOgTI4AKG3WAvMqELatE=\n-----END CERTIFICATE-----\n",
+  "keyGeneration": 1,
+  "name": "fixture-device",
+  "operationId": "11111111-1111-4111-8111-111111111111",
+  "expectedGeneration": 0,
+  "challengeId": "22222222-2222-4222-8222-222222222222",
+  "proof": "MEUCIBoKExz3tDYd-sV_H1dGmYSjUb68Ai5JvN52fupxk7TxAiEArnkiVLF5UNDCCQe6Fa8XbrmsO3BpkN3bMrNQ6ZK3qL0"
+}
+```
+
+Response (201):
+```json
+{
+  "operationId": "11111111-1111-4111-8111-111111111111",
+  "committed": true,
+  "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "keyFingerprint": "bed7c5ac5d786dae6973f2be9867f2ff79e1c9870f79484a1ae90827a3c0fc5a",
+  "keyGeneration": 1
+}
+```
+
+### 5. owner operation 조회
+
+```http
+GET /api/relay/operations/11111111-1111-4111-8111-111111111111
+Content-Type: application/json
+Authorization: Bearer SYNTHETIC_SESSION_TOKEN_NOT_VALID
+```
+
+Response (200):
+```json
+{
+  "operationId": "11111111-1111-4111-8111-111111111111",
+  "committed": true,
+  "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "keyFingerprint": "bed7c5ac5d786dae6973f2be9867f2ff79e1c9870f79484a1ae90827a3c0fc5a",
+  "keyGeneration": 1
+}
+```
+
+challenge가 등록한 owner operation의 mutation 전 조회는 `{operationId, committed:false}`다. 없는 ID와 타인의 ID는 모두404다. `committed:true` receipt는 과거 결과이며 현재 폐기/세대는 GET devices로 확인한다. 동일ID 다른payload는409 operation_conflict, tombstone은 부활하지 않는다.
+
+### 6. same principal key 갱신 challenge
+
+```http
+POST /api/relay/challenge
+Content-Type: application/json
+Authorization: Bearer SYNTHETIC_SESSION_TOKEN_NOT_VALID
+```
+
+Request:
+```json
+{
+  "operation": "register",
+  "payload": {
+    "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "certificatePEM": "-----BEGIN CERTIFICATE-----\nMIIBpzCCAU2gAwIBAgIUD7nlgBWYy1GgKfzHoTPPQ8qkfNAwCgYIKoZIzj0EAwIw\nKTEnMCUGA1UEAwwec2Vzc2lvbi1wZWVyLXN5bnRoZXRpYy1maXh0dXJlMB4XDTI2\nMDkxODA2NDEyNVoXDTI2MDkyODA2NDEyNVowKTEnMCUGA1UEAwwec2Vzc2lvbi1w\nZWVyLXN5bnRoZXRpYy1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\nRofYbKfpzSPpDWMyqAGxmRxlMAXZskhxzLo6Mfu5+lxyoMUbW9JZ1T0bkXV+rDPX\nQB4qIbMhOvpx0tN+58XswqNTMFEwHQYDVR0OBBYEFDlrIQjs9xF6K2ZFlv0Iohn9\nZBvsMB8GA1UdIwQYMBaAFDlrIQjs9xF6K2ZFlv0Iohn9ZBvsMA8GA1UdEwEB/wQF\nMAMBAf8wCgYIKoZIzj0EAwIDSAAwRQIhALWKWPVP+QFI75Gt0Hmgze55dfImFxUw\nCuA8Ptqh8bVkAiB54i+OapvdrT73fmSzYn+2cg73GmLjDEGEg1mz8oQEbg==\n-----END CERTIFICATE-----\n",
+    "keyGeneration": 2,
+    "name": "fixture-device",
+    "operationId": "33333333-3333-4333-8333-333333333333",
+    "expectedGeneration": 1
+  }
+}
+```
+
+Response (200):
+```json
+{
+  "challengeId": "44444444-4444-4444-8444-444444444444",
+  "nonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+  "issuedAt": 1800000000,
+  "expiresAt": 1800000060,
+  "proofMessage": "session-peer-control-v1\nhttps://relay.abruption.dev\nregister\n44444444-4444-4444-8444-444444444444\nAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\ne2c043d1c473b32603a3bfa39658d5eadeebba6eb4d4889da80c7f9607c4cc46"
+}
+```
+
+### 7. same message에 구키·신키 proof 제출
+
+```http
+POST /api/relay/devices
+Content-Type: application/json
+Authorization: Bearer SYNTHETIC_SESSION_TOKEN_NOT_VALID
+```
+
+Request:
+```json
+{
+  "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "certificatePEM": "-----BEGIN CERTIFICATE-----\nMIIBpzCCAU2gAwIBAgIUD7nlgBWYy1GgKfzHoTPPQ8qkfNAwCgYIKoZIzj0EAwIw\nKTEnMCUGA1UEAwwec2Vzc2lvbi1wZWVyLXN5bnRoZXRpYy1maXh0dXJlMB4XDTI2\nMDkxODA2NDEyNVoXDTI2MDkyODA2NDEyNVowKTEnMCUGA1UEAwwec2Vzc2lvbi1w\nZWVyLXN5bnRoZXRpYy1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\nRofYbKfpzSPpDWMyqAGxmRxlMAXZskhxzLo6Mfu5+lxyoMUbW9JZ1T0bkXV+rDPX\nQB4qIbMhOvpx0tN+58XswqNTMFEwHQYDVR0OBBYEFDlrIQjs9xF6K2ZFlv0Iohn9\nZBvsMB8GA1UdIwQYMBaAFDlrIQjs9xF6K2ZFlv0Iohn9ZBvsMA8GA1UdEwEB/wQF\nMAMBAf8wCgYIKoZIzj0EAwIDSAAwRQIhALWKWPVP+QFI75Gt0Hmgze55dfImFxUw\nCuA8Ptqh8bVkAiB54i+OapvdrT73fmSzYn+2cg73GmLjDEGEg1mz8oQEbg==\n-----END CERTIFICATE-----\n",
+  "keyGeneration": 2,
+  "name": "fixture-device",
+  "operationId": "33333333-3333-4333-8333-333333333333",
+  "expectedGeneration": 1,
+  "challengeId": "44444444-4444-4444-8444-444444444444",
+  "previousKeyProof": "MEQCIDmCSfpgxDcgT5AYb83ywhVqp8Dvtq7rgdlSo7xW7GUHAiBGpRGVoYeF3x2Uv-83RZT0H-vgka05zX6HPHzEt8fHsA",
+  "proof": "MEQCIBoCVQp1-o_qEAmP-z14__d9SLFcFQgzzBBCjY9RfbqlAiA9qY4Bz358O33Zb-OJPVhQhwgkigYKDIqUQoDToKZSRQ"
+}
+```
+
+Response (201):
+```json
+{
+  "operationId": "33333333-3333-4333-8333-333333333333",
+  "committed": true,
+  "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "keyFingerprint": "a3ae2f8d36d68b119cba191c79b2c2cd4ac67558551ba6fad97c8c3d15512191",
+  "keyGeneration": 2
+}
+```
+
+### 8. admission challenge
+
+```http
+POST /api/relay/challenge
+Content-Type: application/json
+Authorization: Bearer SYNTHETIC_SESSION_TOKEN_NOT_VALID
+```
+
+Request:
+```json
+{
+  "operation": "admission",
+  "payload": {
+    "role": "receiver",
+    "devicePrincipal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "receiverPrincipal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}
+```
+
+Response (200):
+```json
+{
+  "challengeId": "55555555-5555-4555-8555-555555555555",
+  "nonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+  "issuedAt": 1800000000,
+  "expiresAt": 1800000060,
+  "proofMessage": "session-peer-control-v1\nhttps://relay.abruption.dev\nadmission\n55555555-5555-4555-8555-555555555555\nAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\nd9816e1974bfdff446236e3db7c6b305be75a17978f58c0cb3873267eb83f789"
+}
+```
+
+### 9. admission JWT 발급
+
+```http
+POST /api/relay/admission
+Content-Type: application/json
+Authorization: Bearer SYNTHETIC_SESSION_TOKEN_NOT_VALID
+```
+
+Request:
+```json
+{
+  "role": "receiver",
+  "devicePrincipal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "receiverPrincipal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "challengeId": "55555555-5555-4555-8555-555555555555",
+  "proof": "MEQCIHm2v2q_kOrmJrkp77rD0mlqBXw2KYGCosj0GWQK68GTAiBTDSgdfPpYIGZve_Qs_2i9tBdSVXSoctWarERHXhQi-g"
+}
+```
+
+Response (200):
+```json
+{
+  "token": "SYNTHETIC_JWT_NOT_VALID",
+  "expiresAt": 1800000060,
+  "room": "f8f3367b6f76880e8101074990ee03a28af5e301a202ffa5f61f779f3192038d"
+}
+```
+
+JWT 실제본문은 예제/로그로 출력하지 않는다. claims: iss/aud=origin, sub=내부userID, devicePrincipal/receiverPrincipal, keyFingerprint=SHA256(certificate DER), keyGeneration, role, room, iat, exp<=iat+60, jti, cnf.jwk=certificate public EC P256 key. Signing kid는 별도 signing public key 식별자다.
+
+Relay exchange: Bearer JWT + X-Session-Peer-Proof=ECDSA/SHA256 DER base64url of exact UTF8 `session-peer-admission-v1:`+JWT. 이 proof는 control nonce proof와 별개다.
+
+State: schemaVersion1/issuer/audience/jwks/devices 구조 유지. issuedAt UNIX 초, expiresAt=issuedAt+180; 60초마다 atomic 재발행하고 mutation 즉시 발행. Python은 issuedAt>now+5 / expired / malformed / missing을 fail-closed하고 기존 socket을1초마다 재검사한다.

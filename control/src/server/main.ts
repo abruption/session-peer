@@ -80,7 +80,7 @@ const timer = setInterval(() => {
   } catch {
     console.error("relay_state_refresh_failed");
   }
-}, 2000);
+}, 60000);
 timer.unref();
 server.listen(port, "127.0.0.1", () =>
   console.log("session-peer control ready (loopback only)"),
