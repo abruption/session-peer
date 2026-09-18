@@ -176,12 +176,44 @@ class ControlIntegration(unittest.IsolatedAsyncioTestCase):
             routes = {**record['routes'], 'relay': self.url}
             self.client.db.execute('UPDATE peers SET routes=? WHERE id=?', (json.dumps(routes), self.host.device))
             marker = 'managed-encrypted-fixture-'+str(uuid.uuid4())
-            result = await self.call('send', {'target': 'review', 'message': marker}, route='relay')
+            ident, operation = str(uuid.uuid4()), str(uuid.uuid4())
+            body = {'target': 'review', 'message': marker}
+            result = await self.call('send', body, ident, route='relay')
             self.assertTrue(result['ok'], result)
             self.assertEqual(result['route'], 'relay')
             self.assertFalse(result['consumptionConfirmed'])
             self.assertEqual(len(self.effects), 1)
             self.assertTrue(self.frames)
+            self.assertNotIn(marker.encode(), b''.join(self.frames))
+            old_key = self.client.key_id
+            actual_dispatch = self.receiver.dispatch
+            interrupted = False
+            async def lose_commit(peer, value):
+                nonlocal interrupted
+                response = await actual_dispatch(peer, value)
+                if value.get('op') == 'rotation.commit' and not interrupted:
+                    interrupted = True
+                    # Drop the actual fixture WebSocket after durable commit,
+                    # before Receiver.handle can send its response.
+                    for raw in list(self.receiver.connections):
+                        await raw.close()
+                return response
+            self.receiver.dispatch = lose_commit
+            uncertain = await rotate(self.client, operation, 'relay', None, use_login=True)
+            self.assertTrue(interrupted)
+            self.assertFalse(uncertain['ok'])
+            # Keep the deliberate retry outside the real relay's 20-handshake/s
+            # budget; a burst-limit failure is not the fault under test here.
+            await asyncio.sleep(1.05)
+            rotated = await rotate(self.client, operation, 'relay', None, use_login=True)
+            self.assertTrue(rotated['ok'], rotated)
+            self.assertNotEqual(self.client.key_id, old_key)
+            self.assertEqual(self.client.generation, 1)
+            await asyncio.sleep(1.05)
+            duplicate = await self.call('send', body, ident, route='relay')
+            self.assertTrue(duplicate['ok'], duplicate)
+            self.assertTrue(duplicate['duplicate'])
+            self.assertEqual(len(self.effects), 1)
             self.assertNotIn(marker.encode(), b''.join(self.frames))
             channel = await open_channel(self.client, record['certificate'], routes, 'relay', self.client_token)
             try:
