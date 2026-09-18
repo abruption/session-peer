@@ -33,6 +33,7 @@ import {
   object,
   principal,
   registration,
+  rotation,
   room,
   sha256,
   verifyProof,
@@ -70,7 +71,9 @@ export class RelayControl {
     db.exec(`CREATE TABLE IF NOT EXISTS relay_devices (principal TEXT PRIMARY KEY, userId TEXT NOT NULL, keyFingerprint TEXT NOT NULL, certificateFingerprint TEXT NOT NULL, certificatePEM TEXT NOT NULL, keyGeneration INTEGER NOT NULL, name TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
    CREATE INDEX IF NOT EXISTS relay_devices_owner ON relay_devices(userId);
    CREATE TABLE IF NOT EXISTS relay_challenges (id TEXT PRIMARY KEY,userId TEXT NOT NULL,operation TEXT NOT NULL,payload TEXT NOT NULL,message TEXT NOT NULL,expiresAt INTEGER NOT NULL);
-   CREATE INDEX IF NOT EXISTS relay_challenge_expiry ON relay_challenges(expiresAt);`);
+   CREATE INDEX IF NOT EXISTS relay_challenge_expiry ON relay_challenges(expiresAt);
+   CREATE TABLE IF NOT EXISTS relay_rotation_receipts (operationId TEXT PRIMARY KEY,userId TEXT NOT NULL,requestHash TEXT NOT NULL,result TEXT NOT NULL);
+   CREATE INDEX IF NOT EXISTS relay_rotation_owner ON relay_rotation_receipts(userId);`);
     const privateDir = privateDirectory(config.dataDir);
     const keyPath = join(privateDir, "signing-key.pem");
     try {
@@ -202,16 +205,28 @@ export class RelayControl {
     const o = object(input);
     fields(o, ["operation", "payload"]);
     assert(
-      o.operation === "register" || o.operation === "admission",
+      o.operation === "register" ||
+        o.operation === "admission" ||
+        o.operation === "rotate",
       "invalid_operation",
     );
     const payload =
       o.operation === "register"
         ? registration(o.payload)
-        : admission(o.payload);
+        : o.operation === "rotate"
+          ? rotation(o.payload)
+          : admission(o.payload);
     if (o.operation === "register")
       certificate((payload as Registration).certificatePEM, this.now());
-    else {
+    else if (o.operation === "rotate") {
+      const p = rotation(payload);
+      this.validateRotation(userId, p);
+      assert(
+        !this.rotationReceipt(userId, p),
+        "operation_already_completed",
+        409,
+      );
+    } else {
       const a = admission(payload);
       this.device(a.devicePrincipal, userId);
       this.device(a.receiverPrincipal, userId);
@@ -238,7 +253,16 @@ export class RelayControl {
     this.db
       .prepare("INSERT INTO relay_challenges VALUES (?,?,?,?,?,?)")
       .run(challengeId, userId, o.operation, body, proofMessage, expiresAt);
-    return { challengeId, nonce, expiresAt, proofMessage };
+    return o.operation === "rotate"
+      ? {
+          challengeId,
+          nonce,
+          expiresAt,
+          proofMessage,
+          oldProofMessage: proofMessage + "\nold-key",
+          newProofMessage: proofMessage + "\nnew-key",
+        }
+      : { challengeId, nonce, expiresAt, proofMessage };
   }
   private consume(userId: string, operation: string, input: unknown) {
     const o = object(input);
@@ -317,6 +341,135 @@ export class RelayControl {
       };
     })();
   }
+  private rotationReceipt(userId: string, p: ReturnType<typeof rotation>) {
+    const row = this.db
+      .prepare("SELECT * FROM relay_rotation_receipts WHERE operationId=?")
+      .get(p.operationId) as
+      { userId: string; requestHash: string; result: string } | undefined;
+    if (!row) return undefined;
+    assert(
+      row.userId === userId && row.requestHash === sha256(canonical(p)),
+      "operation_conflict",
+      409,
+    );
+    return JSON.parse(row.result) as {
+      operationId: string;
+      principal: string;
+      keyFingerprint: string;
+      keyGeneration: number;
+      completed: true;
+    };
+  }
+  private validateRotation(userId: string, p: ReturnType<typeof rotation>) {
+    const current = this.device(p.principal, userId);
+    assert(
+      current.keyGeneration === p.expectedGeneration,
+      "generation_conflict",
+      409,
+    );
+    const next = certificate(p.newCertificatePEM, this.now());
+    assert(
+      next.certificateFingerprint !== current.certificateFingerprint,
+      "unchanged_certificate",
+      409,
+    );
+    return { current, next };
+  }
+  rotate(userId: string, id: string, input: unknown) {
+    principal(id);
+    assert(this.healthy, "state_unavailable", 503);
+    const o = object(input);
+    fields(o, [
+      "principal",
+      "expectedGeneration",
+      "newCertificatePEM",
+      "operationId",
+      "challengeId",
+      "oldProof",
+      "newProof",
+    ]);
+    const p = rotation(
+      Object.fromEntries(
+        Object.entries(o).filter(
+          ([k]) => !["challengeId", "oldProof", "newProof"].includes(k),
+        ),
+      ),
+    );
+    assert(p.principal === id, "principal_mismatch");
+    assert(
+      typeof o.challengeId === "string" &&
+        typeof o.oldProof === "string" &&
+        typeof o.newProof === "string",
+      "invalid_proof",
+    );
+    return this.db.transaction(() => {
+      // A completed retry returns a historical receipt only. It cannot modify a
+      // device, revive a tombstone, or require reexecution after a lost response.
+      this.device(id, userId, false);
+      const receipt = this.rotationReceipt(userId, p);
+      if (receipt) return receipt;
+      const { current, next } = this.validateRotation(userId, p);
+      const c = this.db
+        .prepare("SELECT * FROM relay_challenges WHERE id=?")
+        .get(o.challengeId) as ChallengeRow | undefined;
+      assert(
+        c &&
+          c.userId === userId &&
+          c.operation === "rotate" &&
+          c.expiresAt > this.now() &&
+          c.payload === canonical(p),
+        "invalid_or_expired_challenge",
+      );
+      // An expired stored certificate still identifies the old key for renewal;
+      // only this possession check ignores dates. New certs/admission do not.
+      verifyProof(
+        c.message + "\nold-key",
+        o.oldProof,
+        certificate(current.certificatePEM, this.now(), false).key,
+      );
+      verifyProof(c.message + "\nnew-key", o.newProof, next.key);
+      const count = this.db
+        .prepare(
+          "SELECT count(*) AS n FROM relay_rotation_receipts WHERE userId=?",
+        )
+        .get(userId) as { n: number };
+      assert(count.n < 4096, "rotation_receipt_limit", 409);
+      const result = {
+        operationId: p.operationId,
+        principal: id,
+        keyFingerprint: next.keyFingerprint,
+        keyGeneration: current.keyGeneration + 1,
+        completed: true as const,
+      };
+      this.db
+        .prepare(
+          "UPDATE relay_devices SET certificatePEM=?,certificateFingerprint=?,keyFingerprint=?,keyGeneration=? WHERE principal=? AND userId=? AND keyGeneration=? AND revoked=0",
+        )
+        .run(
+          p.newCertificatePEM,
+          next.certificateFingerprint,
+          next.keyFingerprint,
+          result.keyGeneration,
+          id,
+          userId,
+          p.expectedGeneration,
+        );
+      this.db
+        .prepare("INSERT INTO relay_rotation_receipts VALUES (?,?,?,?)")
+        .run(
+          p.operationId,
+          userId,
+          sha256(canonical(p)),
+          JSON.stringify(result),
+        );
+      // Invalidate outstanding proofs from the old generation, including races.
+      this.db
+        .prepare("DELETE FROM relay_challenges WHERE userId=?")
+        .run(userId);
+      this.publish();
+      return result;
+    })();
+  }
   async admit(userId: string, input: unknown) {
     assert(this.healthy, "state_unavailable", 503);
     const result = this.db.transaction(() => {
@@ -349,7 +502,13 @@ export class RelayControl {
       .sign(this.signingKey);
     // Revocation may occur while asynchronous crypto runs. Never return an admission
     // for a device or receiver revoked during issuance.
-    this.device(result.a.devicePrincipal, userId);
+    const current = this.device(result.a.devicePrincipal, userId);
+    assert(
+      current.keyGeneration === result.d.keyGeneration &&
+        current.keyFingerprint === result.d.keyFingerprint,
+      "generation_conflict",
+      409,
+    );
     this.device(result.a.receiverPrincipal, userId);
     assert(this.healthy, "state_unavailable", 503);
     return { token, expiresAt, room: room(userId, result.a.receiverPrincipal) };

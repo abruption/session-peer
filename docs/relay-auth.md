@@ -57,14 +57,17 @@ https://relay.abruption.dev/api/auth/callback/google
 JSON bodies only; 16 KiB maximum. Unknown fields are rejected in protocol payloads.
 Authenticated API requests have a per-user 60/minute limit. Each user has at most
 16 active challenges and 32 total device identities, including revoked tombstones.
+Each owner has at most 4096 durable rotation receipts; the limit fails closed
+rather than deleting records needed to reconcile ambiguous responses.
 Do not retry a potentially accepted native session submission automatically.
 
 | Endpoint | Result / checks |
 | --- | --- |
 | `GET /api/relay/devices` | Only caller-owned devices; no certificates/secrets |
-| `POST /api/relay/challenge` | `{operation: "register" | "admission", payload: …}`; nonce bound to caller/operation/full payload, 60s lifetime |
+| `POST /api/relay/challenge` | `{operation: "register" | "admission" | "rotate", payload: …}`; nonce bound to caller/operation/full payload, 60s lifetime |
 | `POST /api/relay/devices` | Registration payload plus `challengeId`, `proof` |
 | `POST /api/relay/admission` | Admission payload plus `challengeId`, `proof`; short-lived ES256 relay token |
+| `POST /api/relay/devices/:principal/rotate` | Owner, exact generation, old/new key proofs and durable operation ID; historical receipt |
 | `POST /api/relay/devices/:principal/revoke` | Owner session only; no lost-device key requirement; tombstone persists |
 
 Registration payload:
@@ -83,9 +86,66 @@ certificate pinning. Private keys are never submitted.
 
 A repeated registration must have the same owner/generation/certificate and an
 active principal. Other-owner takeover, generation rollback and key replacement
-are rejected. This minimal candidate does not yet implement key rotation under
-an existing principal. Revoke and register a new principal; revoked principals
-cannot be resurrected. Certificate renewal/rotation UX is a remaining gate.
+through registration are rejected. Existing principals can only renew/rotate via
+the explicit dual-proof operation below. Revoked principals cannot be resurrected;
+a lost old key requires owner revocation and a new principal, not a login-only
+replacement. OAuth login never replaces endpoint E2EE pairing authorization.
+
+### Certificate renewal / key rotation
+
+Generate a UUID v4 `operationId` once and retain it with the exact payload until
+its result is known. Challenge operation `rotate` binds:
+
+```json
+{
+  "principal": "<existing 64 lowercase hex ID>",
+  "expectedGeneration": 1,
+  "newCertificatePEM": "<new public P-256 certificate>",
+  "operationId": "<fixed UUID v4>"
+}
+```
+
+The response also supplies `oldProofMessage` and `newProofMessage`. They are the
+base `proofMessage` followed by `\nold-key` and `\nnew-key`, respectively,
+without a trailing newline. Sign each **exact returned string** with the respective
+old/new P-256 key (ECDSA SHA256 DER, unpadded base64url). Submit the payload plus
+`challengeId`, `oldProof`, `newProof` to
+`POST /api/relay/devices/:principal/rotate`; path and payload principal must match.
+A browser/CLI owner session alone is insufficient. The existing device must be
+active, same owner, and at the expected generation. New generation is computed by
+the server as `expectedGeneration + 1`. Owner, principal and name are preserved.
+The new certificate must be valid for more than 60 seconds and differ from the
+stored certificate; same-key certificate renewal is allowed with both proof domains.
+Only the **stored old certificate's possession check** ignores certificate dates,
+so expired certificates can be renewed if the old private key remains available.
+New certificates and normal admission continue to enforce validity.
+
+Mutation, consumed challenges and receipt journal are one SQLite transaction.
+Outstanding owner challenges are invalidated, public state is republished, and
+admission signing that spans a generation change fails rather than returning an
+old-generation token. The result is a historical receipt:
+
+```json
+{
+  "operationId": "<fixed UUID v4>",
+  "principal": "<unchanged ID>",
+  "keyFingerprint": "<new SHA256 SPKI DER>",
+  "keyGeneration": 2,
+  "completed": true
+}
+```
+
+An authenticated same-owner retry of the **identical payload/operationId** returns
+the saved receipt even if its challenge expired or its device was subsequently
+revoked. It does not reverify consumed proofs or perform a second mutation. Reuse
+with a changed payload or another owner is rejected. The receipt is **not current
+device status**; query `GET /api/relay/devices` for that. No retry can revive a
+revoked tombstone. New rotations of revoked devices fail. Do not discard the ID
+or automatically create a new operation on timeout/unknown outcome.
+
+Python must check the current generation/fingerprint at admission and while
+connections remain active. Control login/rotation does not approve a new peer
+certificate pin; endpoints still apply their independent E2EE pairing/pin policy.
 
 Admission payload:
 
@@ -244,12 +304,18 @@ messages contain only fixed operational error codes.
 
 Local tests use real BetterAuth/SQLite/device-code endpoints, generated fixture
 P-256 certificates and crypto, plus the compiled HTTP server on loopback. Auth
-fixtures seed test users/accounts/sessions in a private temporary control DB;
-there is **no production fake OAuth endpoint or auth bypass**. OpenSSL is test-only.
+fixtures seed test users/accounts/sessions in a private temporary control DB.
+Separate callback tests mock only outbound GitHub/Google transport, with fixture
+credentials and signed fixture Google tokens; they run the pinned native OAuth
+state/PKCE/callback/allowlist/account-linking paths. No provider request is sent.
+There is **no production fake OAuth endpoint or auth bypass**. OpenSSL is test-only.
 Tests cover owner isolation, policy revocation, CSRF, exact browser-session claim,
 code approval/denial/expiry/redemption, challenge expiry/replay/alteration, key
-replacement denial, atomic state publication failure and non-secret state,
-loopback/static/Host/body-limit behavior. These are not credentialed provider
+replacement denial, dual-key rotation, generation races, durable receipt retry,
+expired-certificate renewal, revoked tombstones, atomic state publication failure
+and non-secret state,
+loopback/static/Host/body-limit behavior, rejected forged Google ID tokens and
+unallowlisted/same-email different provider identities. These are not credentialed provider
 OAuth, Mac user-browser, Python JWT integration, 24h operating or real Claude
 quota-recovery tests. Record each of those separately before RC PR. No merge,
 release tag, publication or remote push is authorized by this implementation.

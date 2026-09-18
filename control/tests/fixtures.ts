@@ -11,7 +11,12 @@ import { RelayControl } from "../src/server/relay-control.js";
 import { createApp } from "../src/server/app.js";
 import type { Config } from "../src/server/config.js";
 import type { Registration } from "../src/server/protocol.js";
-export function identity(root: string, name: string, character: string) {
+export function identity(
+  root: string,
+  name: string,
+  character: string,
+  days = 2,
+) {
   const key = join(root, name + ".key");
   const cert = join(root, name + ".crt");
   execFileSync(
@@ -31,7 +36,7 @@ export function identity(root: string, name: string, character: string) {
       "-subj",
       "/CN=fixture",
       "-days",
-      "2",
+      String(days),
     ],
     { stdio: "pipe" },
   );
@@ -44,7 +49,9 @@ export function identity(root: string, name: string, character: string) {
   };
   return { payload, privateKey };
 }
-export async function fixture() {
+let fixtureCounter = 0;
+export async function fixture(overrides: Partial<Config> = {}) {
+  const testIP = "192.0.2." + ++fixtureCounter;
   const root = mkdtempSync(join(tmpdir(), "sp-control-"));
   mkdirSync(join(root, "private"), { mode: 0o700 });
   const config: Config = {
@@ -58,6 +65,7 @@ export async function fixture() {
       { provider: "github", accountId: "fixture-owner" },
       { provider: "google", accountId: "fixture-other" },
     ],
+    ...overrides,
   };
   const db = openDatabase(config.dataDir);
   const auth = createAuth(db, config);
@@ -106,6 +114,7 @@ export async function fixture() {
       new Request(config.origin + path, {
         method: method ?? (body === undefined ? "GET" : "POST"),
         headers: {
+          "x-session-peer-ip": testIP,
           ...headers,
           ...(body === undefined ? {} : { "content-type": "application/json" }),
         },
@@ -128,7 +137,30 @@ export async function fixture() {
       ),
     };
   }
+  function rotated(
+    userId: string,
+    payload: unknown,
+    oldKey: Parameters<typeof sign>[2],
+    newKey: Parameters<typeof sign>[2],
+  ) {
+    const c = control.challenge(userId, { operation: "rotate", payload });
+    return {
+      ...(payload as object),
+      challengeId: c.challengeId,
+      oldProof: sign(
+        "sha256",
+        Buffer.from(c.oldProofMessage!),
+        oldKey,
+      ).toString("base64url"),
+      newProof: sign(
+        "sha256",
+        Buffer.from(c.newProofMessage!),
+        newKey,
+      ).toString("base64url"),
+    };
+  }
   return {
+    rotated,
     root,
     config,
     db,
