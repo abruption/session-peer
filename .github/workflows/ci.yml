@@ -123,7 +123,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install '.[relay,mcp]' build
-      - run: python -m unittest tests.test_native_relay tests.test_relay69 -v
+      - run: python -m unittest tests.test_native_relay tests.test_relay69 tests.test_relay_lifecycle tests.test_relay_auth tests.test_relay_control -v
       - run: python -m build
       - name: Verify optional transport packaging
         run: |

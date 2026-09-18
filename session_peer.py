@@ -3855,6 +3855,7 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument('--device-state', help='local device state directory')
         sub.add_argument('--device-route', choices=('auto', 'direct', 'relay'), default='auto')
         sub.add_argument('--relay-admission-file', help='private client admission credential file')
+        sub.add_argument('--relay-login', action='store_true', help='use an explicitly saved device login for relay admission')
     for name in ('device', 'relay'):
         sub = subparsers.add_parser(name, add_help=False, help='optional paired-device '+name+' management')
         sub.add_argument('--help', '-h', dest='relay_help', action='store_true')

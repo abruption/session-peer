@@ -34,6 +34,17 @@ def credential(path):
     return token
 
 
+def device_credential(args, store, receiver, role='client'):
+    use_login = getattr(args, 'login', False) or getattr(args, 'relay_login', False)
+    path = getattr(args, 'admission_file', None) or getattr(args, 'relay_admission_file', None)
+    if use_login:
+        if path:
+            raise Rejected('login_and_static_admission_conflict')
+        from .control import DeviceCredential
+        return DeviceCredential(store, receiver, role)
+    return credential(path)
+
+
 async def lifetime(seconds):
     event = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -68,25 +79,62 @@ async def manage(kind, args):
                 accounts.append({'role': role, 'room': args.room, 'hash': hashlib.sha256(token.encode()).hexdigest()})
             private_write(root/'accounts.json', json.dumps(accounts))
             return {'ok': True, 'provisioned': True, 'directory': str(root)}
-        accounts = json.loads(private_read(args.accounts, systemd_credentials=True))
-        if (not isinstance(accounts, list) or not 1 <= len(accounts) <= 128
+        control = None
+        if args.auth_state:
+            from .auth import ControlAdmission
+            if not args.auth_issuer:
+                raise Rejected('auth_issuer_required')
+            if not args.auth_replay_state:
+                raise Rejected('auth_replay_state_required')
+            control = ControlAdmission(args.auth_state, args.auth_issuer, args.auth_replay_state)
+            control.state()
+        accounts = json.loads(private_read(args.accounts, systemd_credentials=True)) if args.accounts else []
+        if not control and (not isinstance(accounts, list) or not 1 <= len(accounts) <= 128
                 or any(not isinstance(a, dict) or set(a) != {'role', 'room', 'hash'}
                        or a['role'] not in ('receiver', 'client')
                        or not isinstance(a['room'], str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}', a['room'])
                        or not isinstance(a['hash'], str) or not re.fullmatch(r'[a-f0-9]{64}', a['hash']) for a in accounts)):
             raise Rejected('invalid_admission_accounts')
-        relay = Relay(accounts)
+        relay = Relay(accounts, control=control)
         server = await relay.start(args.bind, args.port)
         emit({'ok': True, 'ready': True, 'port': server.sockets[0].getsockname()[1]})
         try:
             await lifetime(args.seconds)
         finally:
             server.close(); await server.wait_closed()
+            if control:
+                control.close()
         return {'ok': True, 'stopped': True, 'frames': relay.forwarded_frames, 'rejected': relay.rejected}
-    store = Store(state_path(args.state))
+    if args.action == 'restore':
+        from .lifecycle import restore
+        return restore(args.backup, args.state)
+    store = Store(state_path(args.state), exclusive=args.action in ('rotate', 'backup'))
     try:
         if args.action == 'init':
             return {'ok': True, 'device': store.device}
+        if args.action == 'login':
+            from .control import login
+            return await login(store, args.server, args.no_browser)
+        if args.action == 'enroll':
+            from .control import enroll
+            return enroll(store, args.name, args.operation_id)
+        if args.action == 'diagnostics':
+            from .lifecycle import diagnostics
+            return diagnostics(store)
+        if args.action == 'backup':
+            from .lifecycle import backup
+            return backup(store, args.out, args.policy)
+        if args.action == 'rotate':
+            from .rotation import rotate
+            if args.login and args.admission_file:
+                raise Rejected('login_and_static_admission_conflict')
+            return await rotate(store, args.operation_id, args.route, credential(args.admission_file), use_login=args.login)
+        if args.action == 'rotation-status':
+            row = store.db.execute('SELECT value FROM metadata WHERE key="local_rotation"').fetchone()
+            saved = json.loads(row[0]) if row else None
+            return {'ok': True, 'device': store.device, 'generation': store.generation,
+                    'keyFingerprint': store.key_id, 'rotation': saved['status'] if saved else 'none',
+                    'operationId': saved['proposal']['id'] if saved else None}
         if args.action == 'peers':
             return {'ok': True, 'device': store.device, 'peers': [
                 {'device': row[0], 'status': row[1]} for row in store.db.execute('SELECT id,status FROM peers ORDER BY id')]}
@@ -112,11 +160,20 @@ async def manage(kind, args):
             return {'ok': True, 'invitationSaved': True, 'device': store.device, 'expiresInSeconds': 600}
         if args.action == 'pair':
             invitation = json.loads(private_read(args.invite))
-            return await pair(store, invitation, args.route, credential(args.admission_file))
+            return await pair(store, invitation, args.route, device_credential(args, store, invitation['device']))
         if args.action == 'status':
             return await exchange(store, args.peer, 'status', args.request_id, route=args.route,
-                                  credential=credential(args.admission_file))
+                                  credential=device_credential(args, store, args.peer))
         if args.action == 'serve':
+            import fcntl
+            lock_fd = os.open(store.root/'receiver.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+            receiver_lock = os.fdopen(lock_fd, 'w')
+            private_path(store.root/'receiver.lock')
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                receiver_lock.close()
+                raise Rejected('receiver_already_running') from None
             policy = json.loads(private_read(args.policy))
             receiver = Receiver(store, policy)
             # Never create a public listener merely because a relay is configured.
@@ -125,7 +182,7 @@ async def manage(kind, args):
             try:
                 if args.relay:
                     validate_relay_url(args.relay)
-                    token = credential(args.admission_file)
+                    token = device_credential(args, store, store.device, 'receiver')
                     if not token:
                         raise Rejected('admission_file_required')
                     task = asyncio.create_task(receiver.relay_listener(args.relay, token))
@@ -137,6 +194,7 @@ async def manage(kind, args):
                 if task:
                     task.cancel(); await asyncio.gather(task, return_exceptions=True)
                 server.close(); await server.wait_closed(); await receiver.close()
+                receiver_lock.close()
             return {'ok': True, 'stopped': True}
         raise Rejected('invalid_command')
     finally:
@@ -159,14 +217,27 @@ def parser(kind):
         item = command('provision', False)
         item.add_argument('--out', required=True); item.add_argument('--room', default='private')
         item = command('serve', False)
-        item.add_argument('--accounts', required=True); server_options(item)
+        source = item.add_mutually_exclusive_group(required=True)
+        source.add_argument('--accounts'); source.add_argument('--auth-state')
+        item.add_argument('--auth-issuer'); item.add_argument('--auth-replay-state'); server_options(item)
         return p
     command('init'); command('peers')
+    item = command('login'); item.add_argument('--server', required=True); item.add_argument('--no-browser', action='store_true')
+    item = command('enroll'); item.add_argument('--name', required=True); item.add_argument('--operation-id', required=True)
+    command('diagnostics')
+    item = command('backup'); item.add_argument('--out', required=True); item.add_argument('--policy', required=True)
+    item = command('restore', False); item.add_argument('--state', required=True); item.add_argument('--backup', required=True)
+    command('rotation-status')
+    item = command('rotate'); item.add_argument('--operation-id', required=True)
+    item.add_argument('--login', action='store_true')
+    item.add_argument('--route', choices=('auto', 'direct', 'relay'), default='auto')
+    item.add_argument('--admission-file')
     item = command('invite'); item.add_argument('--out', required=True)
     item.add_argument('--direct'); item.add_argument('--relay')
     item = command('routes'); item.add_argument('--peer', required=True)
     item.add_argument('--direct'); item.add_argument('--relay')
     item = command('serve'); item.add_argument('--policy', required=True)
+    item.add_argument('--login', action='store_true')
     item.add_argument('--relay'); item.add_argument('--admission-file'); server_options(item)
     item = command('revoke'); item.add_argument('--peer', required=True)
     for name in ('pair', 'status'):
@@ -177,6 +248,7 @@ def parser(kind):
             item.add_argument('--peer', required=True); item.add_argument('--request-id', required=True)
         item.add_argument('--route', choices=('direct', 'relay') if name == 'pair' else ('auto', 'direct', 'relay'), default='direct' if name == 'pair' else 'auto')
         item.add_argument('--admission-file')
+        item.add_argument('--login', action='store_true')
     return p
 
 
@@ -214,7 +286,7 @@ async def core_exchange(args):
         operation = 'resolve' if args.command == 'send' and args.dry_run else args.command
         result = await exchange(store, args.device, operation, body,
                                 getattr(args, 'request_id', None), args.device_route,
-                                credential(args.relay_admission_file))
+                                device_credential(args, store, args.device))
         if args.command == 'list' and args.agent:
             result['sessions'] = [row for row in result.get('sessions', []) if row.get('agent') == args.agent]
         return result
