@@ -7,7 +7,7 @@ import {
   createPublicKey,
   X509Certificate,
 } from "node:crypto";
-import { readFileSync, renameSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { importJWK, jwtVerify } from "jose";
 import { fixture, identity } from "./fixtures.js";
@@ -33,6 +33,36 @@ afterEach(() => {
   f = undefined;
 });
 describe("relay device boundary", () => {
+  it("health rejects expired, changed, missing or unpublished state and recovers only with valid state", async () => {
+    f = await fixture();
+    expect(f.control.isHealthy()).toBe(true);
+    const path = join(f.config.publicDir, "state.json");
+    const original = readFileSync(path, "utf8");
+    const changed = JSON.parse(original); changed.devices = { unexpected: {} };
+    writeFileSync(path, JSON.stringify(changed));
+    expect(f.control.isHealthy()).toBe(false);
+    expect((await f.app(new Request(f.config.origin + "/healthz"))).status).toBe(503);
+    writeFileSync(path, original);
+    expect(f.control.isHealthy()).toBe(true);
+    renameSync(path, path + ".saved");
+    expect(f.control.isHealthy()).toBe(false);
+    renameSync(path + ".saved", path);
+    f.advance(180000);
+    expect(f.control.isHealthy()).toBe(false);
+    f.control.publish();
+    expect(f.control.isHealthy()).toBe(true);
+    f.control.healthy = false;
+    expect(f.control.isHealthy()).toBe(false);
+  });
+  it("health refuses database rollback or a future publication time", async () => {
+    f = await fixture();
+    f.advance(-10000);
+    expect(f.control.isHealthy()).toBe(false);
+    f.advance(10000);
+    expect(f.control.isHealthy()).toBe(true);
+    f.db.prepare("UPDATE relay_public_revision SET revision=0 WHERE id=1").run();
+    expect(f.control.isHealthy()).toBe(false);
+  });
   it("enrolls generation zero with certificate-derived stable identity and rejects ambiguous initial/rotation shapes", async () => {
     f = await fixture();
     const d = identity(f.root, "Device", "a");

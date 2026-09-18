@@ -64,6 +64,8 @@ export class RelayControl {
   private publicJwk: JsonWebKey;
   private publicDir: string;
   private publicationFloor = 0;
+  private publishedState = "";
+  private publishedAt = 0;
   healthy = true;
   constructor(
     private db: Database.Database,
@@ -224,6 +226,8 @@ export class RelayControl {
         closeSync(dirfd);
       }
       this.healthy = true;
+      this.publishedState = JSON.stringify(snapshot);
+      this.publishedAt = now;
     } catch (e) {
       this.healthy = false;
       try {
@@ -231,6 +235,20 @@ export class RelayControl {
       } catch {}
       throw new ControlError("state_publication_failed", 503);
     }
+  }
+  isHealthy() {
+    if (!this.healthy || !this.publishedState) return false;
+    try {
+      const now = this.now() / 1000;
+      const path = join(this.publicDir, "state.json");
+      const st = lstatSync(path);
+      const revision = this.db.prepare("SELECT revision FROM relay_public_revision WHERE id=1").get() as { revision: number } | undefined;
+      return this.publishedAt <= now + 5 && now < this.publishedAt + 180
+        && st.isFile() && !st.isSymbolicLink()
+        && st.size === Buffer.byteLength(this.publishedState)
+        && revision?.revision === this.publicationFloor
+        && readFileSync(path, "utf8") === this.publishedState;
+    } catch { return false; }
   }
   list(userId: string) {
     return (

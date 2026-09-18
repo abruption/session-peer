@@ -5,6 +5,7 @@ import { openDatabase } from "./storage.js";
 import { createAuth } from "./auth.js";
 import { RelayControl } from "./relay-control.js";
 import { createApp } from "./app.js";
+import { createWatchdog } from "./watchdog.js";
 process.umask(0o077);
 const config = loadConfig();
 const db = openDatabase(config.dataDir);
@@ -71,6 +72,7 @@ const server = createServer(async (incoming, outgoing) => {
     outgoing.end('{"error":"internal_error"}');
   }
 });
+const watchdog = createWatchdog(() => server.listening && control.isHealthy());
 server.requestTimeout = 10000;
 server.headersTimeout = 10000;
 server.maxHeadersCount = 50;
@@ -82,10 +84,16 @@ const timer = setInterval(() => {
   }
 }, 60000);
 timer.unref();
-server.listen(port, "127.0.0.1", () =>
-  console.log("session-peer control ready (loopback only)"),
-);
+server.listen(port, "127.0.0.1", () => {
+  void watchdog.start().then(() => {
+    console.log("session-peer control ready (loopback only)");
+  }).catch(() => {
+    console.error("control_watchdog_start_failed");
+    process.exit(1);
+  });
+});
 function stop() {
+  watchdog.stop();
   clearInterval(timer);
   server.close(() => {
     db.close();

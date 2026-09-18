@@ -36,8 +36,10 @@ export function createApp(
     const path = url.pathname;
     if (url.origin !== config.origin)
       return json({ error: "invalid_origin" }, 400);
-    if (path === "/healthz")
-      return json({ ok: control.healthy }, control.healthy ? 200 : 503);
+    if (path === "/healthz") {
+      const healthy = control.isHealthy();
+      return json({ ok: healthy }, healthy ? 200 : 503);
+    }
     if (path === "/api/control/config" && request.method === "GET")
       return json({ providers: Object.keys(config.providers) });
     if (path.startsWith("/api/auth/")) {

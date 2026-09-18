@@ -2,9 +2,15 @@
 Description=session-peer private device control and authentication
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=all
+WatchdogSec=30
+WatchdogSignal=SIGKILL
+TimeoutStartSec=30
 DynamicUser=yes
 WorkingDirectory=/opt/session-peer-control
 Environment=NODE_ENV=production
@@ -17,7 +23,10 @@ LoadCredential=auth-secret:/etc/session-peer-control/auth-secret
 Environment=BETTER_AUTH_SECRET_FILE=%d/auth-secret
 # Add LoadCredential/Environment *_CLIENT_SECRET_FILE entries for enabled
 # providers only, after operator-owned OAuth apps and callbacks are configured.
-ExecStart=/usr/bin/flock --nonblock /var/lib/session-peer-control/writer.lock /usr/bin/node /opt/session-peer-control/dist/server/main.js
+# --no-fork keeps WATCHDOG_PID equal to the Node main process. The notifier
+# child needs NotifyAccess=all and uses systemd-notify's blocking acknowledgement.
+# Use a root-owned runtime outside any home hidden by ProtectHome.
+ExecStart=/usr/bin/flock --no-fork --nonblock /var/lib/session-peer-control/writer.lock /opt/session-peer-control/runtime/node-v24.16.0/bin/node /opt/session-peer-control/dist/server/main.js
 StateDirectory=session-peer-control
 StateDirectoryMode=0700
 UMask=0077
