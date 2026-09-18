@@ -1,0 +1,49 @@
+[Unit]
+Description=session-peer private device control and authentication
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+WorkingDirectory=/opt/session-peer-control
+Environment=NODE_ENV=production
+Environment=PORT=3770
+Environment=SESSION_PEER_CONTROL_ORIGIN=https://relay.abruption.dev
+Environment=SESSION_PEER_CONTROL_DATA=/var/lib/session-peer-control/private
+Environment=SESSION_PEER_RELAY_PUBLIC=/var/lib/session-peer-control/relay-public
+EnvironmentFile=/etc/session-peer-control/control.env
+LoadCredential=auth-secret:/etc/session-peer-control/auth-secret
+Environment=BETTER_AUTH_SECRET_FILE=%d/auth-secret
+# Add LoadCredential/Environment *_CLIENT_SECRET_FILE entries for enabled
+# providers only, after operator-owned OAuth apps and callbacks are configured.
+ExecStart=/usr/bin/flock --nonblock /var/lib/session-peer-control/writer.lock /usr/bin/node /opt/session-peer-control/dist/server/main.js
+StateDirectory=session-peer-control
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+TemporaryFileSystem=/opt:ro
+BindReadOnlyPaths=/opt/session-peer-control
+InaccessiblePaths=-/srv -/var/log -/etc/caddy -/etc/authelia -/etc/redis -/etc/session-peer-relay -/var/lib/caddy -/var/lib/authelia -/var/lib/redis -/var/lib/docker -/var/lib/ontology
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+LockPersonality=yes
+RestrictSUIDSGID=yes
+MemoryMax=256M
+CPUQuota=50%
+TasksMax=64
+LimitNOFILE=256
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

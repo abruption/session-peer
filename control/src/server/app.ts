@@ -1,0 +1,250 @@
+import { readFile } from "node:fs/promises";
+import { resolve, join, extname } from "node:path";
+import type Database from "better-sqlite3";
+import { allowedUser, type Auth } from "./auth.js";
+import type { Config } from "./config.js";
+import { ControlError, assert } from "./protocol.js";
+import type { RelayControl } from "./relay-control.js";
+const MAX_BODY = 16384;
+export function sameOrigin(request: Request, origin: string) {
+  const supplied = request.headers.get("origin");
+  return (
+    supplied === origin ||
+    (!supplied &&
+      request.headers.get("sec-fetch-site") === "same-origin" &&
+      new URL(request.url).origin === origin)
+  );
+}
+export function createApp(
+  auth: Auth,
+  db: Database.Database,
+  control: RelayControl,
+  config: Config,
+  webDir: string,
+) {
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS relay_device_claims (id TEXT PRIMARY KEY,userId TEXT NOT NULL,sessionId TEXT NOT NULL,expiresAt INTEGER NOT NULL)",
+  );
+  const rates = new Map<string, { start: number; count: number }>();
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  async function handle(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const path = url.pathname;
+    if (url.origin !== config.origin)
+      return json({ error: "invalid_origin" }, 400);
+    if (path === "/healthz")
+      return json({ ok: control.healthy }, control.healthy ? 200 : 503);
+    if (path === "/api/control/config" && request.method === "GET")
+      return json({ providers: Object.keys(config.providers) });
+    if (path.startsWith("/api/auth/")) {
+      const mutating = request.method !== "GET" && request.method !== "HEAD";
+      const publicDevice = [
+        "/api/auth/device/code",
+        "/api/auth/device/token",
+      ].includes(path);
+      if (
+        (mutating && !publicDevice) ||
+        [
+          "/api/auth/device",
+          "/api/auth/device/approve",
+          "/api/auth/device/deny",
+        ].includes(path)
+      )
+        assert(sameOrigin(request, config.origin), "csrf_rejected", 403);
+      if (publicDevice && request.headers.has("origin"))
+        assert(sameOrigin(request, config.origin), "csrf_rejected", 403);
+      if (
+        [
+          "/api/auth/device",
+          "/api/auth/device/approve",
+          "/api/auth/device/deny",
+        ].includes(path)
+      ) {
+        assert(
+          !request.headers.has("authorization") &&
+            request.headers.has("cookie"),
+          "browser_session_required",
+          401,
+        );
+        const s = await auth.api.getSession({ headers: request.headers });
+        assert(
+          s && allowedUser(db, config, s.user.id),
+          "account_not_allowed",
+          403,
+        );
+        let code: unknown;
+        if (path === "/api/auth/device")
+          code = url.searchParams.get("user_code");
+        else {
+          try {
+            code = (await request.clone().json()).userCode;
+          } catch {
+            throw new ControlError("invalid_user_code");
+          }
+        }
+        assert(
+          typeof code === "string" && code.length <= 32,
+          "invalid_user_code",
+        );
+        const normalized = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
+        const row = db
+          .prepare(
+            "SELECT id,userId,expiresAt,status FROM deviceCode WHERE userCode=?",
+          )
+          .get(normalized) as
+          | {
+              id: string;
+              userId: string | null;
+              expiresAt: string;
+              status: string;
+            }
+          | undefined;
+        const expiresAt = row ? Date.parse(row.expiresAt) : NaN;
+        assert(row && expiresAt > Date.now(), "invalid_or_expired_code");
+        assert(
+          !row.userId || row.userId === s.user.id,
+          "code_owned_by_another_user",
+          403,
+        );
+        db.prepare("DELETE FROM relay_device_claims WHERE expiresAt<=?").run(
+          Date.now(),
+        );
+        if (path === "/api/auth/device")
+          db.prepare(
+            "INSERT OR IGNORE INTO relay_device_claims VALUES (?,?,?,?)",
+          ).run(row.id, s.user.id, s.session.id, expiresAt);
+        const claim = db
+          .prepare(
+            "SELECT userId,sessionId FROM relay_device_claims WHERE id=?",
+          )
+          .get(row.id) as { userId: string; sessionId: string } | undefined;
+        assert(
+          claim &&
+            claim.userId === s.user.id &&
+            claim.sessionId === s.session.id,
+          "code_not_claimed_by_this_session",
+          403,
+        );
+      }
+      assert(
+        request.method === "GET" || request.method === "POST",
+        "method_not_allowed",
+        405,
+      );
+      return auth.handler(request);
+    }
+    if (path.startsWith("/api/relay/")) {
+      assert(
+        request.method === "GET" || request.method === "POST",
+        "method_not_allowed",
+        405,
+      );
+      const bearer = request.headers.get("authorization");
+      if (request.method === "POST" || request.headers.has("origin")) {
+        if (
+          bearer &&
+          !request.headers.has("cookie") &&
+          !request.headers.has("origin")
+        )
+          assert(/^Bearer [^\s]+$/.test(bearer), "invalid_bearer", 401);
+        else assert(sameOrigin(request, config.origin), "csrf_rejected", 403);
+      }
+      const session = await auth.api.getSession({ headers: request.headers });
+      assert(session, "authentication_required", 401);
+      assert(
+        allowedUser(db, config, session.user.id),
+        "account_not_allowed",
+        403,
+      );
+      const now = Date.now();
+      const current = rates.get(session.user.id);
+      const bucket =
+        current && now - current.start < 60000
+          ? current
+          : { start: now, count: 0 };
+      bucket.count++;
+      rates.set(session.user.id, bucket);
+      assert(bucket.count <= 60, "rate_limited", 429);
+      const userId = session.user.id;
+      if (path === "/api/relay/devices" && request.method === "GET")
+        return json({ devices: control.list(userId) });
+      if (request.method === "POST") {
+        assert(
+          request.headers.get("content-type")?.split(";")[0] ===
+            "application/json",
+          "json_required",
+          415,
+        );
+        const text = await request.text();
+        assert(Buffer.byteLength(text) <= MAX_BODY, "body_too_large", 413);
+        let body: unknown;
+        try {
+          body = JSON.parse(text);
+        } catch {
+          throw new ControlError("invalid_json");
+        }
+        if (path === "/api/relay/challenge")
+          return json(control.challenge(userId, body));
+        if (path === "/api/relay/devices")
+          return json(control.register(userId, body), 201);
+        if (path === "/api/relay/admission")
+          return json(await control.admit(userId, body));
+        const revoke = /^\/api\/relay\/devices\/([a-f0-9]{64})\/revoke$/.exec(
+          path,
+        );
+        if (revoke) return json(control.revoke(userId, revoke[1]));
+      }
+      return json({ error: "not_found" }, 404);
+    }
+    if (path.startsWith("/api/")) return json({ error: "not_found" }, 404);
+    if (request.method !== "GET" && request.method !== "HEAD")
+      return json({ error: "method_not_allowed" }, 405);
+    let file: string;
+    if (["/", "/login", "/device", "/devices"].includes(path))
+      file = join(webDir, "index.html");
+    else if (/^\/assets\/[A-Za-z0-9_.-]+$/.test(path))
+      file = join(webDir, path);
+    else return json({ error: "not_found" }, 404);
+    try {
+      const data = await readFile(resolve(file));
+      const mime: Record<string, string> = {
+        ".html": "text/html; charset=utf-8",
+        ".js": "text/javascript; charset=utf-8",
+        ".css": "text/css; charset=utf-8",
+      };
+      return new Response(request.method === "HEAD" ? null : data, {
+        headers: {
+          "content-type": mime[extname(file)] ?? "application/octet-stream",
+        },
+      });
+    } catch {
+      return json({ error: "not_found" }, 404);
+    }
+  }
+  return async (request: Request) => {
+    let res: Response;
+    try {
+      res = await handle(request);
+    } catch (e) {
+      res = json(
+        { error: e instanceof ControlError ? e.code : "internal_error" },
+        e instanceof ControlError ? e.status : 500,
+      );
+    }
+    res.headers.set("cache-control", "no-store");
+    res.headers.set("x-content-type-options", "nosniff");
+    res.headers.set("referrer-policy", "no-referrer");
+    res.headers.set("x-frame-options", "DENY");
+    res.headers.set(
+      "content-security-policy",
+      "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    );
+    if (config.production)
+      res.headers.set("strict-transport-security", "max-age=31536000");
+    return res;
+  };
+}
