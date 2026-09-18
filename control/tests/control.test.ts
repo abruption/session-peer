@@ -33,6 +33,29 @@ afterEach(() => {
   f = undefined;
 });
 describe("relay device boundary", () => {
+  it("enrolls generation zero with certificate-derived stable identity and rejects ambiguous initial/rotation shapes", async () => {
+    f = await fixture();
+    const d = identity(f.root, "Device", "a");
+    expect(d.payload.principal).toBe(certificate(d.payload.certificatePEM).certificateFingerprint);
+    expect(Object.hasOwn(d.payload, "expectedGeneration")).toBe(false);
+    expect(() => f!.control.challenge(f!.owner.id, {operation: "register", payload: {...d.payload, expectedGeneration: 0}})).toThrow("invalid_initial_generation");
+    expect(() => f!.control.challenge(f!.owner.id, {operation: "register", payload: {...d.payload, principal: "a".repeat(64)}})).toThrow("invalid_initial_principal");
+    expect(() => f!.control.challenge(f!.owner.id, {operation: "register", payload: {...d.payload, keyGeneration: 1}})).toThrow("invalid_generation");
+    const receipt = f.control.register(f.owner.id, f.proven(f.owner.id, "register", d.payload, d.privateKey));
+    expect(receipt).toMatchObject({principal: d.payload.principal, keyFingerprint: d.payload.principal, keyGeneration: 0});
+    expect(f.control.list(f.owner.id)[0].keyGeneration).toBe(0);
+    const state = JSON.parse(readFileSync(join(f.config.publicDir, "state.json"), "utf8"));
+    expect(state.devices[d.payload.principal].generation).toBe(0);
+  });
+  it("refuses pre-zero-based stored registrations without renumbering identities or discarding receipts", async () => {
+    f = await fixture();
+    const d = identity(f.root, "Device", "a");
+    const receipt = f.control.register(f.owner.id, f.proven(f.owner.id, "register", d.payload, d.privateKey));
+    f.db.prepare("DELETE FROM relay_contract_metadata WHERE name='registration'").run();
+    expect(() => new RelayControl(f!.db, f!.config)).toThrow("contract_migration_required");
+    expect(f.control.operation(f.owner.id, d.payload.operationId)).toEqual(receipt);
+    expect(f.control.list(f.owner.id)[0]).toMatchObject({principal: d.payload.principal, keyGeneration: 0});
+  });
   it("persists increasing state revisions across heartbeats, mutations and new publisher instances", async () => {
     f = await fixture();
     const state = () => JSON.parse(readFileSync(join(f!.config.publicDir, "state.json"), "utf8"));
@@ -267,8 +290,8 @@ describe("relay device boundary", () => {
     const replacement = {
       ...alternate.payload,
       principal: d.payload.principal,
-      keyGeneration: 2,
-      expectedGeneration: 1,
+      keyGeneration: 1,
+      expectedGeneration: 0,
       operationId: randomUUID(),
     };
     expect(() =>
@@ -335,7 +358,7 @@ describe("relay device boundary", () => {
     expect(() =>
       f!.control.challenge(f!.owner.id, {
         operation: "register",
-        payload: { ...d.payload, keyGeneration: 0 },
+        payload: { ...d.payload, keyGeneration: -1 },
       }),
     ).toThrow("invalid_generation");
     expect(() =>
@@ -370,8 +393,8 @@ describe("journaled registration and renewal", () => {
     const payload = {
       ...old.payload,
       certificatePEM: next.payload.certificatePEM,
-      expectedGeneration: 1,
-      keyGeneration: 2,
+      expectedGeneration: 0,
+      keyGeneration: 1,
       operationId: randomUUID(),
     };
     return { old, next, payload };
@@ -397,7 +420,7 @@ describe("journaled registration and renewal", () => {
     const receipt = f!.control.register(f!.owner.id, req);
     expect(receipt).toMatchObject({
       committed: true,
-      keyGeneration: 2,
+      keyGeneration: 1,
       principal: payload.principal,
     });
     expect(f!.control.operation(f!.owner.id, payload.operationId)).toEqual(
@@ -406,7 +429,7 @@ describe("journaled registration and renewal", () => {
     expect(f!.control.register(f!.owner.id, req)).toEqual(receipt);
     expect(f!.control.list(f!.owner.id)[0]).toMatchObject({
       name: "Old",
-      keyGeneration: 2,
+      keyGeneration: 1,
       revoked: false,
       keyFingerprint: certificate(next.payload.certificatePEM).keyFingerprint,
     });
@@ -423,7 +446,7 @@ describe("journaled registration and renewal", () => {
     const state = JSON.parse(
       readFileSync(join(f!.config.publicDir, "state.json"), "utf8"),
     );
-    expect(state.devices[payload.principal].generation).toBe(2);
+    expect(state.devices[payload.principal].generation).toBe(1);
     const a = {
       role: "receiver",
       devicePrincipal: payload.principal,
@@ -443,7 +466,7 @@ describe("journaled registration and renewal", () => {
       accepted.token,
       await importJWK(state.jwks.keys[0], "ES256"),
     );
-    expect(verified.payload.keyGeneration).toBe(2);
+    expect(verified.payload.keyGeneration).toBe(1);
   });
   it("requires the old key and rejects wrong proofs/payloads/owner without committing", async () => {
     const { old, next, payload } = await setup();
@@ -477,7 +500,7 @@ describe("journaled registration and renewal", () => {
     expect(
       f!.control.operation(f!.owner.id, payload.operationId).committed,
     ).toBe(false);
-    expect(f!.control.list(f!.owner.id)[0].keyGeneration).toBe(1);
+    expect(f!.control.list(f!.owner.id)[0].keyGeneration).toBe(0);
   });
   it("rejects stale generation/operation collisions and never revives revoked identities", async () => {
     const { old, next, payload } = await setup();
@@ -491,8 +514,8 @@ describe("journaled registration and renewal", () => {
     expect(() =>
       f!.control.register(f!.owner.id, {
         ...req,
-        expectedGeneration: 2,
-        keyGeneration: 3,
+        expectedGeneration: 1,
+        keyGeneration: 2,
       }),
     ).toThrow("operation_conflict");
     expect(() =>
@@ -503,8 +526,8 @@ describe("journaled registration and renewal", () => {
     ).toThrow("generation_conflict");
     const later = {
       ...payload,
-      expectedGeneration: 2,
-      keyGeneration: 3,
+      expectedGeneration: 1,
+      keyGeneration: 2,
       certificatePEM: old.payload.certificatePEM,
       operationId: randomUUID(),
     };
@@ -550,7 +573,7 @@ describe("journaled registration and renewal", () => {
     expect(() =>
       f!.control.challenge(f!.owner.id, {
         operation: "register",
-        payload: { ...payload, expectedGeneration: 0 },
+        payload: { ...payload, expectedGeneration: 1 },
       }),
     ).toThrow("invalid_generation");
     expect(
@@ -558,7 +581,7 @@ describe("journaled registration and renewal", () => {
         f!.owner.id,
         f!.rotated(f!.owner.id, payload, old.privateKey, next.privateKey),
       ).keyGeneration,
-    ).toBe(2);
+    ).toBe(1);
   });
   it("invalidates old outstanding proofs and refuses tokens issued across a generation change", async () => {
     const { old, next, payload } = await setup();
@@ -593,7 +616,7 @@ describe("journaled registration and renewal", () => {
     expect(() => f!.control.register(f!.owner.id, req)).toThrow(
       "state_publication_failed",
     );
-    expect(f!.control.list(f!.owner.id)[0].keyGeneration).toBe(1);
+    expect(f!.control.list(f!.owner.id)[0].keyGeneration).toBe(0);
     expect(
       f!.control.operation(f!.owner.id, payload.operationId).committed,
     ).toBe(false);

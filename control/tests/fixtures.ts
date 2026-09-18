@@ -11,10 +11,11 @@ import { RelayControl } from "../src/server/relay-control.js";
 import { createApp } from "../src/server/app.js";
 import type { Config } from "../src/server/config.js";
 import type { Registration } from "../src/server/protocol.js";
+import { certificate } from "../src/server/protocol.js";
 export function identity(
   root: string,
   name: string,
-  character: string,
+  _character: string,
   days = 2,
 ) {
   const key = join(root, name + ".key");
@@ -42,12 +43,11 @@ export function identity(
   );
   const privateKey = createPrivateKey(readFileSync(key));
   const payload: Registration = {
-    principal: character.repeat(64),
+    principal: certificate(readFileSync(cert, "utf8")).certificateFingerprint,
     certificatePEM: readFileSync(cert, "utf8"),
-    keyGeneration: 1,
+    keyGeneration: 0,
     name,
     operationId: randomUUID(),
-    expectedGeneration: 0,
   };
   return { payload, privateKey };
 }

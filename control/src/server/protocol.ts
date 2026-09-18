@@ -70,7 +70,7 @@ export interface Registration {
   keyGeneration: number;
   name: string;
   operationId: string;
-  expectedGeneration: number;
+  expectedGeneration?: number;
 }
 export interface Admission {
   role: "client" | "receiver";
@@ -85,15 +85,9 @@ export function registration(value: unknown): Registration {
     "keyGeneration",
     "name",
     "operationId",
-    "expectedGeneration",
+    ...(Object.hasOwn(o, "expectedGeneration") ? ["expectedGeneration"] : []),
   ]);
   operationId(o.operationId);
-  assert(
-    Number.isSafeInteger(o.expectedGeneration) &&
-      (o.expectedGeneration as number) >= 0 &&
-      (o.expectedGeneration as number) < 2147483647,
-    "invalid_generation",
-  );
   principal(o.principal);
   assert(
     typeof o.certificatePEM === "string" && o.certificatePEM.length <= 8192,
@@ -101,10 +95,21 @@ export function registration(value: unknown): Registration {
   );
   assert(
     Number.isSafeInteger(o.keyGeneration) &&
-      (o.keyGeneration as number) >= 1 &&
+      (o.keyGeneration as number) >= 0 &&
       (o.keyGeneration as number) <= 2147483647,
     "invalid_generation",
   );
+  if (o.keyGeneration === 0) {
+    assert(!Object.hasOwn(o, "expectedGeneration"), "invalid_initial_generation");
+  } else {
+    assert(
+      Number.isSafeInteger(o.expectedGeneration) &&
+        (o.expectedGeneration as number) >= 0 &&
+        (o.expectedGeneration as number) < 2147483647 &&
+        o.keyGeneration === (o.expectedGeneration as number) + 1,
+      "invalid_generation",
+    );
+  }
   assert(
     typeof o.name === "string" &&
       o.name.trim().length > 0 &&

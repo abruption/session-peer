@@ -76,6 +76,7 @@ export class RelayControl {
    CREATE TABLE IF NOT EXISTS relay_operations (operationId TEXT PRIMARY KEY,userId TEXT NOT NULL,requestHash TEXT NOT NULL,result TEXT);
    CREATE INDEX IF NOT EXISTS relay_operations_owner ON relay_operations(userId);
    CREATE TABLE IF NOT EXISTS relay_state_revision (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>=0 AND revision<=9007199254740991));
+   CREATE TABLE IF NOT EXISTS relay_contract_metadata (name TEXT PRIMARY KEY, value TEXT NOT NULL);
    INSERT OR IGNORE INTO relay_state_revision VALUES (1,0);`);
     // Earlier unpublished candidates stored an SPKI hash under keyFingerprint.
     // Never reinterpret old live state/receipts silently as certificate DER.
@@ -85,6 +86,16 @@ export class RelayControl {
       )
       .get() as { n: number };
     assert(legacy.n === 0, "contract_migration_required", 503);
+    const schema = db
+      .prepare("SELECT value FROM relay_contract_metadata WHERE name='registration'")
+      .get() as { value: string } | undefined;
+    if (!schema) {
+      const existing = db
+        .prepare("SELECT (SELECT count(*) FROM relay_devices) + (SELECT count(*) FROM relay_operations) AS n")
+        .get() as { n: number };
+      assert(existing.n === 0, "contract_migration_required", 503);
+      db.prepare("INSERT INTO relay_contract_metadata VALUES ('registration','zero_based_v1')").run();
+    } else assert(schema.value === "zero_based_v1", "contract_migration_required", 503);
     const privateDir = privateDirectory(config.dataDir);
     const keyPath = join(privateDir, "signing-key.pem");
     try {
@@ -288,7 +299,6 @@ export class RelayControl {
       : JSON.parse(row.result);
   }
   private validateRegistration(userId: string, p: Registration) {
-    assert(p.keyGeneration === p.expectedGeneration + 1, "invalid_generation");
     const current = this.db
       .prepare("SELECT * FROM relay_devices WHERE principal=?")
       .get(p.principal) as DeviceRow | undefined;
@@ -296,12 +306,19 @@ export class RelayControl {
       assert(current.userId === userId, "device_not_found", 404);
       assert(!current.revoked, "device_revoked", 403);
       assert(
-        current.keyGeneration === p.expectedGeneration,
+        typeof p.expectedGeneration === "number" &&
+          current.keyGeneration === p.expectedGeneration &&
+          p.keyGeneration === current.keyGeneration + 1,
         "generation_conflict",
         409,
       );
-    } else assert(p.expectedGeneration === 0, "generation_conflict", 409);
+    } else assert(
+      p.keyGeneration === 0 && p.expectedGeneration === undefined,
+      "generation_conflict",
+      409,
+    );
     const next = certificate(p.certificatePEM, this.now());
+    assert(current || p.principal === next.certificateFingerprint, "invalid_initial_principal");
     assert(
       !current ||
         next.certificateFingerprint !== current.certificateFingerprint,
@@ -410,7 +427,7 @@ export class RelayControl {
       "keyGeneration",
       "name",
       "operationId",
-      "expectedGeneration",
+      ...(Object.hasOwn(o, "expectedGeneration") ? ["expectedGeneration"] : []),
       "challengeId",
       "proof",
       ...(Object.hasOwn(o, "previousKeyProof") ? ["previousKeyProof"] : []),
@@ -459,10 +476,10 @@ export class RelayControl {
             p.certificatePEM,
             next.certificateFingerprint,
             next.keyFingerprint,
-            p.expectedGeneration + 1,
+            current.keyGeneration + 1,
             p.principal,
             userId,
-            p.expectedGeneration,
+            current.keyGeneration,
           );
         assert(changed.changes === 1, "generation_conflict", 409);
         this.db
@@ -485,7 +502,7 @@ export class RelayControl {
             next.keyFingerprint,
             next.certificateFingerprint,
             p.certificatePEM,
-            1,
+            0,
             p.name,
           );
         this.db
@@ -497,7 +514,7 @@ export class RelayControl {
         committed: true,
         principal: p.principal,
         keyFingerprint: next.keyFingerprint,
-        keyGeneration: p.expectedGeneration + 1,
+        keyGeneration: current ? current.keyGeneration + 1 : 0,
       };
       this.db
         .prepare(

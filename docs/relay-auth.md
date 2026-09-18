@@ -72,13 +72,15 @@ the limit fails closed, including pending operations.
 ### Registration and certificate renewal
 
 ```text
-{ principal, certificatePEM, keyGeneration, name, operationId, expectedGeneration }
+Initial: { principal, certificatePEM, keyGeneration: 0, name, operationId }
+Renewal: { principal, certificatePEM, keyGeneration, name, operationId, expectedGeneration }
 ```
 
-`principal` is a fixed random 64-character lowercase hex device identity, separate
-from the certificate. `operationId` is a UUID v4 retained until the result is
-known. Initial registration requires an absent principal, `expectedGeneration=0`
-and `keyGeneration=1`. Renewal requires the existing active same-owner principal,
+`principal` is the SHA256 of the initial certificate DER (64 lowercase hex),
+retained unchanged across later certificate/key rotation. It is not regenerated
+from the replacement certificate. `operationId` is a UUID v4 retained until the result is
+known. Initial registration requires an absent principal matching the supplied certificate
+DER fingerprint, `keyGeneration=0` and **no expectedGeneration field**. Renewal requires the existing active same-owner principal,
 `expectedGeneration=current generation` and `keyGeneration=expectedGeneration+1`.
 The server computes/checks the increment; clients cannot choose a jump or rollback.
 Maximum generation is 2147483647. Owner, principal and existing name are preserved
@@ -121,7 +123,7 @@ Completed registration and `GET /api/relay/operations/:id` return:
   "committed": true,
   "principal": "<unchanged ID>",
   "keyFingerprint": "<SHA256 certificate DER>",
-  "keyGeneration": 2
+  "keyGeneration": 1
 }
 ```
 
@@ -260,7 +262,9 @@ report that failed operation as success or bypass stale-state checks.
 The final contract supersedes unpublished candidates 55ff3bb/6815e1e/fae9029
 (SPKI device hash, millisecond challenges, distinct-domain rotate endpoint, 2s/10s
 state). Do not mix old artifacts/clients with this verifier. Startup refuses stored
-SPKI device rows with `contract_migration_required`; it never silently reinterprets
+SPKI device rows or pre-zero-based registrations/operation journals without the
+`zero_based_v1` registration contract marker with `contract_migration_required`;
+it never silently renumbers generation, replaces a principal, discards receipts or reinterprets
 old device fingerprints or operation history. Use a new isolated candidate state
 or plan an explicit operator-reviewed migration preserving old state. No automatic
 credential/device-state deletion is performed here.
@@ -363,7 +367,7 @@ Official references (implementation verified against installed 1.7.5 source):
 
 사용자 확정 계약에 따른 합성 예제다. 토큰/시간/ID는 합성값이며 운영 인증 응답으로 보고하지 않는다. BetterAuth 1.7.5 설치 소스와 기존 실제 fixture 테스트의 API shape를 기준으로 작성했다. 모든 코드·token·시간·ID는 합성값이다. public certificate와 signature만 격리 fixture에서 생성했으며 private key는 삭제했다. 운영 자격, 실제 JWT, OAuth secret을 포함하지 않는다.
 
-모든 issuedAt/expiresAt은 UNIX 초 number다. 초기 expectedGeneration=0/keyGeneration=1; 갱신은 expectedGeneration=current/keyGeneration=current+1. keyGeneration은 서버가 계산/검사한다. 두 경우 operation=register 및 POST /api/relay/devices를 사용한다. operationId는 UUID v4이며 결과 확인까지 고정한다. 갱신 시 previousKeyProof(구키)와 proof(신키)가 동일 서버 proofMessage를 서명한다. 이전 rotate/oldProof/newProof domain API는 최종 계약에서 사용하지 않는다.
+모든 issuedAt/expiresAt은 UNIX 초 number다. 초기 keyGeneration=0 및 expectedGeneration 생략; principal=최초 certificate DER SHA256; 갱신은 expectedGeneration=current/keyGeneration=current+1. keyGeneration은 서버가 계산/검사한다. 두 경우 operation=register 및 POST /api/relay/devices를 사용한다. operationId는 UUID v4이며 결과 확인까지 고정한다. 갱신 시 previousKeyProof(구키)와 proof(신키)가 동일 서버 proofMessage를 서명한다. 이전 rotate/oldProof/newProof domain API는 최종 계약에서 사용하지 않는다.
 
 ### 1. BetterAuth device code
 
@@ -432,12 +436,11 @@ Request:
 {
   "operation": "register",
   "payload": {
-    "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "certificatePEM": "-----BEGIN CERTIFICATE-----\nMIIBpzCCAU2gAwIBAgIUKa49Xo+kLwTPu8Br3SJKHOs6tnEwCgYIKoZIzj0EAwIw\nKTEnMCUGA1UEAwwec2Vzc2lvbi1wZWVyLXN5bnRoZXRpYy1maXh0dXJlMB4XDTI2\nMDkxODA2NTIyN1oXDTI2MDkyODA2NTIyN1owKTEnMCUGA1UEAwwec2Vzc2lvbi1w\nZWVyLXN5bnRoZXRpYy1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\n92HBlKOEAbVrDiu11KLa+ogz5Ux1EFs0tVxHGZ8RSTXMZbXogQfp6iSu3CQAT1k6\nrMzvQQEQVfnSFA0Nq2ccj6NTMFEwHQYDVR0OBBYEFA6U04cTyhBfA0KJGiRRo12D\nctKpMB8GA1UdIwQYMBaAFA6U04cTyhBfA0KJGiRRo12DctKpMA8GA1UdEwEB/wQF\nMAMBAf8wCgYIKoZIzj0EAwIDSAAwRQIgO7Or4Jqa2uEdzyJuu7ptCcx1+sjECC7I\n2YJohffcZEkCIQCDjCQ27Sul9tUROKwIe0CgA4sYCRXDc8qVBLpglaJqiA==\n-----END CERTIFICATE-----\n",
-    "keyGeneration": 1,
+    "principal": "73df7a993f2d40fbabd3fb3a9df2e4da12e67eb7c218960cf13a18b1f832d1ad",
+    "certificatePEM": "-----BEGIN CERTIFICATE-----\nMIIBqDCCAU2gAwIBAgIUeBtG+98yiurrSQChHG7rLuGDh3IwCgYIKoZIzj0EAwIw\nKTEnMCUGA1UEAwwec2Vzc2lvbi1wZWVyLXN5bnRoZXRpYy1maXh0dXJlMB4XDTI2\nMDkxODA3MTIzOFoXDTI2MDkyODA3MTIzOFowKTEnMCUGA1UEAwwec2Vzc2lvbi1w\nZWVyLXN5bnRoZXRpYy1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\nc1rrM/sIvEqNa6ko0BpvbkwzOX83a/ot0+0sBCmNyM/5Bh0cpgdw4q5/ajXXBxJn\nLRjAMs1zmDkealIzhgVdg6NTMFEwHQYDVR0OBBYEFL6F/HiqqhXJA8H9x+siivhf\nlgnbMB8GA1UdIwQYMBaAFL6F/HiqqhXJA8H9x+siivhflgnbMA8GA1UdEwEB/wQF\nMAMBAf8wCgYIKoZIzj0EAwIDSQAwRgIhANVuUia2tXVDI5DbD0nKcC02JzgJ3+Em\nPkNrTaqktij5AiEA8dxABeLqvk0lh/YqQOhYL00kpH0vDGIUDiZO/uayhJ4=\n-----END CERTIFICATE-----\n",
+    "keyGeneration": 0,
     "name": "fixture-device",
-    "operationId": "11111111-1111-4111-8111-111111111111",
-    "expectedGeneration": 0
+    "operationId": "11111111-1111-4111-8111-111111111111"
   }
 }
 ```
@@ -449,7 +452,7 @@ Response (200):
   "nonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
   "issuedAt": 1800000000,
   "expiresAt": 1800000060,
-  "proofMessage": "session-peer-control-v1:\nhttps://relay.abruption.dev\nregister\n22222222-2222-4222-8222-222222222222\nAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\n065ac9504e5651509919860a9e9005d6fefd3ac8290bfa5846e3ebbc2757bfab"
+  "proofMessage": "session-peer-control-v1:\nhttps://relay.abruption.dev\nregister\n22222222-2222-4222-8222-222222222222\nAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\n6bca400e9c316704cc419bc9e0b0a6e65aa65bf835739c53d0e6a40b2d4bf405"
 }
 ```
 
@@ -464,14 +467,13 @@ Authorization: Bearer SYNTHETIC_SESSION_TOKEN_NOT_VALID
 Request:
 ```json
 {
-  "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "certificatePEM": "-----BEGIN CERTIFICATE-----\nMIIBpzCCAU2gAwIBAgIUKa49Xo+kLwTPu8Br3SJKHOs6tnEwCgYIKoZIzj0EAwIw\nKTEnMCUGA1UEAwwec2Vzc2lvbi1wZWVyLXN5bnRoZXRpYy1maXh0dXJlMB4XDTI2\nMDkxODA2NTIyN1oXDTI2MDkyODA2NTIyN1owKTEnMCUGA1UEAwwec2Vzc2lvbi1w\nZWVyLXN5bnRoZXRpYy1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\n92HBlKOEAbVrDiu11KLa+ogz5Ux1EFs0tVxHGZ8RSTXMZbXogQfp6iSu3CQAT1k6\nrMzvQQEQVfnSFA0Nq2ccj6NTMFEwHQYDVR0OBBYEFA6U04cTyhBfA0KJGiRRo12D\nctKpMB8GA1UdIwQYMBaAFA6U04cTyhBfA0KJGiRRo12DctKpMA8GA1UdEwEB/wQF\nMAMBAf8wCgYIKoZIzj0EAwIDSAAwRQIgO7Or4Jqa2uEdzyJuu7ptCcx1+sjECC7I\n2YJohffcZEkCIQCDjCQ27Sul9tUROKwIe0CgA4sYCRXDc8qVBLpglaJqiA==\n-----END CERTIFICATE-----\n",
-  "keyGeneration": 1,
+  "principal": "73df7a993f2d40fbabd3fb3a9df2e4da12e67eb7c218960cf13a18b1f832d1ad",
+  "certificatePEM": "-----BEGIN CERTIFICATE-----\nMIIBqDCCAU2gAwIBAgIUeBtG+98yiurrSQChHG7rLuGDh3IwCgYIKoZIzj0EAwIw\nKTEnMCUGA1UEAwwec2Vzc2lvbi1wZWVyLXN5bnRoZXRpYy1maXh0dXJlMB4XDTI2\nMDkxODA3MTIzOFoXDTI2MDkyODA3MTIzOFowKTEnMCUGA1UEAwwec2Vzc2lvbi1w\nZWVyLXN5bnRoZXRpYy1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\nc1rrM/sIvEqNa6ko0BpvbkwzOX83a/ot0+0sBCmNyM/5Bh0cpgdw4q5/ajXXBxJn\nLRjAMs1zmDkealIzhgVdg6NTMFEwHQYDVR0OBBYEFL6F/HiqqhXJA8H9x+siivhf\nlgnbMB8GA1UdIwQYMBaAFL6F/HiqqhXJA8H9x+siivhflgnbMA8GA1UdEwEB/wQF\nMAMBAf8wCgYIKoZIzj0EAwIDSQAwRgIhANVuUia2tXVDI5DbD0nKcC02JzgJ3+Em\nPkNrTaqktij5AiEA8dxABeLqvk0lh/YqQOhYL00kpH0vDGIUDiZO/uayhJ4=\n-----END CERTIFICATE-----\n",
+  "keyGeneration": 0,
   "name": "fixture-device",
   "operationId": "11111111-1111-4111-8111-111111111111",
-  "expectedGeneration": 0,
   "challengeId": "22222222-2222-4222-8222-222222222222",
-  "proof": "MEUCIEoLzPVGLD6C4L4qf3hyF0k08pulV-WpeLw6Gr-ruRrBAiEAgc_eYG7iXI8t65rA6I0WYXlzDaAuhnBh74Xdh3hdmBc"
+  "proof": "MEUCIBbDg71igwbrq44VctzxaCgmp8OjBBHcwBk1J96wXRCWAiEA37ilhDIOp0GT4r5q9bGy4w77cwTBD513Je_xjv8ZAD0"
 }
 ```
 
@@ -480,9 +482,9 @@ Response (201):
 {
   "operationId": "11111111-1111-4111-8111-111111111111",
   "committed": true,
-  "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "keyFingerprint": "7c9d073898577eb39a163275f7c227aa24e0fb0dab478fd8f3f1d17bdc8dbdae",
-  "keyGeneration": 1
+  "principal": "73df7a993f2d40fbabd3fb3a9df2e4da12e67eb7c218960cf13a18b1f832d1ad",
+  "keyFingerprint": "73df7a993f2d40fbabd3fb3a9df2e4da12e67eb7c218960cf13a18b1f832d1ad",
+  "keyGeneration": 0
 }
 ```
 
@@ -499,9 +501,9 @@ Response (200):
 {
   "operationId": "11111111-1111-4111-8111-111111111111",
   "committed": true,
-  "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "keyFingerprint": "7c9d073898577eb39a163275f7c227aa24e0fb0dab478fd8f3f1d17bdc8dbdae",
-  "keyGeneration": 1
+  "principal": "73df7a993f2d40fbabd3fb3a9df2e4da12e67eb7c218960cf13a18b1f832d1ad",
+  "keyFingerprint": "73df7a993f2d40fbabd3fb3a9df2e4da12e67eb7c218960cf13a18b1f832d1ad",
+  "keyGeneration": 0
 }
 ```
 
@@ -520,12 +522,12 @@ Request:
 {
   "operation": "register",
   "payload": {
-    "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "certificatePEM": "-----BEGIN CERTIFICATE-----\nMIIBpjCCAU2gAwIBAgIUKQc0iqYoQiyaCmoNO6Qux5zGAvkwCgYIKoZIzj0EAwIw\nKTEnMCUGA1UEAwwec2Vzc2lvbi1wZWVyLXN5bnRoZXRpYy1maXh0dXJlMB4XDTI2\nMDkxODA2NTIyN1oXDTI2MDkyODA2NTIyN1owKTEnMCUGA1UEAwwec2Vzc2lvbi1w\nZWVyLXN5bnRoZXRpYy1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\nV3dkiUlLJLKl/AKNG50R5UgwFj0RDisR7IA2uNClrZxZbKud8Fi8Dt2HaHyycY9E\ntJTrcXsmmk6YfxrgLRWRGqNTMFEwHQYDVR0OBBYEFD+pnfUEswoSaYfpeRSt+bqE\nl4z8MB8GA1UdIwQYMBaAFD+pnfUEswoSaYfpeRSt+bqEl4z8MA8GA1UdEwEB/wQF\nMAMBAf8wCgYIKoZIzj0EAwIDRwAwRAIgYd388lDAsfqrP2MwvyeSHSTgJOlTC52o\nWxd/XSw4l2QCIECk7pesSkht4ULje415Yv48oMjp7Gx5VJnydjW6tHrd\n-----END CERTIFICATE-----\n",
-    "keyGeneration": 2,
+    "principal": "73df7a993f2d40fbabd3fb3a9df2e4da12e67eb7c218960cf13a18b1f832d1ad",
+    "certificatePEM": "-----BEGIN CERTIFICATE-----\nMIIBpzCCAU2gAwIBAgIUTTg7m5LRt7mK2hVNiwXvdqoav5swCgYIKoZIzj0EAwIw\nKTEnMCUGA1UEAwwec2Vzc2lvbi1wZWVyLXN5bnRoZXRpYy1maXh0dXJlMB4XDTI2\nMDkxODA3MTIzOFoXDTI2MDkyODA3MTIzOFowKTEnMCUGA1UEAwwec2Vzc2lvbi1w\nZWVyLXN5bnRoZXRpYy1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\nAAuErF37YkLeeyiloPmtqwWLlZ2bG5Tzv4e6fzvQhy/gDllOug+UtAU5X30MRiAg\naDXBZZpM44e4QM7kLk2ZxKNTMFEwHQYDVR0OBBYEFPkM3Sk71U5heYDTEeQNOtSn\nnb5NMB8GA1UdIwQYMBaAFPkM3Sk71U5heYDTEeQNOtSnnb5NMA8GA1UdEwEB/wQF\nMAMBAf8wCgYIKoZIzj0EAwIDSAAwRQIhALz+N7rUstMwDkq7++0bi717dfnIi9L1\nJ12g90jCBhpQAiBXk4uI89ZjWkPkD21oARi/hmXcT5CWAfTkvnj5I/oyJg==\n-----END CERTIFICATE-----\n",
+    "keyGeneration": 1,
     "name": "fixture-device",
     "operationId": "33333333-3333-4333-8333-333333333333",
-    "expectedGeneration": 1
+    "expectedGeneration": 0
   }
 }
 ```
@@ -537,7 +539,7 @@ Response (200):
   "nonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
   "issuedAt": 1800000000,
   "expiresAt": 1800000060,
-  "proofMessage": "session-peer-control-v1:\nhttps://relay.abruption.dev\nregister\n44444444-4444-4444-8444-444444444444\nAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\n21a005eb78a3bf35c35c5c38e60214e6c9d9ecfd810f6c5b9ae03784a614463b"
+  "proofMessage": "session-peer-control-v1:\nhttps://relay.abruption.dev\nregister\n44444444-4444-4444-8444-444444444444\nAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\n3361cd44a7b3355aab3c3f4d994d68b8d5adf1a38e501df39afb2448935ad4c8"
 }
 ```
 
@@ -552,15 +554,15 @@ Authorization: Bearer SYNTHETIC_SESSION_TOKEN_NOT_VALID
 Request:
 ```json
 {
-  "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "certificatePEM": "-----BEGIN CERTIFICATE-----\nMIIBpjCCAU2gAwIBAgIUKQc0iqYoQiyaCmoNO6Qux5zGAvkwCgYIKoZIzj0EAwIw\nKTEnMCUGA1UEAwwec2Vzc2lvbi1wZWVyLXN5bnRoZXRpYy1maXh0dXJlMB4XDTI2\nMDkxODA2NTIyN1oXDTI2MDkyODA2NTIyN1owKTEnMCUGA1UEAwwec2Vzc2lvbi1w\nZWVyLXN5bnRoZXRpYy1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\nV3dkiUlLJLKl/AKNG50R5UgwFj0RDisR7IA2uNClrZxZbKud8Fi8Dt2HaHyycY9E\ntJTrcXsmmk6YfxrgLRWRGqNTMFEwHQYDVR0OBBYEFD+pnfUEswoSaYfpeRSt+bqE\nl4z8MB8GA1UdIwQYMBaAFD+pnfUEswoSaYfpeRSt+bqEl4z8MA8GA1UdEwEB/wQF\nMAMBAf8wCgYIKoZIzj0EAwIDRwAwRAIgYd388lDAsfqrP2MwvyeSHSTgJOlTC52o\nWxd/XSw4l2QCIECk7pesSkht4ULje415Yv48oMjp7Gx5VJnydjW6tHrd\n-----END CERTIFICATE-----\n",
-  "keyGeneration": 2,
+  "principal": "73df7a993f2d40fbabd3fb3a9df2e4da12e67eb7c218960cf13a18b1f832d1ad",
+  "certificatePEM": "-----BEGIN CERTIFICATE-----\nMIIBpzCCAU2gAwIBAgIUTTg7m5LRt7mK2hVNiwXvdqoav5swCgYIKoZIzj0EAwIw\nKTEnMCUGA1UEAwwec2Vzc2lvbi1wZWVyLXN5bnRoZXRpYy1maXh0dXJlMB4XDTI2\nMDkxODA3MTIzOFoXDTI2MDkyODA3MTIzOFowKTEnMCUGA1UEAwwec2Vzc2lvbi1w\nZWVyLXN5bnRoZXRpYy1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\nAAuErF37YkLeeyiloPmtqwWLlZ2bG5Tzv4e6fzvQhy/gDllOug+UtAU5X30MRiAg\naDXBZZpM44e4QM7kLk2ZxKNTMFEwHQYDVR0OBBYEFPkM3Sk71U5heYDTEeQNOtSn\nnb5NMB8GA1UdIwQYMBaAFPkM3Sk71U5heYDTEeQNOtSnnb5NMA8GA1UdEwEB/wQF\nMAMBAf8wCgYIKoZIzj0EAwIDSAAwRQIhALz+N7rUstMwDkq7++0bi717dfnIi9L1\nJ12g90jCBhpQAiBXk4uI89ZjWkPkD21oARi/hmXcT5CWAfTkvnj5I/oyJg==\n-----END CERTIFICATE-----\n",
+  "keyGeneration": 1,
   "name": "fixture-device",
   "operationId": "33333333-3333-4333-8333-333333333333",
-  "expectedGeneration": 1,
+  "expectedGeneration": 0,
   "challengeId": "44444444-4444-4444-8444-444444444444",
-  "previousKeyProof": "MEQCIA5Zy17iMSNDbkyMOO4bBePq5C8iDjNk_Eok604QM3imAiAFjrGDCTd0HPmmZrRaiJ05EaWm4TtMa_E12Z7lQMlr1w",
-  "proof": "MEUCIFzIQwVYkOvqVP8PGf2dJrapd3uXpIqCKpzt-Xq0ixhpAiEA8fq_jf3DTllk43eR3GS-cYlfV4jDKle5e1yf0wBWq30"
+  "previousKeyProof": "MEQCID4cPE7VjdgNBP93s-zRWMCAQAHh6Jds0wrd5gCPEDS_AiACTvy_1f27uxn9yRwGnhZb5JEHD7AsviaYub2BZfW2gQ",
+  "proof": "MEYCIQDu858vFOThhFr1CldtfLQ5BZRLLaHMEeiBgd3pxEl2DgIhAID1dDYHGz5vFeopM44S7f7hNEu8U4gbQBlAHIX1JBuW"
 }
 ```
 
@@ -569,9 +571,9 @@ Response (201):
 {
   "operationId": "33333333-3333-4333-8333-333333333333",
   "committed": true,
-  "principal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "keyFingerprint": "3b2bde1e4f2c4b605850afad06655e7619402feb71fa3c28d739bc02f89aed8d",
-  "keyGeneration": 2
+  "principal": "73df7a993f2d40fbabd3fb3a9df2e4da12e67eb7c218960cf13a18b1f832d1ad",
+  "keyFingerprint": "551e546cae9cc68b7f6b050a17ed2d7546172c3f6f8a342aeddd8757835d03e7",
+  "keyGeneration": 1
 }
 ```
 
@@ -589,8 +591,8 @@ Request:
   "operation": "admission",
   "payload": {
     "role": "receiver",
-    "devicePrincipal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "receiverPrincipal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    "devicePrincipal": "73df7a993f2d40fbabd3fb3a9df2e4da12e67eb7c218960cf13a18b1f832d1ad",
+    "receiverPrincipal": "73df7a993f2d40fbabd3fb3a9df2e4da12e67eb7c218960cf13a18b1f832d1ad"
   }
 }
 ```
@@ -602,7 +604,7 @@ Response (200):
   "nonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
   "issuedAt": 1800000000,
   "expiresAt": 1800000060,
-  "proofMessage": "session-peer-control-v1:\nhttps://relay.abruption.dev\nadmission\n55555555-5555-4555-8555-555555555555\nAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\nd9816e1974bfdff446236e3db7c6b305be75a17978f58c0cb3873267eb83f789"
+  "proofMessage": "session-peer-control-v1:\nhttps://relay.abruption.dev\nadmission\n55555555-5555-4555-8555-555555555555\nAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\n7d7db46b9dcd38fc091207d8e93cdbf43921508884cae43cf9586a4aa140fbba"
 }
 ```
 
@@ -618,10 +620,10 @@ Request:
 ```json
 {
   "role": "receiver",
-  "devicePrincipal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "receiverPrincipal": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "devicePrincipal": "73df7a993f2d40fbabd3fb3a9df2e4da12e67eb7c218960cf13a18b1f832d1ad",
+  "receiverPrincipal": "73df7a993f2d40fbabd3fb3a9df2e4da12e67eb7c218960cf13a18b1f832d1ad",
   "challengeId": "55555555-5555-4555-8555-555555555555",
-  "proof": "MEUCIFjtvXtaIzRSp71RB5N31qV1HDQ7cb7yu_d6W-kUzedYAiEA9r-3Xq1qzucZuneFEJkRaeUCkIcb4GmANffMVNOcgZc"
+  "proof": "MEYCIQDKke6tCMBb9j1MOtkQAkspQHrsNkruBmIo_R-01CYSHQIhAPwgsJsrkf28JzcYuEFr8cRUFk84V6BnvFyoeFynDi5m"
 }
 ```
 
@@ -630,7 +632,7 @@ Response (200):
 {
   "token": "SYNTHETIC_JWT_NOT_VALID",
   "expiresAt": 1800000060,
-  "room": "f8f3367b6f76880e8101074990ee03a28af5e301a202ffa5f61f779f3192038d"
+  "room": "cc1ade827b80b8972de5d5740224028011d51ea05521d9080b4bdeb41c1a8164"
 }
 ```
 
@@ -638,4 +640,4 @@ JWT 실제본문은 예제/로그로 출력하지 않는다. claims: iss/aud=ori
 
 Relay exchange: Bearer JWT + X-Session-Peer-Proof=ECDSA/SHA256 DER base64url of exact UTF8 `session-peer-admission-v1:`+JWT. 이 proof는 control nonce proof와 별개다.
 
-State: schemaVersion1/issuer/audience/jwks/devices 구조 유지, authDB 영속 카운터 기반 양의 정수 revision 추가. issuedAt UNIX 초, expiresAt=issuedAt+180; 60초마다 atomic 재발행하고 mutation 즉시 발행. Python은 issuedAt>now+5 / expired / malformed / missing을 fail-closed하고 기존 socket을1초마다 재검사한다. Python spent-jti 영속 상태에 highestStateRevision/해시를 보관해 낮은 revision 및 동일 revision의 다른 payload를 거부하는 consumer 계약은 별도 통합 검증 대상이다.
+State: schemaVersion1/issuer/audience/jwks/devices 구조 유지, authDB 영속 예약 카운터 기반 positive revision 추가. Python은 highestStateRevision/hash 영속 보관으로 낮은 revision 및 동일 revision의 다른 payload를 거부한다. issuedAt UNIX 초, expiresAt=issuedAt+180; 60초마다 atomic 재발행하고 mutation 즉시 발행. Python은 issuedAt>now+5 / expired / malformed / missing을 fail-closed하고 기존 socket을1초마다 재검사한다.

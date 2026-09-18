@@ -1,0 +1,41 @@
+{
+  "origin": "https://relay.abruption.dev",
+  "userId": "fixture-user",
+  "initial": {
+    "payload": {
+      "principal": "73df7a993f2d40fbabd3fb3a9df2e4da12e67eb7c218960cf13a18b1f832d1ad",
+      "certificatePEM": "-----BEGIN CERTIFICATE-----\nMIIBqDCCAU2gAwIBAgIUeBtG+98yiurrSQChHG7rLuGDh3IwCgYIKoZIzj0EAwIw\nKTEnMCUGA1UEAwwec2Vzc2lvbi1wZWVyLXN5bnRoZXRpYy1maXh0dXJlMB4XDTI2\nMDkxODA3MTIzOFoXDTI2MDkyODA3MTIzOFowKTEnMCUGA1UEAwwec2Vzc2lvbi1w\nZWVyLXN5bnRoZXRpYy1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\nc1rrM/sIvEqNa6ko0BpvbkwzOX83a/ot0+0sBCmNyM/5Bh0cpgdw4q5/ajXXBxJn\nLRjAMs1zmDkealIzhgVdg6NTMFEwHQYDVR0OBBYEFL6F/HiqqhXJA8H9x+siivhf\nlgnbMB8GA1UdIwQYMBaAFL6F/HiqqhXJA8H9x+siivhflgnbMA8GA1UdEwEB/wQF\nMAMBAf8wCgYIKoZIzj0EAwIDSQAwRgIhANVuUia2tXVDI5DbD0nKcC02JzgJ3+Em\nPkNrTaqktij5AiEA8dxABeLqvk0lh/YqQOhYL00kpH0vDGIUDiZO/uayhJ4=\n-----END CERTIFICATE-----\n",
+      "keyGeneration": 0,
+      "name": "fixture-device",
+      "operationId": "11111111-1111-4111-8111-111111111111"
+    },
+    "challenge": {
+      "challengeId": "22222222-2222-4222-8222-222222222222",
+      "nonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+      "issuedAt": 1800000000,
+      "expiresAt": 1800000060,
+      "proofMessage": "session-peer-control-v1:\nhttps://relay.abruption.dev\nregister\n22222222-2222-4222-8222-222222222222\nAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\n6bca400e9c316704cc419bc9e0b0a6e65aa65bf835739c53d0e6a40b2d4bf405"
+    },
+    "proof": "MEYCIQCosu16vC5OacV_1Cwzys047oCpuNiMWrF-Az2Y0LQ9DwIhAL47GFiDzDvZ4cc-cQTLk9gGeTG4wyCcATCTXFT0z8Xu"
+  },
+  "rotation": {
+    "payload": {
+      "principal": "73df7a993f2d40fbabd3fb3a9df2e4da12e67eb7c218960cf13a18b1f832d1ad",
+      "certificatePEM": "-----BEGIN CERTIFICATE-----\nMIIBpzCCAU2gAwIBAgIUTTg7m5LRt7mK2hVNiwXvdqoav5swCgYIKoZIzj0EAwIw\nKTEnMCUGA1UEAwwec2Vzc2lvbi1wZWVyLXN5bnRoZXRpYy1maXh0dXJlMB4XDTI2\nMDkxODA3MTIzOFoXDTI2MDkyODA3MTIzOFowKTEnMCUGA1UEAwwec2Vzc2lvbi1w\nZWVyLXN5bnRoZXRpYy1maXh0dXJlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\nAAuErF37YkLeeyiloPmtqwWLlZ2bG5Tzv4e6fzvQhy/gDllOug+UtAU5X30MRiAg\naDXBZZpM44e4QM7kLk2ZxKNTMFEwHQYDVR0OBBYEFPkM3Sk71U5heYDTEeQNOtSn\nnb5NMB8GA1UdIwQYMBaAFPkM3Sk71U5heYDTEeQNOtSnnb5NMA8GA1UdEwEB/wQF\nMAMBAf8wCgYIKoZIzj0EAwIDSAAwRQIhALz+N7rUstMwDkq7++0bi717dfnIi9L1\nJ12g90jCBhpQAiBXk4uI89ZjWkPkD21oARi/hmXcT5CWAfTkvnj5I/oyJg==\n-----END CERTIFICATE-----\n",
+      "keyGeneration": 1,
+      "name": "fixture-device",
+      "operationId": "33333333-3333-4333-8333-333333333333",
+      "expectedGeneration": 0
+    },
+    "challenge": {
+      "challengeId": "44444444-4444-4444-8444-444444444444",
+      "nonce": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+      "issuedAt": 1800000000,
+      "expiresAt": 1800000060,
+      "proofMessage": "session-peer-control-v1:\nhttps://relay.abruption.dev\nregister\n44444444-4444-4444-8444-444444444444\nAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE\n3361cd44a7b3355aab3c3f4d994d68b8d5adf1a38e501df39afb2448935ad4c8"
+    },
+    "proof": "MEUCIQCUlUKhuVNsBAcWegrEuhXJyoLW8iNj4SRMSVYty5NlbgIgCuWxRofedo1jkJLJySu-0Jyou9VLHLEDtKAgxLt52LM",
+    "previousKeyProof": "MEQCICJ1x60Q8EDm3uihDg-AxSZgvojetejoopuezvh8cy4BAiAPcR-VB2_4M_R_Q9uppZB-e6pG1LyLY9YCUPqs8c2RYQ"
+  },
+  "room": "cc1ade827b80b8972de5d5740224028011d51ea05521d9080b4bdeb41c1a8164"
+}
