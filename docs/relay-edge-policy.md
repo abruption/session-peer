@@ -9,7 +9,7 @@ On the KR pilot, a native device-code request returned HTTP 403 / Cloudflare
 identified `source=bic`, `ruleId=bic`, `action=block`. This identified Browser
 Integrity Check for that request; it did not identify Bot Fight Mode as the cause.
 
-## Approved native POST exception
+## Native POST exception baseline
 
 The owner first approved device code/token paths, then explicitly approved the
 three registration/admission POST paths. This remains one Configuration Rule,
@@ -46,12 +46,40 @@ Revert only the added rule (disable/delete by its ID), preserving concurrent
 configuration changes. Do not restore application databases, keys, receipts or
 replay state as part of reverting an edge rule.
 
-Operation lookup and relay session/WebSocket GET routes are not included in
-this exception. If they fail, stop and inspect their own status/error and security
-event. Any wider exception needs separate review and authorization. Do not
+The POST-only baseline does not cover operation lookup or relay session/WebSocket
+GET routes. Subsequent approved operation-lookup coverage is described below;
+relay session/WebSocket GETs still have no BIC exception. Do not
 impersonate a browser user-agent, transfer browser cookies to the CLI, or keep
 retrying an explicit non-retryable block. Keep device codes, tokens and secrets
 out of logs and reports.
+
+## Approved operation receipt lookup
+
+The owner subsequently authorized resolving native receipt-lookup 403s. A new
+native lookup returned error 1010; the exact historical security event could not
+be read because the GraphQL diagnostic API exhausted its budget. A BIC-only
+change first restored the single receiver receipt URL, without repeating a
+registration. That narrow successful experiment did not resolve other IDs.
+
+Version 4 of the same rule now additionally matches **HTTPS GET without a query**
+on the relay host, with `/api/relay/operations/` followed by a canonical lowercase
+UUIDv4. Its 58-byte path, hexadecimal characters, hyphen positions, version and
+variant are checked using `starts_with`, `len`, `substring` and per-character
+comparisons supported by this deployment. No paid regex feature or plan upgrade
+was used. An unsupported alternative expression was rejected without changing
+the active configuration; it is not an operational recipe.
+
+Trace passed 21 cases, including both existing operation IDs and malformed IDs,
+uppercase, wrong version/variant, trailing slash, query, method/host/protocol and
+unrelated API exclusions. Both original registered devices then reconciled their
+committed receipts with CLI exit 0 and no new registration. Another authenticated
+owner and a nonexistent canonical operation ID received 404 from the application.
+This exception bypasses BIC only: it does not grant ownership or bypass API auth.
+
+Before reusing this configuration, validate the exact expression in the target
+zone/phase and preserve its other rules. The pilot's sanitized expression, API
+results and rollback diff are retained with `DYNAMIC-RECEIPT-BIC-RESULT.md` in the
+operational evidence directory cited by [RC validation](validation/69-rc.md).
 
 References: [Cloudflare error 1010](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1010/)
 and [Browser Integrity Check](https://developers.cloudflare.com/waf/tools/browser-integrity-check/).
