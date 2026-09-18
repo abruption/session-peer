@@ -206,5 +206,5 @@ export function verifyProof(message: string, proof: unknown, key: KeyObject) {
   }
 }
 export function room(userId: string, receiver: string) {
-  return sha256("session-peer-room-v1\0" + userId + "\0" + receiver);
+  return sha256(userId + "\0" + receiver);
 }

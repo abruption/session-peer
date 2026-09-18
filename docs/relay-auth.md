@@ -156,7 +156,7 @@ Admission payload:
 Both devices must be active and owned by the same **internal user ID**. A receiver
 must identify itself. The server computes the room; callers cannot supply an
 arbitrary room/user/issuer/audience/expiry. Room = SHA256 UTF-8 of
-`session-peer-room-v1\0` + internal user ID + `\0` + receiver principal.
+internal user ID + `\0` + receiver principal (no domain prefix).
 
 ### Device proof
 
@@ -190,7 +190,7 @@ new claim; do not relabel an existing certificate fingerprint as a key hash.
 
 JWT algorithm is pinned **ES256**; `kid` identifies the persisted control signing
 public key. Claims: `iss` and `aud` = configured relay origin, `sub` = internal
-opaque user ID, `devicePrincipal`, `keyFingerprint`, `keyGeneration`, `role`,
+opaque user ID, `devicePrincipal`, `receiverPrincipal`, `keyFingerprint`, `keyGeneration`, `role`,
 server-computed `room`, `iat`, `exp` (60 seconds), `jti`, `cnf.jwk` (device public
 P-256 key only). Neither OAuth provider tokens nor the first-party session token
 are forwarded to the relay. API response includes `{token, expiresAt, room}`;
@@ -200,7 +200,29 @@ The relay must independently verify algorithm/signature, issuer/audience, exact
 claim shape and lifetime, JTI/proof replay protection, device key possession,
 owner/generation/fingerprint/current revocation state, both members' ownership,
 and room derivation before exchanging for its existing short-lived cookie.
-Control issuing a token does not demonstrate these Python gates are implemented.
+For the Python relay's admission exchange (not the control API), send:
+
+```http
+Authorization: Bearer <JWT>
+X-Session-Peer-Proof: <unpadded base64url DER ECDSA signature>
+```
+
+The device signs exact UTF-8 `session-peer-admission-v1:` + the **entire JWT**, with
+P-256 ECDSA/SHA256; no final newline. This is a separate signature from the control
+challenge proof. The relay checks its signature against `cnf.jwk`, which must
+contain only a public EC P-256 key matching the current device SPKI fingerprint.
+It validates `receiverPrincipal`/role/ownership and room derivation independently.
+Pin ES256 and a recognized signing `kid`; require `exp - iat <= 60` seconds and
+valid issue/expiry time bounds. Do not consume a JTI until all checks and device
+proof succeed. Atomic single-use JTI consumption precedes cookie issuance and
+must survive process restart/multiple workers through at least JWT expiration;
+failed device proof must not burn somebody else's JTI. The Python owner must
+validate those concurrency/durability gates in the actual receiver.
+
+The agreed room derivation supersedes the unpublished 55ff3bb/6815e1e control
+candidates, which used a domain prefix and omitted the receiver claim. Do not mix
+those older artifacts with the new Python verifier. Control issuing a token and
+its local proof-format checks do not demonstrate Python gates are implemented.
 E2EE payload remains inside pinned inner TLS, not the control API.
 
 Atomic `relay-public/state.json` contains:
@@ -223,7 +245,7 @@ do not broaden parent permissions to expose the private sibling.
 State refreshes every 2 seconds with 10-second freshness. The Python reader must
 fail closed on missing, malformed or stale state and reopen after replacement.
 Successful revocation publishes a tombstone before returning. Active websocket
-connections also need state monitoring and closure by the Python relay owner;
+connections use the Python owner's proposed 1-second state recheck/closure;
 JWT TTL alone is **not immediate active-session revocation**. No such integration
 claim is made by these control tests. Publication failure rolls back the DB
 mutation, marks health failed and blocks admissions until a successful refresh.
