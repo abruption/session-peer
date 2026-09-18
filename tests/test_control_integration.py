@@ -16,7 +16,11 @@ import uuid
 from unittest import mock
 
 from tests import test_native_relay as native_tests
+from websockets.exceptions import ConnectionClosed
 from session_peer_relay import control
+from session_peer_relay.app import open_channel
+from session_peer_relay.relay import Relay
+from session_peer_relay import wire
 from session_peer_relay.auth import ControlAdmission
 from session_peer_relay.identity import private_write
 from session_peer_relay.rotation import rotate
@@ -62,10 +66,14 @@ class ControlIntegration(unittest.IsolatedAsyncioTestCase):
                 self.opener = build_opener(*handlers)
             def open(self, request, timeout):
                 # Preserve Origin and all auth headers; route only fixture traffic.
-                if not request.full_url.startswith(info['origin']+'/api/'):
+                if request.full_url.startswith(info['origin']+'/api/'):
+                    port = info['port']
+                elif request.full_url == info['origin']+'/v1/session' and 'relayPort' in info:
+                    port = info['relayPort']
+                else:
                     raise AssertionError('unexpected external request')
                 path = request.full_url[len(info['origin']):]
-                local = urllib.request.Request('http://127.0.0.1:'+str(info['port'])+path,
+                local = urllib.request.Request('http://127.0.0.1:'+str(port)+path,
                     data=request.data, headers=dict(request.header_items()), method=request.get_method())
                 return self.opener.open(local, timeout=timeout)
         transport = mock.patch('urllib.request.build_opener', TestTransport)
@@ -143,3 +151,52 @@ class ControlIntegration(unittest.IsolatedAsyncioTestCase):
                 self.headers(other)
         finally:
             other.close()
+
+    async def test_managed_relay_exchange_encrypts_native_payload_and_closes_revoked_connection(self):
+        # Replace fixture outer TLS only; admission/cookie/WS, pinned inner TLS,
+        # native adapter and live revocation checks all use production code.
+        self.listener.cancel()
+        await asyncio.gather(self.listener, return_exceptions=True)
+        self.relay.close()
+        await self.relay.wait_closed()
+        managed = Relay([], control=self.auth, capture=self.frames)
+        self.relay = await managed.start('127.0.0.1', 0)
+        self.info['relayPort'] = self.relay.sockets[0].getsockname()[1]
+        self.url = self.info['origin'].replace('https://', 'wss://')+'/v1/connect'
+        actual_connect = wire.PinnedConnect
+        def local_connect(url, **kwargs):
+            if url != self.url:
+                raise AssertionError('unexpected websocket target')
+            return actual_connect('ws://127.0.0.1:'+str(self.info['relayPort'])+'/v1/connect', **kwargs)
+        with mock.patch.object(wire, 'PinnedConnect', local_connect):
+            self.client_token = control.DeviceCredential(self.client, self.host.device, 'client')
+            self.receiver_token = control.DeviceCredential(self.host, self.host.device, 'receiver')
+            self.listener = asyncio.create_task(self.receiver.relay_listener(self.url, self.receiver_token))
+            record = self.client.peer(self.host.device)
+            routes = {**record['routes'], 'relay': self.url}
+            self.client.db.execute('UPDATE peers SET routes=? WHERE id=?', (json.dumps(routes), self.host.device))
+            marker = 'managed-encrypted-fixture-'+str(uuid.uuid4())
+            result = await self.call('send', {'target': 'review', 'message': marker}, route='relay')
+            self.assertTrue(result['ok'], result)
+            self.assertEqual(result['route'], 'relay')
+            self.assertFalse(result['consumptionConfirmed'])
+            self.assertEqual(len(self.effects), 1)
+            self.assertTrue(self.frames)
+            self.assertNotIn(marker.encode(), b''.join(self.frames))
+            channel = await open_channel(self.client, record['certificate'], routes, 'relay', self.client_token)
+            try:
+                control.call(self.info['origin'], '/api/relay/devices/'+self.client.device+'/revoke', {},
+                             self.info['accounts'][0]['token'])
+                with self.assertRaises((ConnectionClosed, EOFError)):
+                    await asyncio.wait_for(channel.recv(), 3)
+                # A closed client transport is necessary but not sufficient: let
+                # the server finish its close handshake and release its slots.
+                async def released():
+                    while any(getattr(ws, 'lab_account', {}).get('devicePrincipal') == self.client.device
+                              for ws in managed.connections):
+                        await asyncio.sleep(0.01)
+                await asyncio.wait_for(released(), 3)
+            finally:
+                await channel.close()
+                self.listener.cancel()
+                await asyncio.gather(self.listener, return_exceptions=True)

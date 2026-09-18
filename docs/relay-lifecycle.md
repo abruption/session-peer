@@ -87,8 +87,8 @@ Admission requires a short-lived ES256 ticket and a signature by the enrolled
 P-256 device key. Audience, issuer, generation, owner, receiver and room are checked.
 A ticket is consumed once before issuing the existing one-use WebSocket cookie.
 Missing/invalid state fails closed; existing connections recheck revocation every
-second. Control-service issuance and CLI browser login are being integrated in a
-separate worktree. Token verification tests alone do not establish live login.
+second. Control-service issuance and the Python CLI have passed fixture integration.
+Token verification tests alone do not establish live browser login.
 
 ## Browser login (integration candidate)
 
@@ -106,9 +106,10 @@ file. Expired login requires another explicit login. Core local/SSH commands do
 not start a login or contact this service.
 
 The control service uses Better Auth with GitHub/Google, and is independently
-owned under `control/`. The Python client and service API are still undergoing
-cross-language integration. Provider credentials and live OAuth validation are
-pending; successful unit tests must not be reported as a working public login.
+owned under `control/`. The Python client and service API have passed
+cross-language fixture integration. Dedicated provider credentials are prepared;
+live OAuth validation remains pending. Unit tests must not be reported as a
+working public login.
 
 For control-managed rotation add `--login` to `device rotate`. It registers the
 staged public key with the control service using old/new-key proof and the stable
