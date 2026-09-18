@@ -52,6 +52,13 @@ it("blocks cross-origin cookie and bearer requests, allows cookie same origin an
 });
 it("issues first-party device session only after code verification and explicit approval", async () => {
   f = await fixture();
+  const disallowed = await f.request(
+    "/api/auth/device/code",
+    { client_id: "unknown-fixture-client" },
+    {},
+  );
+  expect(disallowed.status).toBe(400);
+  expect((await disallowed.json()).error).toBe("invalid_client");
   const issued = await f.request(
     "/api/auth/device/code",
     { client_id: "session-peer-cli" },
@@ -77,6 +84,13 @@ it("issues first-party device session only after code verification and explicit 
   expect(
     (await (await f.request("/api/auth/device/token", poll, {})).json()).error,
   ).toBe("authorization_pending");
+  const disallowedPoll = await f.request(
+    "/api/auth/device/token",
+    { ...poll, client_id: "unknown-fixture-client" },
+    {},
+  );
+  expect(disallowedPoll.status).toBe(400);
+  expect((await disallowedPoll.json()).error).toBe("invalid_grant");
   const headers = { cookie: f.cookie, origin: f.config.origin };
   const claim = await f.request(
     "/api/auth/device?user_code=" + code.user_code,

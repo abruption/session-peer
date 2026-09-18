@@ -510,6 +510,8 @@ describe("journaled registration and renewal", () => {
       operation: "register",
       payload: d.payload,
     });
+    expect(c.proofMessage.startsWith("session-peer-control-v1:")).toBe(true);
+    expect(c.proofMessage.endsWith("\n")).toBe(false);
     expect(c.expiresAt - c.issuedAt).toBe(60);
     expect(
       Math.abs(c.issuedAt - Math.floor(Date.now() / 1000)),
