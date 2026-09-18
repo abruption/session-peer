@@ -5,6 +5,8 @@ Only the test HTTP transport replaces public TLS; production OAuth is not mocked
 or enabled in the application. Native effects use the existing local socket fixture.
 """
 import asyncio
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -18,6 +20,7 @@ from unittest import mock
 from tests import test_native_relay as native_tests
 from websockets.exceptions import ConnectionClosed
 from session_peer_relay import control
+from session_peer_relay import cli
 from session_peer_relay.app import open_channel
 from session_peer_relay.relay import Relay
 from session_peer_relay import wire
@@ -108,6 +111,32 @@ class ControlIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.auth.active(account))
         with self.assertRaises(Rejected):
             self.headers(self.client)
+
+    async def test_enrollment_cli_success_and_same_operation_recovery_exit_zero(self):
+        root = self.root/'cli-device'
+        store = Store(root)
+        self.login(store)
+        principal = store.device
+        store.close()
+        operation = str(uuid.uuid4())
+        argv = ['enroll', '--state', str(root), '--name', 'cli-test', '--operation-id', operation]
+        outputs = []
+        states = []
+        for _ in range(2):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                status = await asyncio.to_thread(cli.main, 'device', argv)
+            self.assertEqual(status, 0)
+            result = json.loads(output.getvalue())
+            self.assertIs(result['ok'], True)
+            self.assertIs(result['committed'], True)
+            self.assertEqual(result['operationId'], operation)
+            self.assertEqual(result['principal'], principal)
+            self.assertEqual(result['keyGeneration'], 0)
+            outputs.append(result)
+            states.append(json.loads(Path(self.info['stateFile']).read_text()))
+        self.assertEqual(outputs[0], outputs[1])
+        self.assertEqual(states[0], states[1])
 
     async def test_managed_rotation_preserves_native_receipt_and_lost_response_retry(self):
         ident, operation = str(uuid.uuid4()), str(uuid.uuid4())

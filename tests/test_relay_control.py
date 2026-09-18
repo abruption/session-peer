@@ -75,7 +75,7 @@ class ControlClient(unittest.IsolatedAsyncioTestCase):
                    'keyGeneration': 0, 'keyFingerprint': self.store.key_id}
         with patch('session_peer_relay.control.call', side_effect=[Rejected('operation_already_committed'), receipt]) as call, \
              patch('session_peer_relay.control.sign') as sign:
-            self.assertEqual(enroll(self.store, 'test', ident), receipt)
+            self.assertEqual(enroll(self.store, 'test', ident), {'ok': True, **receipt})
             self.assertEqual(call.call_args.args[1], '/api/relay/operations/'+ident)
             sign.assert_not_called()
         with patch('session_peer_relay.control.call', side_effect=[Rejected('operation_already_committed'), {**receipt, 'keyGeneration': 1}]):
@@ -85,3 +85,21 @@ class ControlClient(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(Rejected, 'operation_conflict'):
                 enroll(self.store, 'changed-name', ident)
             self.assertEqual(call.call_count, 1)
+
+    async def test_fresh_enrollment_rejects_invalid_receipt_before_saving_name(self):
+        import uuid
+        ident = str(uuid.uuid4())
+        private_write(self.store.root/'login.json', json.dumps({'server': self.server, 'token': 'secret', 'expiresAt': time.time()+600}))
+        receipt = {'operationId': ident, 'committed': True, 'principal': self.store.device,
+                   'keyGeneration': 0, 'keyFingerprint': self.store.key_id}
+        challenge = {'challengeId': 'fixture', 'proofMessage': 'session-peer-control-v1:fixture'}
+        for field, invalid in [('operationId', str(uuid.uuid4())), ('committed', False),
+                               ('principal', 'f'*64), ('keyFingerprint', 'e'*64),
+                               ('keyGeneration', False), ('keyGeneration', 1)]:
+            with self.subTest(field=field, value=invalid), \
+                 patch('session_peer_relay.control.call', side_effect=[challenge, {**receipt, field: invalid}]):
+                with self.assertRaisesRegex(Rejected, 'invalid_operation_receipt'):
+                    enroll(self.store, 'test', ident)
+                self.assertIsNone(self.store.db.execute('SELECT value FROM metadata WHERE key="control_name"').fetchone())
+        with patch('session_peer_relay.control.call', side_effect=[challenge, {**receipt, 'extra': 'not-for-output'}]):
+            self.assertEqual(enroll(self.store, 'test', ident), {'ok': True, **receipt})

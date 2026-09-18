@@ -126,6 +126,17 @@ def sign(store, message, *, directory=None):
     return base64.urlsafe_b64encode(key.sign(message.encode(), ec.ECDSA(hashes.SHA256()))).rstrip(b'=').decode()
 
 
+def registration_receipt(payload, result):
+    expected = {'operationId': payload['operationId'], 'principal': payload['principal'],
+                'keyFingerprint': fingerprint(payload['certificatePEM']),
+                'keyGeneration': payload['keyGeneration'], 'committed': True}
+    if (not isinstance(result, dict) or result.get('committed') is not True
+            or type(result.get('keyGeneration')) is not int
+            or any(result.get(key) != value for key, value in expected.items())):
+        raise Rejected('invalid_operation_receipt')
+    return expected
+
+
 def prove(store, operation, payload, path, previous_directory=None):
     login_state = session(store)
     try:
@@ -136,20 +147,15 @@ def prove(store, operation, payload, path, previous_directory=None):
         # The challenge endpoint checks the full original payload digest before
         # returning this code. Query its durable result instead of signing again.
         result = call(login_state['server'], '/api/relay/operations/'+payload['operationId'], token=login_state['token'])
-        expected = {'operationId': payload['operationId'], 'principal': payload['principal'],
-                    'keyFingerprint': fingerprint(payload['certificatePEM']),
-                    'keyGeneration': payload['keyGeneration'], 'committed': True}
-        if (result.get("committed") is not True or type(result.get("keyGeneration")) is not int
-                or any(result.get(key) != value for key, value in expected.items())):
-            raise Rejected('invalid_operation_receipt')
-        return result
+        return registration_receipt(payload, result)
     message = challenge.get('proofMessage')
     if not isinstance(message, str) or not message.startswith('session-peer-control-v1:') or len(message) > 8192:
         raise Rejected('invalid_control_challenge')
     request = {**payload, 'challengeId': challenge['challengeId'], 'proof': sign(store, message)}
     if previous_directory:
         request['previousKeyProof'] = sign(store, message, directory=previous_directory)
-    return call(login_state['server'], path, request, login_state['token'])
+    result = call(login_state['server'], path, request, login_state['token'])
+    return registration_receipt(payload, result) if operation == 'register' else result
 
 
 def enroll(store, name, operation_id=None):
@@ -167,7 +173,7 @@ def enroll(store, name, operation_id=None):
         payload['expectedGeneration'] = store.generation-1
     result = prove(store, 'register', payload, '/api/relay/devices', previous)
     store.db.execute('INSERT OR REPLACE INTO metadata VALUES("control_name",?)', (name,))
-    return result
+    return {'ok': True, **result}
 
 
 class DeviceCredential:
