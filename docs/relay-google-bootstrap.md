@@ -35,16 +35,25 @@ Google authentication. Existing account allowlists are not relaxed.
    contains the verified subject, expected email, verification time, issuer and
    public client ID. It contains no authorization code or provider/session token.
 4. The callback intentionally refuses login before account linking or provisioning.
-   Confirm the discovery record through the trusted operator path, add its exact
+   Confirm the discovery record through the trusted operator path, running
+   `node dist/server/confirm-google-discovery.js` as the same service identity
+   with the same protected configuration, within the discovery window. This
+   checks the expected account/client and private file, then synchronizes the
+   file and directory before returning `persistenceConfirmed: true`. Add its exact
    `accountId` as a `google` entry in `SESSION_PEER_ALLOWED_ACCOUNTS`, and remove
    both discovery settings. Preserve the other approved account entries.
 5. Restart through the reviewed service procedure and perform a separate normal
    Google login and CLI device approval test. The discovery callback itself was
    not a successful login.
 
-The discovery file is created once with mode 0600 in a private 0700 directory.
+The discovery file is prepared and synchronized privately, then published once
+with a non-overwriting hard link, mode 0600 in a private 0700 directory.
 Retries, different subjects, an expired window or a failed write cannot replace
-it or grant access. If the operator must repeat discovery, inspect and explicitly
+it or grant access. File presence alone does not prove persistence: directory
+synchronization may have failed after publication. The explicit confirmation
+step retries synchronization without changing the verified record or granting
+login. If it fails, leave the allowlist unchanged and diagnose storage first.
+If the operator must repeat discovery, inspect and explicitly
 archive the prior result first; do not automatically delete it during restart.
 
 `accountLinking=false` remains in effect. A Google account whose email already
