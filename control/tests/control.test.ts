@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   randomUUID,
   sign,
@@ -15,11 +15,84 @@ import { RelayControl } from "../src/server/relay-control.js";
 import { openDatabase } from "../src/server/storage.js";
 import { certificate, room } from "../src/server/protocol.js";
 let f: Awaited<ReturnType<typeof fixture>> | undefined;
+const publicationFault = vi.hoisted(() => ({ directorySync: false }));
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...fs,
+    fsyncSync(fd: number) {
+      if (publicationFault.directorySync && fs.fstatSync(fd).isDirectory())
+        throw new Error("fixture_directory_sync_failure");
+      fs.fsyncSync(fd);
+    },
+  };
+});
 afterEach(() => {
+  publicationFault.directorySync = false;
   f?.cleanup();
   f = undefined;
 });
 describe("relay device boundary", () => {
+  it("persists increasing state revisions across heartbeats, mutations and new publisher instances", async () => {
+    f = await fixture();
+    const state = () => JSON.parse(readFileSync(join(f!.config.publicDir, "state.json"), "utf8"));
+    expect(state().revision).toBe(1);
+    f.control.publish();
+    expect(state().revision).toBe(2);
+    const d = identity(f.root, "Device", "a");
+    const req = f.proven(f.owner.id, "register", d.payload, d.privateKey);
+    f.control.register(f.owner.id, req);
+    expect(state().revision).toBe(3);
+    f.control.register(f.owner.id, req);
+    expect(state().revision).toBe(3);
+    f.control.revoke(f.owner.id, d.payload.principal);
+    expect(state().revision).toBe(4);
+    const second = openDatabase(f.config.dataDir);
+    try {
+      const restarted = new RelayControl(second, f.config);
+      expect(state().revision).toBe(5);
+      expect(state().devices[d.payload.principal].revoked).toBe(true);
+      restarted.publish();
+      expect(state().revision).toBe(6);
+      expect(second.prepare("SELECT revision FROM relay_state_revision WHERE id=1").get()).toEqual({revision: 6});
+    } finally {
+      second.close();
+    }
+  });
+  it("never reuses a visible revision when directory fsync fails and the device mutation rolls back", async () => {
+    f = await fixture();
+    const d = identity(f.root, "Device", "a");
+    f.control.register(f.owner.id, f.proven(f.owner.id, "register", d.payload, d.privateKey));
+    const path = join(f.config.publicDir, "state.json");
+    const before = JSON.parse(readFileSync(path, "utf8"));
+    publicationFault.directorySync = true;
+    expect(() => f!.control.revoke(f!.owner.id, d.payload.principal)).toThrow("state_publication_failed");
+    const visible = JSON.parse(readFileSync(path, "utf8"));
+    expect(visible.revision).toBe(before.revision + 1);
+    expect(visible.devices[d.payload.principal].revoked).toBe(true);
+    expect(f.control.list(f.owner.id)[0].revoked).toBe(false);
+    expect(f.control.healthy).toBe(false);
+    expect(f.db.prepare("SELECT revision FROM relay_state_revision WHERE id=1").get()).toEqual({revision: visible.revision});
+    publicationFault.directorySync = false;
+    const second = openDatabase(f.config.dataDir);
+    try {
+      new RelayControl(second, f.config);
+      const recovered = JSON.parse(readFileSync(path, "utf8"));
+      expect(recovered.revision).toBeGreaterThan(visible.revision);
+      expect(recovered.devices[d.payload.principal].revoked).toBe(false);
+    } finally {
+      second.close();
+    }
+  });
+  it("fails closed at revision exhaustion without publishing a repeated or unsafe JSON integer", async () => {
+    f = await fixture();
+    const path = join(f.config.publicDir, "state.json");
+    const before = readFileSync(path, "utf8");
+    f.db.prepare("UPDATE relay_state_revision SET revision=? WHERE id=1").run(Number.MAX_SAFE_INTEGER);
+    expect(() => f!.control.publish()).toThrow("state_publication_failed");
+    expect(f.control.healthy).toBe(false);
+    expect(readFileSync(path, "utf8")).toBe(before);
+  });
   it("publishes cross-UID readable state under umask 0077 without replacing the directory or exposing private state", async () => {
     const previous = process.umask(0o077);
     try {

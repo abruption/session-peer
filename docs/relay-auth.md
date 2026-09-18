@@ -207,7 +207,7 @@ OAuth login/registration does not replace endpoint E2EE pairing/pin policy.
 ### Atomic public state and contract transition
 
 ```text
-{ schemaVersion: 1, issuer, audience, issuedAt, expiresAt,
+{ schemaVersion: 1, revision, issuer, audience, issuedAt, expiresAt,
   jwks: { keys: [public signing JWK with kid/alg/use] },
   devices: { principal: { userId, keyFingerprint, generation, revoked } } }
 ```
@@ -232,7 +232,27 @@ publishes immediately on mutation. Python fails closed for missing/malformed/
 expired state or issuedAt>now+5 seconds. It rereads every admission and rechecks
 existing connections every second, closing revoked/rotated sessions. JWT TTL
 alone is not active-session revocation. Actual connection/clock/restart behavior
-requires Python/staging verification. Publication failures roll back DB mutations
+requires Python/staging verification.
+
+`revision` is a positive JSON safe integer (maximum 9007199254740991), allocated
+from the single `relay_state_revision` row in the private auth DB. Every initial
+publication, restart, heartbeat and device mutation reserves a new revision in
+an independent IMMEDIATE transaction **before** the device mutation transaction
+or file publication. Failed attempts may leave gaps; reservations never roll back
+with device changes. This prevents a visible post-rename snapshot's revision from
+being reused for a different payload after directory-fsync/mutation failure.
+Exhaustion/failed reservation marks publication unhealthy and fails closed.
+
+Python must durably retain `highestStateRevision` and a payload hash alongside
+its spent-JTI state, reject lower revisions, and reject changed payload at an
+equal revision. Identical same-revision reads remain valid while fresh. Revision
+checking does not replace issuer/schema/future/180-second expiry checks. Auth DB
+backup restore below the relay's persistent highwater is intentionally blocked;
+do not reset the relay highwater or clear tombstones as an automatic repair.
+Restore/recovery fencing and consumer persistence/hash handling require main's
+implementation and coordinated operational verification, not publisher tests.
+
+Publication failures roll back DB device mutations
 and mark health failed; SQLite and a file are not a distributed atomic transaction.
 A publication followed by DB commit failure can temporarily deny access; never
 report that failed operation as success or bypass stale-state checks.
@@ -618,4 +638,4 @@ JWT 실제본문은 예제/로그로 출력하지 않는다. claims: iss/aud=ori
 
 Relay exchange: Bearer JWT + X-Session-Peer-Proof=ECDSA/SHA256 DER base64url of exact UTF8 `session-peer-admission-v1:`+JWT. 이 proof는 control nonce proof와 별개다.
 
-State: schemaVersion1/issuer/audience/jwks/devices 구조 유지. issuedAt UNIX 초, expiresAt=issuedAt+180; 60초마다 atomic 재발행하고 mutation 즉시 발행. Python은 issuedAt>now+5 / expired / malformed / missing을 fail-closed하고 기존 socket을1초마다 재검사한다.
+State: schemaVersion1/issuer/audience/jwks/devices 구조 유지, authDB 영속 카운터 기반 양의 정수 revision 추가. issuedAt UNIX 초, expiresAt=issuedAt+180; 60초마다 atomic 재발행하고 mutation 즉시 발행. Python은 issuedAt>now+5 / expired / malformed / missing을 fail-closed하고 기존 socket을1초마다 재검사한다. Python spent-jti 영속 상태에 highestStateRevision/해시를 보관해 낮은 revision 및 동일 revision의 다른 payload를 거부하는 consumer 계약은 별도 통합 검증 대상이다.

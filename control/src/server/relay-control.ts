@@ -74,7 +74,9 @@ export class RelayControl {
    CREATE TABLE IF NOT EXISTS relay_challenges (id TEXT PRIMARY KEY,userId TEXT NOT NULL,operation TEXT NOT NULL,payload TEXT NOT NULL,message TEXT NOT NULL,expiresAt INTEGER NOT NULL);
    CREATE INDEX IF NOT EXISTS relay_challenge_expiry ON relay_challenges(expiresAt);
    CREATE TABLE IF NOT EXISTS relay_operations (operationId TEXT PRIMARY KEY,userId TEXT NOT NULL,requestHash TEXT NOT NULL,result TEXT);
-   CREATE INDEX IF NOT EXISTS relay_operations_owner ON relay_operations(userId);`);
+   CREATE INDEX IF NOT EXISTS relay_operations_owner ON relay_operations(userId);
+   CREATE TABLE IF NOT EXISTS relay_state_revision (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>=0 AND revision<=9007199254740991));
+   INSERT OR IGNORE INTO relay_state_revision VALUES (1,0);`);
     // Earlier unpublished candidates stored an SPKI hash under keyFingerprint.
     // Never reinterpret old live state/receipts silently as certificate DER.
     const legacy = db
@@ -136,6 +138,36 @@ export class RelayControl {
     this.publish();
   }
   publish() {
+    this.publishRevision(this.reserveStateRevision());
+  }
+  private reserveStateRevision(): number {
+    try {
+      // Commit reservations independently of device mutations. A publication
+      // can become visible before a later mutation/file failure; never reuse
+      // that revision with a different payload after rollback or restart.
+      assert(!this.db.inTransaction, "revision_transaction_overlap", 503);
+      return this.db.transaction(() => {
+        const row = this.db
+          .prepare("SELECT revision FROM relay_state_revision WHERE id=1")
+          .get() as { revision: number } | undefined;
+        assert(
+          row && Number.isSafeInteger(row.revision) && row.revision >= 0 &&
+            row.revision < Number.MAX_SAFE_INTEGER,
+          "state_revision_exhausted",
+          503,
+        );
+        const revision = row.revision + 1;
+        this.db
+          .prepare("UPDATE relay_state_revision SET revision=? WHERE id=1")
+          .run(revision);
+        return revision;
+      }).immediate();
+    } catch {
+      this.healthy = false;
+      throw new ControlError("state_publication_failed", 503);
+    }
+  }
+  private publishRevision(revision: number) {
     const devices: Record<string, unknown> = {};
     for (const d of this.db
       .prepare("SELECT * FROM relay_devices ORDER BY principal")
@@ -149,6 +181,7 @@ export class RelayControl {
     const now = Math.floor(this.now() / 1000);
     const snapshot = {
       schemaVersion: 1,
+      revision,
       issuer: this.config.origin,
       audience: this.config.origin,
       issuedAt: now,
@@ -396,6 +429,10 @@ export class RelayControl {
           typeof o.previousKeyProof === "string"),
       "invalid_proof",
     );
+    const existing = this.operationRecord(userId, p);
+    assert(existing, "operation_not_found", 404);
+    if (existing.result !== null) return JSON.parse(existing.result);
+    const revision = this.reserveStateRevision();
     return this.db.transaction(() => {
       const row = this.operationRecord(userId, p);
       assert(row, "operation_not_found", 404);
@@ -467,7 +504,7 @@ export class RelayControl {
           "UPDATE relay_operations SET result=? WHERE operationId=? AND userId=?",
         )
         .run(JSON.stringify(result), p.operationId, userId);
-      this.publish();
+      this.publishRevision(revision);
       return result;
     })();
   }
@@ -518,6 +555,8 @@ export class RelayControl {
   revoke(userId: string, id: string) {
     principal(id);
     assert(this.healthy, "state_unavailable", 503);
+    this.device(id, userId, false);
+    const revision = this.reserveStateRevision();
     return this.db.transaction(() => {
       this.device(id, userId, false);
       this.db
@@ -528,7 +567,7 @@ export class RelayControl {
       this.db
         .prepare("DELETE FROM relay_challenges WHERE userId=?")
         .run(userId);
-      this.publish();
+      this.publishRevision(revision);
       return { principal: id, revoked: true };
     })();
   }
