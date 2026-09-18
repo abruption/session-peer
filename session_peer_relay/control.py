@@ -137,6 +137,8 @@ def prove(store, operation, payload, path, previous_directory=None):
 
 
 def enroll(store, name, operation_id=None):
+    if store.recovery_required():
+        raise Rejected('recovery_required')
     operation_id = operation_id or str(uuid.uuid4())
     previous = None
     payload = {'principal': store.device, 'certificatePEM': store.cert,

@@ -2,6 +2,7 @@
 import json
 import unittest
 import uuid
+from unittest import mock
 
 from tests import test_native_relay as native_tests
 from session_peer_relay.app import exchange, open_channel, request
@@ -124,6 +125,52 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((await rotate(self.client, operation, 'direct', None))['ok'])
         self.host.revoke(self.client.device)
         self.assertEqual(self.host.peer(self.client.device)['status'], 'revoked')
+
+    async def test_interrupted_restore_never_publishes_usable_state(self):
+        from session_peer_relay.lifecycle import backup, restore
+        from session_peer_relay.identity import private_write
+        policy = self.root/'restore-policy.json'
+        private_write(policy, json.dumps(self.policy))
+        snapshot, destination = self.root/'snapshot', self.root/'restored'
+        backup(self.client, snapshot, policy)
+        with mock.patch('session_peer_relay.lifecycle.sqlite3.connect', side_effect=RuntimeError('crash before quarantine')):
+            with self.assertRaises(RuntimeError):
+                restore(snapshot, destination)
+        self.assertFalse(destination.exists())
+        self.assertEqual(list(self.root.glob('.restore-*')), [])
+        abandoned = self.root/'interrupted-staging'
+        abandoned.mkdir(mode=0o700)
+        private_write(abandoned/'restore-incomplete', 'incomplete')
+        with self.assertRaisesRegex(Rejected, 'restore_incomplete'):
+            Store(abandoned)
+
+    async def test_restored_sender_blocks_effects_rotation_and_pairing(self):
+        from session_peer_relay.lifecycle import backup, restore
+        from session_peer_relay.identity import private_write
+        from session_peer_relay.control import enroll
+        policy = self.root/'restore-policy.json'
+        private_write(policy, json.dumps(self.policy))
+        ident = str(uuid.uuid4())
+        self.assertTrue((await self.call('send', {'target': 'review', 'message': 'before snapshot'}, ident))['ok'])
+        snapshot, destination = self.root/'snapshot', self.root/'restored'
+        backup(self.client, snapshot, policy)
+        restore(snapshot, destination)
+        recovered = Store(destination)
+        try:
+            with self.assertRaisesRegex(Rejected, 'recovery_required'):
+                await exchange(recovered, self.host.device, 'send', {'target': 'review', 'message': 'blocked'}, str(uuid.uuid4()), 'direct')
+            with self.assertRaisesRegex(Rejected, 'recovery_required'):
+                await rotate(recovered, str(uuid.uuid4()), 'direct', None)
+            with self.assertRaisesRegex(Rejected, 'recovery_required'):
+                recovered.invite({})
+            with self.assertRaisesRegex(Rejected, 'recovery_required'):
+                enroll(recovered, 'restored')
+            status = await exchange(recovered, self.host.device, 'status', ident, route='direct')
+            self.assertEqual(status['messageId'], ident)
+            self.assertEqual(len(self.effects), 1)
+            self.assertEqual(recovered.generation, 0)
+        finally:
+            recovered.close()
 
     async def test_retired_old_key_can_never_submit_again(self):
         original_root = self.client.identity_root

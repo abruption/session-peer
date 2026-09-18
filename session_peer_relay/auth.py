@@ -3,6 +3,7 @@ import base64
 import hashlib
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -16,6 +17,25 @@ from .identity import private_path, private_read, private_write
 
 class AdmissionDenied(ValueError):
     pass
+
+
+def initialize_replay(path):
+    path = Path(path)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    private_path(path.parent, True)
+    # Explicit operator bootstrap only. A running service never recreates lost state.
+    not_before = math.ceil(time.time())+65
+    value = {'schemaVersion': 1, 'spent': {}, 'revision': 0, 'digest': None, 'notBefore': not_before}
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'w') as target:
+        json.dump(value, target)
+        target.flush(); os.fsync(target.fileno())
+    directory_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+    return {'ok': True, 'initialized': True, 'admissionNotBefore': not_before}
 
 
 def decode(value):
@@ -46,6 +66,8 @@ class ControlAdmission:
         self.replay_file = Path(replay_file) if replay_file else None
         self.replay_lock = None
         if self.replay_file:
+            if not self.replay_file.exists():
+                raise ValueError('admission_replay_state_missing')
             self.replay_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             private_path(self.replay_file.parent, True)
             lock = self.replay_file.with_suffix('.lock')
@@ -57,13 +79,27 @@ class ControlAdmission:
             except BlockingIOError:
                 self.replay_lock.close()
                 raise ValueError('admission_state_in_use') from None
-        saved = json.loads(private_read(self.replay_file, 262144)) if self.replay_file and self.replay_file.exists() else {'schemaVersion': 1, 'spent': {}, 'revision': 0, 'digest': None}
+        try:
+            self._load_replay()
+        except BaseException:
+            self.close()
+            raise
+
+    def _load_replay(self):
+        saved = json.loads(private_read(self.replay_file, 262144)) if self.replay_file else {'schemaVersion': 1, 'spent': {}, 'revision': 0, 'digest': None, 'notBefore': 0}
         if not isinstance(saved, dict) or saved.get('schemaVersion') != 1 or type(saved.get('revision')) is not int or saved['revision'] < 0:
             raise ValueError('invalid_admission_replay_state')
         self.used = saved.get('spent')
+        self.not_before = saved.get('notBefore')
+        if type(self.not_before) not in (int, float) or not math.isfinite(self.not_before) or self.not_before < 0:
+            raise ValueError('invalid_admission_replay_state')
         self.highest_revision, self.state_digest = saved['revision'], saved.get('digest')
+        if self.highest_revision and (not isinstance(self.state_digest, str)
+                or not re.fullmatch(r'[a-f0-9]{64}', self.state_digest)):
+            raise ValueError('invalid_admission_replay_state')
         if not isinstance(self.used, dict) or len(self.used) > 1000 or any(
-                not isinstance(k, str) or type(v) not in (int, float) for k, v in self.used.items()):
+                not isinstance(k, str) or not 16 <= len(k) <= 128 or type(v) not in (int, float)
+                or not math.isfinite(v) for k, v in self.used.items()):
             raise ValueError('invalid_admission_replay_state')
 
     def close(self):
@@ -76,7 +112,8 @@ class ControlAdmission:
         used = self.used if used is None else used
         if self.replay_file:
             private_write(self.replay_file, json.dumps({'schemaVersion': 1, 'spent': used,
-                                                       'revision': revision, 'digest': digest}))
+                                                       'revision': revision, 'digest': digest,
+                                                       'notBefore': self.not_before}))
         self.used, self.highest_revision, self.state_digest = used, revision, digest
 
     def state(self):
@@ -143,6 +180,7 @@ class ControlAdmission:
         if (claims.get('iss') != self.issuer or claims.get('aud') != self.issuer
                 or type(claims.get('iat')) is not int or type(claims.get('exp')) is not int
                 or not now < claims['exp'] <= claims['iat']+60 or claims['iat'] > now+5
+                or claims['iat'] < self.not_before
                 or claims.get('role') not in ('client', 'receiver')
                 or not isinstance(claims.get('jti'), str) or not 16 <= len(claims['jti']) <= 128
                 or not isinstance(claims.get('sub'), str) or not 1 <= len(claims['sub']) <= 256

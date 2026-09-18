@@ -7,6 +7,7 @@ import tempfile
 import time
 import unittest
 import uuid
+from unittest import mock
 
 from tests import test_native_relay as platform_guard
 from cryptography.hazmat.primitives import hashes
@@ -106,6 +107,8 @@ class Admission(unittest.TestCase):
 
     def test_consumed_ticket_survives_restart_and_locks_other_writers(self):
         replay = Path(self.temp.name)/'spent.json'
+        from session_peer_relay.identity import private_write
+        private_write(replay, json.dumps({'schemaVersion': 1, 'spent': {}, 'revision': 0, 'digest': None, 'notBefore': 0}))
         first = ControlAdmission(self.path, self.issuer, replay)
         ticket = self.ticket()
         try:
@@ -130,8 +133,48 @@ class Admission(unittest.TestCase):
         with self.assertRaises(AdmissionDenied):
             self.auth.authorize(*self.ticket())
 
+    def test_missing_replay_state_refuses_start_and_explicit_bootstrap_waits(self):
+        from session_peer_relay.auth import initialize_replay
+        replay = Path(self.temp.name)/'spent.json'
+        with self.assertRaisesRegex(ValueError, 'admission_replay_state_missing'):
+            ControlAdmission(self.path, self.issuer, replay)
+        initialized = initialize_replay(replay)
+        with self.assertRaises(FileExistsError):
+            initialize_replay(replay)
+        auth = ControlAdmission(self.path, self.issuer, replay)
+        try:
+            with self.assertRaises(AdmissionDenied):
+                auth.authorize(*self.ticket())
+            after = initialized['admissionNotBefore']+1
+            with mock.patch('time.time', return_value=after):
+                auth.authorize(*self.ticket())
+        finally:
+            auth.close()
+        replay.unlink()
+        with self.assertRaisesRegex(ValueError, 'admission_replay_state_missing'):
+            ControlAdmission(self.path, self.issuer, replay)
+
+    def test_corrupt_replay_releases_lock_and_disk_failure_never_issues_account(self):
+        from session_peer_relay.identity import private_write
+        replay = Path(self.temp.name)/'spent.json'
+        private_write(replay, '{invalid')
+        with self.assertRaises(ValueError):
+            ControlAdmission(self.path, self.issuer, replay)
+        private_write(replay, json.dumps({'schemaVersion': 1, 'spent': {}, 'revision': 0, 'digest': None, 'notBefore': 0}))
+        auth = ControlAdmission(self.path, self.issuer, replay)
+        try:
+            auth.state()
+            with mock.patch('session_peer_relay.auth.private_write', side_effect=OSError('full')):
+                with self.assertRaises(AdmissionDenied):
+                    auth.authorize(*self.ticket())
+            self.assertEqual(auth.used, {})
+        finally:
+            auth.close()
+
     def test_rollback_of_public_state_is_blocked_after_restart(self):
         replay = Path(self.temp.name)/'spent.json'
+        from session_peer_relay.identity import private_write
+        private_write(replay, json.dumps({'schemaVersion': 1, 'spent': {}, 'revision': 0, 'digest': None, 'notBefore': 0}))
         previous = self.path.read_text()
         first = ControlAdmission(self.path, self.issuer, replay)
         account = first.authorize(*self.ticket())

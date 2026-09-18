@@ -67,6 +67,9 @@ def emit(value):
 
 async def manage(kind, args):
     if kind == 'relay':
+        if args.action == 'init-replay':
+            from .auth import initialize_replay
+            return initialize_replay(args.out)
         if args.action == 'provision':
             if not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}', args.room):
                 raise Rejected('invalid_room')
@@ -214,6 +217,7 @@ def parser(kind):
         item.add_argument('--port', type=int, default=0)
         item.add_argument('--seconds', type=int, choices=range(0, 86401), default=3600, metavar='SECONDS')
     if kind == 'relay':
+        item = command('init-replay', False); item.add_argument('--out', required=True)
         item = command('provision', False)
         item.add_argument('--out', required=True); item.add_argument('--room', default='private')
         item = command('serve', False)

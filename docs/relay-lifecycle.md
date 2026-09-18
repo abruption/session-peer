@@ -59,9 +59,12 @@ staging directory** containing keys; use the approved encrypted backup system fo
 retention. Do not publish or move the directory through source control. Backing up
 state does not copy keys to the relay or to the OAuth control service.
 
-Restore creates a new directory and sets a persistent recovery marker. Existing
+Restore prepares a private staging directory, commits a persistent recovery marker,
+and only then publishes the destination atomically. Interrupted staging is unusable.
+Existing
 receipts remain queryable; a missing receipt returns unknown rather than proving
-non-execution. New sends and key-rotation changes remain blocked. There is no
+non-execution. Both outgoing and incoming sends, key-rotation changes and new
+pairing/enrollment remain blocked. Receipt-status queries remain available. There is no
 one-command override that clears this safeguard. Reconcile post-snapshot native
 effects and revoke/fence the old identity before planning recovery. This development
 implementation does not yet provide a complete lost-key recovery workflow.
@@ -123,3 +126,16 @@ carries a persistent increasing revision; the relay remembers its highest revisi
 and rejects rollback or conflicting content at the same revision, even after a
 restart. This high-water mark is retained with the spent-ticket file and must not
 be discarded during control-state recovery.
+
+An operator must initialize the replay state once, as the service identity:
+
+```sh
+session-peer relay init-replay --out /private/relay-state/spent-tickets.json
+```
+
+This refuses to overwrite any file. Admission accepts only tickets issued at
+least 65 seconds after this explicit initialization. `serve` refuses to recreate
+missing replay state. Do not put initialization in an automatic restart hook.
+After state loss, reconcile/fence the control authority before explicit recovery.
+Although spent ticket IDs expire quickly, the same file also retains the control
+revision high-water mark and must be preserved for the service's lifetime.

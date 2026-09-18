@@ -111,6 +111,8 @@ def remote_commit(store, peer, key, ident):
 
 
 def local_prepare(store, ident):
+    if store.recovery_required():
+        raise Rejected('recovery_required')
     operation_id(ident)
     row = store.db.execute('SELECT value FROM metadata WHERE key="local_rotation"').fetchone()
     if row:

@@ -200,7 +200,9 @@ async def open_channel(store, certificate, routes, route, credential=None, boots
 
 
 async def pair(store, invite, route, credential=None):
-    if (invite.get('v') not in (1, 2) or invite['expires'] < time.time()
+    if store.recovery_required():
+        raise Rejected('recovery_required')
+    if (type(invite.get('v')) is not int or invite['v'] not in (1, 2) or invite['expires'] < time.time()
             or fingerprint(invite['certificate']) != invite.get('keyFingerprint', invite['device'])):
         raise Rejected('invalid_invitation')
     previous = store.peer(invite['device'])
@@ -245,6 +247,8 @@ async def finish_pair(store, invite, route, credential):
 
 
 async def exchange(store, peer, op, body=None, ident=None, route='auto', credential=None):
+    if store.recovery_required() and op not in ('probe', 'status', 'rotation.status'):
+        raise Rejected('recovery_required')
     record = store.peer(peer)
     if not record or record['status'] != 'paired':
         raise Rejected('unpaired_device')

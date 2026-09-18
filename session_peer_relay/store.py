@@ -20,6 +20,8 @@ class Rejected(ValueError):
 class Store:
     def __init__(self, root, *, exclusive=False):
         self.root = Path(root)
+        if (self.root/'restore-incomplete').exists():
+            raise Rejected('restore_incomplete')
         self.device = initialize(self.root)
         fd = os.open(self.root/'state.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         self.lock = os.fdopen(fd, 'w')
@@ -29,6 +31,15 @@ class Store:
         except BlockingIOError:
             self.lock.close()
             raise Rejected('device_state_busy') from None
+        try:
+            self._open()
+        except BaseException:
+            if hasattr(self, 'db'):
+                self.db.close()
+            self.lock.close()
+            raise
+
+    def _open(self):
         self.cert = private_read(self.root/'identity.pem')
         for name in ('device.sqlite', 'device.sqlite-wal', 'device.sqlite-shm'):
             path = self.root/name
@@ -54,8 +65,12 @@ class Store:
         self.device = self.db.execute('SELECT value FROM metadata WHERE key="principal"').fetchone()[0]
         self.db.execute('INSERT OR IGNORE INTO metadata VALUES("generation","0")')
         row = self.db.execute('SELECT value FROM metadata WHERE key="identity_directory"').fetchone()
+        if row and (not re.fullmatch(r'keys/[0-9a-f-]{36}', row[0])
+                    or str(uuid.UUID(row[0].split('/')[1])) != row[0].split('/')[1]):
+            raise Rejected('invalid_identity_directory')
         self.identity_root = self.root / row[0] if row else self.root
         if self.identity_root != self.root:
+            private_path(self.root/'keys', True)
             private_path(self.identity_root, True)
             initialize(self.identity_root)
         self.cert = private_read(self.identity_root/'identity.pem')
@@ -95,6 +110,8 @@ class Store:
         return self.db.execute('SELECT 1 FROM metadata WHERE key="recovery_required"').fetchone() is not None
 
     def invite(self, routes):
+        if self.recovery_required():
+            raise Rejected('recovery_required')
         secret = secrets.token_urlsafe(32)
         ident = str(uuid.uuid4())
         expires = time.time()+600
@@ -107,6 +124,8 @@ class Store:
         return result
 
     def prepare(self, request):
+        if self.recovery_required():
+            raise Rejected('recovery_required')
         now = time.time()
         row = self.db.execute('SELECT hash,expires,peer FROM invites WHERE id=?',
                               (request.get('invitation'),)).fetchone()
@@ -162,6 +181,8 @@ class Store:
         return list(dict.fromkeys(certificates))
 
     def commit(self, peer):
+        if self.recovery_required():
+            raise Rejected('recovery_required')
         peer = self.principal(peer)
         row = self.peer(peer)
         if not row or row['status'] not in ('pending', 'paired') or (
