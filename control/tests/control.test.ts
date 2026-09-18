@@ -1,5 +1,11 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { randomUUID, sign } from "node:crypto";
+import {
+  randomUUID,
+  sign,
+  verify,
+  createHash,
+  createPublicKey,
+} from "node:crypto";
 import { readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { importJWK, jwtVerify } from "jose";
@@ -39,9 +45,54 @@ describe("relay device boundary", () => {
       algorithms: ["ES256"],
     });
     expect(verified.payload.sub).toBe(f.owner.id);
+    expect(verified.payload.receiverPrincipal).toBe(r.payload.principal);
+    expect(verified.protectedHeader).toMatchObject({
+      alg: "ES256",
+      typ: "JWT",
+      kid: state.jwks.keys[0].kid,
+    });
     expect(verified.payload.exp! - verified.payload.iat!).toBe(60);
     expect(verified.payload.room).toBe(room(f.owner.id, r.payload.principal));
-    expect((verified.payload.cnf as any).jwk.d).toBeUndefined();
+    const cnf = (verified.payload.cnf as any).jwk;
+    expect(cnf).toMatchObject({ kty: "EC", crv: "P-256" });
+    expect(Object.keys(cnf).sort()).toEqual(["crv", "kty", "x", "y"]);
+    const expectedRoom = createHash("sha256")
+      .update(Buffer.from(f.owner.id + "\0" + r.payload.principal, "utf8"))
+      .digest("hex");
+    expect(verified.payload.room).toBe(expectedRoom);
+    expect(result.room).toBe(expectedRoom);
+    // Python's relay proof is separate from the control nonce proof and binds
+    // the entire JWT. Test the header encoding/message against native crypto.
+    const message = "session-peer-admission-v1:" + result.token;
+    const relayProof = sign("sha256", Buffer.from(message, "utf8"), {
+      key: d.privateKey,
+      dsaEncoding: "der",
+    }).toString("base64url");
+    const deviceKey = createPublicKey({ key: cnf, format: "jwk" });
+    expect(
+      verify(
+        "sha256",
+        Buffer.from(message, "utf8"),
+        { key: deviceKey, dsaEncoding: "der" },
+        Buffer.from(relayProof, "base64url"),
+      ),
+    ).toBe(true);
+    expect(
+      verify(
+        "sha256",
+        Buffer.from(message + "\n", "utf8"),
+        { key: deviceKey, dsaEncoding: "der" },
+        Buffer.from(relayProof, "base64url"),
+      ),
+    ).toBe(false);
+    expect(
+      verify(
+        "sha256",
+        Buffer.from(message, "utf8"),
+        { key: r.privateKey, dsaEncoding: "der" },
+        Buffer.from(relayProof, "base64url"),
+      ),
+    ).toBe(false);
     expect(state.devices[d.payload.principal].keyFingerprint).toBe(
       certificate(d.payload.certificatePEM).keyFingerprint,
     );

@@ -486,6 +486,7 @@ export class RelayControl {
     const expiresAt = now + 60;
     const token = await new SignJWT({
       devicePrincipal: result.a.devicePrincipal,
+      receiverPrincipal: result.a.receiverPrincipal,
       keyFingerprint: result.d.keyFingerprint,
       keyGeneration: result.d.keyGeneration,
       role: result.a.role,
