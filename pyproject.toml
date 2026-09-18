@@ -50,7 +50,7 @@ pattern = '__version__ = "(?P<version>[^"]+)"'
 
 [tool.hatch.build.targets.sdist]
 exclude = ["/experiments"]
-include = ["session_peer_relay", "session_peer.py", "session_peer_mcp.py", "LICENSE", "SECURITY.md", "README.md", "README.ko.md", "README.ja.md", "README.zh-CN.md", "docs/cli-reference.md", "docs/download-metrics.md", "docs/releases/v0.9.0.md", "docs/mcp.md", "docs/wake.md", "docs/multi-home-list.md", "docs/agent-adapters.md", "docs/paired-devices.md", "docs/relay-lifecycle.md", "docs/relay-development-plan.md", "docs/relay-public-pilot-2026-09-17.md", "deploy/session-peer-relay.service", "docs/antigravity.md", "docs/validation/85-antigravity.md", "docs/architecture/agent-transports.md", "plugins", ".agents/plugins/marketplace.json"]
+include = ["session_peer_relay", "session_peer.py", "session_peer_mcp.py", "LICENSE", "SECURITY.md", "README.md", "README.ko.md", "README.ja.md", "README.zh-CN.md", "docs/cli-reference.md", "docs/download-metrics.md", "docs/releases/v0.9.0.md", "docs/mcp.md", "docs/wake.md", "docs/multi-home-list.md", "docs/agent-adapters.md", "docs/paired-devices.md", "docs/relay-lifecycle.md", "docs/relay-auth.md", "docs/relay-google-bootstrap.md", "docs/relay-development-plan.md", "docs/relay-public-pilot-2026-09-17.md", "deploy/session-peer-relay.service", "docs/antigravity.md", "docs/validation/85-antigravity.md", "docs/architecture/agent-transports.md", "plugins", ".agents/plugins/marketplace.json"]
 
 [tool.hatch.build.targets.wheel]
 only-include = ["session_peer_relay", "session_peer.py", "session_peer_mcp.py"]
