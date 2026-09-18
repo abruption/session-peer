@@ -11,6 +11,7 @@ export interface Config {
   providers: Partial<
     Record<Provider, { clientId: string; clientSecret: string }>
   >;
+  googleDiscovery?: { expectedEmail: string; expiresAt: number };
 }
 function readSecret(path: string, env: NodeJS.ProcessEnv) {
   const absolute = resolve(path);
@@ -78,12 +79,25 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (clientId && clientSecret)
       providers[provider] = { clientId, clientSecret };
   }
+  let googleDiscovery: Config["googleDiscovery"];
+  const expectedEmail = env.SESSION_PEER_GOOGLE_DISCOVERY_EMAIL;
+  const until = env.SESSION_PEER_GOOGLE_DISCOVERY_UNTIL;
+  if (expectedEmail || until) {
+    const expiresAt = Number(until);
+    if (!expectedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(expectedEmail)
+        || expectedEmail.length > 254 || !providers.google || !until
+        || !Number.isSafeInteger(expiresAt) || expiresAt <= Date.now()/1000
+        || expiresAt > Date.now()/1000 + 1800)
+      throw new Error("invalid_google_discovery_configuration");
+    googleDiscovery = { expectedEmail, expiresAt };
+  }
   return {
     origin,
     production,
     secret,
     allowlist,
     providers,
+    ...(googleDiscovery ? { googleDiscovery } : {}),
     dataDir: env.SESSION_PEER_CONTROL_DATA ?? "./state/private",
     publicDir: env.SESSION_PEER_RELAY_PUBLIC ?? "./state/relay-public",
   };

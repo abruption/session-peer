@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { betterAuth } from "better-auth";
 import { bearer, deviceAuthorization } from "better-auth/plugins";
 import type { Config } from "./config.js";
+import { verifiedGoogleUserInfo } from "./google-discovery.js";
 export function allowedAccount(
   config: Config,
   provider: string,
@@ -32,7 +33,9 @@ export function createAuth(db: Database.Database, config: Config) {
     secret: config.secret,
     trustedOrigins: [config.origin],
     emailAndPassword: { enabled: false },
-    socialProviders: config.providers,
+    socialProviders: { ...config.providers, ...(config.providers.google ? {
+      google: { ...config.providers.google, getUserInfo: verifiedGoogleUserInfo(config) },
+    } : {}) },
     account: {
       accountLinking: { enabled: false, allowUnlinkingAll: false },
       encryptOAuthTokens: true,
