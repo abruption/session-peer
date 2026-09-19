@@ -6,7 +6,7 @@
 내부 어댑터/트랜스포트 리팩터링(#47)을 사용하며, 페어링된 기기 전달을 위한 대상(#69)으로 승인될 수 있습니다. Antigravity 자체는 절대 자동으로 설치되지 않습니다. 필터링되지 않은 목록 조회에는 실행 중인 브리지 등록이 포함됩니다.
 
 이는 사용자가 시작한 로컬 브리지와 [공식 agentapi 인터페이스](https://antigravity.google/docs/sidecars/)를 사용하여 **기존 TUI**로 전달합니다.
-Mac 및 Linux CLI 1.2.4 실험을 통해 유휴 상태 전달이 입증되었으나, CLI 사이드카 자동 시작 메커니즘은 확립되지 **않았습니다**. `agy -p` 및 `--conversation`으로 다른 작성기를 시작하는 것은 전달 대체 수단이 아닙니다. Windows 브리지 작업은 지원되지 않으며, 다른 어댑터는 해당 환경에서 계속 사용 가능합니다.
+Mac 및 Linux CLI 1.2.4 실험을 통해 유휴 상태 전달이 입증되었습니다. 이후 macOS CLI 1.2.7 RC 시험에서는 문서화된 `agentapi send-message` 위치 인자를 맞춘 뒤 직접 전달과 공개 릴레이 전달이 모두 통과했습니다. CLI 사이드카 자동 시작 메커니즘은 확립되지 **않았습니다**. `agy -p` 및 `--conversation`으로 다른 작성기를 시작하는 것은 전달 대체 수단이 아닙니다. Windows 브리지 작업은 지원되지 않으며, 다른 어댑터는 해당 환경에서 계속 사용 가능합니다.
 
 ## 수신 TUI에서 등록
 
@@ -16,7 +16,7 @@ Mac 및 Linux CLI 1.2.4 실험을 통해 유휴 상태 전달이 입증되었으
 session-peer antigravity-bridge serve --thread FULL-CONVERSATION-UUID
 ```
 
-TUI를 소유한 계정으로 실행하십시오. 다른 사용자가 소유한 작업 공간 디렉터리는 CLI의 홈을 식별하지 않습니다. 기본 홈은 `~/.gemini/antigravity-cli`입니다. 사용자 지정 홈의 경우 `--antigravity-home /absolute/path`를 사용하십시오. 등록 시 조상 `agy` 프로세스, UID, 시작 시간 및 해당 정확한 홈과 대화에 대한 열린 현재 상태 파일을 확인합니다. Linux는 `/proc`을 사용하고, macOS는 `ps` 및 `lsof`를 사용합니다.
+TUI를 소유한 계정으로 실행하십시오. 다른 사용자가 소유한 작업 공간 디렉터리는 CLI의 홈을 식별하지 않습니다. 기본 홈은 `~/.gemini/antigravity-cli`입니다. 사용자 지정 홈의 경우 `--antigravity-home /absolute/path`를 사용하십시오. 등록 시 조상 `agy` 프로세스, UID, 시작 시간 및 해당 정확한 홈과 대화에 대한 열린 현재 상태 파일을 확인합니다. Linux는 `/proc`을 사용하고, macOS는 `ps` 및 `lsof`를 사용합니다. macOS에서는 고정된 C 로캘로 프로세스 시작 시간을 읽으므로, 현지화된 TUI에서 시작한 브리지를 다른 로캘을 사용하는 릴레이 작업자도 검색할 수 있습니다.
 열려 있는 presence FD는 신원의 증거이며, **보유된 커널 잠금의 증거가 아닙니다**.
 일치하는 여러 조상 등록을 사용하여 발신자를 유추하지 않습니다.
 

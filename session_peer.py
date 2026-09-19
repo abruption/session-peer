@@ -42,7 +42,7 @@ try:
 except ImportError:  # Windows has no POSIX flock; activity stays unknown there.
     fcntl = None
 
-__version__ = "0.9.0"
+__version__ = "1.0.0a1"
 GITHUB_REPO = "abruption/session-peer"
 
 # Claude Code refuses a same-machine message once its serialized form passes
@@ -344,9 +344,14 @@ def _lsof_executable() -> str | None:
 
 def _process_start_time(pid: int) -> str | None:
     try:
+        env = os.environ.copy()
+        # ps formats lstart according to LC_TIME.  Bridges may be launched by
+        # an interactive TUI with a different locale from relay workers, so a
+        # localized value is not a stable PID-reuse identity.
+        env["LC_ALL"] = "C"
         done = subprocess.run(
             ["ps", "-p", str(pid), "-o", "lstart="], capture_output=True,
-            encoding="utf-8", errors="replace", timeout=DETECT_TIMEOUT,
+            encoding="utf-8", errors="replace", timeout=DETECT_TIMEOUT, env=env,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -2661,7 +2666,7 @@ class AgyBridge:
         self.seen[ident] = signature, result
         try:
             # No shell; native stdout/stderr may contain credentials and are discarded.
-            done = subprocess.run([str(self.api), 'send-message', '--title=session-peer', '--',
+            done = subprocess.run([str(self.api), 'send-message', '--title=session-peer',
                                    self.info['id'], text], stdout=subprocess.DEVNULL,
                                   stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, timeout=15)
             result = {**result, 'nativeExitCode': done.returncode}
@@ -3201,6 +3206,36 @@ def stable_version(text: object) -> tuple[int, int, int] | None:
     return values if all(value <= sys.maxsize for value in values) else None
 
 
+def release_version(text: object) -> tuple[int, int, int, int, int] | None:
+    """Strict comparable stable/alpha/beta/rc version without a packaging dependency."""
+    if not isinstance(text, str):
+        return None
+    match = re.fullmatch(
+        r"[vV]?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+        r"(?:(?:-)?(a|alpha|b|beta|rc|pre|preview)[.-]?(0|[1-9]\d*))?",
+        text.strip(),
+        re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    major, minor, patch = (int(part) for part in match.groups()[:3])
+    if any(value > sys.maxsize for value in (major, minor, patch)):
+        return None
+    label, serial = match.groups()[3:]
+    if label is None:
+        return major, minor, patch, 3, 0
+    stage = {
+        "a": 0,
+        "alpha": 0,
+        "b": 1,
+        "beta": 1,
+        "rc": 2,
+        "pre": 2,
+        "preview": 2,
+    }[label.lower()]
+    return major, minor, patch, stage, int(serial)
+
+
 def normalized_version(version: tuple[int, int, int]) -> str:
     return ".".join(str(part) for part in version)
 
@@ -3404,16 +3439,16 @@ def prepare_client_update(args: argparse.Namespace, now: float | None = None,
         except Exception:
             pass
         return None
-    current = stable_version(__version__)
-    latest = stable_version(state["latest"])
+    current = release_version(__version__)
+    latest = release_version(state["latest"])
     if current is None or latest is None or latest <= current:
         return None
     checked_at = datetime.fromtimestamp(state["checkedAt"], timezone.utc)
     return {
         "schemaVersion": UPDATE_CACHE_SCHEMA_VERSION,
         "status": "available",
-        "current": normalized_version(current),
-        "latest": normalized_version(latest),
+        "current": __version__.lstrip("vV"),
+        "latest": state["latest"],
         "checkedAt": checked_at.isoformat(timespec="seconds").replace("+00:00", "Z"),
         "source": "github_release_cache",
         "command": update_command(),
@@ -3462,7 +3497,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                 write_update_cache(tag)
             except (OSError, ValueError):
                 pass
-            latest, current = stable_version(tag), stable_version(__version__)
+            latest, current = release_version(tag), release_version(__version__)
             outdated = latest is not None and current is not None and current < latest
             state = f"{tag} available" if outdated else "up to date"
             emit(
@@ -3547,7 +3582,9 @@ def cmd_update(args: argparse.Namespace) -> int:
         write_update_cache(tag)
     except (OSError, ValueError):
         pass
-    latest, current = parse_version(tag), parse_version(__version__)
+    latest, current = release_version(tag), release_version(__version__)
+    if latest is None or current is None:
+        raise CcPeerError("could not compare the installed and latest release versions")
 
     if args.check:
         state = "up to date" if current >= latest else f"{tag} available"
@@ -3855,6 +3892,7 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument('--device-state', help='local device state directory')
         sub.add_argument('--device-route', choices=('auto', 'direct', 'relay'), default='auto')
         sub.add_argument('--relay-admission-file', help='private client admission credential file')
+        sub.add_argument('--relay-login', action='store_true', help='use an explicitly saved device login for relay admission')
     for name in ('device', 'relay'):
         sub = subparsers.add_parser(name, add_help=False, help='optional paired-device '+name+' management')
         sub.add_argument('--help', '-h', dest='relay_help', action='store_true')

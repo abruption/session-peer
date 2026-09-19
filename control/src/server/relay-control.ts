@@ -1,0 +1,602 @@
+import Database from "better-sqlite3";
+import {
+  randomBytes,
+  randomUUID,
+  generateKeyPairSync,
+  createPrivateKey,
+  createPublicKey,
+  type KeyObject,
+} from "node:crypto";
+import {
+  writeFileSync,
+  openSync,
+  closeSync,
+  fsyncSync,
+  fchmodSync,
+  renameSync,
+  unlinkSync,
+  readFileSync,
+  lstatSync,
+  mkdirSync,
+  chmodSync,
+} from "node:fs";
+import { join, resolve } from "node:path";
+import { SignJWT } from "jose";
+import type { Config } from "./config.js";
+import { privateDirectory } from "./storage.js";
+import {
+  admission,
+  assert,
+  canonical,
+  certificate,
+  ControlError,
+  fields,
+  object,
+  principal,
+  registration,
+  operationId,
+  room,
+  sha256,
+  verifyProof,
+  type Registration,
+} from "./protocol.js";
+interface DeviceRow {
+  principal: string;
+  userId: string;
+  keyFingerprint: string;
+  certificateFingerprint: string;
+  certificatePEM: string;
+  keyGeneration: number;
+  name: string;
+  revoked: number;
+}
+interface ChallengeRow {
+  id: string;
+  userId: string;
+  operation: string;
+  payload: string;
+  message: string;
+  expiresAt: number;
+}
+export class RelayControl {
+  private signingKey: KeyObject;
+  private kid: string;
+  private publicJwk: JsonWebKey;
+  private publicDir: string;
+  private publicationFloor = 0;
+  private publishedState = "";
+  private publishedAt = 0;
+  healthy = true;
+  constructor(
+    private db: Database.Database,
+    private config: Config,
+    private now: () => number = Date.now,
+  ) {
+    db.exec(`CREATE TABLE IF NOT EXISTS relay_devices (principal TEXT PRIMARY KEY, userId TEXT NOT NULL, keyFingerprint TEXT NOT NULL, certificateFingerprint TEXT NOT NULL, certificatePEM TEXT NOT NULL, keyGeneration INTEGER NOT NULL, name TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
+   CREATE INDEX IF NOT EXISTS relay_devices_owner ON relay_devices(userId);
+   CREATE TABLE IF NOT EXISTS relay_challenges (id TEXT PRIMARY KEY,userId TEXT NOT NULL,operation TEXT NOT NULL,payload TEXT NOT NULL,message TEXT NOT NULL,expiresAt INTEGER NOT NULL);
+   CREATE INDEX IF NOT EXISTS relay_challenge_expiry ON relay_challenges(expiresAt);
+   CREATE TABLE IF NOT EXISTS relay_operations (operationId TEXT PRIMARY KEY,userId TEXT NOT NULL,requestHash TEXT NOT NULL,result TEXT);
+   CREATE INDEX IF NOT EXISTS relay_operations_owner ON relay_operations(userId);`);
+    // Earlier unpublished candidates stored an SPKI hash under keyFingerprint.
+    // Never reinterpret old live state/receipts silently as certificate DER.
+    const legacy = db
+      .prepare(
+        "SELECT count(*) AS n FROM relay_devices WHERE keyFingerprint<>certificateFingerprint",
+      )
+      .get() as { n: number };
+    assert(legacy.n === 0, "contract_migration_required", 503);
+    db.exec("CREATE TABLE IF NOT EXISTS relay_contract_metadata (name TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    const schema = db.prepare("SELECT value FROM relay_contract_metadata WHERE name='registration'").get() as { value: string } | undefined;
+    if (!schema) {
+      const existing = db.prepare("SELECT (SELECT count(*) FROM relay_devices) + (SELECT count(*) FROM relay_operations) AS n").get() as { n: number };
+      assert(existing.n === 0, "contract_migration_required", 503);
+      db.prepare("INSERT INTO relay_contract_metadata VALUES ('registration','zero_based_v1')").run();
+    } else assert(schema.value === "zero_based_v1", "contract_migration_required", 503);
+    const privateDir = privateDirectory(config.dataDir);
+    const keyPath = join(privateDir, "signing-key.pem");
+    try {
+      const st = lstatSync(keyPath);
+      assert(
+        st.isFile() &&
+          !st.isSymbolicLink() &&
+          st.uid === process.getuid?.() &&
+          !(st.mode & 0o077),
+        "unsafe_signing_key",
+      );
+      this.signingKey = createPrivateKey(readFileSync(keyPath));
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+      this.signingKey = generateKeyPairSync("ec", {
+        namedCurve: "prime256v1",
+      }).privateKey;
+      writeFileSync(
+        keyPath,
+        this.signingKey.export({ format: "pem", type: "pkcs8" }),
+        { mode: 0o600, flag: "wx" },
+      );
+    }
+    assert(
+      this.signingKey.asymmetricKeyType === "ec" &&
+        this.signingKey.asymmetricKeyDetails?.namedCurve === "prime256v1",
+      "invalid_signing_key",
+    );
+    const publicKey = createPublicKey(this.signingKey);
+    this.publicJwk = publicKey.export({ format: "jwk" });
+    this.kid = sha256(publicKey.export({ format: "der", type: "spki" }));
+    this.publicDir = resolve(config.publicDir);
+    assert(
+      this.publicDir !== privateDir &&
+        !this.publicDir.startsWith(privateDir + "/") &&
+        !privateDir.startsWith(this.publicDir + "/"),
+      "public_private_overlap",
+    );
+    mkdirSync(this.publicDir, { recursive: true, mode: 0o755 });
+    const st = lstatSync(this.publicDir);
+    assert(
+      st.isDirectory() &&
+        !st.isSymbolicLink() &&
+        st.uid === process.getuid?.() &&
+        !(st.mode & 0o022),
+      "unsafe_public_directory",
+    );
+    chmodSync(this.publicDir, 0o755);
+    this.db.exec("CREATE TABLE IF NOT EXISTS relay_public_revision (id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL)");
+    const revision = this.db.prepare("SELECT revision FROM relay_public_revision WHERE id=1").get() as { revision: number } | undefined;
+    if (!revision) {
+      const count = this.db.prepare("SELECT COUNT(*) AS n FROM relay_devices").get() as { n: number };
+      assert(count.n === 0, "contract_migration_required");
+      this.db.prepare("INSERT INTO relay_public_revision VALUES(1,0)").run();
+    }
+    const previous = join(this.publicDir, "state.json");
+    try {
+      const st = lstatSync(previous);
+      assert(st.isFile() && !st.isSymbolicLink() && st.size <= 1024*1024, "unsafe_public_state");
+      const old = JSON.parse(readFileSync(previous, "utf8"));
+      assert(old.schemaVersion === 1 && old.issuer === config.origin && old.audience === config.origin,
+        "control_state_identity_changed");
+      assert(Number.isSafeInteger(old.revision) && old.revision >= 1
+        && old.revision <= (revision?.revision ?? 0), "control_state_rollback");
+      this.publicationFloor = old.revision;
+    } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
+    this.publish();
+  }
+  private reserveRevision() {
+    // Autocommit before any mutation or publication: a later rollback must
+    // never reuse a revision that another process may already have observed.
+    try {
+      assert(!this.db.inTransaction, "revision_requires_autocommit");
+      const row = this.db.prepare("UPDATE relay_public_revision SET revision=revision+1 WHERE id=1 AND revision>=0 AND revision<9007199254740991 RETURNING revision").get() as { revision: number } | undefined;
+      assert(row && Number.isSafeInteger(row.revision), "revision_exhausted");
+      return row.revision;
+    } catch {
+      this.healthy = false;
+      throw new ControlError("state_publication_failed", 503);
+    }
+  }
+  publish(reservedRevision?: number) {
+    const revision = reservedRevision ?? this.reserveRevision();
+    const current = this.db.prepare("SELECT revision FROM relay_public_revision WHERE id=1").get() as { revision: number };
+    assert(revision === current.revision && revision > this.publicationFloor, "stale_publication_revision");
+    this.publicationFloor = revision;
+    const devices: Record<string, unknown> = {};
+    for (const d of this.db
+      .prepare("SELECT * FROM relay_devices ORDER BY principal")
+      .all() as DeviceRow[])
+      devices[d.principal] = {
+        userId: d.userId,
+        keyFingerprint: d.keyFingerprint,
+        generation: d.keyGeneration,
+        revoked: !!d.revoked,
+      };
+    const now = Math.floor(this.now() / 1000);
+    const snapshot = {
+      schemaVersion: 1,
+      revision,
+      issuer: this.config.origin,
+      audience: this.config.origin,
+      issuedAt: now,
+      expiresAt: now + 180,
+      jwks: {
+        keys: [{ ...this.publicJwk, kid: this.kid, alg: "ES256", use: "sig" }],
+      },
+      devices,
+    };
+    const temp = join(this.publicDir, ".state-" + randomUUID());
+    const path = join(this.publicDir, "state.json");
+    try {
+      try {
+        assert(!lstatSync(path).isSymbolicLink(), "unsafe_public_state");
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+      }
+      const fd = openSync(temp, "wx", 0o644);
+      try {
+        writeFileSync(fd, JSON.stringify(snapshot));
+        fchmodSync(fd, 0o644);
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+      renameSync(temp, path);
+      const dirfd = openSync(this.publicDir, "r");
+      try {
+        fsyncSync(dirfd);
+      } finally {
+        closeSync(dirfd);
+      }
+      this.healthy = true;
+      this.publishedState = JSON.stringify(snapshot);
+      this.publishedAt = now;
+    } catch (e) {
+      this.healthy = false;
+      try {
+        unlinkSync(temp);
+      } catch {}
+      throw new ControlError("state_publication_failed", 503);
+    }
+  }
+  isHealthy() {
+    if (!this.healthy || !this.publishedState) return false;
+    try {
+      const now = this.now() / 1000;
+      const path = join(this.publicDir, "state.json");
+      const st = lstatSync(path);
+      const revision = this.db.prepare("SELECT revision FROM relay_public_revision WHERE id=1").get() as { revision: number } | undefined;
+      return this.publishedAt <= now + 5 && now < this.publishedAt + 180
+        && st.isFile() && !st.isSymbolicLink()
+        && st.size === Buffer.byteLength(this.publishedState)
+        && revision?.revision === this.publicationFloor
+        && readFileSync(path, "utf8") === this.publishedState;
+    } catch { return false; }
+  }
+  list(userId: string) {
+    return (
+      this.db
+        .prepare(
+          "SELECT * FROM relay_devices WHERE userId=? ORDER BY name,principal",
+        )
+        .all(userId) as DeviceRow[]
+    ).map((d) => ({
+      principal: d.principal,
+      name: d.name,
+      keyGeneration: d.keyGeneration,
+      keyFingerprint: d.keyFingerprint,
+      revoked: !!d.revoked,
+    }));
+  }
+  private device(id: string, userId: string, active = true) {
+    const d = this.db
+      .prepare("SELECT * FROM relay_devices WHERE principal=?")
+      .get(id) as DeviceRow | undefined;
+    assert(d && d.userId === userId, "device_not_found", 404);
+    assert(!active || !d.revoked, "device_revoked", 403);
+    return d;
+  }
+  private operationRecord(userId: string, p: Registration) {
+    const row = this.db
+      .prepare("SELECT * FROM relay_operations WHERE operationId=?")
+      .get(p.operationId) as
+      | { userId: string; requestHash: string; result: string | null }
+      | undefined;
+    if (row)
+      assert(
+        row.userId === userId && row.requestHash === sha256(canonical(p)),
+        "operation_conflict",
+        409,
+      );
+    return row;
+  }
+  private reserveOperation(userId: string, p: Registration) {
+    const row = this.operationRecord(userId, p);
+    if (row) {
+      assert(row.result === null, "operation_already_committed", 409);
+      return;
+    }
+    const count = this.db
+      .prepare("SELECT count(*) AS n FROM relay_operations WHERE userId=?")
+      .get(userId) as { n: number };
+    assert(count.n < 4096, "operation_limit", 409);
+    this.db
+      .prepare("INSERT INTO relay_operations VALUES (?,?,?,NULL)")
+      .run(p.operationId, userId, sha256(canonical(p)));
+  }
+  operation(userId: string, id: string) {
+    operationId(id);
+    const row = this.db
+      .prepare(
+        "SELECT result FROM relay_operations WHERE operationId=? AND userId=?",
+      )
+      .get(id, userId) as { result: string | null } | undefined;
+    // Identical response for an absent ID and another owner's ID.
+    assert(row, "operation_not_found", 404);
+    return row.result === null
+      ? { operationId: id, committed: false }
+      : JSON.parse(row.result);
+  }
+  private validateRegistration(userId: string, p: Registration) {
+    const current = this.db
+      .prepare("SELECT * FROM relay_devices WHERE principal=?")
+      .get(p.principal) as DeviceRow | undefined;
+    if (current) {
+      assert(current.userId === userId, "device_not_found", 404);
+      assert(!current.revoked, "device_revoked", 403);
+      assert(typeof p.expectedGeneration === "number" && p.keyGeneration === p.expectedGeneration + 1, "invalid_generation");
+      assert(
+        current.keyGeneration === p.expectedGeneration,
+        "generation_conflict",
+        409,
+      );
+    } else assert(p.expectedGeneration === undefined && p.keyGeneration === 0, "generation_conflict", 409);
+    const next = certificate(p.certificatePEM, this.now());
+    assert(current || p.principal === next.certificateFingerprint, "invalid_initial_principal");
+    assert(
+      !current ||
+        next.certificateFingerprint !== current.certificateFingerprint,
+      "unchanged_certificate",
+      409,
+    );
+    return { current, next };
+  }
+  challenge(userId: string, input: unknown) {
+    const o = object(input);
+    fields(o, ["operation", "payload"]);
+    assert(
+      o.operation === "register" || o.operation === "admission",
+      "invalid_operation",
+    );
+    const payload =
+      o.operation === "register"
+        ? registration(o.payload)
+        : admission(o.payload);
+    if (o.operation === "register") {
+      const p = registration(payload);
+      const row = this.operationRecord(userId, p);
+      assert(!row?.result, "operation_already_committed", 409);
+      this.validateRegistration(userId, p);
+    } else {
+      const a = admission(payload);
+      this.device(a.devicePrincipal, userId);
+      this.device(a.receiverPrincipal, userId);
+    }
+    this.db
+      .prepare("DELETE FROM relay_challenges WHERE expiresAt<=?")
+      .run(this.now());
+    const count = this.db
+      .prepare("SELECT count(*) AS n FROM relay_challenges WHERE userId=?")
+      .get(userId) as { n: number };
+    assert(count.n < 16, "too_many_challenges", 429);
+    const challengeId = randomUUID();
+    const nonce = randomBytes(32).toString("base64url");
+    const issuedAt = Math.floor(this.now() / 1000);
+    const expiresAt = issuedAt + 60;
+    const body = canonical(payload);
+    const proofMessage = [
+      "session-peer-control-v1:",
+      this.config.origin,
+      o.operation,
+      challengeId,
+      nonce,
+      sha256(body),
+    ].join("\n");
+    this.db.transaction(() => {
+      if (o.operation === "register")
+        this.reserveOperation(userId, registration(payload));
+      this.db
+        .prepare("INSERT INTO relay_challenges VALUES (?,?,?,?,?,?)")
+        .run(
+          challengeId,
+          userId,
+          o.operation,
+          body,
+          proofMessage,
+          expiresAt * 1000,
+        );
+    })();
+    return { challengeId, nonce, issuedAt, expiresAt, proofMessage };
+  }
+  private consume(userId: string, operation: string, input: unknown) {
+    const o = object(input);
+    assert(
+      typeof o.challengeId === "string" && typeof o.proof === "string",
+      "invalid_proof",
+    );
+    const excluded =
+      operation === "register"
+        ? ["challengeId", "proof", "previousKeyProof"]
+        : ["challengeId", "proof"];
+    const payload = Object.fromEntries(
+      Object.entries(o).filter(([k]) => !excluded.includes(k)),
+    );
+    operation === "register" ? registration(payload) : admission(payload);
+    const c = this.db
+      .prepare("SELECT * FROM relay_challenges WHERE id=?")
+      .get(o.challengeId) as ChallengeRow | undefined;
+    assert(
+      c &&
+        c.userId === userId &&
+        c.operation === operation &&
+        c.expiresAt > this.now() &&
+        c.payload === canonical(payload),
+      "invalid_or_expired_challenge",
+    );
+    const pem =
+      operation === "register"
+        ? registration(payload).certificatePEM
+        : this.device(admission(payload).devicePrincipal, userId)
+            .certificatePEM;
+    const cert = certificate(pem, this.now());
+    verifyProof(c.message, o.proof, cert.key);
+    return { payload, cert, challengeId: c.id, proofMessage: c.message };
+  }
+  register(userId: string, input: unknown) {
+    assert(this.healthy, "state_unavailable", 503);
+    const o = object(input);
+    fields(o, [
+      "principal",
+      "certificatePEM",
+      "keyGeneration",
+      "name",
+      "operationId",
+      ...(Object.hasOwn(o, "expectedGeneration") ? ["expectedGeneration"] : []),
+      "challengeId",
+      "proof",
+      ...(Object.hasOwn(o, "previousKeyProof") ? ["previousKeyProof"] : []),
+    ]);
+    const p = registration(
+      Object.fromEntries(
+        Object.entries(o).filter(
+          ([k]) => !["challengeId", "proof", "previousKeyProof"].includes(k),
+        ),
+      ),
+    );
+    assert(
+      typeof o.challengeId === "string" &&
+        typeof o.proof === "string" &&
+        (!Object.hasOwn(o, "previousKeyProof") ||
+          typeof o.previousKeyProof === "string"),
+      "invalid_proof",
+    );
+    const existing = this.operationRecord(userId, p);
+    assert(existing, "operation_not_found", 404);
+    if (existing.result !== null) return JSON.parse(existing.result);
+    const revision = this.reserveRevision();
+    return this.db.transaction(() => {
+      const row = this.operationRecord(userId, p);
+      assert(row, "operation_not_found", 404);
+      // Historical receipt only: no new mutation, proof reexecution or revival.
+      if (row.result !== null) return JSON.parse(row.result);
+      const { current, next } = this.validateRegistration(userId, p);
+      const proof = this.consume(userId, "register", o);
+      if (current) {
+        assert(
+          typeof o.previousKeyProof === "string",
+          "previous_key_proof_required",
+        );
+        // Only the old stored certificate possession check ignores expiry.
+        verifyProof(
+          proof.proofMessage,
+          o.previousKeyProof,
+          certificate(current.certificatePEM, this.now(), false).key,
+        );
+        const changed = this.db
+          .prepare(
+            "UPDATE relay_devices SET certificatePEM=?,certificateFingerprint=?,keyFingerprint=?,keyGeneration=? WHERE principal=? AND userId=? AND keyGeneration=? AND revoked=0",
+          )
+          .run(
+            p.certificatePEM,
+            next.certificateFingerprint,
+            next.keyFingerprint,
+            p.keyGeneration,
+            p.principal,
+            userId,
+            p.expectedGeneration,
+          );
+        assert(changed.changes === 1, "generation_conflict", 409);
+        this.db
+          .prepare("DELETE FROM relay_challenges WHERE userId=?")
+          .run(userId);
+      } else {
+        assert(
+          !Object.hasOwn(o, "previousKeyProof"),
+          "unexpected_previous_key_proof",
+        );
+        const n = this.db
+          .prepare("SELECT count(*) AS n FROM relay_devices WHERE userId=?")
+          .get(userId) as { n: number };
+        assert(n.n < 32, "device_limit", 409);
+        this.db
+          .prepare("INSERT INTO relay_devices VALUES (?,?,?,?,?,?,?,0)")
+          .run(
+            p.principal,
+            userId,
+            next.keyFingerprint,
+            next.certificateFingerprint,
+            p.certificatePEM,
+            0,
+            p.name,
+          );
+        this.db
+          .prepare("DELETE FROM relay_challenges WHERE id=?")
+          .run(proof.challengeId);
+      }
+      const result = {
+        operationId: p.operationId,
+        committed: true,
+        principal: p.principal,
+        keyFingerprint: next.keyFingerprint,
+        keyGeneration: p.keyGeneration,
+      };
+      this.db
+        .prepare(
+          "UPDATE relay_operations SET result=? WHERE operationId=? AND userId=?",
+        )
+        .run(JSON.stringify(result), p.operationId, userId);
+      this.publish(revision);
+      return result;
+    })();
+  }
+  async admit(userId: string, input: unknown) {
+    assert(this.healthy, "state_unavailable", 503);
+    const result = this.db.transaction(() => {
+      const proof = this.consume(userId, "admission", input);
+      const a = admission(proof.payload);
+      const d = this.device(a.devicePrincipal, userId);
+      this.device(a.receiverPrincipal, userId);
+      this.db
+        .prepare("DELETE FROM relay_challenges WHERE id=?")
+        .run(proof.challengeId);
+      return { a, d, cert: proof.cert };
+    })();
+    const now = Math.floor(this.now() / 1000);
+    const expiresAt = now + 60;
+    const token = await new SignJWT({
+      devicePrincipal: result.a.devicePrincipal,
+      receiverPrincipal: result.a.receiverPrincipal,
+      keyFingerprint: result.d.keyFingerprint,
+      keyGeneration: result.d.keyGeneration,
+      role: result.a.role,
+      room: room(userId, result.a.receiverPrincipal),
+      cnf: { jwk: result.cert.jwk },
+    })
+      .setProtectedHeader({ alg: "ES256", kid: this.kid, typ: "JWT" })
+      .setIssuer(this.config.origin)
+      .setAudience(this.config.origin)
+      .setSubject(userId)
+      .setIssuedAt(now)
+      .setExpirationTime(expiresAt)
+      .setJti(randomUUID())
+      .sign(this.signingKey);
+    // Revocation may occur while asynchronous crypto runs. Never return an admission
+    // for a device or receiver revoked during issuance.
+    const current = this.device(result.a.devicePrincipal, userId);
+    assert(
+      current.keyGeneration === result.d.keyGeneration &&
+        current.keyFingerprint === result.d.keyFingerprint,
+      "generation_conflict",
+      409,
+    );
+    this.device(result.a.receiverPrincipal, userId);
+    assert(this.healthy, "state_unavailable", 503);
+    return { token, expiresAt, room: room(userId, result.a.receiverPrincipal) };
+  }
+  revoke(userId: string, id: string) {
+    principal(id);
+    assert(this.healthy, "state_unavailable", 503);
+    this.device(id, userId, false);
+    const revision = this.reserveRevision();
+    return this.db.transaction(() => {
+      this.device(id, userId, false);
+      this.db
+        .prepare(
+          "UPDATE relay_devices SET revoked=1 WHERE principal=? AND userId=?",
+        )
+        .run(id, userId);
+      this.db
+        .prepare("DELETE FROM relay_challenges WHERE userId=?")
+        .run(userId);
+      this.publish(revision);
+      return { principal: id, revoked: true };
+    })();
+  }
+}

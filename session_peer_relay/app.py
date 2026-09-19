@@ -13,6 +13,7 @@ from .identity import context, fingerprint
 from .store import Store, Rejected
 from .wire import Secure, Tcp, relay_stream, direct_address
 from .native import Policy, Native
+from .rotation import remote_prepare, remote_commit, remote_status
 
 
 class Receiver:
@@ -27,7 +28,11 @@ class Receiver:
     async def watch_peer(self, channel):
         while True:
             await asyncio.sleep(.2)
-            row = self.store.peer(channel.peer)
+            try:
+                row = self.store.peer(self.store.principal(channel.peer))
+            except Rejected:
+                await channel.close()
+                return
             if not row or row['status'] == 'revoked' or (
                     row['status'] == 'pending' and row['expires'] < time.time()):
                 await channel.close()
@@ -38,6 +43,8 @@ class Receiver:
             return self.store.prepare(value)
         if value.get('op') == 'pair.commit' and peer:
             return self.store.commit(peer)
+        key = peer
+        peer = self.store.principal(key)
         self.store.authorize(peer, value.get('op'))
         if (set(value) != {'v', 'sender', 'receiver', 'id', 'expires', 'op', 'body'}
                 or type(value['v']) is not int or value['v'] != 1 or value['sender'] != peer or value['receiver'] != self.store.device
@@ -53,10 +60,25 @@ class Receiver:
         if peer not in self.policy.peers:
             raise Rejected('peer_policy_denied')
         op = value['op']
+        restricted = self.store.key_status(key) != 'active' or self.store.db.execute(
+            'SELECT 1 FROM rotations WHERE peer=? AND status="prepared"', (peer,)).fetchone()
+        if restricted and op not in ('probe', 'status', 'rotation.prepare', 'rotation.commit', 'rotation.status'):
+            raise Rejected('key_rotation_restricted')
         if op == 'probe':
-            return {'ok': True, 'device': self.store.device, 'receiverReady': True}
+            return {'ok': True, 'device': self.store.device, 'receiverReady': True,
+                    'features': ['identity-rotation-v1']}
         if op == 'status':
             return self.store.status(peer, value['body'])
+        if op == 'rotation.prepare':
+            if self.store.recovery_required():
+                raise Rejected('recovery_required')
+            return remote_prepare(self.store, peer, key, value['body'])
+        if op == 'rotation.commit':
+            if self.store.recovery_required():
+                raise Rejected('recovery_required')
+            return remote_commit(self.store, peer, key, value['body'])
+        if op == 'rotation.status':
+            return remote_status(self.store, peer, value['body'])
         if op == 'list':
             aliases = self.policy.authorize(peer, 'list')
             if value['body'] not in (None, {}):
@@ -96,7 +118,7 @@ class Receiver:
         channel = None
         watch = None
         try:
-            channel = Secure(raw, context(self.store.root, True, self.store.trusted()), server=True)
+            channel = Secure(raw, context(self.store.identity_root, True, self.store.trusted()), server=True)
             await channel.handshake()
             if channel.peer:
                 watch = asyncio.create_task(self.watch_peer(channel))
@@ -167,7 +189,7 @@ async def open_channel(store, certificate, routes, route, credential=None, boots
         raw = Tcp(*await asyncio.wait_for(asyncio.open_connection(host, port), 5))
     else:
         raw = await relay_stream(routes['relay'], credential)
-    channel = Secure(raw, context(store.root, False, [certificate], present=not bootstrap),
+    channel = Secure(raw, context(store.identity_root, False, [certificate], present=not bootstrap),
                      expected=fingerprint(certificate))
     try:
         await channel.handshake()
@@ -178,8 +200,10 @@ async def open_channel(store, certificate, routes, route, credential=None, boots
 
 
 async def pair(store, invite, route, credential=None):
-    if (invite.get('v') != 1 or invite['expires'] < time.time()
-            or fingerprint(invite['certificate']) != invite['device']):
+    if store.recovery_required():
+        raise Rejected('recovery_required')
+    if (type(invite.get('v')) is not int or invite['v'] not in (1, 2) or invite['expires'] < time.time()
+            or fingerprint(invite['certificate']) != invite.get('keyFingerprint', invite['device'])):
         raise Rejected('invalid_invitation')
     previous = store.peer(invite['device'])
     if previous and previous['status'] == 'paired':
@@ -193,11 +217,16 @@ async def pair(store, invite, route, credential=None):
     store.stage(invite)
     channel = await open_channel(store, invite['certificate'], invite['routes'], route, credential, True)
     try:
-        await channel.send({'op': 'pair.prepare', 'invitation': invite['id'],
-                            'secret': invite['secret'], 'certificate': store.cert})
+        preparation = {'op': 'pair.prepare', 'invitation': invite['id'],
+                       'secret': invite['secret'], 'certificate': store.cert}
+        if store.generation:
+            preparation.update(principal=store.device, generation=store.generation)
+        await channel.send(preparation)
         prepared = await channel.recv()
         if not prepared.get('ok'):
             raise Rejected(prepared.get('reason', 'pairing_failed'))
+        if store.generation and 'identity-rotation-v1' not in prepared.get('features', []):
+            raise Rejected('rotation_unsupported')
     finally:
         await channel.close()
     return await finish_pair(store, invite, route, credential)
@@ -218,6 +247,8 @@ async def finish_pair(store, invite, route, credential):
 
 
 async def exchange(store, peer, op, body=None, ident=None, route='auto', credential=None):
+    if store.recovery_required() and op not in ('probe', 'status', 'rotation.status'):
+        raise Rejected('recovery_required')
     record = store.peer(peer)
     if not record or record['status'] != 'paired':
         raise Rejected('unpaired_device')
@@ -230,6 +261,8 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
             response = await channel.recv()
             if not response.get('ok') or response.get('device') != peer:
                 raise Rejected('peer_not_ready')
+            if op.startswith('rotation.') and 'identity-rotation-v1' not in response.get('features', []):
+                raise Rejected('rotation_unsupported')
             return kind, channel
         except BaseException:
             await channel.close()

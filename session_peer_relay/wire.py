@@ -79,7 +79,8 @@ def admission(url, credential):
     validate_relay_url(url)
     target = url.replace('wss://', 'https://', 1).replace('ws://', 'http://', 1)
     target = target.removesuffix('/v1/connect') + '/v1/session'
-    req = urllib.request.Request(target, headers={'Authorization': 'Bearer '+credential, 'User-Agent': 'session-peer/0.9-relay'})
+    headers = credential.headers(url) if hasattr(credential, 'headers') else {'Authorization': 'Bearer '+credential}
+    req = urllib.request.Request(target, headers={**headers, 'User-Agent': 'session-peer/0.9-relay'})
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *args, **kwargs):
             return None

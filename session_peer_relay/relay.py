@@ -13,9 +13,10 @@ from .wire import MAX_FRAME
 
 
 class Relay:
-    def __init__(self, accounts, *, capture=None):
+    def __init__(self, accounts, *, capture=None, control=None):
         # Provisioned admission hashes are independent of end-to-end TLS identities.
         self.accounts = accounts
+        self.control = control
         self.sessions = {}
         self.waiting = {}
         self.connections = set()
@@ -40,9 +41,15 @@ class Relay:
         self.sessions = {key: value for key, value in self.sessions.items() if value[0] > now}
         if request.path == '/v1/session':
             auth = request.headers.get('Authorization', '')
-            digest = hashlib.sha256(auth.removeprefix('Bearer ').encode()).hexdigest()
-            account = next((a for a in self.accounts if auth.startswith('Bearer ')
-                            and secrets.compare_digest(digest, a['hash'])), None)
+            if self.control:
+                try:
+                    account = self.control.authorize(auth.removeprefix('Bearer '), request.headers.get('X-Session-Peer-Proof', '')) if auth.startswith('Bearer ') else None
+                except ValueError:
+                    account = None
+            else:
+                digest = hashlib.sha256(auth.removeprefix('Bearer ').encode()).hexdigest()
+                account = next((a for a in self.accounts if auth.startswith('Bearer ')
+                                and secrets.compare_digest(digest, a['hash'])), None)
             if not account or len(self.sessions) >= 100:
                 self.rejected += 1
                 return self.response(connection, HTTPStatus.UNAUTHORIZED, 'unauthorized\n')
@@ -62,6 +69,14 @@ class Relay:
         if not ticket:
             self.rejected += 1
             return self.response(connection, HTTPStatus.UNAUTHORIZED, 'unauthorized\n')
+        if self.control and not self.control.active(ticket[1]):
+            return self.response(connection, HTTPStatus.UNAUTHORIZED, 'unauthorized\n')
+        if self.control:
+            current = [getattr(item, 'lab_account', {}) for item in self.connections]
+            account = ticket[1]
+            if (sum(item.get('userId') == account['userId'] for item in current) >= 8
+                    or sum(item.get('devicePrincipal') == account['devicePrincipal'] for item in current) >= 4):
+                return self.response(connection, HTTPStatus.SERVICE_UNAVAILABLE, 'capacity\n')
         if len(self.connections) >= 10:
             return self.response(connection, HTTPStatus.SERVICE_UNAVAILABLE, 'capacity\n')
         self.connections.add(connection)
@@ -80,6 +95,15 @@ class Relay:
         key = account['room']
         other_role = 'client' if account['role'] == 'receiver' else 'receiver'
         slot = self.waiting.get(key)
+        watcher = None
+        if self.control:
+            async def watch_authorization():
+                while True:
+                    await asyncio.sleep(1)
+                    if not self.control.active(account):
+                        await ws.close(1008, 'authorization_revoked')
+                        return
+            watcher = asyncio.create_task(watch_authorization())
         if slot is None:
             slot = {'members': {}, 'ready': asyncio.Event()}
             self.waiting[key] = slot
@@ -123,6 +147,9 @@ class Relay:
             # No request headers, tokens, body or endpoint fingerprints in logs.
             pass
         finally:
+            if watcher:
+                watcher.cancel()
+                await asyncio.gather(watcher, return_exceptions=True)
             self.connections.discard(ws)
             if slot['members'].get(account['role']) is ws:
                 slot['members'].pop(account['role'], None)

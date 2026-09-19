@@ -6,6 +6,40 @@ on:
   pull_request:
 
 jobs:
+  relay-control:
+    name: optional relay control (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: control/package-lock.json
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - run: npm ci
+        working-directory: control
+      - run: npm run typecheck
+        working-directory: control
+      - run: npm test
+        working-directory: control
+      - run: npm audit --omit=dev
+        working-directory: control
+      - run: python -m pip install '.[relay]'
+      - name: Actual Node and Python contract integration
+        env:
+          SESSION_PEER_CONTROL_INTEGRATION: '1'
+        run: python -m unittest tests.test_control_integration -v
+
   test:
     name: test (${{ matrix.os }}, python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
@@ -84,7 +118,7 @@ jobs:
           ./install.sh
           version=$("$HOME/.local/bin/session-peer" --version)
           echo "$version"
-          echo "$version" | grep -qv "0.0.1"
+          echo "$version" | grep -qvF "0.0.1"
       - name: Uninstall
         run: |
           ./install.sh --uninstall
@@ -123,7 +157,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install '.[relay,mcp]' build
-      - run: python -m unittest tests.test_native_relay tests.test_relay69 -v
+      - run: python -m unittest tests.test_native_relay tests.test_relay69 tests.test_relay_lifecycle tests.test_relay_auth tests.test_relay_control -v
       - run: python -m build
       - name: Verify optional transport packaging
         run: |

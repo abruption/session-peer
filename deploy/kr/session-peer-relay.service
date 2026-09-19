@@ -1,0 +1,65 @@
+[Unit]
+Description=session-peer private blind relay
+After=network-online.target
+Wants=network-online.target
+# Explicit readiness validates the published state plus loopback health.
+After=session-peer-control.service session-peer-control-ready.service
+Requires=session-peer-control.service session-peer-control-ready.service
+PartOf=session-peer-control.service session-peer-stack.target
+BindsTo=session-peer-control.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+DynamicUser=yes
+User=session-peer-relay
+ExecStartPre=/usr/bin/test -s /run/session-peer-auth/state.json
+# The separate readiness unit validates health/schema/freshness before this
+# existence check; relay's independent product verifier remains authoritative.
+ExecStart=/opt/session-peer-relay/current/venv/bin/session-peer relay serve --auth-state /run/session-peer-auth/state.json --auth-issuer https://relay.abruption.dev --auth-replay-state /var/lib/session-peer-relay/private/spent-tickets.json --bind 127.0.0.1 --port 3769 --seconds 0
+StateDirectory=session-peer-relay
+StateDirectoryMode=0700
+# Persistent writable storage is restricted to the replay state directory.
+ReadOnlyPaths=/tmp /var/tmp /dev/shm
+# Directory bind is essential: atomic file rename must remain visible.
+# Do not use an optional '-' source: absent public state is a startup failure.
+BindReadOnlyPaths=/var/lib/private/session-peer-control/relay-public:/run/session-peer-auth
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET
+CapabilityBoundingSet=
+LockPersonality=yes
+RestrictSUIDSGID=yes
+# KR systemd reports -BPF_FRAMEWORK: IPAddress/SocketBind BPF enforcement was
+# ineffective in a transient probe. Use explicit loopback CLI binding, existing
+# host/OCI ingress policy and seccomp outbound denial; verify listener at startup.
+# Accepted sockets can send/receive; block new outbound connections, including
+# localhost Caddy admin/Redis and Unix sockets. Candidate runtime must pass this.
+SystemCallFilter=~connect
+SystemCallErrorNumber=EPERM
+InaccessiblePaths=-/home -/root -/etc/caddy -/etc/authelia -/var/lib/authadmin
+InaccessiblePaths=-/etc/session-peer-control -/var/lib/session-peer-control -/var/lib/private/session-peer-control
+MemoryMax=256M
+CPUQuota=50%
+TasksMax=64
+LimitNOFILE=256
+LimitCORE=0
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=30
+
+[Install]
+WantedBy=multi-user.target

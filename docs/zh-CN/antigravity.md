@@ -7,7 +7,7 @@
 Antigravity 本身绝不会被自动安装。未过滤的列表包含活跃的桥接注册项。
 
 它使用用户启动的本地桥接和[官方 agentapi 接口](https://antigravity.google/docs/sidecars/)投递到**现有 TUI**。
-Mac 和 Linux CLI 1.2.4 实验验证了空闲状态下的投递；CLI sidecar
+Mac 和 Linux CLI 1.2.4 实验验证了空闲状态下的投递。后续 macOS CLI 1.2.7 RC 测试在对齐文档中的 `agentapi send-message` 位置参数后，通过了直接投递和公共中继投递。CLI sidecar
 自动启动机制**尚未**建立。`agy -p` 以及使用 `--conversation` 启动另一个
 写入端并不是投递的替代方案。不支持 Windows 桥接操作；其他适配器在该平台上仍然可用。
 
@@ -23,7 +23,7 @@ session-peer antigravity-bridge serve --thread FULL-CONVERSATION-UUID
 默认主目录为 `~/.gemini/antigravity-cli`；使用 `--antigravity-home /absolute/path`
 指定自定义主目录。注册会验证祖先 `agy` 进程、UID、启动时间以及针对该确切主目录
 和对话打开的存在文件（presence file）。Linux 使用 `/proc`；macOS 使用 `ps`
-和 `lsof`。打开的存在文件描述符是身份证据，**并非持有内核锁的证明**。
+和 `lsof`。在 macOS 上，进程启动时间使用固定的 C 语言区域设置读取，因此从本地化 TUI 启动的桥接仍可被使用其他语言区域设置的中继工作进程发现。打开的存在文件描述符是身份证据，**并非持有内核锁的证明**。
 多个匹配的祖先注册不会用于推断发送方。
 
 桥接继承已验证的工具环境并调用 `<home>/bin/agentapi send-message`。

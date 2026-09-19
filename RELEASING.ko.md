@@ -1,31 +1,28 @@
-# session-peer 릴리스하기
+# session-peer 릴리스
 
-GitHub 릴리스를 발행하면 `.github/workflows/publish.yml`이 트리거되어 태그를 빌드하고 Trusted Publishing을 통해 PyPI에 업로드합니다. 드래프트 릴리스는 발행되지 않습니다. 태그와 업로드된 아티팩트가 항상 검토된 코드를 가리키도록 릴리스 준비, 승인, 발행 및 검증을 별도의 단계로 유지하세요.
+GitHub 릴리스를 게시하면 `.github/workflows/publish.yml`이 트리거되어 선택한 태그를 빌드하고 Trusted Publishing을 통해 PyPI에 업로드합니다. 드래프트는 게시되지 않습니다. 공개 아티팩트가 항상 검토된 코드를 가리키도록 준비, 승인, 게시 및 검증 단계를 분리하여 유지하십시오.
 
-## 현재 후보: v0.9.0
+## 현재 후보: v1.0.0-alpha.1
 
-v0.9.0 후보는 승인된 #47 어댑터/트랜스포트 리팩터링, #69 릴레이 실험실, #85 Antigravity 어댑터와 네이티브 어댑터를 통해 페어링된 요청을 라우팅하는 선택적 제품 릴레이 패키지를 통합합니다. 이전의 #87/#88 PR은 의존성 브랜치에 병합되었으며, 승인된 변경 사항은 메인 타깃 릴리스 PR로 명시적으로 전달됩니다. 후보 릴리스 노트: `docs/releases/v0.9.0.md`. #89에서 발행을 추적하며 아티팩트 검증이 완료될 때까지 열어 둡니다.
-플러그인 매니페스트는 독립적인 버전(0.1.0)을 유지합니다.
+첫 번째 1.0 알파는 #99의 인증 릴레이 RC에 의존합니다. 표준 Python/PyPI 버전은 `1.0.0a1`이며, 사용자용 Git 태그 및 GitHub 릴리스는 `v1.0.0-alpha.1`입니다. `packaging.version.Version`은 이 값들을 동일하게 취급합니다. 알파 제로로 정규화되는 단순 `v1.0.0-alpha`는 사용하지 마십시오.
 
-### #90, #91, #92 이후의 최종 통합
+이번 릴리스는 명시적인 시험판(prerelease)입니다:
 
-릴리스 최종화 브랜치는 main `27b28dd`에서 시작되며, 여기에는 v0.9 기능 준비(#90), 지원/보안 파일럿(#91), 4개 국어 README(#92)가 포함되어 있습니다. 후자에는 조정된 v0.9 기능 설명 및 sdist 내용이 포함됩니다. 패키지 버전은 이미 `0.9.0`이므로 이번 문서 최종화를 위해 다시 올리지 마세요. 이 베이스는 최종 릴리스 커밋이 아닙니다. 최종화 PR이 병합된 후 정확한 main 커밋을 기록하세요.
+- GitHub 릴리스를 **Pre-release**로 표시하고 Latest로 표시하지 마십시오.
+- 일반 안정 버전 패키지 업그레이드는 v0.9.0을 계속 선택해야 합니다.
+- 테스터는 `pipx install 'session-peer[relay]==1.0.0a1'` 또는 이에 상응하는 `uv` 명령어로 정확한 버전을 설치합니다.
+- GitHub, PyPI 및 클린 설치 검증이 완료될 때까지 #101을 열린 상태로 유지하십시오.
+- 플러그인 매니페스트는 독자적인 버전(0.1.0)을 유지합니다.
 
-- #89를 열어 두세요: 준비 PR 병합이 발행 또는 아티팩트 검증을 의미하는 것은 아닙니다.
-- 세 개의 번역된 README, `docs/cli-reference.md`, 보안 정책 및 v0.9 릴리스 노트를 선택적 릴레이 파일과 함께 sdist에 포함합니다.
-- 독립적인 플러그인 버전, 동결된 기존 업데이터, 선택적 extra 및 실험 제외를 유지합니다. CI에서 wheel과 sdist 설치를 모두 검증합니다.
-- 이 최종화가 준비될 당시 가장 최근에 발행된 릴리스는 v0.8.0이었습니다. 후보 문구를 성공적인 PyPI 업로드로 해석해서는 안 됩니다.
-- 병합 후에만 드래프트를 생성하세요. 릴리스 발행에는 아래에 설명된 별도의 최종 승인이 여전히 필요합니다. 이 PR에서 #89를 자동으로 닫지 마세요.
+후보 버전에는 로컬/SSH 작동, 선택적 MCP 및 Antigravity 어댑터, 페어링된 직접/릴레이 전송, 관리형 허가(managed admission), 공개 OAuth 가입, 능동적 해지(active revocation), 운영자 메트릭 및 검토된 KR 배포 아티팩트가 포함됩니다. 릴레이 엑스트라는 Unix 및 Python 3.11+를 필요로 합니다. 기본 코어는 Python 3.9+에서 의존성 없이 유지됩니다. 호스팅된 릴레이는 운영 서비스이며 패키지 가용성에 대한 약속이 아닙니다.
 
-릴레이 extra에는 Unix 및 Python 3.11+가 필요합니다. `docs/relay-public-pilot-2026-09-17.md`의 공개 파일럿 증거를 포함하여 의존성이 없는 코어 외에도 `.[relay,mcp]`를 검증하세요. 제한된 실시간 테스트는 소크(soak) 테스트가 아닙니다. 실제 운영 검증은 v1.0.0-rc의 관문으로 남아 있습니다.
+저장소는 레거시 자체 업데이트 URL을 위해 루트의 동결된 `cc_peer.py`를 유지해야 하지만 wheel 및 sdist에서는 제외해야 합니다. 4개의 README, 보안 정책, 알파 릴리스 노트, 릴레이 수명주기/인증 문서 및 선택적 런타임 소스를 모두 포함하십시오. OAuth 자격 증명, 기기 키, 인증 데이터베이스, 재생 상태(replay state), 브라우저 프로필, 로컬 증거 또는 대화 내용을 절대로 포함하지 마십시오.
 
-저장소는 레거시 자체 업데이트 URL을 위해 동결된 루트 `cc_peer.py`를 계속 포함해야 합니다. 이는 session-peer wheel 및 sdist 외부에 남아 있어야 합니다.
-
-## Trusted Publisher 구성
+## Trusted Publisher 설정
 
 GitHub 환경은 `pypi`이고 활성 워크플로는 `publish.yml`입니다. PyPI 프로젝트 소유자는 다음 Trusted Publisher 매핑을 유지해야 합니다:
 
-| Field | Value |
+| 필드 | 값 |
 | --- | --- |
 | PyPI project | `session-peer` |
 | GitHub owner | `abruption` |
@@ -33,60 +30,60 @@ GitHub 환경은 `pypi`이고 활성 워크플로는 `publish.yml`입니다. PyP
 | Workflow filename | `publish.yml` |
 | GitHub environment | `pypi` |
 
-v0.6.1 릴리스는 이 경로를 성공적으로 사용했습니다. GitHub는 PyPI 소유자 측 매핑을 검사할 수 없으므로 이전의 성공은 변경되지 않았음을 보장하는 것이 아니라 증거일 뿐입니다.
+이전의 성공적인 릴리스는 참고 증거일 뿐이며, 소유자 측 매핑이 변경되지 않았음을 보장하지 않습니다.
 
 ## 준비 및 검증
 
-1. 릴리스 이슈를 생성하고 현재 `origin/main`에서 브랜치를 생성합니다.
-2. 하나의 릴리스 준비 PR에서 `session_peer.__version__`, 지속적인 README 문구, 이 런북 및 `docs/releases/<version>.md`를 업데이트합니다.
-3. CI에서 사용되는 검사를 실행합니다:
+1. 먼저 #99를 병합합니다. 릴리스 준비 PR의 타깃을 `main`으로 재지정하고, 업데이트한 후 클린 머지를 요구하십시오. 다른 브랜치에서 릴리스 변경 사항을 수동으로 다시 생성하지 마십시오.
+2. `session_peer.__version__ == "1.0.0a1"`인지 확인하고, 알파 노트가 sdist에 포함되어 있는지, 4개 README의 설치 명령어가 일치하는지 확인하십시오.
+3. 전체 CI 매트릭스를 실행합니다. 로컬에서 코어 스위트, 컨트롤 Node 22/24 스위트, Node/Python 통합, 최종 diff에 적합한 빌드 및 아카이브 검사를 반복하십시오. 라이브 모델 제출은 릴리스 준비 과정에 포함되지 않습니다.
+4. 정확한 후보로부터 한 번 빌드합니다:
 
    ```bash
-   python3 -m compileall -q cc_peer.py session_peer.py session_peer_mcp.py tests
-   python3 -m unittest discover -s tests -v
-   python3 -m unittest discover -v
    python3 -m build
    ```
 
-   `.[mcp]` extra가 설치된 별도의 Python 3.10+ 환경에서 테스트 스위트를 반복합니다. 독립형 환경에서는 선택적 SDK 테스트만 건너뛰어야 합니다. 릴리스 검사 시 실시간 wake/모델 테스트를 활성화하지 마세요.
-
-4. 두 아카이브를 모두 검사합니다. `session_peer.py`, 라이선스, 메타데이터 및 README는 sdist에 속하며, wheel에는 `session_peer.py`, `session_peer_mcp.py`, 선택적 `session_peer_relay/` 패키지 및 메타데이터가 포함됩니다. sdist에는 MCP/wake/멀티 홈 문서와 플러그인 파일도 포함됩니다. 어떤 아카이브도 `cc_peer.py`, 자격 증명, 세션 데이터베이스 또는 로컬 메모를 포함해서는 안 됩니다.
-5. 새로운 환경에서 wheel과 sdist를 각각 독립적으로 설치합니다. `session-peer --version`, `session-peer list --output-format json` 및 import 메타데이터를 확인합니다. 세션이 없는 스모크 테스트에는 격리된 임시 HOME을 사용하세요. extra가 설치된 상태에서 `session-peer-mcp --help`를 확인합니다. 기본 정책은 로컬 읽기 전용으로 유지되어야 합니다.
-6. 필요한 모든 검사를 통과한 후에만 릴리스 준비 PR을 병합합니다. `main`을 가져와 정확한 커밋을 기록하고 원하는 변경 사항과 버전이 여전히 포함되어 있는지 확인합니다.
+5. 두 아카이브를 모두 검사합니다. wheel에는 `session_peer.py`, `session_peer_mcp.py`, `session_peer_relay/` 및 메타데이터가 포함됩니다. sdist에는 승인된 문서 및 배포 템플릿도 포함됩니다. 어떤 아카이브에도 `cc_peer.py`, 자격 증명, 데이터베이스, 재생 상태, 개인 키, 브라우저 데이터 또는 로컬 증거가 포함되어서는 안 됩니다.
+6. 깨끗한 환경에 wheel과 sdist를 각각 독립적으로 설치합니다. `session-peer --version`이 `1.0.0a1`을 보고하는지, 비어 있는 홈 디렉터리에서 `session-peer list --output-format
+   json` works in an empty home, and relay/MCP extras pass `pip check` 및 help 스모크 테스트를 통과하는지 확인하십시오.
+7. 필수 검사가 통과된 후에만 병합합니다. `main`을 가져와서(fetch) 정확한 커밋을 기록하고, 해당 커밋에서 버전과 의도된 변경 사항을 확인하십시오.
 
 ## 드래프트 준비
 
-스쿼시 또는 병합 커밋은 릴리스 커밋을 변경하므로 릴리스 준비 PR이 병합된 후에만 드래프트를 생성하세요:
+릴리스 준비 PR이 병합된 후에만 드래프트를 생성하십시오. 스쿼시 또는 머지 커밋은 릴리스 커밋을 변경합니다.
 
 ```bash
 git fetch origin main --tags
 release_commit=$(git rev-parse origin/main)
-gh release create v0.9.0 \
+gh release create v1.0.0-alpha.1 \
   --repo abruption/session-peer \
   --target "$release_commit" \
-  --title "session-peer v0.9.0" \
-  --notes-file docs/releases/v0.9.0.md \
-  --draft --latest
+  --title "session-peer v1.0.0-alpha.1" \
+  --notes-file docs/releases/v1.0.0-alpha.1.md \
+  --draft --prerelease --latest=false
 ```
 
-드래프트의 태그, 타깃 커밋, 제목, 노트, 드래프트 상태 및 사전 릴리스(prerelease) 상태를 확인합니다. 드래프트를 저장하는 동안 GitHub가 태그를 생성한 경우 기록된 릴리스 커밋으로 확인되는지 확인하세요. 기존에 발행된 태그를 이동하지 마세요.
+태그, 타깃, 제목, 릴리스 노트, 드래프트 상태 및 시험판(prerelease) 상태를 확인하십시오. 게시된 기존 태그를 이동하지 마십시오. 드래프트 생성이 게시를 승인하는 것은 아닙니다.
 
-## 발행
+## 게시
 
-발행 직전에 최종 승인을 받습니다. 발행은 GitHub 릴리스를 공개하고 PyPI 업로드를 시작하는 작업입니다:
+게시 직전에 최종 사용자 승인을 받으십시오. 게시하면 GitHub 릴리스가 공개되고 PyPI 업로드가 트리거됩니다:
 
 ```bash
-gh release edit v0.9.0 --repo abruption/session-peer --draft=false --latest
+gh release edit v1.0.0-alpha.1 \
+  --repo abruption/session-peer \
+  --draft=false --prerelease --latest=false
 ```
 
-워크플로가 실패하더라도 두 번째 릴리스를 생성하거나 수정된 아티팩트로 재시도하지 마세요. 실패한 실행을 보존하고 실패한 단계를 진단하세요. PyPI에서 이미 수락된 버전은 대체할 수 없습니다.
+워크플로가 실패하더라도 두 번째 릴리스를 생성하거나 수정된 아티팩트로 재시도하지 마십시오. 실패한 실행을 보존하고 원인을 진단하십시오. PyPI 버전은 변경할 수 없습니다(immutable).
 
-## 발행 검증
+## 게시 검증
 
-1. 릴리스로 트리거된 `publish.yml` 실행이 성공적으로 완료되었고 예상된 태그 및 커밋을 사용했는지 확인합니다.
-2. PyPI에 정확히 `session-peer==0.9.0`이 노출되는지 확인합니다. wheel과 sdist를 다운로드하여 해당 파일 이름과 SHA-256 해시를 워크플로 아티팩트와 비교하고 내용을 다시 검사합니다.
-3. 새로운 환경에 PyPI에서 0.9.0을 설치합니다. 버전과 로컬 읽기 전용 목록 조회를 확인합니다. 제출 없는 dry-run은 명시적인 임시 Codex 홈 및 실행 파일을 사용할 수 있으며, 큐 명령어가 실행되지 않았음을 증명한다면 예상된 대상 실패는 허용됩니다.
-4. GitHub가 v0.9.0을 latest로 표시하고 이전 독립형 설치에 대해 `session-peer update --check`가 이를 보고하는지 확인합니다.
-5. GitHub, PyPI, 신규 설치 및 업데이터 검증이 기록된 후에만 릴리스 이슈를 닫습니다.
+1. 예상되는 태그 및 커밋에 대해 `publish.yml`이 성공했는지 확인하십시오.
+2. PyPI가 정확히 `session-peer==1.0.0a1`을 노출하는지 확인하십시오. wheel과 sdist를 다운로드하여 워크플로 아티팩트와 해시를 비교하고 내용을 다시 검사하십시오.
+3. 깨끗한 환경에 정확한 PyPI 시험판을 설치하고 버전, 클린 홈 list, 릴레이 엑스트라 및 MCP 스모크 검사를 반복하십시오.
+4. GitHub가 해당 릴리스를 prerelease로 표시하고 latest로 표시하지 않았는지 확인하십시오. 안정 버전 `releases/latest` 엔드포인트 및 일반 업데이트 알림은 v0.9.0을 계속 가리켜야 합니다.
+5. 호스팅된 릴레이는 별도로 검증하십시오. 패키지 게시가 서비스 정상 상태, OAuth 정책 또는 에이전트 인정을 증명하지는 않습니다.
+6. GitHub, PyPI 및 클린 설치 증거가 기록된 후에만 #101을 닫으십시오.
 
-패키지 관리자로 설치한 경우 자체 관리자로 업그레이드합니다. 독립형 설치는 `session-peer update`를 사용하며 번들된 Claude 스킬을 새로고침하려면 `install.sh`가 필요합니다. 제출이 소비나 확인의 증거는 절대 아닙니다.
+패키지 관리자로 설치한 환경은 자체 패키지 관리자로 업그레이드합니다. 독립형 안정 설치는 `session-peer update`를 계속 사용하고, 알파 테스터는 정확한 패키지 버전을 사용합니다. 제출이 소비나 인정을 증명하는 것은 절대 아닙니다.

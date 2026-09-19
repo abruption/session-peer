@@ -82,11 +82,11 @@ validation steps, and a completion-report format. You remain in control of
 account changes, public exposure, payments, reboots, merges, releases, and
 publication.
 
-## Optional v0.9 features
+## Optional 1.0 alpha features
 
-Available in v0.9.0: experimental [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md) through a bridge explicitly started inside an existing TUI; unfiltered `list` also includes live registered bridges.
-[Paired devices / encrypted relay](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md) require Unix, Python 3.11+ and the `[relay]` extra. Device identities are pinned and targets need explicit operator authorization. The self-hosted WSS relay cannot decrypt application messages; no NAT traversal or hosted public service is provided.
-Install the relay beta with `pipx install 'session-peer[relay]'`. Antigravity and relay still need operational validation; release does not imply long-term stability. Ordinary local/SSH commands remain dependency-free.
+The opt-in `1.0.0a1` prerelease adds the authenticated public relay and keeps the v0.9 experimental [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md) bridge. Unfiltered `list` also includes live registered bridges.
+[Paired devices / encrypted relay](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md) require Unix, Python 3.11+ and the `[relay]` extra. Device identities are pinned and targets need explicit authorization on the receiving endpoint. The blind WSS relay cannot decrypt application messages; hosted-service availability remains separate from the package.
+Install the alpha explicitly with `pipx install 'session-peer[relay]==1.0.0a1'`; normal upgrades do not select prereleases. Start with the [session-peer project page](https://abruption.dev/projects/session-peer/) and the paired-device guide above. Alpha publication does not imply long-term stability. Ordinary local/SSH commands remain dependency-free.
 
 ## Before you send
 

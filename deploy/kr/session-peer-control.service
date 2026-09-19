@@ -1,0 +1,71 @@
+[Unit]
+Description=session-peer private device control service (candidate contract)
+After=network-online.target
+Wants=network-online.target
+PartOf=session-peer-stack.target
+Upholds=session-peer-control-ready.service session-peer-relay.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+LoadCredential=github-client-secret:/etc/session-peer-control/github-client-secret
+Environment=GITHUB_CLIENT_SECRET_FILE=%d/github-client-secret
+Type=notify
+NotifyAccess=all
+WatchdogSec=30
+WatchdogSignal=SIGKILL
+TimeoutStartSec=30
+DynamicUser=yes
+User=session-peer-control
+# App root contains dist/server/main.js and dist/web/.
+WorkingDirectory=/opt/session-peer-control/current
+ExecStart=/usr/bin/flock --no-fork --nonblock /var/lib/session-peer-control/writer.lock /opt/session-peer-control/runtime/node-v24.16.0/bin/node /opt/session-peer-control/current/dist/server/main.js
+ExecStartPost=/usr/bin/python3 /opt/session-peer-infra/check-control-ready.py --state /var/lib/session-peer-control/relay-public/state.json --origin https://relay.abruption.dev --port 3770
+Environment=NODE_ENV=production
+Environment=PORT=3770
+Environment=SESSION_PEER_CONTROL_ORIGIN=https://relay.abruption.dev
+Environment=SESSION_PEER_CONTROL_DATA=/var/lib/session-peer-control/private
+Environment=SESSION_PEER_RELAY_PUBLIC=/var/lib/session-peer-control/relay-public
+Environment=BETTER_AUTH_SECRET_FILE=%d/auth-secret
+EnvironmentFile=/etc/session-peer-control/control.env
+LoadCredential=auth-secret:/etc/session-peer-control/auth-secret
+# Enabled providers only: add LoadCredential=<provider>-client-secret:...
+# and Environment=<PROVIDER>_CLIENT_SECRET_FILE=%d/<provider>-client-secret.
+# Client IDs, the break-glass provider allowlist, and SESSION_PEER_PUBLIC_SIGNUP
+# belong in control.env. False closes new signup without evicting committed users.
+# Admission signing key is generated/preserved in private/signing-key.pem.
+StateDirectory=session-peer-control
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+LockPersonality=yes
+RestrictSUIDSGID=yes
+InaccessiblePaths=-/home -/root -/etc/caddy -/etc/authelia -/var/lib/authadmin -/etc/session-peer-relay -/var/lib/session-peer-relay -/var/lib/ontology -/var/lib/private/session-peer-relay
+# OAuth needs outbound HTTPS/DNS: intentionally no relay connect-deny filter.
+# KR systemd lacks BPF support; no ineffective IPAddress/SocketBind constraints.
+# Initial budget, not a measured capacity guarantee for the future Node artifact.
+MemoryMax=256M
+CPUQuota=50%
+TasksMax=64
+LimitNOFILE=256
+LimitCORE=0
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=30
+
+[Install]
+WantedBy=multi-user.target
