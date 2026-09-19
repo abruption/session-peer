@@ -2,6 +2,7 @@ import { it, expect, afterEach, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { SignJWT } from "jose";
 import { fixture } from "./fixtures.js";
+import { allowedUser, authorizeAccount } from "../src/server/auth.js";
 let fixtureIdToken: string;
 let f: Awaited<ReturnType<typeof fixture>> | undefined;
 afterEach(() => {
@@ -19,7 +20,11 @@ const providers = {
     clientSecret: "fixture-google-secret",
   },
 };
-async function setup(subject = "allowed-oauth", email = "oauth@test.invalid") {
+async function setup(
+  subject = "allowed-oauth",
+  email = "oauth@test.invalid",
+  publicSignupEnabled = false,
+) {
   f = await fixture({
     providers,
     allowlist: [
@@ -28,6 +33,7 @@ async function setup(subject = "allowed-oauth", email = "oauth@test.invalid") {
       { provider: "github", accountId: "allowed-oauth" },
       { provider: "google", accountId: "allowed-oauth" },
     ],
+    publicSignupEnabled,
   });
   const { privateKey, publicKey } = generateKeyPairSync("rsa", {
     modulusLength: 2048,
@@ -93,6 +99,64 @@ async function setup(subject = "allowed-oauth", email = "oauth@test.invalid") {
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
+
+for (const provider of ["github", "google"] as const) {
+  it("admits one verified public "+provider+" identity when public signup is open", async () => {
+    await setup("public-oauth", "public@test.invalid", true);
+    const started = await authorize(provider);
+    const callback = await f!.request(
+      "/api/auth/callback/"+provider+"?code=fixture-code&state="+
+        encodeURIComponent(started.state),
+      undefined,
+      { cookie: started.cookie },
+    );
+    expect(callback.status).toBe(302);
+    expect(callback.headers.get("location")).toBe("/devices");
+    const account = f!.db.prepare(
+      "SELECT userId FROM account WHERE providerId=? AND accountId=?",
+    ).get(provider, "public-oauth") as { userId: string };
+    expect(allowedUser(f!.db, { ...f!.config, publicSignupEnabled: false }, account.userId)).toBe(true);
+    expect(f!.db.prepare(
+      "SELECT status,expiresAt FROM relay_public_signups WHERE providerId=? AND accountId=?",
+    ).get(provider, "public-oauth")).toEqual({ status: "active", expiresAt: 0 });
+  });
+}
+
+it("keeps verified public signup reservations stable across retries and expiry", async () => {
+  f = await fixture({ publicSignupEnabled: true });
+  expect(authorizeAccount(f.db, f.config, "github", "first-public", 100)).toBe(true);
+  expect(authorizeAccount(f.db, f.config, "github", "first-public", 101)).toBe(true);
+  expect(authorizeAccount(f.db, f.config, "google", "second-public", 101)).toBe(true);
+  expect(f.db.prepare("SELECT COUNT(*) AS n FROM relay_public_signups").get()).toEqual({ n: 2 });
+  expect(authorizeAccount(f.db, f.config, "google", "second-public", 702)).toBe(true);
+  expect(f.db.prepare(
+    "SELECT accountId FROM relay_public_signups ORDER BY accountId",
+  ).all()).toEqual([{ accountId: "second-public" }]);
+});
+
+it("closing signup does not evict an existing public identity", async () => {
+  f = await fixture({ publicSignupEnabled: true });
+  const now = Math.floor(Date.now() / 1000);
+  expect(authorizeAccount(
+    f.db,
+    { ...f.config, allowlist: [], publicSignupEnabled: true },
+    "github",
+    "fixture-owner",
+    now,
+  )).toBe(false);
+  expect(authorizeAccount(f.db, f.config, "github", "public-existing", now)).toBe(true);
+  const user = await (await f.auth.$context).internalAdapter.createUser(
+    { name: "Public", email: "public-existing@test.invalid", emailVerified: true },
+    { method: "admin" },
+  );
+  await (await f.auth.$context).internalAdapter.createAccount({
+    userId: user.id, providerId: "github", accountId: "public-existing",
+  });
+  expect(allowedUser(f.db, { ...f.config, publicSignupEnabled: false }, user.id)).toBe(true);
+  expect(authorizeAccount(
+    f.db, { ...f.config, publicSignupEnabled: false }, "github", "public-new", now + 1,
+  )).toBe(false);
+});
 function cookies(response: Response) {
   return response.headers
     .getSetCookie()

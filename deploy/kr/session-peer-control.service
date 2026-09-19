@@ -31,7 +31,8 @@ EnvironmentFile=/etc/session-peer-control/control.env
 LoadCredential=auth-secret:/etc/session-peer-control/auth-secret
 # Enabled providers only: add LoadCredential=<provider>-client-secret:...
 # and Environment=<PROVIDER>_CLIENT_SECRET_FILE=%d/<provider>-client-secret.
-# Client IDs and immutable provider-account allowlist belong in control.env.
+# Client IDs, the break-glass provider allowlist, and SESSION_PEER_PUBLIC_SIGNUP
+# belong in control.env. False closes new signup without evicting committed users.
 # Admission signing key is generated/preserved in private/signing-key.pem.
 StateDirectory=session-peer-control
 StateDirectoryMode=0700

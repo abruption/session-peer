@@ -7,6 +7,7 @@ import type { Config } from "../src/server/config.js";
 
 function sample(root: string) {
   const config: Config = { origin: "https://relay.test", production: true,
+    publicSignupEnabled: false,
     secret: "test-only-secret", dataDir: root, publicDir: join(root, "unused"),
     allowlist: [], providers: { google: { clientId: "fixture-client", clientSecret: "fixture-secret" } },
     googleDiscovery: { expectedEmail: "test@example.invalid", expiresAt: Math.floor(Date.now()/1000)+600 } };

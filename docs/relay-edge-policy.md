@@ -25,7 +25,7 @@ zone-wide BIC setting, managed WAF, Bot Fight Mode, DDoS protection, security
 level, existing rate rules and origin ingress restrictions stay unchanged.
 The existing Cloudflare rate rule protects a different service; it must not be
 described as relay-specific rate protection. Control's own request limits,
-fixed client ID, code expiry/polling restrictions, account allowlist and explicit
+fixed client ID, code expiry/polling restrictions, explicit public-signup switch or account allowlist, and explicit
 browser approval continue to apply. Matching this rule grants no authentication.
 
 The configuration was applied after explicit approval. The v2 rule's Cloudflare

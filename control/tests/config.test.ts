@@ -23,6 +23,21 @@ it("fails closed without a secret and validates exact origins/allowlists", () =>
   const c = loadConfig({ BETTER_AUTH_SECRET: "x".repeat(40) });
   expect(c.allowlist).toEqual([]);
   expect(c.providers).toEqual({});
+  expect(c.publicSignupEnabled).toBe(false);
+  expect(loadConfig({
+    BETTER_AUTH_SECRET: "x".repeat(40),
+    SESSION_PEER_PUBLIC_SIGNUP: "true",
+  }).publicSignupEnabled).toBe(true);
+  expect(loadConfig({
+    BETTER_AUTH_SECRET: "x".repeat(40),
+    SESSION_PEER_PUBLIC_SIGNUP: "false",
+  }).publicSignupEnabled).toBe(false);
+  for (const value of ["1", "TRUE", "yes", "0"]) {
+    expect(() => loadConfig({
+      BETTER_AUTH_SECRET: "x".repeat(40),
+      SESSION_PEER_PUBLIC_SIGNUP: value,
+    })).toThrow("invalid_public_signup");
+  }
 });
 
 it("requires protected regular secret files, rejecting world-readable and symlink input", async () => {

@@ -53,9 +53,11 @@ it("starts real compiled server only on loopback; enforces host, body limit and 
     expect((await fetch(origin + "/healthz")).status).toBe(200);
     const html = await (await fetch(origin + "/login")).text();
     expect(html).toContain('id="root"');
+    expect(await (await fetch(origin + "/admin/metrics")).text()).toContain('id="root"');
     const asset = /src="([^"]+\.js)"/.exec(html)![1];
     expect((await fetch(origin + asset)).status).toBe(200);
     expect((await fetch(origin + "/api/relay/devices")).status).toBe(401);
+    expect((await fetch(origin + "/api/admin/metrics")).status).toBe(401);
     const { request } = await import("node:http");
     const hostStatus = await new Promise<number>((resolve, reject) => {
       const r = request(

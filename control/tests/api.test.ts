@@ -355,6 +355,36 @@ it("does not enable password signup, fake OAuth or automatic email linking", asy
   expect(other).toBeNull();
 });
 
+it("serves non-identifying metrics only to an allowlisted browser operator", async () => {
+  f = await fixture({ publicSignupEnabled: true });
+  const browser = { cookie: f.cookie };
+  expect(await (await f.request("/api/control/me", undefined, browser)).json()).toEqual({ admin: true });
+  expect((await f.request("/api/admin/metrics", undefined, f.ownerHeaders)).status).toBe(401);
+  const before = await f.request("/api/admin/metrics", undefined, browser);
+  expect(before.status).toBe(200);
+  expect(await before.json()).toMatchObject({
+    serviceHealthy: true,
+    signup: { mode: "open", registeredUsers: 2, publicUsers: 0, pendingReservations: 0 },
+    devices: { total: 0, active: 0, revoked: 0 },
+    operations: { total: 0, committed: 0, pending: 0 },
+  });
+  const d = identity(f.root, "Metric Device", "a");
+  f.control.register(f.owner.id, f.proven(f.owner.id, "register", d.payload, d.privateKey));
+  f.db.prepare("INSERT INTO relay_public_signups VALUES(?,?,'pending',?,?)")
+    .run("github", "pending-fixture", Math.floor(Date.now() / 1000) + 300, Math.floor(Date.now() / 1000));
+  const after = await (await f.request("/api/admin/metrics", undefined, browser)).json();
+  expect(after.devices).toEqual({ total: 1, active: 1, revoked: 0 });
+  expect(after.signup.pendingReservations).toBe(1);
+  expect(after.operations).toEqual({ total: 1, committed: 1, pending: 0 });
+  expect(JSON.stringify(after)).not.toContain("pending-fixture");
+  expect(JSON.stringify(after)).not.toContain(d.payload.principal);
+  f.db.prepare("INSERT INTO relay_public_signups VALUES(?,?,'active',0,?)")
+    .run("github", "fixture-owner", Math.floor(Date.now() / 1000));
+  f.config.allowlist = [];
+  expect(await (await f.request("/api/control/me", undefined, browser)).json()).toEqual({ admin: false });
+  expect((await f.request("/api/admin/metrics", undefined, browser)).status).toBe(403);
+});
+
 it("routes same-principal rotation through authenticated ownership and CSRF guards", async () => {
   f = await fixture();
   const old = identity(f.root, "Old", "a");

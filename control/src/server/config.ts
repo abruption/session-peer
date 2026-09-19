@@ -8,6 +8,8 @@ export interface Config {
   publicDir: string;
   secret: string;
   allowlist: { provider: Provider; accountId: string }[];
+  /** Explicit opt-in for verified public OAuth signup. Existing users remain valid when disabled. */
+  publicSignupEnabled: boolean;
   providers: Partial<
     Record<Provider, { clientId: string; clientSecret: string }>
   >;
@@ -67,6 +69,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     allowlist.length > 32
   )
     throw new Error("invalid_account_allowlist");
+  const publicSignup = env.SESSION_PEER_PUBLIC_SIGNUP ?? "false";
+  if (publicSignup !== "true" && publicSignup !== "false")
+    throw new Error("invalid_public_signup");
   const providers: Config["providers"] = {};
   for (const provider of ["github", "google"] as const) {
     const prefix = provider.toUpperCase();
@@ -96,6 +101,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     production,
     secret,
     allowlist,
+    publicSignupEnabled: publicSignup === "true",
     providers,
     ...(googleDiscovery ? { googleDiscovery } : {}),
     dataDir: env.SESSION_PEER_CONTROL_DATA ?? "./state/private",

@@ -1,8 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { resolve, join, extname } from "node:path";
 import type Database from "better-sqlite3";
-import { allowedUser, type Auth } from "./auth.js";
+import { allowedUser, operatorUser, type Auth } from "./auth.js";
 import type { Config } from "./config.js";
+import { adminMetrics } from "./metrics.js";
 import { ControlError, assert } from "./protocol.js";
 import type { RelayControl } from "./relay-control.js";
 const MAX_BODY = 16384;
@@ -42,6 +43,22 @@ export function createApp(
     }
     if (path === "/api/control/config" && request.method === "GET")
       return json({ providers: Object.keys(config.providers) });
+    if (path === "/api/control/me" && request.method === "GET") {
+      const session = await auth.api.getSession({ headers: request.headers });
+      assert(session && allowedUser(db, config, session.user.id), "authentication_required", 401);
+      return json({ admin: operatorUser(db, config, session.user.id) });
+    }
+    if (path === "/api/admin/metrics" && request.method === "GET") {
+      assert(
+        request.headers.has("cookie") && !request.headers.has("authorization"),
+        "browser_session_required",
+        401,
+      );
+      const session = await auth.api.getSession({ headers: request.headers });
+      assert(session, "authentication_required", 401);
+      assert(operatorUser(db, config, session.user.id), "admin_required", 403);
+      return json(adminMetrics(db, config, control.isHealthy()));
+    }
     if (path.startsWith("/api/auth/")) {
       const mutating = request.method !== "GET" && request.method !== "HEAD";
       const publicDevice = [
@@ -209,7 +226,7 @@ export function createApp(
     if (request.method !== "GET" && request.method !== "HEAD")
       return json({ error: "method_not_allowed" }, 405);
     let file: string;
-    if (["/", "/login", "/device", "/devices"].includes(path))
+    if (["/", "/login", "/device", "/devices", "/admin/metrics"].includes(path))
       file = join(webDir, "index.html");
     else if (/^\/assets\/[A-Za-z0-9_.-]+$/.test(path))
       file = join(webDir, path);

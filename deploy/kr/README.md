@@ -10,10 +10,11 @@ directories. Build each release on its target platform. Install the helper at
 `/opt/session-peer-infra/check-control-ready.py`. Explicitly configure the origin,
 release links and protected credential/environment paths before installation.
 Actual `control.env`, OAuth client secrets, Better Auth secret, provider allowlist,
+public signup switch,
 private signing key, auth DB and relay replay file are deliberately omitted.
 Google provider credentials were enabled separately after these unit copies;
 any provider-specific drop-in must use protected LoadCredential files and
-`GOOGLE_CLIENT_SECRET_FILE`, with IDs/allowlist in the protected environment file.
+`GOOGLE_CLIENT_SECRET_FILE`, with IDs/allowlist/signup switch in the protected environment file.
 
 Run compiled auth migration and explicit replay initialization only through the
 reviewed same-UID/writer-lock procedure on first setup. Regular service startup
@@ -60,3 +61,20 @@ remain disabled as direct boot entries, and migration/replay initialization
 remain inactive manual one-shots. This policy passed an actual KR reboot on
 2026-09-19; see the validation record for timings and existing-infrastructure
 checks.
+### Operator metrics entry point
+
+Keep `admin.abruption.dev` as the existing Authelia-protected administration
+portal. It already owns its root page and `/api/*`; do not replace those routes
+with session-peer. The safe integration is an exact `/session-peer` portal link
+or redirect to `https://relay.abruption.dev/admin/metrics`. The relay page and
+`/api/admin/metrics` apply a second authorization check: only provider identities
+present in `SESSION_PEER_ALLOWED_ACCOUNTS` are operators. Public RC signups never
+inherit this role. The metrics response contains aggregate counts only, with no
+email, provider account ID, user ID, principal, token, or certificate.
+
+`admin-session-peer.caddy` is the reviewed insertion block for the existing
+`(b_admin)` snippet. Place it before that snippet's catch-all `handle`, adapt and
+validate the complete Caddy configuration, then reload with a live-file CAS.
+The block keeps Authelia in front of the redirect; the destination independently
+requires the relay operator's provider allowlist. Do not import the block at the
+global level or use it to replace the existing admin site.

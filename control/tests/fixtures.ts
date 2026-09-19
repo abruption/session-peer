@@ -62,6 +62,7 @@ export async function fixture(overrides: Partial<Config> = {}) {
     secret: "test-only-local-secret-never-production-000000",
     dataDir: join(root, "private"),
     publicDir: join(root, "public"),
+    publicSignupEnabled: false,
     providers: {},
     allowlist: [
       { provider: "github", accountId: "fixture-owner" },

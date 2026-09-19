@@ -10,17 +10,19 @@ OAuth accounts, or Node dependency to a normal Python installation.
 `control/` is an independent Node 22/24 React/Vite + BetterAuth **1.7.5** service.
 GitHub and Google are the only configured login providers. Missing provider
 credentials expose no fake login. Password login/signup are disabled. OAuth
-account IDs, not email addresses, are explicitly allowlisted. Every control API
-call checks the native BetterAuth session, the allowlist, and internal user ID
-ownership again; removing an account from policy blocks existing control sessions.
+account IDs, not email addresses, are the authorization identity. Every control
+API call checks the native BetterAuth session, an explicit allowlist or committed
+public-signup record, and internal user ID ownership again. Pausing signup does
+not evict an already committed public identity.
 No automatic email-based account linking is permitted. Enabling another provider
 with the same email does not silently give it an existing user's devices.
 
-Private operation means operator-owned accounts/devices only. Adding an account
-to the allowlist is an explicit operator decision; this implementation does not
-open public signup. Allowed OAuth account creation and session creation are also
-checked by BetterAuth DB hooks. A rejected OAuth callback may leave a user record
-without a permitted account/session; such a record never grants control access.
+Allowlist-only operation remains the fail-closed default. Operators may explicitly
+enable unrestricted verified public signup. Verified provider callbacks reserve
+their identity before BetterAuth creates a user; committed identities remain usable
+if the operator later closes new signup. Account and session creation
+are also checked by BetterAuth DB hooks. A rejected callback cannot consume a
+permanent public slot or grant control access.
 
 Web `/login`, `/device`, `/devices` use HTTP-only secure cookies in production.
 The device page displays the code, client and scope, requires a code-match
@@ -205,6 +207,24 @@ restart/multiple workers through JWT expiration. These are Python integration ga
 control format tests do not establish that the Python receiver implements them.
 OAuth login/registration does not replace endpoint E2EE pairing/pin policy.
 
+## Operator metrics
+
+`GET /api/admin/metrics` is a browser-session-only operator endpoint. An
+operator is an authenticated user with at least one provider identity explicitly
+listed in `SESSION_PEER_ALLOWED_ACCOUNTS`; public signup never grants this role.
+The response contains aggregate service health, signup status and counts, device counts,
+operation counts and the current public-state revision. It never returns email,
+provider account ID, internal user ID, device principal, certificate, token or
+secret. The React route is `/admin/metrics` and refreshes the aggregate view every
+30 seconds.
+
+`admin.abruption.dev` remains the existing Authelia administration portal. Its
+root and `/api/*` routes are already owned by the authentication console. Integrate
+session-peer with an exact `/session-peer` portal link or redirect to
+`https://relay.abruption.dev/admin/metrics`; do not replace or proxy over the
+existing admin console. The relay operator check remains authoritative after the
+portal redirect.
+
 ### Atomic public state and contract transition
 
 ```text
@@ -264,20 +284,28 @@ npm run build
 ```
 
 Production must explicitly configure one HTTPS origin (no wildcard trusted
-origins), a >=32-character random BetterAuth secret, immutable provider account-ID
-allowlist and the enabled operator-owned OAuth apps. Example **non-secret** values:
+origins), a >=32-character random BetterAuth secret, an optional break-glass
+provider account-ID allowlist, an explicit public-signup switch and the enabled
+operator-owned OAuth apps. Example **non-secret** values:
 
 ```
 NODE_ENV=production
 SESSION_PEER_CONTROL_ORIGIN=https://relay.abruption.dev
 SESSION_PEER_ALLOWED_ACCOUNTS=[{"provider":"github","accountId":"REPLACE_WITH_NUMERIC_PROVIDER_ID"}]
+SESSION_PEER_PUBLIC_SIGNUP=true
 SESSION_PEER_CONTROL_DATA=/var/lib/session-peer-control/private
 SESSION_PEER_RELAY_PUBLIC=/var/lib/session-peer-control/relay-public
 GITHUB_CLIENT_ID=REPLACE_WITH_OPERATOR_APP_ID
 GOOGLE_CLIENT_ID=REPLACE_WITH_OPERATOR_APP_ID
 ```
 
-Missing allowlist defaults to deny all. OAuth secrets and the BetterAuth secret
+Missing allowlist defaults to deny all unless the operator explicitly sets
+`SESSION_PEER_PUBLIC_SIGNUP=true`. Public signup has no invitation list or user
+count cap. Setting it back to `false` closes new registration while previously
+committed public identities and explicit allowlist entries remain usable.
+Provider verification creates a pending identity reservation for at most ten
+minutes, and a SQLite `IMMEDIATE` transaction prevents concurrent callbacks from
+racing the same identity. OAuth secrets and the BetterAuth secret
 come from `*_SECRET_FILE`/`BETTER_AUTH_SECRET_FILE` and systemd LoadCredential;
 never commit them or copy browser credentials. Raw env values are also supported
 for operator-controlled local/test environments; never print environment dumps.

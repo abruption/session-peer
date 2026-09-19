@@ -52,7 +52,10 @@ export function confirmGoogleDiscovery(config: Config) {
 }
 
 /** Normal OAuth processing remains in Better Auth; discovery never signs in. */
-export function verifiedGoogleUserInfo(config: Config): GoogleOptions["getUserInfo"] {
+export function verifiedGoogleUserInfo(
+  config: Config,
+  authorize?: (accountId: string) => boolean,
+): GoogleOptions["getUserInfo"] {
   const credentials = config.providers.google!;
   const provider = google(credentials);
   return async (tokens: Parameters<typeof provider.getUserInfo>[0]) => {
@@ -67,8 +70,10 @@ export function verifiedGoogleUserInfo(config: Config): GoogleOptions["getUserIn
     if (!profile || profile.data.sub !== verified.sub || profile.user.email !== verified.email
         || profile.user.emailVerified !== verified.email_verified) return null;
     const discovery = config.googleDiscovery;
-    if (!discovery) return config.allowlist.some(account =>
-      account.provider === "google" && account.accountId === verified.sub) ? profile : null;
+    if (!discovery)
+      return (authorize?.(verified.sub) ?? config.allowlist.some(account =>
+        account.provider === "google" && account.accountId === verified.sub))
+        ? profile : null;
 
     // Request-scoped context, reached only after native state/PKCE code exchange.
     // Direct sign-in with an ID token must never write an operator discovery file.

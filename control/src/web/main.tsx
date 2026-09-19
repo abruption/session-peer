@@ -23,7 +23,7 @@ async function api<T>(
   return res.json() as Promise<T>;
 }
 function safeReturn(value: string | null) {
-  return value && /^\/(device|devices)(?:\?[^#]*)?$/.test(value)
+  return value && /^\/(device|devices|admin\/metrics)(?:\?[^#]*)?$/.test(value)
     ? value
     : "/devices";
 }
@@ -36,11 +36,25 @@ interface Device {
   keyGeneration: number;
   revoked: boolean;
 }
+interface AdminMetrics {
+  generatedAt: number;
+  serviceHealthy: boolean;
+  signup: {
+    mode: "closed" | "open";
+    registeredUsers: number;
+    publicUsers: number;
+    pendingReservations: number;
+  };
+  devices: { total: number; active: number; revoked: number };
+  operations: { total: number; committed: number; pending: number };
+  stateRevision: number;
+}
 function App() {
   const path = location.pathname;
   const [session, setSession] = useState<Session | null | undefined>();
   const [error, setError] = useState("");
   const [providers, setProviders] = useState<string[]>([]);
+  const [admin, setAdmin] = useState(false);
   useEffect(() => {
     api<Session | null>("/api/auth/get-session")
       .then(setSession)
@@ -48,6 +62,9 @@ function App() {
     api<{ providers: string[] }>("/api/control/config")
       .then((x) => setProviders(x.providers))
       .catch(() => setError("Service unavailable."));
+    api<{ admin: boolean }>("/api/control/me")
+      .then((x) => setAdmin(x.admin))
+      .catch(() => setAdmin(false));
   }, []);
   async function login(provider: string) {
     try {
@@ -77,6 +94,7 @@ function App() {
             <>
               <a href="/devices">Devices</a>
               <a href="/device">Authorize</a>
+              {admin && <a href="/admin/metrics">Metrics</a>}
               <button
                 onClick={() =>
                   api("/api/auth/sign-out", {})
@@ -105,7 +123,7 @@ function App() {
               connected privately.
             </h1>
             <p className="muted">
-              Sign in with an account approved by the relay operator.
+              Sign in with GitHub or Google to manage your relay devices.
             </p>
             {session === undefined ? (
               <p>Checking session…</p>
@@ -143,6 +161,8 @@ function App() {
           </>
         ) : path === "/device" ? (
           <Authorize />
+        ) : path === "/admin/metrics" ? (
+          <Metrics />
         ) : (
           <Devices />
         )}
@@ -150,6 +170,69 @@ function App() {
       <footer>
         End-to-end encrypted relay · Only approve devices you recognize.
       </footer>
+    </>
+  );
+}
+function MetricCard({ label, value, note }: { label: string; value: React.ReactNode; note: string }) {
+  return (
+    <section className="metric-card">
+      <p className="metric-label">{label}</p>
+      <strong className="metric-value">{value}</strong>
+      <p className="muted">{note}</p>
+    </section>
+  );
+}
+function Metrics() {
+  const [metrics, setMetrics] = useState<AdminMetrics>();
+  const [error, setError] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      setMetrics(await api<AdminMetrics>("/api/admin/metrics"));
+      setError("");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+  useEffect(() => {
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <>
+      <div className="title-row">
+        <div>
+          <p className="eyebrow">OPERATOR ONLY</p>
+          <h1>Relay metrics</h1>
+          <p className="muted">Aggregate service and RC signup counters. No account or device identifiers are shown.</p>
+        </div>
+        <button disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "Refreshing…" : "Refresh"}</button>
+      </div>
+      {error && <p role="alert" className="error">{error}</p>}
+      {!metrics ? (
+        !error && <p>Loading metrics…</p>
+      ) : (
+        <>
+          <section className="status-line">
+            <span className={metrics.serviceHealthy ? "status-ok" : "status-bad"}>
+              {metrics.serviceHealthy ? "Healthy" : "Unhealthy"}
+            </span>
+            <span>Signup: {metrics.signup.mode.replaceAll("_", " ")}</span>
+            <span>State revision: {metrics.stateRevision}</span>
+          </section>
+          <div className="metric-grid">
+            <MetricCard label="Registered users" value={metrics.signup.registeredUsers} note={`${metrics.signup.publicUsers} public OAuth user${metrics.signup.publicUsers === 1 ? "" : "s"}`} />
+            <MetricCard label="Pending signups" value={metrics.signup.pendingReservations} note={metrics.signup.mode === "open" ? "Public signup is open" : "New public signup is closed"} />
+            <MetricCard label="Active devices" value={metrics.devices.active} note={`${metrics.devices.revoked} revoked · ${metrics.devices.total} total`} />
+            <MetricCard label="Committed operations" value={metrics.operations.committed} note={`${metrics.operations.pending} pending · ${metrics.operations.total} total`} />
+          </div>
+          <p className="updated">Updated {new Date(metrics.generatedAt).toLocaleString()}</p>
+        </>
+      )}
     </>
   );
 }
