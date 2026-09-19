@@ -45,7 +45,7 @@ class Protocol(unittest.TestCase):
                 self.bridge.handle({**req, 'text': 'changed'})
             self.assertEqual(run.call_count, 1)
             self.assertEqual(run.call_args.args[0], [
-                '/fixture/bin/agentapi', 'send-message', '--title=session-peer', THREAD, req['text']])
+                str(Path('/fixture/bin/agentapi')), 'send-message', '--title=session-peer', THREAD, req['text']])
             self.assertEqual(run.call_args.args[0][-1], req['text'])
             self.assertEqual(run.call_args.kwargs['stdout'], subprocess.DEVNULL)
 
