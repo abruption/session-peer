@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
+import githubMark from "./assets/github-invertocat-white.svg";
+import googleSignIn from "./assets/google-signin-dark@2x.png";
 import "./style.css";
 async function api<T>(
   path: string,
@@ -49,6 +51,36 @@ interface AdminMetrics {
   operations: { total: number; committed: number; pending: number };
   stateRevision: number;
 }
+function OAuthButton({
+  provider,
+  onClick,
+}: {
+  provider: string;
+  onClick: () => void;
+}) {
+  if (provider === "google") {
+    return (
+      <button
+        type="button"
+        className="oauth-button google-sign-in"
+        aria-label="Sign in with Google"
+        onClick={onClick}
+      >
+        <img src={googleSignIn} alt="" aria-hidden="true" />
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="oauth-button github-sign-in"
+      onClick={onClick}
+    >
+      <img src={githubMark} alt="" aria-hidden="true" />
+      <span>Sign in with GitHub</span>
+    </button>
+  );
+}
 function App() {
   const path = location.pathname;
   const [session, setSession] = useState<Session | null | undefined>();
@@ -83,6 +115,7 @@ function App() {
       setError((e as Error).message);
     }
   }
+  const signingIn = path === "/login" || !session;
   return (
     <>
       <header>
@@ -108,14 +141,14 @@ function App() {
           )}
         </nav>
       </header>
-      <main>
+      <main className={signingIn ? "login-main" : undefined}>
         <p className="eyebrow">PRIVATE DEVICE NETWORK</p>
         {error && (
           <p role="alert" className="error">
             {error}
           </p>
         )}
-        {path === "/login" || !session ? (
+        {signingIn ? (
           <>
             <h1>
               Your devices,
@@ -131,15 +164,15 @@ function App() {
               <section className="card">
                 <h2>Sign in</h2>
                 {providers.length ? (
-                  providers.map((p) => (
-                    <button
-                      className="primary"
-                      key={p}
-                      onClick={() => login(p)}
-                    >
-                      Continue with {p === "github" ? "GitHub" : "Google"}
-                    </button>
-                  ))
+                  <div className="oauth-buttons">
+                    {providers.map((provider) => (
+                      <OAuthButton
+                        key={provider}
+                        provider={provider}
+                        onClick={() => login(provider)}
+                      />
+                    ))}
+                  </div>
                 ) : (
                   <p>Sign in is not configured. Contact the relay operator.</p>
                 )}
