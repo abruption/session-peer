@@ -96,6 +96,7 @@ Install the relay beta with `pipx install 'session-peer[relay]'`. Antigravity an
 
 ## Documentation
 
+- [Project site](https://abruption.dev/projects/session-peer/): a curated overview, quick start, and documentation entry point.
 - [CLI reference](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md): commands, JSON, environment variables, updates, limits, and validation history.
 - [Diagnostics and replies](https://github.com/abruption/session-peer/blob/main/docs/diagnostics.md) · [Multiple Codex homes](https://github.com/abruption/session-peer/blob/main/docs/multi-home-list.md)
 - [Moving from cc-peer](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#moving-from-cc-peer) · [Releases](https://github.com/abruption/session-peer/releases)

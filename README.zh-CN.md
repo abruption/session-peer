@@ -92,6 +92,7 @@ v0.9.0提供的实验性[Antigravity](https://github.com/abruption/session-peer/
 
 ## 文档
 
+- [项目指南网站](https://abruption.dev/projects/session-peer/)：核心概览、快速开始和文档入口
 - [CLI参考](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/cli-reference.md)：命令、JSON、环境变量、更新、限制及验证记录
 - [诊断与回复](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/diagnostics.md) · [多个Codex主目录](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/multi-home-list.md)
 - [从cc-peer迁移](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/cli-reference.md#moving-from-cc-peer) · [发行版本](https://github.com/abruption/session-peer/releases)

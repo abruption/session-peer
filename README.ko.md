@@ -92,6 +92,7 @@ v0.9.0에서 제공하는 실험 상태의 [Antigravity](https://github.com/abru
 
 ## 문서
 
+- [프로젝트 안내 사이트](https://abruption.dev/projects/session-peer/): 핵심 소개, 빠른 시작과 문서 진입점
 - [CLI 상세](https://github.com/abruption/session-peer/blob/main/docs/ko/cli-reference.md): 명령, JSON, 환경 변수, 업데이트, 제약, 검증 이력
 - [진단·회신](https://github.com/abruption/session-peer/blob/main/docs/ko/diagnostics.md) · [여러 Codex 홈](https://github.com/abruption/session-peer/blob/main/docs/ko/multi-home-list.md)
 - [cc-peer에서 전환](https://github.com/abruption/session-peer/blob/main/docs/ko/cli-reference.md#moving-from-cc-peer) · [릴리스](https://github.com/abruption/session-peer/releases)

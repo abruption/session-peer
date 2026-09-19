@@ -2,7 +2,7 @@
   "canonicalLocale": "en",
   "schemaVersion": 1,
   "sources": {
-    "README.md": "e082e3669e38654bc936cce95be3e2c32b5087339be693a9cf2eddf077118ce5",
+    "README.md": "48b083269673be71d55a0165772416f5a7bac2202306e2ee8841676baf66d326",
     "RELEASING.md": "18071b9a94250304d6659c0af38daa4dff9d010309eea65437afdf56cb84891c",
     "SECURITY.md": "83551e78e3525cb7e2614b303f7c6758bbddf0442bfe1b3e4529635cf2fec918",
     "docs/agent-adapters.md": "bf185d3121c94829bb412071a25c4d943302e10a6b2e713111e653b8f8c3ea91",
