@@ -124,7 +124,9 @@ class DocumentationTranslationsTest(unittest.TestCase):
         self.assertEqual("en", manifest["canonicalLocale"])
         self.assertEqual(list(LANGUAGES), manifest["translatedLocales"])
         expected = {
-            str(source): hashlib.sha256((ROOT / source).read_bytes()).hexdigest()
+            source.as_posix(): hashlib.sha256(
+                (ROOT / source).read_text(encoding="utf-8").encode("utf-8")
+            ).hexdigest()
             for source in canonical_documents()
         }
         self.assertEqual(expected, manifest["sources"])
