@@ -71,11 +71,11 @@ Shell安装脚本需要POSIX环境。原生Windows请使用Python包管理器。
 可选MCP工具需要Python 3.10或更高版本以及`session-peer[mcp]`。
 请参阅[安装详情](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#install)。
 
-## 可选的v0.9功能
+## 可选的1.0 Alpha功能
 
-v0.9.0提供的实验性[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md)需要在现有TUI内显式启动桥接。未筛选的`list`也会显示正在运行的已注册桥接。
-[设备配对与加密中继](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md)需要Unix、Python 3.11以上及`[relay]`扩展。设备身份固定，目标需由维护者显式授权。自托管WSS中继无法解密应用消息；不提供NAT穿透或托管的公共服务。
-使用`pipx install 'session-peer[relay]'`安装中继测试版。Antigravity和中继仍需进一步运行验证，发布并不保证长期稳定性。普通本地与SSH命令仍不需要第三方依赖。
+显式选择的`1.0.0a1`预发布版新增了认证公共中继，并保留v0.9的实验性[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md)桥接。未筛选的`list`也会显示正在运行的已注册桥接。
+[设备配对与加密中继](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md)需要Unix、Python 3.11以上及`[relay]`扩展。设备身份固定，目标需在接收端显式授权。盲转发WSS中继无法解密应用消息；托管服务的可用性与软件包分开运营。
+请使用`pipx install 'session-peer[relay]==1.0.0a1'`显式安装Alpha版；普通升级不会选择预发布版本。请先查看[session-peer项目页面](https://abruption.dev/projects/session-peer/)及上方的设备配对文档。Alpha发布不代表长期稳定性，普通本地与SSH命令仍不需要第三方依赖。
 
 ## 发送前须知
 

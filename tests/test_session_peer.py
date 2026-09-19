@@ -397,6 +397,20 @@ class VersionParsing(unittest.TestCase):
     def test_ignores_anything_past_patch(self):
         self.assertEqual(session_peer.parse_version("1.2.3.4"), (1, 2, 3))
 
+    def test_orders_pep440_and_human_prerelease_spellings(self):
+        ordered = [
+            "1.0.0a1", "v1.0.0-alpha.2", "1.0.0b1",
+            "v1.0.0-beta.2", "1.0.0rc1", "v1.0.0-rc.2", "1.0.0",
+        ]
+        parsed = [session_peer.release_version(value) for value in ordered]
+        self.assertTrue(all(value is not None for value in parsed))
+        self.assertEqual(parsed, sorted(parsed))
+
+    def test_rejects_ambiguous_release_versions(self):
+        for text in ("1.0", "1.0.0-alpha", "1.0.0-dev1", "01.0.0", "latest"):
+            with self.subTest(text=text):
+                self.assertIsNone(session_peer.release_version(text))
+
 
 class RemoteInstalledVersion(unittest.TestCase):
     """Why this exists at all: run_remote() ships and runs *our* source, so
@@ -953,6 +967,19 @@ class ClientUpdateNotice(unittest.TestCase):
             **self.NOTICE, "checkedAt": "1970-01-01T00:16:40Z",
         })
 
+    @mock.patch.object(session_peer, "__version__", "1.0.0a1")
+    def test_alpha_notices_the_final_release_but_not_an_older_stable(self):
+        session_peer.write_update_cache("1.0.0", self.cache, checked_at=1_000)
+        with mock.patch.object(session_peer, "update_cache_path", return_value=self.cache), \
+             mock.patch.object(session_peer, "installed_as_distribution", return_value=False):
+            notice = session_peer.prepare_client_update(self.args(), now=1_001)
+        self.assertEqual(notice["current"], "1.0.0a1")
+        self.assertEqual(notice["latest"], "1.0.0")
+
+        session_peer.write_update_cache("0.9.0", self.cache, checked_at=1_000)
+        with mock.patch.object(session_peer, "update_cache_path", return_value=self.cache):
+            self.assertIsNone(session_peer.prepare_client_update(self.args(), now=1_001))
+
     def test_current_expired_missing_and_malformed_states_are_explicit(self):
         session_peer.write_update_cache("0.7.0", self.cache, checked_at=1_000)
         self.assertEqual(session_peer.read_update_cache(self.cache, now=1_001)["status"], "fresh")
@@ -1176,6 +1203,17 @@ class PackageManagement(unittest.TestCase):
         self.assertTrue(result["outdated"])
         self.assertEqual(result["updateCommand"], "pipx upgrade session-peer")
         write.assert_called_once_with("v0.7.1")
+
+    @mock.patch.object(session_peer, "__version__", "1.0.0a1")
+    def test_package_alpha_reports_the_final_as_newer(self):
+        args = argparse.Namespace(host=[], check=True, json=True)
+        with mock.patch.object(session_peer, "installed_as_distribution", return_value=True), \
+             mock.patch.object(session_peer, "update_command", return_value="pipx upgrade session-peer"), \
+             mock.patch.object(session_peer, "latest_release", return_value=("v1.0.0", "url")), \
+             mock.patch.object(session_peer, "write_update_cache"), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(session_peer.cmd_update(args), 0)
+        self.assertTrue(json.loads(output.getvalue())["outdated"])
 
     def test_new_reply_variable_precedes_legacy(self):
         with mock.patch.dict(os.environ, {"SESSION_PEER_REPLY_HOST": "alice@new", "CC_PEER_REPLY_HOST": "bob@old"}), \
