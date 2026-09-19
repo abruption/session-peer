@@ -71,11 +71,11 @@ cd session-peer
 オプションのMCPツールにはPython 3.10以上と`session-peer[mcp]`が必要です。
 [詳細な手順](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#install)を参照してください。
 
-## オプションのv0.9機能
+## オプションの1.0アルファ機能
 
-v0.9.0で提供する実験段階の[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md)は、既存TUI内でブリッジを明示的に起動する必要があります。フィルターなしの`list`には稼働中の登録済みブリッジも表示されます。
-[デバイスのペアリング・暗号化リレー](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md)にはUnix、Python 3.11以上、`[relay]`が必要です。デバイスの識別情報を固定し、接続対象は運用者が明示的に許可します。セルフホストのWSSリレーはメッセージを復号できません。NAT越えやホスト済み公開サービスは提供しません。
-リレーのベータ版は`pipx install 'session-peer[relay]'`でインストールできます。Antigravityとリレーには追加の運用検証が必要で、公開は長期安定性の保証ではありません。通常のローカル・SSHコマンドは外部依存なしで使えます。
+明示的に選択する`1.0.0a1`プレリリースには認証付き公開リレーが追加され、v0.9の実験段階の[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md)ブリッジも維持されます。フィルターなしの`list`には稼働中の登録済みブリッジも表示されます。
+[デバイスのペアリング・暗号化リレー](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md)にはUnix、Python 3.11以上、`[relay]`が必要です。デバイスの識別情報を固定し、受信側の端末で接続対象を明示的に許可します。ブラインドWSSリレーはメッセージを復号できず、ホスト型サービスの可用性はパッケージとは別に運用されます。
+アルファ版は`pipx install 'session-peer[relay]==1.0.0a1'`で明示的にインストールしてください。通常のアップグレードではプレリリースは選択されません。[session-peerプロジェクトページ](https://abruption.dev/projects/session-peer/)と上記のデバイスペアリング文書から始めてください。アルファ公開は長期安定性を保証せず、通常のローカル・SSHコマンドは外部依存なしで使えます。
 
 ## 送信前の確認
 

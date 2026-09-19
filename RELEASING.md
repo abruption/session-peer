@@ -1,51 +1,43 @@
 # Releasing session-peer
 
 Publishing a GitHub release triggers `.github/workflows/publish.yml`, which builds
-the tag and uploads it to PyPI through Trusted Publishing. A draft release does
-not publish. Keep release preparation, approval, publication, and verification as
-separate steps so the tag and uploaded artifacts always point at reviewed code.
+the selected tag and uploads it to PyPI through Trusted Publishing. A draft does
+not publish. Keep preparation, approval, publication and verification separate so
+the public artifacts always point at reviewed code.
 
-## Current candidate: v0.9.0
+## Current candidate: v1.0.0-alpha.1
 
-The v0.9.0 candidate integrates the approved #47 adapter/transport refactor,
-#69 relay lab and #85 Antigravity adapter, plus an optional product relay package
-that routes paired requests through native adapters. The earlier #87/#88 PRs
-merged into the dependency branch; their approved changes are explicitly carried
-into the main-target release PR. Candidate notes: `docs/releases/v0.9.0.md`. Track publication in #89; keep it
-open until artifact verification finishes.
-The plugin manifest retains its independent version (0.1.0).
+The first 1.0 alpha depends on the authenticated relay RC in #99. Its canonical
+Python/PyPI version is `1.0.0a1`; the human-facing Git tag and GitHub release are
+`v1.0.0-alpha.1`. `packaging.version.Version` treats those values as equal. Do
+not use a bare `v1.0.0-alpha`, which normalizes to alpha zero.
 
-### Final integration after #90, #91 and #92
+This release is an explicit prerelease:
 
-The release-finalization branch starts at main `27b28dd`, which contains the
-v0.9 feature preparation (#90), support/security pilot (#91), and four-language
-README (#92). The latter includes the reconciled v0.9 feature descriptions and
-sdist contents. The package version is already `0.9.0`; do not bump it again for
-this documentation finalization. This base is not the eventual release commit:
-record the exact main commit after the finalization PR is merged.
+- mark the GitHub release **Pre-release** and do not mark it Latest;
+- normal stable package upgrades must continue to select v0.9.0;
+- testers install the exact version with
+  `pipx install 'session-peer[relay]==1.0.0a1'` or the equivalent `uv` command;
+- keep #101 open until GitHub, PyPI and fresh-install verification finish;
+- the plugin manifest retains its independent version (0.1.0).
 
-- Keep #89 open: merging preparation PRs is not publication or artifact verification.
-- Include all three translated READMEs, `docs/cli-reference.md`, the security
-  policy and v0.9 release notes in the sdist, alongside the optional relay files.
-- Retain the independent plugin version, frozen legacy updater, optional extras,
-  and experiments exclusion. Verify both wheel and sdist installation in CI.
-- The latest published release was v0.8.0 when this finalization was prepared.
-  Candidate wording must not be interpreted as a successful PyPI upload.
-- Only create a draft after merge; publishing the release still requires the
-  separate final approval described below. Do not auto-close #89 from this PR.
+The candidate includes local/SSH operation, optional MCP and Antigravity adapters,
+paired direct/relay transport, managed admission, public OAuth signup, active
+revocation, operator metrics and the reviewed KR deployment artifacts. The relay
+extra requires Unix and Python 3.11+. The default core remains dependency-free on
+Python 3.9+. A hosted relay is an operational service and not a package-availability
+promise.
 
-The relay extra requires Unix and Python 3.11+. Validate `.[relay,mcp]` in
-addition to the dependency-free core, including the public pilot evidence in
-`docs/relay-public-pilot-2026-09-17.md`. A bounded live test is not a soak test:
-actual operational validation remains a gate for v1.0.0-rc.
-
-The repository must continue to contain the frozen root `cc_peer.py` for legacy
-self-update URLs. It must remain outside the session-peer wheel and sdist.
+The repository must retain the frozen root `cc_peer.py` for legacy self-update
+URLs while excluding it from wheel and sdist. Include all four READMEs, security
+policy, alpha release notes, relay lifecycle/auth documentation and optional
+runtime sources. Never include OAuth credentials, device keys, auth databases,
+replay state, browser profiles, local evidence or conversations.
 
 ## Trusted Publisher configuration
 
-The GitHub environment is `pypi`, and the active workflow is `publish.yml`.
-The PyPI project owner should retain this Trusted Publisher mapping:
+The GitHub environment is `pypi`, and the active workflow is `publish.yml`. The
+PyPI project owner should retain this Trusted Publisher mapping:
 
 | Field | Value |
 | --- | --- |
@@ -55,90 +47,84 @@ The PyPI project owner should retain this Trusted Publisher mapping:
 | Workflow filename | `publish.yml` |
 | GitHub environment | `pypi` |
 
-The v0.6.1 release used this path successfully. GitHub cannot inspect the PyPI
-owner-side mapping, so a previous success is evidence rather than a guarantee
-that it has not changed.
+A previous successful release is evidence, not a guarantee that the owner-side
+mapping has not changed.
 
 ## Prepare and verify
 
-1. Create a release issue and branch from current `origin/main`.
-2. Update `session_peer.__version__`, durable README wording, this runbook, and
-   `docs/releases/<version>.md` in one release-preparation PR.
-3. Run the checks used by CI:
+1. Merge #99 first. Retarget the release-preparation PR to `main`, update it, and
+   require a clean merge. Do not recreate release changes manually on another
+   branch.
+2. Confirm `session_peer.__version__ == "1.0.0a1"`, the alpha notes are included
+   in the sdist, and the four README install commands agree.
+3. Run the complete CI matrix. Locally repeat the core suite, control Node 22/24
+   suite, Node/Python integration, build and archive inspection appropriate to
+   the final diff. Live model submissions are not part of release preparation.
+4. Build once from the exact candidate:
 
    ```bash
-   python3 -m compileall -q cc_peer.py session_peer.py session_peer_mcp.py tests
-   python3 -m unittest discover -s tests -v
-   python3 -m unittest discover -v
    python3 -m build
    ```
 
-   Repeat the test suite in a separate Python 3.10+ environment with the
-   `.[mcp]` extra installed. The standalone environment should skip only the
-   optional SDK tests. Do not enable live wake/model tests for release checks.
-
-4. Inspect both archives. `session_peer.py`, license, metadata, and README belong
-   in the sdist; the wheel contains `session_peer.py`, `session_peer_mcp.py`, the optional `session_peer_relay/` package, and metadata.
-   The sdist also includes MCP/wake/multi-home documentation and plugin files. Neither
-   archive may contain `cc_peer.py`, credentials, session databases, or local
-   notes.
-5. Install the wheel and sdist independently in fresh environments. Confirm
-   `session-peer --version`, `session-peer list --output-format json`, and import metadata. Use an isolated
-   temporary HOME for no-session smoke checks. Verify `session-peer-mcp --help`
-   with the extra installed; default policy must remain local read-only.
-6. Merge the release-preparation PR only after every required check passes. Fetch
-   `main`, record its exact commit, and confirm it still contains the intended
-   changes and version.
+5. Inspect both archives. The wheel contains `session_peer.py`,
+   `session_peer_mcp.py`, `session_peer_relay/` and metadata. The sdist also
+   contains the approved documentation and deployment templates. Neither archive
+   may contain `cc_peer.py`, credentials, databases, replay state, private keys,
+   browser data or local evidence.
+6. Install wheel and sdist independently in fresh environments. Confirm
+   `session-peer --version` reports `1.0.0a1`, `session-peer list --output-format
+   json` works in an empty home, and relay/MCP extras pass `pip check` and help
+   smoke tests.
+7. Merge only after required checks pass. Fetch `main`, record its exact commit,
+   and verify the version and intended changes at that commit.
 
 ## Prepare the draft
 
-Create the draft only after the release-preparation PR is merged, because a
-squash or merge commit changes the release commit:
+Create the draft only after the release-preparation PR is merged. A squash or
+merge commit changes the release commit.
 
 ```bash
 git fetch origin main --tags
 release_commit=$(git rev-parse origin/main)
-gh release create v0.9.0 \
+gh release create v1.0.0-alpha.1 \
   --repo abruption/session-peer \
   --target "$release_commit" \
-  --title "session-peer v0.9.0" \
-  --notes-file docs/releases/v0.9.0.md \
-  --draft --latest
+  --title "session-peer v1.0.0-alpha.1" \
+  --notes-file docs/releases/v1.0.0-alpha.1.md \
+  --draft --prerelease --latest=false
 ```
 
-Verify the draft's tag, target commit, title, notes, draft status, and prerelease
-status. If GitHub created the tag while saving the draft, confirm it resolves to
-the recorded release commit. Do not move an existing published tag.
+Verify tag, target, title, notes, draft status and prerelease status. Do not move
+an existing published tag. Draft creation does not authorize publication.
 
 ## Publish
 
-Obtain final approval immediately before publication. Publishing is the action
-that makes the GitHub release public and starts the PyPI upload:
+Obtain final user approval immediately before publication. Publishing makes the
+GitHub release public and triggers the PyPI upload:
 
 ```bash
-gh release edit v0.9.0 --repo abruption/session-peer --draft=false --latest
+gh release edit v1.0.0-alpha.1 \
+  --repo abruption/session-peer \
+  --draft=false --prerelease --latest=false
 ```
 
 Do not create a second release or retry with modified artifacts if the workflow
-fails. Preserve the failed run and diagnose the failing stage. A version already
-accepted by PyPI cannot be replaced.
+fails. Preserve the failed run and diagnose it. PyPI versions are immutable.
 
 ## Verify publication
 
-1. Confirm the release-triggered `publish.yml` run completed successfully and
-   used the expected tag and commit.
-2. Confirm PyPI exposes exactly `session-peer==0.9.0`. Download the wheel and
-   sdist, compare their filenames and SHA-256 hashes with the workflow artifacts,
-   and inspect their contents again.
-3. Install 0.9.0 from PyPI into a fresh environment. Confirm the version and a
-   local read-only listing. A no-submit dry-run may use an explicit temporary
-   Codex home and executable; expected target failure is acceptable if it proves
-   no queue command ran.
-4. Confirm GitHub marks v0.9.0 as latest and `session-peer update --check` reports
-   it to an older standalone installation.
-5. Close the release issue only after GitHub, PyPI, fresh-install, and updater
-   verification are recorded.
+1. Confirm `publish.yml` succeeded for the expected tag and commit.
+2. Confirm PyPI exposes exactly `session-peer==1.0.0a1`. Download wheel and sdist,
+   compare their hashes with the workflow artifacts, and inspect contents again.
+3. Install the exact PyPI prerelease in fresh environments and repeat version,
+   clean-home list, relay-extra and MCP smoke checks.
+4. Confirm GitHub marks the release as prerelease and not latest. The stable
+   `releases/latest` endpoint and ordinary update notices must continue to point
+   to v0.9.0.
+5. Verify the hosted relay separately; package publication does not prove service
+   health, OAuth policy or agent acknowledgement.
+6. Close #101 only after GitHub, PyPI and fresh-install evidence is recorded.
 
-Package-managed installations upgrade with their own manager. Standalone
-installations use `session-peer update`; `install.sh` is required to refresh the
-bundled Claude skill. Submission is never proof of consumption or acknowledgement.
+Package-managed installations upgrade with their own manager. Standalone stable
+installations keep using `session-peer update`; alpha testers use the exact package
+version. Submission is never proof of consumption or acknowledgement.

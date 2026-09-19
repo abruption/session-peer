@@ -71,11 +71,11 @@ cd session-peer
 선택형 MCP 도구는 Python 3.10 이상과 `session-peer[mcp]`가 필요해요.
 [설치 상세](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#install)를 참고하세요.
 
-## 선택형 v0.9 기능
+## 선택형 1.0 알파 기능
 
-v0.9.0에서 제공하는 실험 상태의 [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md)는 기존 TUI 안에서 브리지를 명시적으로 시작해야 해요. 필터 없는 `list`에는 실행 중인 등록 브리지도 표시돼요.
-[기기 페어링·암호화 릴레이](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md)는 Unix·Python 3.11 이상·`[relay]` 확장이 필요해요. 기기 신원을 고정하며 대상은 운영자가 명시적으로 허용해야 해요. 자체 호스팅 WSS 릴레이는 메시지를 복호화할 수 없으며 NAT 통과나 호스팅된 공용 서비스는 제공하지 않아요.
-릴레이 베타는 `pipx install 'session-peer[relay]'`로 설치해요. Antigravity와 릴레이는 추가 운영 검증이 필요하며 공개가 장기 안정성을 뜻하지는 않아요. 일반 로컬·SSH 명령은 외부 의존성 없이 유지돼요.
+명시적으로 선택하는 `1.0.0a1` 시험판에는 인증된 공개 릴레이가 추가되며, v0.9의 실험 상태 [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md) 브리지도 유지돼요. 필터 없는 `list`에는 실행 중인 등록 브리지도 표시돼요.
+[기기 페어링·암호화 릴레이](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md)는 Unix·Python 3.11 이상·`[relay]` 확장이 필요해요. 기기 신원을 고정하며 수신 기기에서 대상을 명시적으로 허용해야 해요. 블라인드 WSS 릴레이는 메시지를 복호화할 수 없으며 호스팅 서비스의 가용성은 패키지와 별도로 운영돼요.
+알파는 `pipx install 'session-peer[relay]==1.0.0a1'`로 명시적으로 설치하세요. 일반 업그레이드는 시험판을 선택하지 않아요. [session-peer 프로젝트 페이지](https://abruption.dev/projects/session-peer/)와 위의 기기 페어링 문서부터 확인하세요. 알파 공개는 장기 안정성을 뜻하지 않으며 일반 로컬·SSH 명령은 외부 의존성 없이 유지돼요.
 
 ## 전송 전 확인
 
