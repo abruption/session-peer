@@ -92,9 +92,10 @@ Install the relay beta with `pipx install 'session-peer[relay]'`. Antigravity an
 - [Moving from cc-peer](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#moving-from-cc-peer) · [Releases](https://github.com/abruption/session-peer/releases)
 - [Adapter development](https://github.com/abruption/session-peer/blob/main/docs/agent-adapters.md) · [Release process](https://github.com/abruption/session-peer/blob/main/RELEASING.md)
 
-The four README editions cover the same quick start. Detailed docs are currently
-in English. Keep translated commands, requirements, and behavior aligned with
-the English README. These translations do not change the CLI output language.
+The README and detailed documentation are available in English, Korean, Japanese,
+and Simplified Chinese. English is canonical; CI checks that translated files,
+commands, requirements, and behavior stay aligned. These translations do not
+change the CLI output language.
 
 ## Support and security
 
