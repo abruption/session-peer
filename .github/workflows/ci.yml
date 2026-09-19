@@ -118,7 +118,7 @@ jobs:
           ./install.sh
           version=$("$HOME/.local/bin/session-peer" --version)
           echo "$version"
-          echo "$version" | grep -qv "0.0.1"
+          echo "$version" | grep -qvF "0.0.1"
       - name: Uninstall
         run: |
           ./install.sh --uninstall
