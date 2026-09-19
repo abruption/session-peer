@@ -75,6 +75,7 @@ email, provider account ID, user ID, principal, token, or certificate.
 `admin-session-peer.caddy` is the reviewed insertion block for the existing
 `(b_admin)` snippet. Place it before that snippet's catch-all `handle`, adapt and
 validate the complete Caddy configuration, then reload with a live-file CAS.
-The block keeps Authelia in front of the redirect; the destination independently
-requires the relay operator's provider allowlist. Do not import the block at the
-global level or use it to replace the existing admin site.
+The block uses an explicit `route` so Caddy preserves `forward_auth` before the
+redirect; ordinary directive sorting would otherwise run `redir` first. The
+destination independently requires the relay operator's provider allowlist. Do not
+import the block at the global level or use it to replace the existing admin site.
