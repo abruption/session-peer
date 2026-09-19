@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import githubMark from "./assets/github-invertocat-white.svg";
-import googleSignIn from "./assets/google-signin-dark@2x.png";
+import googleSignIn from "./assets/google-signin-dark-2x.png";
 import "./style.css";
 async function api<T>(
   path: string,

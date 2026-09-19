@@ -1,5 +1,5 @@
 import { it, expect } from "vitest";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, execFileSync } from "node:child_process";
@@ -56,6 +56,16 @@ it("starts real compiled server only on loopback; enforces host, body limit and 
     expect(await (await fetch(origin + "/admin/metrics")).text()).toContain('id="root"');
     const asset = /src="([^"]+\.js)"/.exec(html)![1];
     expect((await fetch(origin + asset)).status).toBe(200);
+    const webAssets = fileURLToPath(
+      new URL("../dist/web/assets/", import.meta.url),
+    );
+    const googleButton = readdirSync(webAssets).find(
+      (name) => /^google-signin-dark-2x-[A-Za-z0-9_-]+\.png$/.test(name),
+    );
+    expect(googleButton).toBeTruthy();
+    const imageResponse = await fetch(origin + "/assets/" + googleButton);
+    expect(imageResponse.status).toBe(200);
+    expect(imageResponse.headers.get("content-type")).toBe("image/png");
     expect((await fetch(origin + "/api/relay/devices")).status).toBe(401);
     expect((await fetch(origin + "/api/admin/metrics")).status).toBe(401);
     const { request } = await import("node:http");
