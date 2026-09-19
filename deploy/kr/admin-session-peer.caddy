@@ -1,7 +1,10 @@
 # Insert this block inside the existing (b_admin) snippet, before its catch-all
-# handle. It preserves the current Authelia gate and does not claim /api/*.
+# handle. The route wrapper preserves forward_auth before redir; without it,
+# Caddy's normal directive sorting can run redir first. It does not claim /api/*.
 @session_peer_metrics path /session-peer /session-peer/
 handle @session_peer_metrics {
-	import authelia
-	redir https://relay.abruption.dev/admin/metrics 302
+	route {
+		import authelia
+		redir https://relay.abruption.dev/admin/metrics 302
+	}
 }
