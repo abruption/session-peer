@@ -71,6 +71,13 @@ cd session-peer
 선택형 MCP 도구는 Python 3.10 이상과 `session-peer[mcp]`가 필요해요.
 [설치 상세](https://github.com/abruption/session-peer/blob/main/docs/ko/cli-reference.md#install)를 참고하세요.
 
+## AI에게 작업 맡기기
+
+모든 문서를 직접 살피는 대신 목표를 설명하고 싶다면 코딩 에이전트에게
+[AI 지원 설치·운영 가이드](https://github.com/abruption/session-peer/blob/main/docs/ko/ai-assistant-guide.md)를 전달하세요.
+재사용 가능한 요청문, 승인·비밀정보 경계, 검증 단계와 완료 보고 형식을 제공해요.
+계정 변경, 공개 노출, 결제, 재부팅, 병합, 릴리스와 게시는 사용자가 계속 통제해요.
+
 ## 선택형 v0.9 기능
 
 v0.9.0에서 제공하는 실험 상태의 [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/ko/antigravity.md)는 기존 TUI 안에서 브리지를 명시적으로 시작해야 해요. 필터 없는 `list`에는 실행 중인 등록 브리지도 표시돼요.

@@ -71,6 +71,13 @@ cd session-peer
 オプションのMCPツールにはPython 3.10以上と`session-peer[mcp]`が必要です。
 [詳細な手順](https://github.com/abruption/session-peer/blob/main/docs/ja/cli-reference.md#install)を参照してください。
 
+## AIアシスタントに作業を依頼する
+
+すべての文書を自分で確認する代わりに目標を伝えたい場合は、コーディングエージェントに
+[AIを利用したセットアップと運用ガイド](https://github.com/abruption/session-peer/blob/main/docs/ja/ai-assistant-guide.md)を渡してください。
+再利用できる依頼文、承認と秘密情報の境界、検証手順、完了報告の形式を提供します。
+アカウント変更、公開、支払い、再起動、マージ、リリース、公開作業はユーザーが引き続き管理します。
+
 ## オプションのv0.9機能
 
 v0.9.0で提供する実験段階の[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/ja/antigravity.md)は、既存TUI内でブリッジを明示的に起動する必要があります。フィルターなしの`list`には稼働中の登録済みブリッジも表示されます。

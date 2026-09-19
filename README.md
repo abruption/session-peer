@@ -73,6 +73,15 @@ The shell installer requires POSIX; on native Windows use a Python package
 manager. Optional MCP tools require Python 3.10+ and `session-peer[mcp]`.
 See [installation details](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#install).
 
+## Let an AI assistant help
+
+If you would rather describe the goal than work through every document, give your
+coding agent the [AI-assisted setup and operation guide](https://github.com/abruption/session-peer/blob/main/docs/ai-assistant-guide.md).
+It provides a reusable request, approval and secret-handling boundaries,
+validation steps, and a completion-report format. You remain in control of
+account changes, public exposure, payments, reboots, merges, releases, and
+publication.
+
 ## Optional v0.9 features
 
 Available in v0.9.0: experimental [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md) through a bridge explicitly started inside an existing TUI; unfiltered `list` also includes live registered bridges.

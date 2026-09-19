@@ -71,6 +71,13 @@ Shell安装脚本需要POSIX环境。原生Windows请使用Python包管理器。
 可选MCP工具需要Python 3.10或更高版本以及`session-peer[mcp]`。
 请参阅[安装详情](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/cli-reference.md#install)。
 
+## 让AI助手代为处理
+
+如果你更愿意描述目标，而不是逐篇阅读所有文档，请把
+[AI辅助设置与运维指南](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/ai-assistant-guide.md)交给编程代理。
+其中提供可复用的请求、授权和密钥处理边界、验证步骤及完成报告格式。
+账户更改、公开访问、付款、重启、合并、发布版本和公开发布仍由用户控制。
+
 ## 可选的v0.9功能
 
 v0.9.0提供的实验性[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/antigravity.md)需要在现有TUI内显式启动桥接。未筛选的`list`也会显示正在运行的已注册桥接。
