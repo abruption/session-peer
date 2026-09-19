@@ -52,8 +52,8 @@ session-peer send --host worker --to 'codex:00000000-0000-4000-8000-000000000001
 | 仅解析目标，不发送消息 | `session-peer send --to api-worker --dry-run -m "hello"` |
 | 获取JSON结果 | `session-peer list --output-format json` |
 | 从文件读取消息 | `session-peer send --to api-worker -m - < message.txt` |
-| 可选MCP工具 / Codex插件 | [MCP配置](https://github.com/abruption/session-peer/blob/main/docs/mcp.md) |
-| 启动已接收队列消息的Codex会话 | [显式wake](https://github.com/abruption/session-peer/blob/main/docs/wake.md) |
+| 可选MCP工具 / Codex插件 | [MCP配置](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/mcp.md) |
+| 启动已接收队列消息的Codex会话 | [显式wake](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/wake.md) |
 
 ## 安装方式
 
@@ -69,12 +69,19 @@ cd session-peer
 
 Shell安装脚本需要POSIX环境。原生Windows请使用Python包管理器。
 可选MCP工具需要Python 3.10或更高版本以及`session-peer[mcp]`。
-请参阅[安装详情](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#install)。
+请参阅[安装详情](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/cli-reference.md#install)。
+
+## 让AI助手代为处理
+
+如果你更愿意描述目标，而不是逐篇阅读所有文档，请把
+[AI辅助设置与运维指南](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/ai-assistant-guide.md)交给编程代理。
+其中提供可复用的请求、授权和密钥处理边界、验证步骤及完成报告格式。
+账户更改、公开访问、付款、重启、合并、发布版本和公开发布仍由用户控制。
 
 ## 可选的v0.9功能
 
-v0.9.0提供的实验性[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md)需要在现有TUI内显式启动桥接。未筛选的`list`也会显示正在运行的已注册桥接。
-[设备配对与加密中继](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md)需要Unix、Python 3.11以上及`[relay]`扩展。设备身份固定，目标需由维护者显式授权。自托管WSS中继无法解密应用消息；不提供NAT穿透或托管的公共服务。
+v0.9.0提供的实验性[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/antigravity.md)需要在现有TUI内显式启动桥接。未筛选的`list`也会显示正在运行的已注册桥接。
+[设备配对与加密中继](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/paired-devices.md)需要Unix、Python 3.11以上及`[relay]`扩展。设备身份固定，目标需由维护者显式授权。自托管WSS中继无法解密应用消息；不提供NAT穿透或托管的公共服务。
 使用`pipx install 'session-peer[relay]'`安装中继测试版。Antigravity和中继仍需进一步运行验证，发布并不保证长期稳定性。普通本地与SSH命令仍不需要第三方依赖。
 
 ## 发送前须知
@@ -85,19 +92,20 @@ v0.9.0提供的实验性[Antigravity](https://github.com/abruption/session-peer/
 
 ## 文档
 
-- [CLI参考](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md)：命令、JSON、环境变量、更新、限制及验证记录
-- [诊断与回复](https://github.com/abruption/session-peer/blob/main/docs/diagnostics.md) · [多个Codex主目录](https://github.com/abruption/session-peer/blob/main/docs/multi-home-list.md)
-- [从cc-peer迁移](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#moving-from-cc-peer) · [发行版本](https://github.com/abruption/session-peer/releases)
-- [适配器开发](https://github.com/abruption/session-peer/blob/main/docs/agent-adapters.md) · [发布流程](https://github.com/abruption/session-peer/blob/main/RELEASING.md)
+- [项目指南网站](https://abruption.dev/projects/session-peer/)：核心概览、快速开始和文档入口
+- [CLI参考](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/cli-reference.md)：命令、JSON、环境变量、更新、限制及验证记录
+- [诊断与回复](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/diagnostics.md) · [多个Codex主目录](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/multi-home-list.md)
+- [从cc-peer迁移](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/cli-reference.md#moving-from-cc-peer) · [发行版本](https://github.com/abruption/session-peer/releases)
+- [适配器开发](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/agent-adapters.md) · [发布流程](https://github.com/abruption/session-peer/blob/main/RELEASING.zh-CN.md)
 
-四种语言的README提供相同的入门内容，详细文档目前为英文。
-更新翻译时，请保持命令、环境要求和行为描述与英文版一致。CLI输出语言不受影响。
+README和详细文档提供英文、韩文、日文和简体中文版本。英文文档为正本，
+CI会检查翻译文件、命令、要求和行为是否保持一致。这些翻译不会改变CLI的输出语言。
 
 ## 支持与安全报告
 
 普通错误和功能建议请使用[GitHub Issues](https://github.com/abruption/session-peer/issues/new/choose)，
 安全漏洞请通过[私密报告](https://github.com/abruption/session-peer/security/advisories/new)提交，
-并参阅[安全政策](https://github.com/abruption/session-peer/blob/main/SECURITY.md)。
+并参阅[安全政策](https://github.com/abruption/session-peer/blob/main/SECURITY.zh-CN.md)。
 非公开咨询或无法使用私密报告时，请发送邮件至
 [support@abruption.dev](mailto:support@abruption.dev)，标题中注明`[session-peer]`。
 支持服务不保证响应时限。邮件由维护者手动审核，不会自动转为公开Issue。目前接受英文或韩文报告。

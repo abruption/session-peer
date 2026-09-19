@@ -52,8 +52,8 @@ session-peer自体をインストールする必要はありません。
 | 送信せずに宛先を確認する | `session-peer send --to api-worker --dry-run -m "hello"` |
 | JSONで結果を取得する | `session-peer list --output-format json` |
 | ファイルからメッセージを読む | `session-peer send --to api-worker -m - < message.txt` |
-| オプションのMCPツール / Codexプラグイン | [MCP設定](https://github.com/abruption/session-peer/blob/main/docs/mcp.md) |
-| キューに送信したCodexセッションを起動する | [明示的なwake](https://github.com/abruption/session-peer/blob/main/docs/wake.md) |
+| オプションのMCPツール / Codexプラグイン | [MCP設定](https://github.com/abruption/session-peer/blob/main/docs/ja/mcp.md) |
+| キューに送信したCodexセッションを起動する | [明示的なwake](https://github.com/abruption/session-peer/blob/main/docs/ja/wake.md) |
 
 ## インストール方法
 
@@ -69,12 +69,19 @@ cd session-peer
 
 シェルインストーラーにはPOSIX環境が必要です。ネイティブWindowsではPythonパッケージマネージャーを使ってください。
 オプションのMCPツールにはPython 3.10以上と`session-peer[mcp]`が必要です。
-[詳細な手順](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#install)を参照してください。
+[詳細な手順](https://github.com/abruption/session-peer/blob/main/docs/ja/cli-reference.md#install)を参照してください。
+
+## AIアシスタントに作業を依頼する
+
+すべての文書を自分で確認する代わりに目標を伝えたい場合は、コーディングエージェントに
+[AIを利用したセットアップと運用ガイド](https://github.com/abruption/session-peer/blob/main/docs/ja/ai-assistant-guide.md)を渡してください。
+再利用できる依頼文、承認と秘密情報の境界、検証手順、完了報告の形式を提供します。
+アカウント変更、公開、支払い、再起動、マージ、リリース、公開作業はユーザーが引き続き管理します。
 
 ## オプションのv0.9機能
 
-v0.9.0で提供する実験段階の[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md)は、既存TUI内でブリッジを明示的に起動する必要があります。フィルターなしの`list`には稼働中の登録済みブリッジも表示されます。
-[デバイスのペアリング・暗号化リレー](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md)にはUnix、Python 3.11以上、`[relay]`が必要です。デバイスの識別情報を固定し、接続対象は運用者が明示的に許可します。セルフホストのWSSリレーはメッセージを復号できません。NAT越えやホスト済み公開サービスは提供しません。
+v0.9.0で提供する実験段階の[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/ja/antigravity.md)は、既存TUI内でブリッジを明示的に起動する必要があります。フィルターなしの`list`には稼働中の登録済みブリッジも表示されます。
+[デバイスのペアリング・暗号化リレー](https://github.com/abruption/session-peer/blob/main/docs/ja/paired-devices.md)にはUnix、Python 3.11以上、`[relay]`が必要です。デバイスの識別情報を固定し、接続対象は運用者が明示的に許可します。セルフホストのWSSリレーはメッセージを復号できません。NAT越えやホスト済み公開サービスは提供しません。
 リレーのベータ版は`pipx install 'session-peer[relay]'`でインストールできます。Antigravityとリレーには追加の運用検証が必要で、公開は長期安定性の保証ではありません。通常のローカル・SSHコマンドは外部依存なしで使えます。
 
 ## 送信前の確認
@@ -85,19 +92,21 @@ v0.9.0で提供する実験段階の[Antigravity](https://github.com/abruption/s
 
 ## ドキュメント
 
-- [CLIリファレンス](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md): コマンド、JSON、環境変数、更新、制約、検証履歴
-- [診断と返信](https://github.com/abruption/session-peer/blob/main/docs/diagnostics.md) · [複数のCodexホーム](https://github.com/abruption/session-peer/blob/main/docs/multi-home-list.md)
-- [cc-peerからの移行](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#moving-from-cc-peer) · [リリース](https://github.com/abruption/session-peer/releases)
-- [アダプター開発](https://github.com/abruption/session-peer/blob/main/docs/agent-adapters.md) · [リリース手順](https://github.com/abruption/session-peer/blob/main/RELEASING.md)
+- [プロジェクトガイドサイト](https://abruption.dev/projects/session-peer/): 概要、クイックスタート、ドキュメントへの入口
+- [CLIリファレンス](https://github.com/abruption/session-peer/blob/main/docs/ja/cli-reference.md): コマンド、JSON、環境変数、更新、制約、検証履歴
+- [診断と返信](https://github.com/abruption/session-peer/blob/main/docs/ja/diagnostics.md) · [複数のCodexホーム](https://github.com/abruption/session-peer/blob/main/docs/ja/multi-home-list.md)
+- [cc-peerからの移行](https://github.com/abruption/session-peer/blob/main/docs/ja/cli-reference.md#moving-from-cc-peer) · [リリース](https://github.com/abruption/session-peer/releases)
+- [アダプター開発](https://github.com/abruption/session-peer/blob/main/docs/ja/agent-adapters.md) · [リリース手順](https://github.com/abruption/session-peer/blob/main/RELEASING.ja.md)
 
-4言語のREADMEは同じ入門内容を提供します。詳細な文書は現在英語です。
-翻訳を更新する際は、コマンド・要件・動作を英語版に合わせてください。CLIの出力言語は変わりません。
+READMEと詳細文書は英語、韓国語、日本語、簡体字中国語で提供しています。
+英語文書を正本とし、CIで翻訳ファイル、コマンド、要件、動作の整合性を確認します。
+翻訳によってCLIの出力言語が変わることはありません。
 
 ## サポートとセキュリティ
 
 バグや機能の提案は[GitHub Issues](https://github.com/abruption/session-peer/issues/new/choose)、
 脆弱性は[非公開の報告フォーム](https://github.com/abruption/session-peer/security/advisories/new)をご利用ください。
-[セキュリティポリシー](https://github.com/abruption/session-peer/blob/main/SECURITY.md)もご確認ください。
+[セキュリティポリシー](https://github.com/abruption/session-peer/blob/main/SECURITY.ja.md)もご確認ください。
 非公開のご質問や代替の脆弱性報告窓口は、件名に`[session-peer]`を付けて
 [support@abruption.dev](mailto:support@abruption.dev)へご連絡ください。
 対応期限は保証していません。メールは手動で確認し、公開Issueへ自動変換しません。報告は英語・韓国語で受け付けています。
