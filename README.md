@@ -73,6 +73,15 @@ The shell installer requires POSIX; on native Windows use a Python package
 manager. Optional MCP tools require Python 3.10+ and `session-peer[mcp]`.
 See [installation details](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#install).
 
+## Let an AI assistant help
+
+If you would rather describe the goal than work through every document, give your
+coding agent the [AI-assisted setup and operation guide](https://github.com/abruption/session-peer/blob/main/docs/ai-assistant-guide.md).
+It provides a reusable request, approval and secret-handling boundaries,
+validation steps, and a completion-report format. You remain in control of
+account changes, public exposure, payments, reboots, merges, releases, and
+publication.
+
 ## Optional 1.0 alpha features
 
 The opt-in `1.0.0a1` prerelease adds the authenticated public relay and keeps the v0.9 experimental [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md) bridge. Unfiltered `list` also includes live registered bridges.
@@ -87,14 +96,16 @@ Install the alpha explicitly with `pipx install 'session-peer[relay]==1.0.0a1'`;
 
 ## Documentation
 
+- [Project site](https://abruption.dev/projects/session-peer/): a curated overview, quick start, and documentation entry point.
 - [CLI reference](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md): commands, JSON, environment variables, updates, limits, and validation history.
 - [Diagnostics and replies](https://github.com/abruption/session-peer/blob/main/docs/diagnostics.md) · [Multiple Codex homes](https://github.com/abruption/session-peer/blob/main/docs/multi-home-list.md)
 - [Moving from cc-peer](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#moving-from-cc-peer) · [Releases](https://github.com/abruption/session-peer/releases)
 - [Adapter development](https://github.com/abruption/session-peer/blob/main/docs/agent-adapters.md) · [Release process](https://github.com/abruption/session-peer/blob/main/RELEASING.md)
 
-The four README editions cover the same quick start. Detailed docs are currently
-in English. Keep translated commands, requirements, and behavior aligned with
-the English README. These translations do not change the CLI output language.
+The README and detailed documentation are available in English, Korean, Japanese,
+and Simplified Chinese. English is canonical; CI checks that translated files,
+commands, requirements, and behavior stay aligned. These translations do not
+change the CLI output language.
 
 ## Support and security
 

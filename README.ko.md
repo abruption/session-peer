@@ -52,8 +52,8 @@ session-peer를 별도로 설치할 필요는 없어요.
 | 전송 없이 대상 확인 | `session-peer send --to api-worker --dry-run -m "hello"` |
 | JSON 결과 출력 | `session-peer list --output-format json` |
 | 파일에서 메시지 읽기 | `session-peer send --to api-worker -m - < message.txt` |
-| 선택형 MCP 도구 / Codex 플러그인 | [MCP 설정](https://github.com/abruption/session-peer/blob/main/docs/mcp.md) |
-| 큐에 제출한 Codex 세션 활성화 | [명시적 wake](https://github.com/abruption/session-peer/blob/main/docs/wake.md) |
+| 선택형 MCP 도구 / Codex 플러그인 | [MCP 설정](https://github.com/abruption/session-peer/blob/main/docs/ko/mcp.md) |
+| 큐에 제출한 Codex 세션 활성화 | [명시적 wake](https://github.com/abruption/session-peer/blob/main/docs/ko/wake.md) |
 
 ## 설치 방법
 
@@ -69,12 +69,19 @@ cd session-peer
 
 셸 설치기는 POSIX 환경이 필요해요. 네이티브 Windows에서는 Python 패키지 관리자를 사용하세요.
 선택형 MCP 도구는 Python 3.10 이상과 `session-peer[mcp]`가 필요해요.
-[설치 상세](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#install)를 참고하세요.
+[설치 상세](https://github.com/abruption/session-peer/blob/main/docs/ko/cli-reference.md#install)를 참고하세요.
+
+## AI에게 작업 맡기기
+
+모든 문서를 직접 살피는 대신 목표를 설명하고 싶다면 코딩 에이전트에게
+[AI 지원 설치·운영 가이드](https://github.com/abruption/session-peer/blob/main/docs/ko/ai-assistant-guide.md)를 전달하세요.
+재사용 가능한 요청문, 승인·비밀정보 경계, 검증 단계와 완료 보고 형식을 제공해요.
+계정 변경, 공개 노출, 결제, 재부팅, 병합, 릴리스와 게시는 사용자가 계속 통제해요.
 
 ## 선택형 1.0 알파 기능
 
-명시적으로 선택하는 `1.0.0a1` 시험판에는 인증된 공개 릴레이가 추가되며, v0.9의 실험 상태 [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md) 브리지도 유지돼요. 필터 없는 `list`에는 실행 중인 등록 브리지도 표시돼요.
-[기기 페어링·암호화 릴레이](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md)는 Unix·Python 3.11 이상·`[relay]` 확장이 필요해요. 기기 신원을 고정하며 수신 기기에서 대상을 명시적으로 허용해야 해요. 블라인드 WSS 릴레이는 메시지를 복호화할 수 없으며 호스팅 서비스의 가용성은 패키지와 별도로 운영돼요.
+명시적으로 선택하는 `1.0.0a1` 시험판에는 인증된 공개 릴레이가 추가되며, v0.9의 실험 상태 [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/ko/antigravity.md) 브리지도 유지돼요. 필터 없는 `list`에는 실행 중인 등록 브리지도 표시돼요.
+[기기 페어링·암호화 릴레이](https://github.com/abruption/session-peer/blob/main/docs/ko/paired-devices.md)는 Unix·Python 3.11 이상·`[relay]` 확장이 필요해요. 기기 신원을 고정하며 수신 기기에서 대상을 명시적으로 허용해야 해요. 블라인드 WSS 릴레이는 메시지를 복호화할 수 없으며 호스팅 서비스의 가용성은 패키지와 별도로 운영돼요.
 알파는 `pipx install 'session-peer[relay]==1.0.0a1'`로 명시적으로 설치하세요. 일반 업그레이드는 시험판을 선택하지 않아요. [session-peer 프로젝트 페이지](https://abruption.dev/projects/session-peer/)와 위의 기기 페어링 문서부터 확인하세요. 알파 공개는 장기 안정성을 뜻하지 않으며 일반 로컬·SSH 명령은 외부 의존성 없이 유지돼요.
 
 ## 전송 전 확인
@@ -85,19 +92,21 @@ cd session-peer
 
 ## 문서
 
-- [CLI 상세](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md): 명령, JSON, 환경 변수, 업데이트, 제약, 검증 이력
-- [진단·회신](https://github.com/abruption/session-peer/blob/main/docs/diagnostics.md) · [여러 Codex 홈](https://github.com/abruption/session-peer/blob/main/docs/multi-home-list.md)
-- [cc-peer에서 전환](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#moving-from-cc-peer) · [릴리스](https://github.com/abruption/session-peer/releases)
-- [어댑터 개발](https://github.com/abruption/session-peer/blob/main/docs/agent-adapters.md) · [릴리스 절차](https://github.com/abruption/session-peer/blob/main/RELEASING.md)
+- [프로젝트 안내 사이트](https://abruption.dev/projects/session-peer/): 핵심 소개, 빠른 시작과 문서 진입점
+- [CLI 상세](https://github.com/abruption/session-peer/blob/main/docs/ko/cli-reference.md): 명령, JSON, 환경 변수, 업데이트, 제약, 검증 이력
+- [진단·회신](https://github.com/abruption/session-peer/blob/main/docs/ko/diagnostics.md) · [여러 Codex 홈](https://github.com/abruption/session-peer/blob/main/docs/ko/multi-home-list.md)
+- [cc-peer에서 전환](https://github.com/abruption/session-peer/blob/main/docs/ko/cli-reference.md#moving-from-cc-peer) · [릴리스](https://github.com/abruption/session-peer/releases)
+- [어댑터 개발](https://github.com/abruption/session-peer/blob/main/docs/ko/agent-adapters.md) · [릴리스 절차](https://github.com/abruption/session-peer/blob/main/RELEASING.ko.md)
 
-네 언어 README는 같은 빠른 시작 내용을 제공해요. 상세 문서는 현재 영어로 제공해요.
-번역을 수정할 때 명령·요구 환경·동작을 영어 README와 맞춰주세요. CLI 출력 언어는 변경되지 않아요.
+README와 상세 문서는 영어, 한국어, 일본어, 중국어 간체로 제공해요. 영어 문서가
+정본이며 CI가 번역 파일, 명령, 요구 사항, 동작의 정합성을 검사해요. 이 번역은 CLI
+출력 언어를 바꾸지 않아요.
 
 ## 문의·보안 제보
 
 버그·기능 요청은 [GitHub Issues](https://github.com/abruption/session-peer/issues/new/choose),
 취약점은 [비공개 제보](https://github.com/abruption/session-peer/security/advisories/new)를 이용하세요.
-[보안 정책](https://github.com/abruption/session-peer/blob/main/SECURITY.md)도 확인해주세요.
+[보안 정책](https://github.com/abruption/session-peer/blob/main/SECURITY.ko.md)도 확인해주세요.
 비공개 문의 또는 대체 보안 제보는 제목에 `[session-peer]`를 넣어
 [support@abruption.dev](mailto:support@abruption.dev)로 보내주세요.
 응답 기한은 보장하지 않으며 메일은 수동 검토하고 공개 Issue로 자동 전환하지 않아요. 영어·한국어 제보를 받아요.
