@@ -32,5 +32,10 @@ these units do not claim a kernel restriction to a single listening port.
 
 Use the [validation record](../../docs/validation/69-rc.md) and
 [watchdog runbook](../../docs/relay-watchdog.md) for evidence and limitations.
-Migration/replay initialization, Caddy changes, boot enablement and fault tests
-are explicit operator steps; adding these files does not execute them.
+Migration/replay initialization, Caddy changes and fault tests are explicit
+operator steps; adding these files does not execute them. Production boot uses
+only `session-peer-stack.target` as the enabled entry point. Control and relay
+remain disabled as direct boot entries, and migration/replay initialization
+remain inactive manual one-shots. This policy passed an actual KR reboot on
+2026-09-19; see the validation record for timings and existing-infrastructure
+checks.
