@@ -23,6 +23,27 @@ Preserve signing keys, operation receipts, tombstones, revision counter and repl
 highwater across restarts, upgrades and rollbacks; never restore an old snapshot
 as current state without explicit restore fencing.
 
+`session-peer-backup-snapshot.py` creates the state input for the KR encrypted
+Restic job. Run it as root. It stops relay, readiness and control explicitly,
+backs up SQLite through its online backup API while the writers are stopped,
+copies the signing key, provider configuration, public state and replay
+high-water into a root-only snapshot, verifies the signing key against the
+published JWKS, and restarts only a stack that was active before the snapshot.
+The regular DR job must fail closed if this helper fails and include all of:
+
+- `/var/lib/session-peer-backup/snapshots`
+- `/etc/session-peer-control` and the four session-peer systemd units
+- `/opt/session-peer-control`, `/opt/session-peer-relay` and
+  `/opt/session-peer-infra`
+- `/usr/local/sbin/session-peer-backup-snapshot.py`
+
+Do not restore those paths over a running service. Restore the encrypted
+snapshot to a root-only staging directory first, verify `manifest.json`, SQLite
+integrity and table counts, signing-key/JWKS identity, state/replay revisions,
+spent-ticket count and runtime symlinks, then perform a separately reviewed
+fenced recovery with the stack stopped. Historical Restic data is recovery
+evidence, not an automatically current authority.
+
 The explicit stack uses Upholds plus dependency shutdown and fresh readiness.
 The application sends systemd watchdog notifications only while durable state
 and listener health pass; Type=notify, NotifyAccess=all, flock --no-fork and the

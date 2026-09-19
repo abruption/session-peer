@@ -140,3 +140,21 @@ missing replay state. Do not put initialization in an automatic restart hook.
 After state loss, reconcile/fence the control authority before explicit recovery.
 Although spent ticket IDs expire quickly, the same file also retains the control
 revision high-water mark and must be preserved for the service's lifetime.
+
+## KR service backup and restore staging
+
+The deployed KR service uses `deploy/kr/session-peer-backup-snapshot.py` before
+its encrypted Restic job. The helper briefly stops the coordinated stack and
+creates a root-only recovery set containing a transactionally consistent control
+database, the admission signing key, provider configuration, public auth state
+and the relay replay/high-water file. It validates database integrity and the
+signing key's published JWK before making the snapshot visible, then restores the
+previously active stack. A partial snapshot aborts the DR job.
+
+The Restic scope also contains the immutable control and relay runtimes, readiness
+helper and installed service units. Recovery must first restore into an isolated
+root-only directory and validate the snapshot manifest, file hashes and modes,
+SQLite table counts, state/replay revisions, spent entries, signing key and
+runtime links. Never overlay a live service or automatically promote an old
+control database, signing key or replay high-water. Production replacement still
+requires a stopped stack and explicit rollback/revocation fencing.
