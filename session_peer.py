@@ -344,9 +344,14 @@ def _lsof_executable() -> str | None:
 
 def _process_start_time(pid: int) -> str | None:
     try:
+        env = os.environ.copy()
+        # ps formats lstart according to LC_TIME.  Bridges may be launched by
+        # an interactive TUI with a different locale from relay workers, so a
+        # localized value is not a stable PID-reuse identity.
+        env["LC_ALL"] = "C"
         done = subprocess.run(
             ["ps", "-p", str(pid), "-o", "lstart="], capture_output=True,
-            encoding="utf-8", errors="replace", timeout=DETECT_TIMEOUT,
+            encoding="utf-8", errors="replace", timeout=DETECT_TIMEOUT, env=env,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -2661,7 +2666,7 @@ class AgyBridge:
         self.seen[ident] = signature, result
         try:
             # No shell; native stdout/stderr may contain credentials and are discarded.
-            done = subprocess.run([str(self.api), 'send-message', '--title=session-peer', '--',
+            done = subprocess.run([str(self.api), 'send-message', '--title=session-peer',
                                    self.info['id'], text], stdout=subprocess.DEVNULL,
                                   stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, timeout=15)
             result = {**result, 'nativeExitCode': done.returncode}

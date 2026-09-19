@@ -9,8 +9,10 @@ automatically. Unfiltered listing includes live bridge registrations.
 
 It delivers to an **existing TUI** using a user-started local bridge and the
 [official agentapi interface](https://antigravity.google/docs/sidecars/).
-Mac and Linux CLI 1.2.4 experiments demonstrated idle delivery; a CLI sidecar
-autostart mechanism has **not** been established. `agy -p` and starting another
+Mac and Linux CLI 1.2.4 experiments demonstrated idle delivery. A later macOS
+CLI 1.2.7 RC run passed both direct and public-relay delivery after aligning the
+documented `agentapi send-message` positionals. A CLI sidecar autostart mechanism
+has **not** been established. `agy -p` and starting another
 writer with `--conversation` are not delivery substitutes. Windows bridge
 operation is unsupported; other adapters remain available there.
 
@@ -27,6 +29,8 @@ does not identify the CLI's home. Default home is `~/.gemini/antigravity-cli`;
 use `--antigravity-home /absolute/path` for a custom home. Registration verifies
 an ancestor `agy` process, UID, start time, and an open presence file for that
 exact home and conversation. Linux uses `/proc`; macOS uses `ps` and `lsof`.
+On macOS, process start time is read with a fixed C locale so a bridge started
+from a localized TUI remains discoverable by relay workers using another locale.
 An open presence FD is identity evidence, **not proof of a held kernel lock**.
 Multiple matching ancestor registrations are not used to infer a sender.
 

@@ -44,6 +44,8 @@ class Protocol(unittest.TestCase):
             with self.assertRaisesRegex(p.AdapterError, 'request_id_conflict'):
                 self.bridge.handle({**req, 'text': 'changed'})
             self.assertEqual(run.call_count, 1)
+            self.assertEqual(run.call_args.args[0], [
+                '/fixture/bin/agentapi', 'send-message', '--title=session-peer', THREAD, req['text']])
             self.assertEqual(run.call_args.args[0][-1], req['text'])
             self.assertEqual(run.call_args.kwargs['stdout'], subprocess.DEVNULL)
 
@@ -151,6 +153,12 @@ class Adapter(unittest.TestCase):
         with mock.patch.object(p,'agy_registrations',return_value=[]):
             self.assertEqual(self.adapter.list(self.ctx)['sessions'],[])
             self.assertEqual(self.adapter.diagnose(self.ctx)['status'],'disabled')
+
+    def test_process_start_identity_uses_stable_locale(self):
+        completed = argparse.Namespace(returncode=0, stdout='Sat Sep 19 12:00:00 2026\n')
+        with mock.patch.object(p.subprocess, 'run', return_value=completed) as run:
+            self.assertEqual(p._process_start_time(12), 'Sat Sep 19 12:00:00 2026')
+        self.assertEqual(run.call_args.kwargs['env']['LC_ALL'], 'C')
 
 
 @unittest.skipUnless(os.name=='posix','Unix bridge')

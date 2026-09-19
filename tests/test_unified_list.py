@@ -28,7 +28,8 @@ class UnifiedList(unittest.TestCase):
         self.codex = {**type(self).codex, "agent": "codex", "updatedAt": 1,
                       "codexHome": str(self.home), "stateDb": str(self.home / "state_5.sqlite")}
         for patcher in (mock.patch.object(Path, "home", return_value=root),
-                        mock.patch.dict(os.environ)):
+                        mock.patch.dict(os.environ),
+                        mock.patch.object(peer, "agy_registrations", return_value=[])):
             patcher.start()
             self.addCleanup(patcher.stop)
         os.environ.pop("CODEX_HOME", None)

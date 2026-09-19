@@ -27,7 +27,8 @@ class MultiHome(unittest.TestCase):
         self.orca = self.root/'Library/Application Support/orca/codex-accounts'
         self.args = argparse.Namespace(codex_home=None, agent='codex', all=False)
         for patcher in (mock.patch.object(Path,'home',return_value=self.root),
-                        mock.patch.dict(os.environ)):
+                        mock.patch.dict(os.environ),
+                        mock.patch.object(peer,'agy_registrations',return_value=[])):
             patcher.start(); self.addCleanup(patcher.stop)
         os.environ.pop('CODEX_HOME',None)
         os.environ.pop('SESSION_PEER_CODEX_HOMES',None)
