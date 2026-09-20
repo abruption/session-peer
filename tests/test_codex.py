@@ -263,6 +263,16 @@ class CodexWriterEvidence(unittest.TestCase):
             {"pid": 42, "command": "codex", "uid": 501},
         ])
 
+    def test_missing_lock_is_inactive_even_when_flock_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.object(peer, "fcntl", None):
+            lock = Path(directory) / "missing.lock"
+            self.assertEqual(peer.probe_codex_writer_lock(lock),
+                             ("absent", "lock_absent"))
+            lock.write_text("fixture", encoding="utf-8")
+            self.assertEqual(peer.probe_codex_writer_lock(lock),
+                             ("unknown", "lock_probe_unsupported"))
+
     @unittest.skipIf(peer.fcntl is None, "POSIX flock is unavailable")
     def test_probes_a_real_advisory_lock_without_changing_the_file(self):
         with tempfile.TemporaryDirectory() as directory:

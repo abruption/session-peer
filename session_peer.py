@@ -269,8 +269,6 @@ def _codex_lock_snapshot(path: Path) -> tuple[int, int, int, int] | None:
 
 def probe_codex_writer_lock(path: Path) -> tuple[str, str]:
     """Probe Codex's real advisory lock without changing the lock file."""
-    if fcntl is None:
-        return "unknown", "lock_probe_unsupported"
     try:
         before = path.lstat()
     except (FileNotFoundError, NotADirectoryError):
@@ -281,6 +279,8 @@ def probe_codex_writer_lock(path: Path) -> tuple[str, str]:
         return "unknown", "lock_symlink"
     if not stat.S_ISREG(before.st_mode):
         return "unknown", "lock_not_regular"
+    if fcntl is None:
+        return "unknown", "lock_probe_unsupported"
 
     descriptor = None
     try:
