@@ -6,65 +6,113 @@
     <meta name="robots" content="noindex,nofollow" />
     <title>Session Peer 릴레이</title>
     <style>
-      :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background:#f4f6f8; color:#172033; }
+      :root { color-scheme:light; font-family:Inter,ui-sans-serif,system-ui,sans-serif; background:#f4f6f8; color:#172033; }
       * { box-sizing:border-box; }
       body { margin:0; min-height:100vh; }
-      main { width:min(1040px, calc(100% - 32px)); margin:0 auto; padding:48px 0 72px; }
+      main { width:min(1040px,calc(100% - 32px)); margin:0 auto; padding:48px 0 72px; }
       header { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; margin-bottom:28px; }
-      h1 { margin:0 0 8px; font-size:clamp(28px, 4vw, 42px); letter-spacing:-.04em; }
+      h1 { margin:0 0 8px; font-size:clamp(28px,4vw,42px); letter-spacing:-.04em; }
       p { margin:0; color:#637087; }
       a { color:#2167d5; text-decoration:none; }
       .status { display:inline-flex; align-items:center; gap:8px; padding:9px 13px; border-radius:999px; background:#fff; border:1px solid #dce2ea; font-weight:700; }
       .dot { width:9px; height:9px; border-radius:50%; background:#d18b00; }
       .healthy .dot { background:#15945a; }
       .unhealthy .dot { background:#d63b45; }
-      .grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:16px; }
-      section { background:#fff; border:1px solid #dce2ea; border-radius:18px; padding:22px; box-shadow:0 8px 28px rgba(35, 48, 73, .06); }
+      .grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
+      section { background:#fff; border:1px solid #dce2ea; border-radius:18px; padding:22px; box-shadow:0 8px 28px rgba(35,48,73,.06); }
       h2 { margin:0 0 18px; font-size:15px; color:#59667c; }
-      dl { margin:0; display:grid; gap:14px; }
-      dl div { display:flex; justify-content:space-between; gap:16px; align-items:baseline; }
-      dt { color:#637087; }
-      dd { margin:0; font-size:22px; font-weight:750; font-variant-numeric:tabular-nums; }
+      .stat { display:flex; width:100%; justify-content:space-between; gap:16px; align-items:baseline; padding:7px 0; border:0; background:transparent; color:inherit; font:inherit; text-align:left; }
+      .stat span:first-child { color:#637087; }
+      .stat strong { font-size:22px; font-weight:750; font-variant-numeric:tabular-nums; }
+      button.stat { cursor:pointer; border-radius:8px; }
+      button.stat:hover,button.stat:focus-visible { background:#f1f5fb; outline:none; }
+      button.stat strong::after { content:'›'; margin-left:8px; color:#8d99ac; }
       footer { display:flex; justify-content:space-between; gap:16px; margin-top:24px; font-size:13px; color:#778398; }
+      dialog { width:min(1000px,calc(100% - 28px)); max-height:82vh; padding:0; border:1px solid #dce2ea; border-radius:18px; box-shadow:0 24px 80px rgba(23,32,51,.24); }
+      dialog::backdrop { background:rgba(23,32,51,.46); }
+      .dialog-head { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; padding:22px 24px; border-bottom:1px solid #e4e8ee; }
+      .dialog-head h2 { margin:0 0 5px; color:#172033; font-size:21px; }
+      .close { border:0; background:#eef2f7; border-radius:10px; width:36px; height:36px; cursor:pointer; font-size:22px; }
+      .table-wrap { overflow:auto; max-height:calc(82vh - 110px); }
+      table { width:100%; border-collapse:collapse; font-size:13px; }
+      th,td { padding:12px 14px; border-bottom:1px solid #edf0f4; text-align:left; white-space:nowrap; }
+      th { position:sticky; top:0; background:#f8fafc; color:#59667c; font-weight:700; }
+      td { font-variant-numeric:tabular-nums; }
+      .empty,.loading { padding:36px 24px; text-align:center; color:#637087; }
       @media (max-width:760px) { header { flex-direction:column; } .grid { grid-template-columns:1fr; } }
     </style>
   </head>
   <body>
     <main>
       <header>
-        <div><h1>Session Peer 릴레이</h1><p>Authelia로 보호되는 식별 정보 없는 운영 지표입니다.</p></div>
+        <div><h1>Session Peer 릴레이</h1><p>지표를 누르면 운영 상세 데이터를 확인할 수 있습니다.</p></div>
         <div id="health" class="status"><span class="dot"></span><span>확인 중</span></div>
       </header>
       <div class="grid">
-        <section><h2>가입</h2><dl><div><dt>모드</dt><dd id="signup-mode">—</dd></div><div><dt>등록 사용자</dt><dd id="registered-users">—</dd></div><div><dt>공개 가입</dt><dd id="public-users">—</dd></div><div><dt>대기</dt><dd id="pending-signups">—</dd></div></dl></section>
-        <section><h2>기기</h2><dl><div><dt>전체</dt><dd id="devices-total">—</dd></div><div><dt>활성</dt><dd id="devices-active">—</dd></div><div><dt>폐기</dt><dd id="devices-revoked">—</dd></div></dl></section>
-        <section><h2>작업</h2><dl><div><dt>전체</dt><dd id="operations-total">—</dd></div><div><dt>완료</dt><dd id="operations-committed">—</dd></div><div><dt>대기</dt><dd id="operations-pending">—</dd></div><div><dt>상태 리비전</dt><dd id="revision">—</dd></div></dl></section>
+        <section><h2>가입</h2>
+          <div class="stat"><span>모드</span><strong id="signup-mode">—</strong></div>
+          <button class="stat" data-view="users" data-filter="all" data-title="등록 사용자"><span>등록 사용자</span><strong id="registered-users">—</strong></button>
+          <button class="stat" data-view="signups" data-filter="active" data-title="공개 가입"><span>공개 가입</span><strong id="public-users">—</strong></button>
+          <button class="stat" data-view="signups" data-filter="pending" data-title="가입 대기"><span>대기</span><strong id="pending-signups">—</strong></button>
+        </section>
+        <section><h2>기기</h2>
+          <button class="stat" data-view="devices" data-filter="all" data-title="전체 기기"><span>전체</span><strong id="devices-total">—</strong></button>
+          <button class="stat" data-view="devices" data-filter="active" data-title="활성 기기"><span>활성</span><strong id="devices-active">—</strong></button>
+          <button class="stat" data-view="devices" data-filter="revoked" data-title="폐기 기기"><span>폐기</span><strong id="devices-revoked">—</strong></button>
+        </section>
+        <section><h2>작업</h2>
+          <button class="stat" data-view="operations" data-filter="all" data-title="전체 작업"><span>전체</span><strong id="operations-total">—</strong></button>
+          <button class="stat" data-view="operations" data-filter="committed" data-title="완료 작업"><span>완료</span><strong id="operations-committed">—</strong></button>
+          <button class="stat" data-view="operations" data-filter="pending" data-title="대기 작업"><span>대기</span><strong id="operations-pending">—</strong></button>
+          <div class="stat"><span>상태 리비전</span><strong id="revision">—</strong></div>
+        </section>
       </div>
       <footer><span id="updated">아직 갱신되지 않음</span><a href="/">관리 홈으로</a></footer>
     </main>
+    <dialog id="details"><div class="dialog-head"><div><h2 id="detail-title">상세</h2><p id="detail-note">최대 100개</p></div><button class="close" aria-label="닫기">×</button></div><div id="detail-body" class="loading">불러오는 중</div></dialog>
     <script>
-      const ids = (id, value) => { document.getElementById(id).textContent = String(value); };
-      async function refresh() {
-        const health = document.getElementById('health');
-        try {
-          const response = await fetch('/session-peer/api/metrics', { credentials:'same-origin', cache:'no-store' });
-          if (!response.ok) throw new Error(String(response.status));
-          const m = await response.json();
-          health.className = 'status ' + (m.serviceHealthy ? 'healthy' : 'unhealthy');
-          health.lastElementChild.textContent = m.serviceHealthy ? '정상' : '점검 필요';
-          ids('signup-mode', m.signup.mode === 'open' ? '공개' : '닫힘');
-          ids('registered-users', m.signup.registeredUsers);
-          ids('public-users', m.signup.publicUsers);
-          ids('pending-signups', m.signup.pendingReservations);
-          ids('devices-total', m.devices.total); ids('devices-active', m.devices.active); ids('devices-revoked', m.devices.revoked);
-          ids('operations-total', m.operations.total); ids('operations-committed', m.operations.committed); ids('operations-pending', m.operations.pending);
-          ids('revision', m.stateRevision);
-          ids('updated', '마지막 갱신 ' + new Date(m.generatedAt).toLocaleString('ko-KR'));
-        } catch {
-          health.className = 'status unhealthy'; health.lastElementChild.textContent = '불러오기 실패';
-        }
+      const set = (id,value) => { document.getElementById(id).textContent=String(value); };
+      const columns={
+        users:[['name','이름'],['email','이메일'],['emailVerified','확인'],['providers','공급자'],['createdAt','생성'],['activeDevices','활성 기기'],['revokedDevices','폐기 기기']],
+        signups:[['provider','공급자'],['status','상태'],['userName','사용자'],['userEmail','이메일'],['createdAt','생성'],['expiresAt','만료']],
+        devices:[['name','기기'],['ownerName','소유자'],['ownerEmail','이메일'],['providers','공급자'],['principalHint','Principal'],['keyGeneration','세대'],['revoked','상태']],
+        operations:[['operationId','작업 ID'],['ownerName','소유자'],['ownerEmail','이메일'],['committed','상태'],['principalHint','Principal'],['keyGeneration','세대']]
+      };
+      const value=(key,v)=>{
+        if(v===null||v===undefined||v==='') return '—';
+        if(key==='emailVerified') return v?'확인됨':'미확인';
+        if(key==='revoked') return v?'폐기':'활성';
+        if(key==='committed') return v?'완료':'대기';
+        if(key==='status') return v==='active'?'활성':'대기';
+        if(key==='expiresAt'&&Number(v)===0) return '—';
+        if(['createdAt','expiresAt'].includes(key)) { const n=Number(v); const d=new Date(Number.isFinite(n)&&n<1e12?n*1000:v); return Number.isNaN(d.valueOf())?String(v):d.toLocaleString('ko-KR'); }
+        return String(v);
+      };
+      async function refresh(){
+        const health=document.getElementById('health');
+        try{
+          const response=await fetch('/session-peer/api/metrics',{credentials:'same-origin',cache:'no-store'}); if(!response.ok)throw new Error(String(response.status));
+          const m=await response.json(); health.className='status '+(m.serviceHealthy?'healthy':'unhealthy'); health.lastElementChild.textContent=m.serviceHealthy?'정상':'점검 필요';
+          set('signup-mode',m.signup.mode==='open'?'공개':'닫힘'); set('registered-users',m.signup.registeredUsers); set('public-users',m.signup.publicUsers); set('pending-signups',m.signup.pendingReservations);
+          set('devices-total',m.devices.total); set('devices-active',m.devices.active); set('devices-revoked',m.devices.revoked);
+          set('operations-total',m.operations.total); set('operations-committed',m.operations.committed); set('operations-pending',m.operations.pending); set('revision',m.stateRevision);
+          set('updated','마지막 갱신 '+new Date(m.generatedAt).toLocaleString('ko-KR'));
+        }catch{ health.className='status unhealthy'; health.lastElementChild.textContent='불러오기 실패'; }
       }
-      refresh(); setInterval(refresh, 30000);
+      async function details(button){
+        const dialog=document.getElementById('details'),body=document.getElementById('detail-body');
+        set('detail-title',button.dataset.title); set('detail-note','최대 100개 표시'); body.className='loading'; body.textContent='불러오는 중'; dialog.showModal();
+        try{
+          const q=new URLSearchParams({view:button.dataset.view,filter:button.dataset.filter}); const response=await fetch('/session-peer/api/metrics?'+q,{credentials:'same-origin',cache:'no-store'}); if(!response.ok)throw new Error(String(response.status));
+          const data=await response.json(),cols=columns[data.view]; if(!data.rows.length){body.className='empty';body.textContent='표시할 데이터가 없습니다.';return;}
+          const table=document.createElement('table'),thead=document.createElement('thead'),tr=document.createElement('tr'); cols.forEach(([,label])=>{const th=document.createElement('th');th.textContent=label;tr.append(th);}); thead.append(tr); table.append(thead);
+          const tbody=document.createElement('tbody'); data.rows.forEach(row=>{const line=document.createElement('tr');cols.forEach(([key])=>{const td=document.createElement('td');td.textContent=value(key,row[key]);line.append(td);});tbody.append(line);}); table.append(tbody); body.className='table-wrap';body.replaceChildren(table);
+        }catch{body.className='empty';body.textContent='상세 데이터를 불러오지 못했습니다.';}
+      }
+      document.querySelectorAll('button.stat').forEach(button=>button.addEventListener('click',()=>details(button)));
+      document.querySelector('.close').addEventListener('click',()=>document.getElementById('details').close());
+      document.getElementById('details').addEventListener('click',event=>{if(event.target===event.currentTarget)event.currentTarget.close();});
+      refresh();setInterval(refresh,30000);
     </script>
   </body>
 </html>

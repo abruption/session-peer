@@ -69,9 +69,11 @@ with session-peer. The exact `/session-peer` page and
 `/session-peer/api/metrics` route use the portal's existing Authelia session as
 the sole browser login. The API proxies only to the control service's dedicated
 `127.0.0.1:3771` listener; never expose that listener through the relay host or
-bind it publicly. Public RC signups never inherit portal access. The metrics
-response contains aggregate counts only, with no
-email, provider account ID, user ID, principal, token, or certificate.
+bind it publicly. Public RC signups never inherit portal access. The default
+response contains aggregate counts. Allowlisted drill-down queries may return
+operator-useful names, email addresses, providers, operation IDs and shortened
+principal hints. They never return provider account IDs, internal user IDs, full
+principals, tokens, cookies, proofs, request hashes, certificates or keys.
 
 `admin-session-peer.caddy` is the reviewed insertion block for the existing
 `(b_admin)` snippet. Place it before that snippet's catch-all `handle`, adapt and

@@ -85,6 +85,24 @@ it("starts real compiled server only on loopback; enforces host, body limit and 
       operations: { total: 0, committed: 0, pending: 0 },
     });
     expect(JSON.stringify(metrics)).not.toMatch(/email|principal|userId|accountId/i);
+    const details = await (
+      await fetch(
+        adminOrigin + "/session-peer/api/metrics?view=devices&filter=active",
+      )
+    ).json();
+    expect(details).toMatchObject({
+      view: "devices",
+      filter: "active",
+      limit: 100,
+      rows: [],
+    });
+    expect(
+      (
+        await fetch(
+          adminOrigin + "/session-peer/api/metrics?view=devices&filter=secret",
+        )
+      ).status,
+    ).toBe(400);
     expect((await fetch(adminOrigin + "/healthz")).status).toBe(404);
     expect(
       (
