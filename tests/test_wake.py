@@ -93,8 +93,11 @@ class Wake(unittest.TestCase):
         wake.assert_called_once_with('codex', self.root, THREAD, str(self.root), 1)
 
     def test_active_writer_only_queues(self):
+        active = {'activity':'live_writer', 'writerLock':'held', 'ownerPid':42,
+                  'ownerStartTime':'stable', 'ownerStable':True,
+                  'reason':'stable_live_writer'}
         with mock.patch.object(peer, 'codex_wake_preflight', return_value={'cwd':str(self.root)}), \
-             mock.patch.object(peer, 'inspect_codex_writer', return_value={'activity':'live_writer'}), \
+             mock.patch.object(peer, 'inspect_codex_writer', return_value=active), \
              mock.patch.object(peer, '_queue_codex', return_value=dict(self.submitted)) as queue, \
              mock.patch.object(peer, 'run_codex_wake') as wake:
             result = peer.queue_codex(self.args, 'test')
