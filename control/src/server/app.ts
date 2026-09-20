@@ -16,6 +16,35 @@ export function sameOrigin(request: Request, origin: string) {
       new URL(request.url).origin === origin)
   );
 }
+
+/** Aggregate-only endpoint for a separate loopback listener behind Authelia. */
+export function createAdminMetricsApp(
+  db: Database.Database,
+  control: RelayControl,
+  config: Config,
+) {
+  if (!config.adminOrigin) throw new Error("admin_origin_required");
+  return async function handleAdminMetrics(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const headers = {
+      "cache-control": "no-store",
+      "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+      "content-type": "application/json",
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+    };
+    const json = (body: unknown, status = 200) =>
+      new Response(JSON.stringify(body), { status, headers });
+    if (url.origin !== config.adminOrigin)
+      return json({ error: "invalid_origin" }, 400);
+    if (url.pathname !== "/session-peer/api/metrics")
+      return json({ error: "not_found" }, 404);
+    if (request.method !== "GET")
+      return json({ error: "method_not_allowed" }, 405);
+    return json(adminMetrics(db, config, control.isHealthy()));
+  };
+}
 export function createApp(
   auth: Auth,
   db: Database.Database,

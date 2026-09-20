@@ -4,7 +4,7 @@ import { loadConfig } from "./config.js";
 import { openDatabase } from "./storage.js";
 import { createAuth } from "./auth.js";
 import { RelayControl } from "./relay-control.js";
-import { createApp } from "./app.js";
+import { createAdminMetricsApp, createApp } from "./app.js";
 import { createWatchdog } from "./watchdog.js";
 process.umask(0o077);
 const config = loadConfig();
@@ -21,6 +21,18 @@ const app = createApp(
 const port = Number(process.env.PORT ?? 3770);
 if (!Number.isSafeInteger(port) || port < 1024 || port > 65535)
   throw new Error("invalid_port");
+const adminPortText = process.env.SESSION_PEER_ADMIN_PORT;
+if (!!config.adminOrigin !== !!adminPortText)
+  throw new Error("incomplete_admin_listener_configuration");
+const adminPort = adminPortText ? Number(adminPortText) : undefined;
+if (
+  adminPort !== undefined &&
+  (!Number.isSafeInteger(adminPort) ||
+    adminPort < 1024 ||
+    adminPort > 65535 ||
+    adminPort === port)
+)
+  throw new Error("invalid_admin_port");
 const server = createServer(async (incoming, outgoing) => {
   try {
     if (incoming.headers.host !== new URL(config.origin).host) {
@@ -72,10 +84,56 @@ const server = createServer(async (incoming, outgoing) => {
     outgoing.end('{"error":"internal_error"}');
   }
 });
-const watchdog = createWatchdog(() => server.listening && control.isHealthy());
+const adminApp = config.adminOrigin
+  ? createAdminMetricsApp(db, control, config)
+  : undefined;
+const adminServer = adminApp
+  ? createServer(async (incoming, outgoing) => {
+      try {
+        if (
+          !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
+            incoming.socket.remoteAddress ?? "",
+          ) ||
+          incoming.headers.host !== new URL(config.adminOrigin!).host
+        ) {
+          outgoing.writeHead(400);
+          outgoing.end();
+          return;
+        }
+        if (!incoming.url?.startsWith("/") || incoming.url.startsWith("//")) {
+          outgoing.writeHead(400);
+          outgoing.end();
+          return;
+        }
+        const method = incoming.method ?? "GET";
+        const response = await adminApp(
+          new Request(config.adminOrigin! + incoming.url, { method }),
+        );
+        outgoing.writeHead(
+          response.status,
+          Object.fromEntries(response.headers),
+        );
+        outgoing.end(Buffer.from(await response.arrayBuffer()));
+      } catch {
+        outgoing.writeHead(500, { "content-type": "application/json" });
+        outgoing.end('{"error":"internal_error"}');
+      }
+    })
+  : undefined;
+const watchdog = createWatchdog(
+  () =>
+    server.listening &&
+    (!adminServer || adminServer.listening) &&
+    control.isHealthy(),
+);
 server.requestTimeout = 10000;
 server.headersTimeout = 10000;
 server.maxHeadersCount = 50;
+if (adminServer) {
+  adminServer.requestTimeout = 5000;
+  adminServer.headersTimeout = 5000;
+  adminServer.maxHeadersCount = 20;
+}
 const timer = setInterval(() => {
   try {
     control.publish();
@@ -84,21 +142,30 @@ const timer = setInterval(() => {
   }
 }, 60000);
 timer.unref();
-server.listen(port, "127.0.0.1", () => {
+function ready() {
   void watchdog.start().then(() => {
     console.log("session-peer control ready (loopback only)");
   }).catch(() => {
     console.error("control_watchdog_start_failed");
     process.exit(1);
   });
+}
+server.listen(port, "127.0.0.1", () => {
+  if (adminServer) adminServer.listen(adminPort!, "127.0.0.1", ready);
+  else ready();
 });
 function stop() {
   watchdog.stop();
   clearInterval(timer);
-  server.close(() => {
-    db.close();
-    process.exit(0);
-  });
+  let open = adminServer ? 2 : 1;
+  const closed = () => {
+    if (--open === 0) {
+      db.close();
+      process.exit(0);
+    }
+  };
+  server.close(closed);
+  adminServer?.close(closed);
 }
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);

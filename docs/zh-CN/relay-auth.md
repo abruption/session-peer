@@ -216,12 +216,13 @@ OAuth 登录/注册不会取代端点 E2EE 配对/PIN 策略。
 密钥。React 路由为 `/admin/metrics`，每 30 秒刷新一次
 汇总视图。
 
-`admin.abruption.dev` 仍是现有的 Authelia 管理门户。其
-根路由和 `/api/*` 路由已归认证控制台所有。请使用精确的
-`/session-peer` 门户链接集成 session-peer，或重定向到
-`https://relay.abruption.dev/admin/metrics`；切勿替换
-现有管理控制台或在其上建立代理。门户重定向后，
-中继运维人员检查仍然具有权威性。
+`admin.abruption.dev` 继续作为现有的 Authelia 管理门户。其根路径和
+`/api/*` 路由已由认证控制台占用。请使用精确的 `/session-peer` 门户页面，
+并用 Authelia 同时保护该页面和 `/session-peer/api/metrics`。聚合 API 由
+独立的 `127.0.0.1:3771` 监听器提供，绝不能经由公共中继主机路由。这样
+Authelia 就是唯一的浏览器登录边界，同时公共中继无需信任转发的身份标头。
+为直接访问中继的情况保留现有 `/admin/metrics` 和 `/api/admin/metrics`
+的提供商运维人员授权。
 
 ### 原子公开状态与协约过渡
 

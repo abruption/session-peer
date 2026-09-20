@@ -3,6 +3,8 @@ import { dirname, resolve } from "node:path";
 export type Provider = "github" | "google";
 export interface Config {
   origin: string;
+  /** Optional loopback-only operator endpoint exposed through Authelia. */
+  adminOrigin?: string;
   production: boolean;
   dataDir: string;
   publicDir: string;
@@ -49,6 +51,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       !["127.0.0.1", "localhost"].includes(url.hostname))
   )
     throw new Error("invalid_control_origin");
+  let adminOrigin: string | undefined;
+  if (env.SESSION_PEER_ADMIN_ORIGIN) {
+    const adminUrl = new URL(env.SESSION_PEER_ADMIN_ORIGIN);
+    if (
+      adminUrl.origin !== env.SESSION_PEER_ADMIN_ORIGIN ||
+      adminUrl.username ||
+      adminUrl.password ||
+      (production && adminUrl.protocol !== "https:") ||
+      (!production &&
+        adminUrl.protocol !== "https:" &&
+        !["127.0.0.1", "localhost"].includes(adminUrl.hostname))
+    )
+      throw new Error("invalid_admin_origin");
+    adminOrigin = adminUrl.origin;
+  }
   const secret = env.BETTER_AUTH_SECRET_FILE
     ? readSecret(env.BETTER_AUTH_SECRET_FILE, env)
     : env.BETTER_AUTH_SECRET;
@@ -98,6 +115,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   return {
     origin,
+    ...(adminOrigin ? { adminOrigin } : {}),
     production,
     secret,
     allowlist,

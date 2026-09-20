@@ -16,6 +16,8 @@ WorkingDirectory=/opt/session-peer-control
 Environment=NODE_ENV=production
 Environment=PORT=3770
 Environment=SESSION_PEER_CONTROL_ORIGIN=https://relay.abruption.dev
+Environment=SESSION_PEER_ADMIN_ORIGIN=https://admin.abruption.dev
+Environment=SESSION_PEER_ADMIN_PORT=3771
 Environment=SESSION_PEER_CONTROL_DATA=/var/lib/session-peer-control/private
 Environment=SESSION_PEER_RELAY_PUBLIC=/var/lib/session-peer-control/relay-public
 EnvironmentFile=/etc/session-peer-control/control.env
