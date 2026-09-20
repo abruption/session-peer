@@ -65,17 +65,18 @@ checks.
 
 Keep `admin.abruption.dev` as the existing Authelia-protected administration
 portal. It already owns its root page and `/api/*`; do not replace those routes
-with session-peer. The safe integration is an exact `/session-peer` portal link
-or redirect to `https://relay.abruption.dev/admin/metrics`. The relay page and
-`/api/admin/metrics` apply a second authorization check: only provider identities
-present in `SESSION_PEER_ALLOWED_ACCOUNTS` are operators. Public RC signups never
-inherit this role. The metrics response contains aggregate counts only, with no
+with session-peer. The exact `/session-peer` page and
+`/session-peer/api/metrics` route use the portal's existing Authelia session as
+the sole browser login. The API proxies only to the control service's dedicated
+`127.0.0.1:3771` listener; never expose that listener through the relay host or
+bind it publicly. Public RC signups never inherit portal access. The metrics
+response contains aggregate counts only, with no
 email, provider account ID, user ID, principal, token, or certificate.
 
 `admin-session-peer.caddy` is the reviewed insertion block for the existing
 `(b_admin)` snippet. Place it before that snippet's catch-all `handle`, adapt and
 validate the complete Caddy configuration, then reload with a live-file CAS.
-The block uses an explicit `route` so Caddy preserves `forward_auth` before the
-redirect; ordinary directive sorting would otherwise run `redir` first. The
-destination independently requires the relay operator's provider allowlist. Do not
-import the block at the global level or use it to replace the existing admin site.
+The block uses explicit `route` wrappers so Caddy preserves `forward_auth`
+before serving the page or proxying the aggregate API. Install
+`session-peer-admin.html` as `/srv/www/home/session-peer.html`. Do not import the
+block at the global level or use it to replace the existing admin site.

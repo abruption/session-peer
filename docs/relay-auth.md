@@ -220,10 +220,13 @@ secret. The React route is `/admin/metrics` and refreshes the aggregate view eve
 
 `admin.abruption.dev` remains the existing Authelia administration portal. Its
 root and `/api/*` routes are already owned by the authentication console. Integrate
-session-peer with an exact `/session-peer` portal link or redirect to
-`https://relay.abruption.dev/admin/metrics`; do not replace or proxy over the
-existing admin console. The relay operator check remains authoritative after the
-portal redirect.
+session-peer with the exact `/session-peer` portal page and protect both that page
+and `/session-peer/api/metrics` with Authelia. The aggregate API is served on a
+separate `127.0.0.1:3771` listener and must never be routed through the public
+relay host. This makes Authelia the sole browser login while keeping the public
+relay from trusting forwarded identity headers. The original relay
+`/admin/metrics` route and `/api/admin/metrics` retain their provider-operator
+authorization for direct relay access.
 
 ### Atomic public state and contract transition
 

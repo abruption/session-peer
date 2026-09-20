@@ -8,12 +8,16 @@ import { fileURLToPath } from "node:url";
 it("starts real compiled server only on loopback; enforces host, body limit and static/API behavior without OAuth", async () => {
   const root = mkdtempSync(join(tmpdir(), "sp-control-http-"));
   const port = 38771;
+  const adminPort = 38772;
   const origin = `http://127.0.0.1:${port}`;
+  const adminOrigin = `http://127.0.0.1:${adminPort}`;
   const env = {
     ...process.env,
     NODE_ENV: "development",
     BETTER_AUTH_SECRET: randomBytes(32).toString("base64url"),
     SESSION_PEER_CONTROL_ORIGIN: origin,
+    SESSION_PEER_ADMIN_ORIGIN: adminOrigin,
+    SESSION_PEER_ADMIN_PORT: String(adminPort),
     SESSION_PEER_CONTROL_DATA: join(root, "private"),
     SESSION_PEER_RELAY_PUBLIC: join(root, "public"),
     SESSION_PEER_ALLOWED_ACCOUNTS: "[]",
@@ -68,6 +72,27 @@ it("starts real compiled server only on loopback; enforces host, body limit and 
     expect(imageResponse.headers.get("content-type")).toBe("image/png");
     expect((await fetch(origin + "/api/relay/devices")).status).toBe(401);
     expect((await fetch(origin + "/api/admin/metrics")).status).toBe(401);
+    const metricsResponse = await fetch(
+      adminOrigin + "/session-peer/api/metrics",
+    );
+    expect(metricsResponse.status).toBe(200);
+    expect(metricsResponse.headers.get("cache-control")).toBe("no-store");
+    const metrics = await metricsResponse.json();
+    expect(metrics).toMatchObject({
+      serviceHealthy: true,
+      signup: { registeredUsers: 0, publicUsers: 0 },
+      devices: { total: 0, active: 0, revoked: 0 },
+      operations: { total: 0, committed: 0, pending: 0 },
+    });
+    expect(JSON.stringify(metrics)).not.toMatch(/email|principal|userId|accountId/i);
+    expect((await fetch(adminOrigin + "/healthz")).status).toBe(404);
+    expect(
+      (
+        await fetch(adminOrigin + "/session-peer/api/metrics", {
+          method: "POST",
+        })
+      ).status,
+    ).toBe(405);
     const { request } = await import("node:http");
     const hostStatus = await new Promise<number>((resolve, reject) => {
       const r = request(

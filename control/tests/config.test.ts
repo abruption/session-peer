@@ -24,6 +24,26 @@ it("fails closed without a secret and validates exact origins/allowlists", () =>
   expect(c.allowlist).toEqual([]);
   expect(c.providers).toEqual({});
   expect(c.publicSignupEnabled).toBe(false);
+  expect(c.adminOrigin).toBeUndefined();
+  expect(
+    loadConfig({
+      NODE_ENV: "test",
+      BETTER_AUTH_SECRET: "x".repeat(40),
+      SESSION_PEER_ADMIN_ORIGIN: "http://127.0.0.1:3771",
+    }).adminOrigin,
+  ).toBe("http://127.0.0.1:3771");
+  expect(() =>
+    loadConfig({
+      BETTER_AUTH_SECRET: "x".repeat(40),
+      SESSION_PEER_ADMIN_ORIGIN: "http://admin.example",
+    }),
+  ).toThrow("invalid_admin_origin");
+  expect(() =>
+    loadConfig({
+      BETTER_AUTH_SECRET: "x".repeat(40),
+      SESSION_PEER_ADMIN_ORIGIN: "https://admin.example/path",
+    }),
+  ).toThrow("invalid_admin_origin");
   expect(loadConfig({
     BETTER_AUTH_SECRET: "x".repeat(40),
     SESSION_PEER_PUBLIC_SIGNUP: "true",

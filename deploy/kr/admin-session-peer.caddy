@@ -1,10 +1,22 @@
 # Insert this block inside the existing (b_admin) snippet, before its catch-all
-# handle. The route wrapper preserves forward_auth before redir; without it,
-# Caddy's normal directive sorting can run redir first. It does not claim /api/*.
+# handle. Authelia is the sole browser authentication boundary. The aggregate
+# API is reachable only through the dedicated loopback listener.
+@session_peer_metrics_api path /session-peer/api/metrics
+handle @session_peer_metrics_api {
+	route {
+		import authelia_api
+		reverse_proxy 127.0.0.1:3771 {
+			header_up Host admin.abruption.dev
+		}
+	}
+}
+
 @session_peer_metrics path /session-peer /session-peer/
 handle @session_peer_metrics {
 	route {
 		import authelia
-		redir https://relay.abruption.dev/admin/metrics 302
+		rewrite * /session-peer.html
+		root * /srv/www/home
+		file_server
 	}
 }

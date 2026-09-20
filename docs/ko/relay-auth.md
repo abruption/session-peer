@@ -215,12 +215,14 @@ OAuth 로그인/등록은 엔드포인트 E2EE 페어링/PIN 정책을 대체하
 비밀 정보는 절대 반환하지 않습니다. React 경로는 `/admin/metrics`이며 30초마다
 집계 뷰를 새로고침합니다.
 
-`admin.abruption.dev`는 기존의 Authelia 관리 포털로 유지됩니다. 해당
-루트 및 `/api/*` 경로는 이미 인증 콘솔이 소유하고 있습니다. 정확한
-`/session-peer` 포털 링크로 session-peer를 통합하거나
-`https://relay.abruption.dev/admin/metrics`로 리디렉션하십시오; 기존
-관리 콘솔을 대체하거나 그 위로 프록시하지 마십시오. 포털 리디렉션
-후에도 릴레이 운영자 검사는 권한을 유지합니다.
+`admin.abruption.dev`는 기존 Authelia 관리 포털로 유지합니다. 루트와
+`/api/*` 경로는 이미 인증 콘솔이 소유합니다. 정확한 `/session-peer`
+포털 페이지와 `/session-peer/api/metrics`를 모두 Authelia로 보호하십시오.
+집계 API는 별도의 `127.0.0.1:3771` 리스너에서 제공하며 공개 릴레이
+호스트로 라우팅해서는 안 됩니다. 이 방식은 Authelia를 유일한 브라우저
+로그인으로 사용하면서 공개 릴레이가 전달된 신원 헤더를 신뢰하지 않게
+합니다. 릴레이에 직접 접근하는 경우를 위해 기존 `/admin/metrics`와
+`/api/admin/metrics`의 공급자 운영자 권한 검사는 유지합니다.
 
 ### 원자적 공개 상태 및 계약 전환
 
