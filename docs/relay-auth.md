@@ -226,7 +226,12 @@ separate `127.0.0.1:3771` listener and must never be routed through the public
 relay host. This makes Authelia the sole browser login while keeping the public
 relay from trusting forwarded identity headers. The original relay
 `/admin/metrics` route and `/api/admin/metrics` retain their provider-operator
-authorization for direct relay access.
+authorization for direct relay access. The Authelia portal can request bounded
+drill-down lists for users, public signups, devices and operations. Those lists
+may include names, email addresses, providers, operation IDs, status, generation
+and shortened principal hints. They never include provider account IDs, internal
+user IDs, full principals, tokens, cookies, proofs, request hashes, certificates
+or keys, and each response is limited to 100 rows.
 
 ### Atomic public state and contract transition
 

@@ -3,7 +3,12 @@ import { resolve, join, extname } from "node:path";
 import type Database from "better-sqlite3";
 import { allowedUser, operatorUser, type Auth } from "./auth.js";
 import type { Config } from "./config.js";
-import { adminMetrics } from "./metrics.js";
+import {
+  adminMetricDetails,
+  adminMetrics,
+  type AdminDetailFilter,
+  type AdminDetailView,
+} from "./metrics.js";
 import { ControlError, assert } from "./protocol.js";
 import type { RelayControl } from "./relay-control.js";
 const MAX_BODY = 16384;
@@ -42,7 +47,29 @@ export function createAdminMetricsApp(
       return json({ error: "not_found" }, 404);
     if (request.method !== "GET")
       return json({ error: "method_not_allowed" }, 405);
-    return json(adminMetrics(db, config, control.isHealthy()));
+    const view = url.searchParams.get("view");
+    if (!view) return json(adminMetrics(db, config, control.isHealthy()));
+    if (
+      !["users", "signups", "devices", "operations"].includes(view) ||
+      [...url.searchParams.keys()].some((key) => !["view", "filter"].includes(key))
+    )
+      return json({ error: "invalid_detail_query" }, 400);
+    const filter = url.searchParams.get("filter") ?? "all";
+    const filters: Record<AdminDetailView, string[]> = {
+      users: ["all"],
+      signups: ["all", "active", "pending"],
+      devices: ["all", "active", "revoked"],
+      operations: ["all", "committed", "pending"],
+    };
+    if (!filters[view as AdminDetailView].includes(filter))
+      return json({ error: "invalid_detail_query" }, 400);
+    return json(
+      adminMetricDetails(
+        db,
+        view as AdminDetailView,
+        filter as AdminDetailFilter,
+      ),
+    );
   };
 }
 export function createApp(
