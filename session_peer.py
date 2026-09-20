@@ -269,8 +269,6 @@ def _codex_lock_snapshot(path: Path) -> tuple[int, int, int, int] | None:
 
 def probe_codex_writer_lock(path: Path) -> tuple[str, str]:
     """Probe Codex's real advisory lock without changing the lock file."""
-    if fcntl is None:
-        return "unknown", "lock_probe_unsupported"
     try:
         before = path.lstat()
     except (FileNotFoundError, NotADirectoryError):
@@ -281,6 +279,8 @@ def probe_codex_writer_lock(path: Path) -> tuple[str, str]:
         return "unknown", "lock_symlink"
     if not stat.S_ISREG(before.st_mode):
         return "unknown", "lock_not_regular"
+    if fcntl is None:
+        return "unknown", "lock_probe_unsupported"
 
     descriptor = None
     try:
@@ -426,6 +426,7 @@ def inspect_codex_writer(home: Path, thread_id: str) -> dict:
     return {
         "activity": "live_writer", "writerLock": "held",
         "ownerPid": first["pid"], "ownerStable": True,
+        "ownerStartTime": first["startTime"],
         "reason": "stable_live_writer",
     }
 
@@ -444,27 +445,37 @@ def _home_resolution(status: str, selected: Path | None, reason: str,
 def resolve_codex_home(args: argparse.Namespace, selected: Path,
                        thread_id: str) -> tuple[Path, dict]:
     """Select a destination home or fail closed with structured evidence."""
-    if getattr(args, "codex_home", None):
-        candidate = {"codexHome": str(selected), "savedThread": None,
-                     "writerLock": "not_checked", "reason": "explicit_selection"}
-        return selected, _home_resolution(
-            "explicit", selected, "explicit_codex_home", [candidate]
+    explicit = bool(getattr(args, "codex_home", None))
+    inactive_opt_in = bool(getattr(args, "allow_inactive_codex_home", False))
+    wake = bool(getattr(args, "wake", False))
+    if inactive_opt_in and not explicit:
+        resolution = _home_resolution(
+            "unknown", None, "inactive_opt_in_requires_explicit_home", []
         )
-
+        raise CcPeerError(
+            "--allow-inactive-codex-home requires --codex-home; nothing queued.",
+            {"codexHomeResolution": resolution},
+        )
     homes = known_codex_homes(selected)
-    if len(homes) == 1:
-        candidate = {"codexHome": str(selected), "savedThread": None,
-                     "writerLock": "not_checked", "reason": "single_known_home"}
-        return selected, _home_resolution(
-            "selected", selected, "single_known_home", [candidate]
-        )
-
     candidates = [
         {"codexHome": str(home), "savedThread": None,
          "writerLock": "not_checked", "reason": "not_inspected"}
         for home in homes
     ]
     for home, candidate in zip(homes, candidates):
+        db = home / "state_5.sqlite"
+        if not db.is_file():
+            candidate["savedThread"] = False
+            candidate["reason"] = "state_db_absent"
+            if home == selected:
+                continue
+            resolution = _home_resolution(
+                "unknown", None, "home_inventory_unreadable", candidates
+            )
+            raise CcPeerError(
+                f"Cannot check Codex home {home}: state_5.sqlite is absent; "
+                "nothing queued.", {"codexHomeResolution": resolution},
+            )
         try:
             candidate["savedThread"] = _codex_thread_is_saved(home, thread_id)
         except sqlite3.Error as exc:
@@ -479,13 +490,12 @@ def resolve_codex_home(args: argparse.Namespace, selected: Path,
             ) from exc
     matches = [candidate for candidate in candidates if candidate["savedThread"]]
     if not matches:
-        return selected, _home_resolution(
-            "selected", selected, "no_competing_saved_copy", candidates
+        resolution = _home_resolution(
+            "unknown", None, "thread_not_saved_in_known_homes", candidates
         )
-    if len(matches) == 1 and matches[0]["codexHome"] == str(selected):
-        matches[0]["reason"] = "single_saved_copy"
-        return selected, _home_resolution(
-            "selected", selected, "single_saved_copy", candidates
+        raise NoTargetError(
+            f"No saved Codex thread {thread_id} in known homes; nothing queued.",
+            {"codexHomeResolution": resolution},
         )
 
     by_home = {str(home): home for home in homes}
@@ -493,37 +503,67 @@ def resolve_codex_home(args: argparse.Namespace, selected: Path,
         candidate.update(inspect_codex_writer(by_home[candidate["codexHome"]], thread_id))
     live = [candidate for candidate in matches if candidate.get("activity") == "live_writer"]
     unknown = any(candidate.get("activity") == "unknown" for candidate in matches)
-    if len(live) == 1 and not unknown:
-        active = by_home[live[0]["codexHome"]]
-        return active, _home_resolution(
-            "selected", active, "single_stable_live_writer", candidates
-        )
-
     paths = ", ".join(candidate["codexHome"] for candidate in matches)
-    if len(matches) == 1:
-        reason = "saved_copy_outside_selected_home_not_active"
-        resolution = _home_resolution("unknown", None, reason, candidates)
+    if unknown:
+        resolution = _home_resolution(
+            "unknown", None, "active_writer_unverified", candidates
+        )
+        raise CcPeerError(
+            f"Cannot verify every Codex writer for thread {thread_id} in homes: {paths}; "
+            "nothing queued.", {"codexHomeResolution": resolution},
+        )
+    if len(live) > 1:
+        resolution = _home_resolution(
+            "ambiguous", None, "multiple_live_writers", candidates
+        )
+        raise CcPeerError(
+            f"Multiple live Codex writers exist for thread {thread_id} in homes: {paths}; "
+            "nothing queued.", {"codexHomeResolution": resolution},
+        )
+    if len(live) == 1:
+        active = by_home[live[0]["codexHome"]]
+        if explicit and active != selected:
+            resolution = _home_resolution(
+                "ambiguous", None, "explicit_home_conflicts_with_live_writer", candidates
+            )
+            raise CcPeerError(
+                f"Explicit Codex home {selected} is not the unique live writer for thread "
+                f"{thread_id}; the live writer is in {active}. Nothing queued and the home "
+                "was not changed automatically.",
+                {"codexHomeResolution": resolution},
+            )
+        status = "explicit" if explicit else "selected"
+        reason = "explicit_live_writer" if explicit else "single_stable_live_writer"
+        return active, _home_resolution(status, active, reason, candidates)
+
+    if explicit and str(selected) not in {candidate["codexHome"] for candidate in matches}:
+        resolution = _home_resolution(
+            "unknown", None, "thread_not_saved_in_explicit_home", candidates
+        )
         raise NoTargetError(
-            f"No saved Codex thread {thread_id} in selected home {selected}; found in "
-            f"{paths}, but no unique stable live writer selected it. Select --codex-home "
-            "explicitly; nothing queued.",
+            f"No saved Codex thread {thread_id} in explicit home {selected}; nothing queued.",
             {"codexHomeResolution": resolution},
         )
+    if explicit and (inactive_opt_in or wake):
+        reason = "explicit_inactive_wake" if wake else "explicit_inactive_opt_in"
+        return selected, _home_resolution("explicit", selected, reason, candidates)
 
-    reason = "multiple_live_writers" if len(live) > 1 else (
-        "active_writer_unverified" if unknown else "no_live_writer"
+    resolution = _home_resolution(
+        "ambiguous", None, "inactive_queue_requires_opt_in", candidates
     )
-    status = "unknown" if unknown and len(live) <= 1 else "ambiguous"
-    resolution = _home_resolution(status, None, reason, candidates)
     raise CcPeerError(
-        f"Ambiguous Codex thread {thread_id}; found in homes: {paths}. No unique "
-        "stable live writer could select one. Select --codex-home explicitly; nothing queued.",
+        f"All saved copies of Codex thread {thread_id} are inactive in homes: {paths}. "
+        "To queue for a future resume, select one with --codex-home and add "
+        "--allow-inactive-codex-home; nothing queued.",
         {"codexHomeResolution": resolution},
     )
 
 
 def revalidate_codex_home(root: Path, thread_id: str, resolution: dict) -> None:
-    if resolution.get("reason") != "single_stable_live_writer":
+    reason = resolution.get("reason")
+    live_selection = reason in ("single_stable_live_writer", "explicit_live_writer")
+    inactive_selection = reason in ("explicit_inactive_opt_in", "explicit_inactive_wake")
+    if not (live_selection or inactive_selection):
         return
     previous = next(
         candidate for candidate in resolution["candidates"]
@@ -545,9 +585,17 @@ def revalidate_codex_home(root: Path, thread_id: str, resolution: dict) -> None:
         candidate for candidate in updated
         if candidate.get("savedThread") and candidate["codexHome"] != str(root)
     ]
-    if (
-        (selected.get("activity"), selected.get("ownerPid"))
-        == ("live_writer", previous.get("ownerPid"))
+    if live_selection:
+        if (
+            (selected.get("activity"), selected.get("writerLock"),
+             selected.get("ownerPid"), selected.get("ownerStartTime"))
+            == ("live_writer", "held", previous.get("ownerPid"),
+                previous.get("ownerStartTime"))
+            and all(candidate.get("activity") == "inactive" for candidate in competitors)
+        ):
+            return
+    elif (
+        selected.get("activity") == "inactive"
         and all(candidate.get("activity") == "inactive" for candidate in competitors)
     ):
         return
@@ -806,7 +854,15 @@ def queue_codex(args: argparse.Namespace, text: str) -> dict:
         return _queue_codex(args, text)
     thread_id = codex_thread(args.to)
     check_codex_message(text)
-    root, resolution = resolve_codex_home(args, codex_home(args), thread_id)
+    try:
+        root, resolution = resolve_codex_home(args, codex_home(args), thread_id)
+    except CcPeerError as exc:
+        resolution = exc.details.get("codexHomeResolution")
+        if resolution and resolution.get("reason") == "active_writer_unverified":
+            exc.details.setdefault(
+                "wake", {"status": "refused", "reason": "writer_unknown"}
+            )
+        raise
     executable = codex_executable(args)
     preflight = codex_wake_preflight(root, thread_id, executable)
     selected = argparse.Namespace(**vars(args))
@@ -846,6 +902,8 @@ def codex_remote_options(args: argparse.Namespace) -> list[str]:
             argv.extend([flag, value])
     if getattr(args, "wake", False):
         argv += ["--wake", "--wake-timeout", str(args.wake_timeout)]
+    if getattr(args, "allow_inactive_codex_home", False):
+        argv.append("--allow-inactive-codex-home")
     return argv
 
 
@@ -3842,8 +3900,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="session name, PID, codex:UUID, antigravity:UUID, or session-peer://v1/reply address",
     )
     sending.add_argument("--codex-home", help=home_help)
-    sending.epilog = ("Without --codex-home, duplicate threads in known homes select only one "
-                      "stable live writer or fail closed. Known homes: selected/default, macOS "
+    sending.add_argument(
+        "--allow-inactive-codex-home", action="store_true",
+        help="with --codex-home, intentionally queue an inactive thread for a future resume",
+    )
+    sending.epilog = ("All matching known homes are checked even with --codex-home. A unique "
+                      "stable live writer is required unless --codex-home and "
+                      "--allow-inactive-codex-home explicitly select an all-inactive copy. "
+                      "Known homes: selected/default, macOS "
                       "Orca account homes, and destination SESSION_PEER_CODEX_HOMES (JSON array "
                       "of paths). Queued/submitted never confirms consumption.")
     sending.add_argument("--codex-bin", help="Codex executable on the destination machine")

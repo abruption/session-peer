@@ -31,7 +31,8 @@ class Codex(unittest.TestCase):
         conn.commit()
         conn.close()
         self.args = argparse.Namespace(codex_home=str(self.root), codex_bin=None, all=False,
-                                       to="codex:" + THREAD, dry_run=False)
+                                       to="codex:" + THREAD, dry_run=False,
+                                       allow_inactive_codex_home=True, wake=False)
 
     def invoke(self, *argv):
         output = io.StringIO()
@@ -165,7 +166,8 @@ class Codex(unittest.TestCase):
                     "consumptionConfirmed": False, "codexHomeResolution": resolution}
         with mock.patch.object(peer, "run_remote", return_value=response) as remote:
             code, result = self.invoke("send", "--host", "worker", "--to", "codex:" + THREAD,
-                "--codex-home", "/remote home", "--codex-bin", "/remote bin/codex", "--json", "--no-from", "--no-reply-to", "test")
+                "--codex-home", "/remote home", "--allow-inactive-codex-home",
+                "--codex-bin", "/remote bin/codex", "--json", "--no-from", "--no-reply-to", "test")
         self.assertEqual(code, 0)
         self.assertEqual(result["host"], "worker")
         self.assertEqual(result["queueId"], "queue-id")
@@ -177,6 +179,7 @@ class Codex(unittest.TestCase):
         argv = remote.call_args.args[1]
         self.assertEqual(argv[argv.index("--codex-home") + 1], "/remote home")
         self.assertEqual(argv[argv.index("--codex-bin") + 1], "/remote bin/codex")
+        self.assertIn("--allow-inactive-codex-home", argv)
 
     def test_remote_send_preserves_structured_home_failure(self):
         resolution = {"schemaVersion": 1, "status": "ambiguous", "selected": None,
@@ -260,6 +263,16 @@ class CodexWriterEvidence(unittest.TestCase):
             {"pid": 42, "command": "codex", "uid": 501},
         ])
 
+    def test_missing_lock_is_inactive_even_when_flock_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.object(peer, "fcntl", None):
+            lock = Path(directory) / "missing.lock"
+            self.assertEqual(peer.probe_codex_writer_lock(lock),
+                             ("absent", "lock_absent"))
+            lock.write_text("fixture", encoding="utf-8")
+            self.assertEqual(peer.probe_codex_writer_lock(lock),
+                             ("unknown", "lock_probe_unsupported"))
+
     @unittest.skipIf(peer.fcntl is None, "POSIX flock is unavailable")
     def test_probes_a_real_advisory_lock_without_changing_the_file(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -329,6 +342,7 @@ class CodexWriterEvidence(unittest.TestCase):
             result = peer.inspect_codex_writer(Path("/home"), THREAD)
         self.assertEqual(result["activity"], "live_writer")
         self.assertEqual(result["ownerPid"], 42)
+        self.assertEqual(result["ownerStartTime"], "stable")
         self.assertNotIn("command", result)
         self.assertNotIn("startTime", result)
 
@@ -394,8 +408,10 @@ class CodexHomes(unittest.TestCase):
             code, result = self.send(*flags)
             self.assertEqual(code, 1)
             self.assertFalse(result["ok"])
-            self.assertIn("ambiguous", result["error"].lower())
-            for expected in (str(self.default), str(self.account), "--codex-home"):
+            self.assertEqual(result["codexHomeResolution"]["reason"],
+                             "inactive_queue_requires_opt_in")
+            for expected in (str(self.default), str(self.account),
+                             "--allow-inactive-codex-home"):
                 self.assertIn(expected, result["error"])
         self.queue.assert_not_called()
         for path, original in before.items():
@@ -405,7 +421,7 @@ class CodexHomes(unittest.TestCase):
         inactive = {"activity": "inactive", "writerLock": "free",
                     "reason": "kernel_lock_free"}
         active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
-                  "ownerStable": True, "reason": "stable_live_writer"}
+                  "ownerStable": True, "ownerStartTime": "stable", "reason": "stable_live_writer"}
         with mock.patch.object(peer, "inspect_codex_writer",
                                side_effect=[inactive, active, inactive, active]) as inspect:
             code, result = self.send()
@@ -421,7 +437,7 @@ class CodexHomes(unittest.TestCase):
         inactive = {"activity": "inactive", "writerLock": "absent",
                     "reason": "lock_absent"}
         active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
-                  "ownerStable": True, "reason": "stable_live_writer"}
+                  "ownerStable": True, "ownerStartTime": "stable", "reason": "stable_live_writer"}
         with mock.patch.object(peer, "inspect_codex_writer",
                                side_effect=[inactive, active]) as inspect:
             code, result = self.send("--dry-run")
@@ -436,7 +452,7 @@ class CodexHomes(unittest.TestCase):
             conn.execute("DELETE FROM threads")
             conn.commit()
         active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
-                  "ownerStable": True, "reason": "stable_live_writer"}
+                  "ownerStable": True, "ownerStartTime": "stable", "reason": "stable_live_writer"}
         with mock.patch.object(peer, "inspect_codex_writer", side_effect=[active, active]):
             code, result = self.send()
         self.assertEqual(code, 0)
@@ -446,9 +462,9 @@ class CodexHomes(unittest.TestCase):
 
     def test_multiple_live_writers_are_structured_ambiguity(self):
         active_a = {"activity": "live_writer", "writerLock": "held", "ownerPid": 41,
-                    "ownerStable": True, "reason": "stable_live_writer"}
+                    "ownerStable": True, "ownerStartTime": "stable", "reason": "stable_live_writer"}
         active_b = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
-                    "ownerStable": True, "reason": "stable_live_writer"}
+                    "ownerStable": True, "ownerStartTime": "stable", "reason": "stable_live_writer"}
         with mock.patch.object(peer, "inspect_codex_writer", side_effect=[active_a, active_b]):
             code, result = self.send()
         self.assertEqual(code, 1)
@@ -460,7 +476,7 @@ class CodexHomes(unittest.TestCase):
 
     def test_unknown_competing_writer_prevents_selection(self):
         active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 41,
-                  "ownerStable": True, "reason": "stable_live_writer"}
+                  "ownerStable": True, "ownerStartTime": "stable", "reason": "stable_live_writer"}
         unknown = {"activity": "unknown", "writerLock": "held",
                    "reason": "lsof_unavailable"}
         with mock.patch.object(peer, "inspect_codex_writer", side_effect=[active, unknown]):
@@ -471,11 +487,26 @@ class CodexHomes(unittest.TestCase):
                          "active_writer_unverified")
         self.queue.assert_not_called()
 
+    def test_unknown_probe_prevents_explicit_selection(self):
+        unknown = {"activity": "unknown", "writerLock": "held",
+                   "reason": "lsof_unavailable"}
+        inactive = {"activity": "inactive", "writerLock": "free",
+                    "reason": "kernel_lock_free"}
+        with mock.patch.object(peer, "inspect_codex_writer",
+                               side_effect=[unknown, inactive]):
+            code, result = self.send("--codex-home", str(self.account),
+                                     "--allow-inactive-codex-home")
+        self.assertEqual(code, 1)
+        self.assertEqual(result["codexHomeResolution"]["status"], "unknown")
+        self.assertEqual(result["codexHomeResolution"]["reason"],
+                         "active_writer_unverified")
+        self.queue.assert_not_called()
+
     def test_writer_pid_change_before_queue_fails_closed(self):
         inactive = {"activity": "inactive", "writerLock": "free",
                     "reason": "kernel_lock_free"}
         active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
-                  "ownerStable": True, "reason": "stable_live_writer"}
+                  "ownerStable": True, "ownerStartTime": "stable", "reason": "stable_live_writer"}
         changed = {**active, "ownerPid": 43}
         with mock.patch.object(peer, "inspect_codex_writer",
                                side_effect=[inactive, active, inactive, changed]):
@@ -486,11 +517,26 @@ class CodexHomes(unittest.TestCase):
                          "writer_evidence_changed_before_queue")
         self.queue.assert_not_called()
 
+    def test_writer_start_time_change_before_queue_fails_closed(self):
+        inactive = {"activity": "inactive", "writerLock": "free",
+                    "reason": "kernel_lock_free"}
+        active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
+                  "ownerStable": True, "ownerStartTime": "first",
+                  "reason": "stable_live_writer"}
+        changed = {**active, "ownerStartTime": "reused-pid"}
+        with mock.patch.object(peer, "inspect_codex_writer",
+                               side_effect=[inactive, active, inactive, changed]):
+            code, result = self.send()
+        self.assertEqual(code, 1)
+        self.assertEqual(result["codexHomeResolution"]["reason"],
+                         "writer_evidence_changed_before_queue")
+        self.queue.assert_not_called()
+
     def test_competing_writer_appearing_before_queue_fails_closed(self):
         inactive = {"activity": "inactive", "writerLock": "free",
                     "reason": "kernel_lock_free"}
         selected = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
-                    "ownerStable": True, "reason": "stable_live_writer"}
+                    "ownerStable": True, "ownerStartTime": "stable", "reason": "stable_live_writer"}
         competitor = {**selected, "ownerPid": 41}
         with mock.patch.object(peer, "inspect_codex_writer",
                                side_effect=[inactive, selected, competitor, selected]):
@@ -509,22 +555,72 @@ class CodexHomes(unittest.TestCase):
         self.assertIn("--codex-home", result["error"])
         self.queue.assert_not_called()
 
-    def test_explicit_home_queues_only_selected_copy_and_exposes_semantics(self):
-        for home in (self.account, self.default):
-            with self.subTest(home=home):
-                code, result = self.send("--codex-home", str(home))
-                self.assertEqual(code, 0)
-                self.assertEqual(result["codexHome"], str(home))
-                self.assertEqual(result["status"], "queued")
-                self.assertTrue(result["submitted"])
-                self.assertIs(result["consumptionConfirmed"], False)
-                self.assertEqual(result["codexHomeResolution"]["status"], "explicit")
-                self.assertEqual(result["codexHomeResolution"]["reason"],
-                                 "explicit_codex_home")
-                self.assertEqual(self.queue.call_args.kwargs["env"]["CODEX_HOME"], str(home))
+    def test_explicit_live_writer_is_validated_and_revalidated(self):
+        inactive = {"activity": "inactive", "writerLock": "free",
+                    "reason": "kernel_lock_free"}
+        active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
+                  "ownerStable": True, "ownerStartTime": "stable",
+                  "reason": "stable_live_writer"}
+        with mock.patch.object(peer, "inspect_codex_writer",
+                               side_effect=[active, inactive, active, inactive]) as inspect:
+            code, result = self.send("--codex-home", str(self.account))
+        self.assertEqual(code, 0)
+        self.assertEqual(result["codexHome"], str(self.account))
+        self.assertEqual(result["codexHomeResolution"]["status"], "explicit")
+        self.assertEqual(result["codexHomeResolution"]["reason"],
+                         "explicit_live_writer")
+        self.assertEqual(inspect.call_count, 4)
+        self.assertEqual(self.queue.call_args.kwargs["env"]["CODEX_HOME"], str(self.account))
 
-    def test_explicit_dry_run_selects_one_copy_without_submission(self):
-        code, result = self.send("--codex-home", str(self.account), "--dry-run")
+    def test_explicit_inactive_home_conflicting_with_live_writer_is_rejected(self):
+        inactive = {"activity": "inactive", "writerLock": "free",
+                    "reason": "kernel_lock_free"}
+        active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
+                  "ownerStable": True, "ownerStartTime": "stable",
+                  "reason": "stable_live_writer"}
+        with mock.patch.object(peer, "inspect_codex_writer",
+                               side_effect=[inactive, active]):
+            code, result = self.send("--codex-home", str(self.default))
+        self.assertEqual(code, 1)
+        resolution = result["codexHomeResolution"]
+        self.assertEqual(resolution["reason"],
+                         "explicit_home_conflicts_with_live_writer")
+        self.assertIsNone(resolution["selected"])
+        self.assertIn(str(self.account), result["error"])
+        self.queue.assert_not_called()
+
+    def test_explicit_inactive_home_requires_opt_in(self):
+        code, result = self.send("--codex-home", str(self.account))
+        self.assertEqual(code, 1)
+        self.assertEqual(result["codexHomeResolution"]["reason"],
+                         "inactive_queue_requires_opt_in")
+        self.assertIn("--allow-inactive-codex-home", result["error"])
+        self.queue.assert_not_called()
+
+    def test_inactive_opt_in_requires_explicit_home(self):
+        code, result = self.send("--allow-inactive-codex-home")
+        self.assertEqual(code, 1)
+        self.assertEqual(result["codexHomeResolution"]["reason"],
+                         "inactive_opt_in_requires_explicit_home")
+        self.queue.assert_not_called()
+
+    def test_explicit_inactive_opt_in_queues_selected_copy_and_revalidates(self):
+        with mock.patch.object(peer, "inspect_codex_writer", wraps=peer.inspect_codex_writer) as inspect:
+            code, result = self.send(
+                "--codex-home", str(self.account), "--allow-inactive-codex-home"
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(result["codexHome"], str(self.account))
+        self.assertEqual(result["codexHomeResolution"]["status"], "explicit")
+        self.assertEqual(result["codexHomeResolution"]["reason"],
+                         "explicit_inactive_opt_in")
+        self.assertEqual(inspect.call_count, 4)
+        self.assertEqual(self.queue.call_args.kwargs["env"]["CODEX_HOME"], str(self.account))
+
+    def test_explicit_inactive_dry_run_requires_and_accepts_opt_in(self):
+        code, result = self.send(
+            "--codex-home", str(self.account), "--allow-inactive-codex-home", "--dry-run"
+        )
         self.assertEqual(code, 0)
         self.assertEqual(result["codexHome"], str(self.account))
         self.assertEqual(result["status"], "validated")
@@ -541,46 +637,127 @@ class CodexHomes(unittest.TestCase):
         self.assertIn(str(self.account), result["error"])
         self.queue.assert_not_called()
 
+    @unittest.skipIf(os.name == "nt", "hard links require platform-specific privileges")
+    def test_hard_linked_rollouts_still_use_unique_live_writer(self):
+        rollouts = self.user / "rollouts"
+        rollouts.mkdir()
+        default_rollout = rollouts / "default.jsonl"
+        account_rollout = rollouts / "account.jsonl"
+        default_rollout.write_text("fixture", encoding="utf-8")
+        os.link(default_rollout, account_rollout)
+        self.assertEqual(default_rollout.stat().st_ino, account_rollout.stat().st_ino)
+        for home, rollout in ((self.default, default_rollout),
+                              (self.account, account_rollout)):
+            with contextlib.closing(sqlite3.connect(home / "state_5.sqlite")) as conn:
+                conn.execute("UPDATE threads SET rollout_path=? WHERE id=?",
+                             (str(rollout), THREAD))
+                conn.commit()
+        inactive = {"activity": "inactive", "writerLock": "free",
+                    "reason": "kernel_lock_free"}
+        active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
+                  "ownerStable": True, "ownerStartTime": "stable",
+                  "reason": "stable_live_writer"}
+        with mock.patch.object(peer, "inspect_codex_writer",
+                               side_effect=[inactive, active, inactive, active]):
+            code, result = self.send()
+        self.assertEqual(code, 0)
+        self.assertEqual(result["codexHome"], str(self.account))
+        self.assertEqual(result["codexHomeResolution"]["reason"],
+                         "single_stable_live_writer")
+
+    @unittest.skipIf(peer.fcntl is None, "POSIX flock is unavailable")
+    @unittest.skipUnless(hasattr(os, "getuid"), "POSIX UID is unavailable")
+    def test_resolver_uses_real_advisory_lock_and_revalidates_it(self):
+        with contextlib.closing(sqlite3.connect(self.account / "state_5.sqlite")) as conn:
+            conn.execute("UPDATE threads SET id=?", (OTHER,))
+            conn.commit()
+        directory = self.default / "thread-writer-locks"
+        directory.mkdir()
+        lock = directory / f"{THREAD}.lock"
+        lock.write_text("fixture", encoding="utf-8")
+        child = subprocess.Popen([
+            peer.sys.executable, "-c",
+            "import fcntl,sys,time; f=open(sys.argv[1],'r+'); "
+            "fcntl.flock(f,fcntl.LOCK_EX); print('ready',flush=True); time.sleep(60)",
+            str(lock),
+        ], stdout=subprocess.PIPE, text=True)
+
+        def cleanup():
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=5)
+            if child.stdout and not child.stdout.closed:
+                child.stdout.close()
+
+        self.addCleanup(cleanup)
+        self.assertEqual(child.stdout.readline().strip(), "ready")
+        opener = [{"pid": child.pid, "uid": os.getuid(), "command": "codex",
+                   "startTime": "stable"}]
+        with mock.patch.object(peer, "_codex_lock_openers",
+                               return_value=(opener, None)), \
+             mock.patch.object(peer.time, "sleep"):
+            code, result = self.send()
+        self.assertEqual(code, 0)
+        self.assertEqual(result["codexHome"], str(self.default))
+        self.assertEqual(result["codexHomeResolution"]["reason"],
+                         "single_stable_live_writer")
+        self.assertEqual(peer.probe_codex_writer_lock(lock),
+                         ("held", "kernel_lock_held"))
+
     def test_archived_duplicate_is_not_assumed_inactive_or_safe(self):
         with contextlib.closing(sqlite3.connect(self.account / "state_5.sqlite")) as conn:
             conn.execute("UPDATE threads SET archived=1")
             conn.commit()
         code, result = self.send()
         self.assertEqual(code, 1)
-        self.assertIn("Ambiguous", result["error"])
+        self.assertEqual(result["codexHomeResolution"]["reason"],
+                         "inactive_queue_requires_opt_in")
         self.queue.assert_not_called()
 
     def test_unrelated_known_home_keeps_selected_destination(self):
         with contextlib.closing(sqlite3.connect(self.account / "state_5.sqlite")) as conn:
             conn.execute("UPDATE threads SET id=?", (OTHER,))
             conn.commit()
-        code, result = self.send()
+        active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
+                  "ownerStable": True, "ownerStartTime": "stable",
+                  "reason": "stable_live_writer"}
+        with mock.patch.object(peer, "inspect_codex_writer", side_effect=[active, active]):
+            code, result = self.send()
         self.assertEqual(code, 0)
         self.assertEqual(result["codexHome"], str(self.default))
         self.assertEqual(self.queue.call_args.kwargs["env"]["CODEX_HOME"], str(self.default))
         self.queue.assert_called_once()
 
-    def test_single_default_home_preserves_native_queue_behavior(self):
-        with mock.patch.object(peer.sys, "platform", "linux"):
+    def test_single_default_live_writer_is_validated(self):
+        active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
+                  "ownerStable": True, "ownerStartTime": "stable",
+                  "reason": "stable_live_writer"}
+        with mock.patch.object(peer.sys, "platform", "linux"), \
+             mock.patch.object(peer, "inspect_codex_writer", side_effect=[active, active]):
             code, result = self.send()
         self.assertEqual(code, 0)
         self.assertEqual(result["codexHome"], str(self.default))
         self.assertEqual(result["status"], "queued")
         self.queue.assert_called_once()
 
-    def test_single_default_without_discovery_db_still_delegates_to_native_queue(self):
+    def test_single_default_without_discovery_db_fails_without_queue(self):
         empty_user = self.user / "empty-user"
         with mock.patch.object(peer.Path, "home", return_value=empty_user):
             code, result = self.send()
-        self.assertEqual(code, 0)
-        self.assertEqual(result["codexHome"], str(empty_user / ".codex"))
+        self.assertEqual(code, 2)
+        self.assertEqual(result["codexHomeResolution"]["reason"],
+                         "thread_not_saved_in_known_homes")
         self.assertFalse(empty_user.exists())
-        self.queue.assert_called_once()
+        self.queue.assert_not_called()
 
     def test_macos_default_without_orca_installation_remains_compatible(self):
         user = self.user / "single-home-user"
         self.make_home(user / ".codex")
-        with mock.patch.object(peer.Path, "home", return_value=user):
+        active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
+                  "ownerStable": True, "ownerStartTime": "stable",
+                  "reason": "stable_live_writer"}
+        with mock.patch.object(peer.Path, "home", return_value=user), \
+             mock.patch.object(peer, "inspect_codex_writer", side_effect=[active, active]):
             code, result = self.send()
         self.assertEqual(code, 0)
         self.assertEqual(result["codexHome"], str(user / ".codex"))
@@ -591,7 +768,11 @@ class CodexHomes(unittest.TestCase):
         self.make_home(user / ".codex")
         empty = user / "Library/Application Support/orca/codex-accounts/empty/home"
         empty.mkdir(parents=True)
-        with mock.patch.object(peer.Path, "home", return_value=user):
+        active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
+                  "ownerStable": True, "ownerStartTime": "stable",
+                  "reason": "stable_live_writer"}
+        with mock.patch.object(peer.Path, "home", return_value=user), \
+             mock.patch.object(peer, "inspect_codex_writer", side_effect=[active, active]):
             code, result = self.send()
         self.assertEqual(code, 0)
         self.assertEqual(result["codexHome"], str(user / ".codex"))
@@ -603,9 +784,9 @@ class CodexHomes(unittest.TestCase):
             conn.execute("DELETE FROM threads")
             conn.commit()
         code, result = self.send()
-        self.assertEqual(code, 2)
+        self.assertEqual(code, 1)
         self.assertIn(str(self.account), result["error"])
-        self.assertIn("--codex-home", result["error"])
+        self.assertIn("--allow-inactive-codex-home", result["error"])
         self.queue.assert_not_called()
 
     def test_invalid_config_fails_closed_without_echoing_raw_value(self):
@@ -624,7 +805,7 @@ class CodexHomes(unittest.TestCase):
         code, result = self.send()
         self.assertEqual(code, 1)
         self.assertIn(str(missing), result["error"])
-        self.assertIn("--codex-home", result["error"])
+        self.assertIn("nothing queued", result["error"])
         self.assertFalse(missing.exists())
         self.queue.assert_not_called()
 
@@ -658,20 +839,24 @@ class CodexHomes(unittest.TestCase):
         self.assertIn("Cannot inspect Codex homes", result["error"])
         self.queue.assert_not_called()
 
-    def test_explicit_selection_bypasses_unrelated_broken_inventory(self):
+    def test_explicit_selection_does_not_bypass_broken_inventory(self):
         os.environ["SESSION_PEER_CODEX_HOMES"] = 'invalid'
         with mock.patch.object(peer.Path, "iterdir", side_effect=PermissionError("denied")):
             code, result = self.send("--codex-home", str(self.account))
-        self.assertEqual(code, 0)
-        self.assertEqual(result["codexHome"], str(self.account))
-        self.queue.assert_called_once()
+        self.assertEqual(code, 1)
+        self.assertIn("Cannot inspect Codex homes", result["error"])
+        self.queue.assert_not_called()
 
     @unittest.skipIf(os.name == "nt", "creating symlinks may require Windows privileges")
     def test_symlink_and_repeated_paths_are_one_home(self):
         alias = self.user / "codex-alias"
         alias.symlink_to(self.default, target_is_directory=True)
         os.environ["SESSION_PEER_CODEX_HOMES"] = json.dumps([str(alias), str(self.default), str(alias)])
-        with mock.patch.object(peer.sys, "platform", "linux"):
+        active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
+                  "ownerStable": True, "ownerStartTime": "stable",
+                  "reason": "stable_live_writer"}
+        with mock.patch.object(peer.sys, "platform", "linux"), \
+             mock.patch.object(peer, "inspect_codex_writer", side_effect=[active, active]):
             code, result = self.send()
         self.assertEqual(code, 0)
         self.assertEqual(result["codexHome"], str(self.default))
@@ -711,14 +896,15 @@ class CodexHomes(unittest.TestCase):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             code = peer.main(["send", "--to", "codex:" + THREAD, "--codex-home", str(self.account),
-                              "--no-from", "--no-reply-to", "test"])
+                              "--allow-inactive-codex-home", "--no-from", "--no-reply-to", "test"])
         self.assertEqual(code, 0)
         self.assertIn(str(self.account), output.getvalue())
         self.assertIn("consumption not confirmed", output.getvalue())
 
     def test_timeout_does_not_return_false_submission_or_consumption_confirmation(self):
         self.queue.side_effect = subprocess.TimeoutExpired("codex", 30)
-        code, result = self.send("--codex-home", str(self.account))
+        code, result = self.send("--codex-home", str(self.account),
+                                 "--allow-inactive-codex-home")
         self.assertEqual(code, 1)
         self.assertFalse(result["ok"])
         self.assertIn("outcome unknown", result["error"])
@@ -743,9 +929,10 @@ class CodexHomes(unittest.TestCase):
             code, result = self.send("--host", "worker")
             self.assertEqual(code, 1)
             self.assertEqual(result["host"], "worker")
-            self.assertIn("Ambiguous", result["error"])
+            self.assertIn("inactive", result["error"])
             self.queue.assert_not_called()
-            code, result = self.send("--host", "worker", "--codex-home", str(self.account))
+            code, result = self.send("--host", "worker", "--codex-home", str(self.account),
+                                     "--allow-inactive-codex-home")
             self.assertEqual(code, 0)
             self.assertEqual(result["host"], "worker")
             self.assertEqual(result["codexHome"], str(self.account))
@@ -753,7 +940,8 @@ class CodexHomes(unittest.TestCase):
             self.assertIs(result["consumptionConfirmed"], False)
             self.assertEqual(self.queue.call_args.kwargs["env"]["CODEX_HOME"], str(self.account))
             self.queue.reset_mock()
-            code, result = self.send("--host", "worker", "--codex-home", str(self.account), "--dry-run")
+            code, result = self.send("--host", "worker", "--codex-home", str(self.account),
+                                     "--allow-inactive-codex-home", "--dry-run")
             self.assertEqual(code, 0)
             self.assertIs(result["submitted"], False)
             self.assertEqual(result["codexHome"], str(self.account))

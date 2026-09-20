@@ -425,9 +425,9 @@ session-peer send --host mac --to 'codex:<full-thread-uuid>' \
 
 Omit `--host mac` for local use. Remove `--dry-run` only when ready to submit.
 Quoting `~` keeps expansion on the destination; an absolute remote path also
-works. `--codex-home` explicitly chooses that copy but is not proof of activity.
-This explicit-home form also works with releases that predate active-writer
-resolution.
+works. Current releases treat `--codex-home` as a destination constraint and
+still validate every matching known home's writer evidence. Older releases
+accept the explicit-home syntax but do not provide this safety guarantee.
 
 The duplicate-home rejection baseline shipped in v0.6.1. The active-writer
 selection, revalidation, and detailed `codexHomeResolution` evidence described
@@ -451,28 +451,35 @@ forwarded by `--host`. On Windows, use absolute Windows paths with backslashes
 escaped as required by JSON. Empty configuration arrays are allowed; malformed
 configuration is an error for implicit sends.
 
-If the UUID occurs in multiple known homes, session-peer examines the exact
-`thread-writer-locks/<uuid>.lock` in each matching home. It independently probes
-the kernel advisory lock and correlates the opener through two stable `lsof`
-observations. Exactly one stable, same-user Codex writer selects that home; the
-evidence is checked again immediately before queue submission. A free or stale
-lock does not win merely because its file exists.
+For every send and dry-run, session-peer finds every known home that saves the
+UUID and examines its exact `thread-writer-locks/<uuid>.lock`. This includes a
+single candidate and an explicit `--codex-home`. It independently probes the
+kernel advisory lock and correlates the opener through two stable `lsof`
+observations. An implicit send selects the only stable, same-user Codex writer.
+An explicit home must be that writer; if another home owns the only live writer,
+the command returns a structured conflict and never changes the home silently.
+The selected PID, process start time, and held lock are checked again immediately
+before queue submission. A free or stale lock does not win merely because its
+file exists.
 
-Zero or multiple live writers, missing `lsof`, permission failures, changing
-PIDs/inodes and conflicting evidence fail closed before queueing. Archived saved
-copies still count. Unreadable or incompatible known databases and missing
-configured databases also prevent implicit submission. Choose `--codex-home`
-explicitly to bypass unrelated inventory and activity checks. Resolved symlink
-aliases and repeated paths count as one home.
+Unknown evidence, multiple live writers, missing `lsof`, permission failures,
+changing PIDs/start times/inodes, and conflicting evidence fail closed before
+queueing. Archived saved copies still count. Unreadable or incompatible known
+databases and missing configured databases also prevent submission. If every
+saved copy is inactive, intentionally queueing for a future resume requires an
+explicit `--codex-home` together with `--allow-inactive-codex-home`; `--wake`
+already serves as the explicit activation opt-in. The inactive flag without an
+explicit home is rejected. Resolved symlink aliases and repeated paths count as
+one home.
 
-With no competing saved home, native queue behavior is preserved. `list`
-aggregates known homes unless `--codex-home` selects exactly one. There is no general filesystem scan or process
-environment inspection, and process arguments are not exposed. Activity
-inspection runs on the destination machine, including over SSH. Platforms
-without POSIX `flock` or `lsof` cannot automatically resolve competing homes and
-must use `--codex-home`. Unconfigured/custom layouts and copies created after the
-check can still be missed. Use `session-peer doctor` to inspect the selected home,
-bounded candidates, executable, and supported state DB schema without submitting.
+`list` aggregates known homes unless `--codex-home` selects exactly one. There
+is no general filesystem scan or process environment inspection, and process
+arguments are not exposed. Activity inspection runs on the destination machine,
+including over SSH. Platforms without POSIX `flock` or `lsof` cannot establish
+live-writer ownership and fail closed when that evidence is required.
+Unconfigured/custom layouts and copies created after the check can still be
+missed. Use `session-peer doctor` to inspect the selected home, bounded
+candidates, executable, and supported state DB schema without submitting.
 
 ### Submission and JSON results
 
@@ -505,8 +512,8 @@ Within the common envelope, Codex send JSON includes `target: {agent, id}`,
 - `codexHome`: the resolved absolute destination home, not a sender-side guess.
 - `codexHomeResolution`: schema-versioned `status`, `selected`, `reason`, and
   bounded candidate evidence. Status is `explicit`, `selected`, `ambiguous`, or
-  `unknown`; candidates expose saved-thread, writer-lock and stable owner PID
-  facts without process arguments or environment values.
+  `unknown`; candidates expose saved-thread, writer-lock, stable owner PID and
+  process start-time facts without process arguments or environment values.
 - `submitted`: `true` only after successful queue CLI completion, `false` for dry-run.
 - `consumptionConfirmed`: always `false`; neither queued nor validated establishes consumption.
 
