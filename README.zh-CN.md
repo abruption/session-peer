@@ -57,19 +57,19 @@ session-peer send --host worker --to 'codex:00000000-0000-4000-8000-000000000001
 
 ## 安装方式
 
-可以使用`pipx`或`uv`，也可以在已激活的虚拟环境中运行`python -m pip install session-peer`。
-如需同时安装独立CLI和代理技能：
+运行时可使用`pipx`或`uv`安装，也可以在已激活的虚拟环境中运行
+`python -m pip install session-peer`。代理技能请从[专用仓库](https://github.com/abruption/session-peer-skill)单独安装：
 
 ```bash
-git clone https://github.com/abruption/session-peer
-cd session-peer
-./install.sh
-# 远程安装: ./install.sh --host worker
+npx -y skills@latest add abruption/session-peer-skill \
+  --skill session-peer --global \
+  --agent claude-code --agent codex --agent antigravity \
+  --copy --yes
 ```
 
-Shell安装脚本需要POSIX环境。原生Windows请使用Python包管理器。
-可选MCP工具需要Python 3.10或更高版本以及`session-peer[mcp]`。
-请参阅[安装详情](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/cli-reference.md#install)。
+在隔离网络或SSH部署中，POSIX的`./install.sh [--host worker]`仍会附带迁移期兼容技能副本。
+原生Windows的运行时请使用Python包管理器。可选MCP工具需要Python 3.10或更高版本以及
+`session-peer[mcp]`。请参阅[安装详情](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/cli-reference.md#install)。
 
 ## 让AI助手代为处理
 

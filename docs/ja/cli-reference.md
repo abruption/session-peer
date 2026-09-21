@@ -121,13 +121,14 @@ pipx install session-peer
 ```
 
 あるいは、`uv tool install session-peer` を使用します。
-パッケージマネージャーは `session-peer` コマンドをインストールしますが、[Claude Code スキル](#the-skill)はインストールしません。
-Claude が自律的に session-peer を使用できるようにスキルを追加するには:
+パッケージマネージャーは `session-peer` コマンドをインストールしますが、[エージェントスキル](#the-skill)はインストールしません。
+Claude Code、Codex、Antigravity 用のスキルは専用リポジトリからインストールします。
 
 ```bash
-mkdir -p ~/.claude/skills/session-peer
-curl -fsSL -o ~/.claude/skills/session-peer/SKILL.md \
-  https://raw.githubusercontent.com/abruption/session-peer/main/skills/session-peer/SKILL.md
+npx -y skills@latest add abruption/session-peer-skill \
+  --skill session-peer --global \
+  --agent claude-code --agent codex --agent antigravity \
+  --copy --yes
 ```
 
 <a id="installsh"></a>
@@ -145,7 +146,7 @@ git clone https://github.com/abruption/session-peer && cd session-peer
 ```
 
 これにより、`session_peer.py` が `~/.local/share/session-peer/` に配置され、
-[Claude Code スキル](../../skills/session-peer/SKILL.md) が `~/.claude/skills/session-peer/` にインストールされ、
+[session-peer スキル](https://github.com/abruption/session-peer-skill/blob/main/session-peer/SKILL.md) の互換コピーが `~/.claude/skills/session-peer/` にインストールされ、
 `~/.local/bin/session-peer` がリンクされます。既存の cc-peer ファイルは保持されます。
 削除するには `./install.sh --uninstall [--host ...]` を使用します。
 
@@ -170,12 +171,13 @@ chmod +x session_peer.py
 <a id="the-skill"></a>
 ### スキル
 
-スタンドアロンインストーラーは、プログラムを `~/.local/share/session-peer/` に配置し、
-スキルを個別に `~/.claude/skills/session-peer/SKILL.md` に配置します。スキルの配置場所は、
-デフォルトの前に `CLAUDE_CONFIG_DIR`、次に `ANTHROPIC_CONFIG_DIR` を優先します。
-スキルは Claude によるターゲットとメッセージの選択を案内し、Python プログラムが
-検出とトランスポートを実行します。これをインストールしても、Codex プラグインは
-インストールされず、いずれのエージェントの権限やインバウンド設定も変更されません。
+公開スキルの正本は [session-peer-skill リポジトリ](https://github.com/abruption/session-peer-skill)で管理します。
+スタンドアロンインストーラーはエアギャップと SSH インストール用の互換コピーを保持し、
+`~/.claude/skills/session-peer/SKILL.md` に配置します。配置場所はデフォルトの前に
+`CLAUDE_CONFIG_DIR`、次に `ANTHROPIC_CONFIG_DIR` を優先します。Claude Code、Codex、
+Antigravity 全体へグローバルインストールする場合は、上記の Skills CLI コマンドを使用してください。
+スキルがターゲットとメッセージの選択を案内し、Python プログラムが検出と転送を実行します。
+インストールしてもエージェントの権限やインバウンド設定は変更されません。
 
 ## 使用方法
 

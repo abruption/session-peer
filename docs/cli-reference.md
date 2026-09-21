@@ -122,13 +122,14 @@ pipx install session-peer
 ```
 
 Alternatively, use `uv tool install session-peer`.
-Package managers install the `session-peer` command but not the [Claude Code skill](#the-skill).
-To add the skill so Claude can use session-peer on its own:
+Package managers install the `session-peer` command but not the [agent skill](#the-skill).
+Install the skill for Claude Code, Codex, and Antigravity from its dedicated repository:
 
 ```bash
-mkdir -p ~/.claude/skills/session-peer
-curl -fsSL -o ~/.claude/skills/session-peer/SKILL.md \
-  https://raw.githubusercontent.com/abruption/session-peer/main/skills/session-peer/SKILL.md
+npx -y skills@latest add abruption/session-peer-skill \
+  --skill session-peer --global \
+  --agent claude-code --agent codex --agent antigravity \
+  --copy --yes
 ```
 
 ### install.sh
@@ -145,7 +146,7 @@ git clone https://github.com/abruption/session-peer && cd session-peer
 ```
 
 That places `session_peer.py` in `~/.local/share/session-peer/`, installs the
-[Claude Code skill](../skills/session-peer/SKILL.md) in `~/.claude/skills/session-peer/`,
+a compatibility copy of the [session-peer skill](https://github.com/abruption/session-peer-skill/blob/main/session-peer/SKILL.md) in `~/.claude/skills/session-peer/`,
 and links `~/.local/bin/session-peer`. Existing cc-peer files are preserved.
 Remove it with `./install.sh --uninstall [--host ...]`.
 
@@ -169,12 +170,14 @@ chmod +x session_peer.py
 
 ### The skill
 
-The standalone installer puts the program in `~/.local/share/session-peer/`
-and the skill separately in `~/.claude/skills/session-peer/SKILL.md`. Skill placement
+The published skill is maintained in the [session-peer-skill repository](https://github.com/abruption/session-peer-skill).
+The standalone installer retains a compatibility copy for air-gapped and SSH
+installations and places it in `~/.claude/skills/session-peer/SKILL.md`; placement
 respects `CLAUDE_CONFIG_DIR`, then `ANTHROPIC_CONFIG_DIR`, before the default.
-The skill guides Claude's choice of target and message; the Python program
-performs discovery and transport. Installing it does not install a Codex
-plugin or change either agent's permissions or inbound settings.
+For normal global installation across Claude Code, Codex, and Antigravity, use the
+Skills CLI command above. The skill guides target and message selection while the
+Python program performs discovery and transport. Installing it does not change an
+agent's permissions or inbound settings.
 
 ## Usage
 

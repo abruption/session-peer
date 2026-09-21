@@ -57,19 +57,21 @@ session-peer自体をインストールする必要はありません。
 
 ## インストール方法
 
-`pipx`や`uv`、または有効化した仮想環境で`python -m pip install session-peer`を使えます。
-単独実行CLIとエージェントスキルをまとめてインストールするには:
+ランタイムは`pipx`や`uv`、または有効化した仮想環境の`python -m pip install session-peer`で
+インストールします。エージェントスキルは[専用リポジトリ](https://github.com/abruption/session-peer-skill)から
+別途インストールします。
 
 ```bash
-git clone https://github.com/abruption/session-peer
-cd session-peer
-./install.sh
-# リモートへのインストール: ./install.sh --host worker
+npx -y skills@latest add abruption/session-peer-skill \
+  --skill session-peer --global \
+  --agent claude-code --agent codex --agent antigravity \
+  --copy --yes
 ```
 
-シェルインストーラーにはPOSIX環境が必要です。ネイティブWindowsではPythonパッケージマネージャーを使ってください。
-オプションのMCPツールにはPython 3.10以上と`session-peer[mcp]`が必要です。
-[詳細な手順](https://github.com/abruption/session-peer/blob/main/docs/ja/cli-reference.md#install)を参照してください。
+エアギャップ環境またはSSH配布では、POSIXの`./install.sh [--host worker]`が移行期間向けの
+スキルコピーを引き続き同梱します。ネイティブWindowsのランタイムにはPythonパッケージ
+マネージャーを使用してください。オプションのMCPツールにはPython 3.10以上と
+`session-peer[mcp]`が必要です。[詳細な手順](https://github.com/abruption/session-peer/blob/main/docs/ja/cli-reference.md#install)を参照してください。
 
 ## AIアシスタントに作業を依頼する
 

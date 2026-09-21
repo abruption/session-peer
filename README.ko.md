@@ -57,18 +57,20 @@ session-peer를 별도로 설치할 필요는 없어요.
 
 ## 설치 방법
 
-`pipx`·`uv`를 사용하거나 활성화된 가상 환경에서 `python -m pip install session-peer`를 실행하세요.
-독립 실행 CLI와 에이전트 스킬을 함께 설치하려면:
+실행 프로그램은 `pipx`·`uv` 또는 활성화된 가상 환경의 `python -m pip install session-peer`로
+설치하세요. 에이전트 스킬은 [전용 저장소](https://github.com/abruption/session-peer-skill)에서
+별도로 설치합니다.
 
 ```bash
-git clone https://github.com/abruption/session-peer
-cd session-peer
-./install.sh
-# 원격 설치: ./install.sh --host worker
+npx -y skills@latest add abruption/session-peer-skill \
+  --skill session-peer --global \
+  --agent claude-code --agent codex --agent antigravity \
+  --copy --yes
 ```
 
-셸 설치기는 POSIX 환경이 필요해요. 네이티브 Windows에서는 Python 패키지 관리자를 사용하세요.
-선택형 MCP 도구는 Python 3.10 이상과 `session-peer[mcp]`가 필요해요.
+에어갭 또는 SSH 배포에서는 POSIX `./install.sh [--host worker]`가 전환 기간용 스킬
+사본을 계속 함께 설치합니다. 네이티브 Windows의 실행 프로그램은 Python 패키지 관리자를
+사용하세요. 선택형 MCP 도구는 Python 3.10 이상과 `session-peer[mcp]`가 필요해요.
 [설치 상세](https://github.com/abruption/session-peer/blob/main/docs/ko/cli-reference.md#install)를 참고하세요.
 
 ## AI에게 작업 맡기기
