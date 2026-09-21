@@ -1,5 +1,6 @@
 """Authenticated online-only blind relay. Never imports endpoint identity keys."""
 import asyncio
+from dataclasses import asdict, dataclass
 import hashlib
 from http import HTTPStatus
 from http.cookies import SimpleCookie
@@ -12,11 +13,40 @@ from websockets.asyncio.server import serve
 from .wire import MAX_FRAME
 
 
+@dataclass(frozen=True)
+class RelayLimits:
+    handshake_rate: int = 20
+    pending_sessions: int = 100
+    global_connections: int = 10
+    user_connections: int = 8
+    device_connections: int = 4
+    connection_byte_budget: int = 32 * 1024 * 1024
+
+    def validate(self):
+        bounds = {
+            'handshake_rate': (1, 1000),
+            'pending_sessions': (1, 10000),
+            'global_connections': (2, 10000),
+            'user_connections': (1, 1000),
+            'device_connections': (1, 1000),
+            'connection_byte_budget': (MAX_FRAME, 1024 * 1024 * 1024),
+        }
+        for name, (minimum, maximum) in bounds.items():
+            value = getattr(self, name)
+            if type(value) is not int or not minimum <= value <= maximum:
+                raise ValueError('invalid_relay_limits')
+        if (self.device_connections > self.user_connections
+                or self.user_connections > self.global_connections):
+            raise ValueError('invalid_relay_limits')
+        return self
+
+
 class Relay:
-    def __init__(self, accounts, *, capture=None, control=None):
+    def __init__(self, accounts, *, capture=None, control=None, limits=None):
         # Provisioned admission hashes are independent of end-to-end TLS identities.
         self.accounts = accounts
         self.control = control
+        self.limits = (limits or RelayLimits()).validate()
         self.sessions = {}
         self.waiting = {}
         self.connections = set()
@@ -25,6 +55,38 @@ class Relay:
         self.forwarded_frames = 0
         self.rejected = 0
         self.requests = []
+        self.started_at = time.time()
+        self.started_monotonic = time.monotonic()
+        self.counters = {
+            'handshakes': 0,
+            'sessionsIssued': 0,
+            'connectionsAccepted': 0,
+            'rateRejected': 0,
+            'sessionCapacityRejected': 0,
+            'connectionCapacityRejected': 0,
+            'unauthorizedRejected': 0,
+            'byteBudgetClosed': 0,
+        }
+
+    def metrics(self):
+        now = time.monotonic()
+        self.sessions = {key: value for key, value in self.sessions.items() if value[0] > now}
+        return {
+            'schemaVersion': 1,
+            'generatedAt': int(time.time() * 1000),
+            'uptimeSeconds': max(0, int(now - self.started_monotonic)),
+            'capacity': asdict(self.limits),
+            'current': {
+                'activeConnections': len(self.connections),
+                'waitingRooms': len(self.waiting),
+                'pendingSessions': len(self.sessions),
+            },
+            'counters': {
+                **self.counters,
+                'forwardedFrames': self.forwarded_frames,
+                'forwardedBytes': self.bytes,
+            },
+        }
 
     def response(self, connection, status, text):
         response = connection.respond(status, text)
@@ -33,13 +95,20 @@ class Relay:
 
     async def process_request(self, connection, request):
         now = time.monotonic()
+        self.counters['handshakes'] += 1
         self.requests = [stamp for stamp in self.requests if stamp > now-1]
-        if len(self.requests) >= 20:
+        if len(self.requests) >= self.limits.handshake_rate:
             self.rejected += 1
+            self.counters['rateRejected'] += 1
             return self.response(connection, HTTPStatus.TOO_MANY_REQUESTS, 'rate_limited\n')
         self.requests.append(now)
         self.sessions = {key: value for key, value in self.sessions.items() if value[0] > now}
         if request.path == '/v1/session':
+            # Capacity rejection must not consume a control admission JTI.
+            if len(self.sessions) >= self.limits.pending_sessions:
+                self.rejected += 1
+                self.counters['sessionCapacityRejected'] += 1
+                return self.response(connection, HTTPStatus.SERVICE_UNAVAILABLE, 'capacity\n')
             auth = request.headers.get('Authorization', '')
             if self.control:
                 try:
@@ -50,11 +119,13 @@ class Relay:
                 digest = hashlib.sha256(auth.removeprefix('Bearer ').encode()).hexdigest()
                 account = next((a for a in self.accounts if auth.startswith('Bearer ')
                                 and secrets.compare_digest(digest, a['hash'])), None)
-            if not account or len(self.sessions) >= 100:
+            if not account:
                 self.rejected += 1
+                self.counters['unauthorizedRejected'] += 1
                 return self.response(connection, HTTPStatus.UNAUTHORIZED, 'unauthorized\n')
             token = secrets.token_urlsafe(32)
             self.sessions[token] = (now+120, account)
+            self.counters['sessionsIssued'] += 1
             response = self.response(connection, HTTPStatus.OK, '{"ok":true}\n')
             response.headers['Set-Cookie'] = 'session_peer='+token+'; Path=/v1/; Secure; HttpOnly; SameSite=Strict; Max-Age=120'
             return response
@@ -68,16 +139,23 @@ class Relay:
             ticket = None
         if not ticket:
             self.rejected += 1
+            self.counters['unauthorizedRejected'] += 1
             return self.response(connection, HTTPStatus.UNAUTHORIZED, 'unauthorized\n')
         if self.control and not self.control.active(ticket[1]):
+            self.rejected += 1
+            self.counters['unauthorizedRejected'] += 1
             return self.response(connection, HTTPStatus.UNAUTHORIZED, 'unauthorized\n')
         if self.control:
             current = [getattr(item, 'lab_account', {}) for item in self.connections]
             account = ticket[1]
-            if (sum(item.get('userId') == account['userId'] for item in current) >= 8
-                    or sum(item.get('devicePrincipal') == account['devicePrincipal'] for item in current) >= 4):
+            if (sum(item.get('userId') == account['userId'] for item in current) >= self.limits.user_connections
+                    or sum(item.get('devicePrincipal') == account['devicePrincipal'] for item in current) >= self.limits.device_connections):
+                self.rejected += 1
+                self.counters['connectionCapacityRejected'] += 1
                 return self.response(connection, HTTPStatus.SERVICE_UNAVAILABLE, 'capacity\n')
-        if len(self.connections) >= 10:
+        if len(self.connections) >= self.limits.global_connections:
+            self.rejected += 1
+            self.counters['connectionCapacityRejected'] += 1
             return self.response(connection, HTTPStatus.SERVICE_UNAVAILABLE, 'capacity\n')
         self.connections.add(connection)
         async def release_slot():
@@ -85,6 +163,7 @@ class Relay:
             self.connections.discard(connection)
         asyncio.create_task(release_slot())
         self.sessions.pop(cookie['session_peer'].value, None)
+        self.counters['connectionsAccepted'] += 1
         connection.lab_account = ticket[1]
         connection.lab_expiry = ticket[0]
         return None
@@ -137,7 +216,8 @@ class Relay:
                     self.bytes += len(data)
                     forwarded_bytes += len(data)
                     self.forwarded_frames += 1
-                    if forwarded_bytes > 32*1024*1024:
+                    if forwarded_bytes > self.limits.connection_byte_budget:
+                        self.counters['byteBudgetClosed'] += 1
                         await ws.close(1013, 'byte_budget')
                         break
                     if self.capture is not None:
@@ -165,3 +245,20 @@ class Relay:
                            compression=None, max_size=MAX_FRAME, max_queue=4,
                            write_limit=32768, ping_interval=10, ping_timeout=10,
                            open_timeout=5, close_timeout=2)
+
+    async def start_metrics(self, port):
+        async def metrics_request(connection, request):
+            host = request.headers.get('Host', '').split(':', 1)[0]
+            if request.path != '/metrics' or host != '127.0.0.1':
+                return self.response(connection, HTTPStatus.NOT_FOUND, 'not_found\n')
+            response = self.response(connection, HTTPStatus.OK,
+                                     json.dumps(self.metrics(), separators=(',', ':'))+'\n')
+            response.headers['Content-Type'] = 'application/json'
+            return response
+
+        async def unreachable_handler(ws):
+            await ws.close()
+
+        return await serve(unreachable_handler, '127.0.0.1', port,
+                           process_request=metrics_request, compression=None,
+                           open_timeout=2, close_timeout=1)

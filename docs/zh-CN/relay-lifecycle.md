@@ -62,6 +62,21 @@ session-peer relay serve --auth-state /run/session-peer-auth/state.json \
 
 准入需要一个短期 ES256 票据以及已注册 P-256 设备密钥的签名。Audience、issuer、generation、owner、receiver 和 room 均会被检查。在签发既有的一次性 WebSocket Cookie 之前，票据会被消费一次。缺失/无效的状态会导致闭锁失败（fail-closed）；现有的连接每秒都会重新检查吊销情况。控制服务签发和 Python CLI 已通过测试夹具集成。仅靠令牌验证测试不能证明真实的浏览器登录有效。
 
+### 托管容量与运营指标
+
+兼容的默认值均可显式配置：
+
+```sh
+session-peer relay serve ... \
+  --handshake-rate 20 --pending-sessions 100 \
+  --global-connections 10 --user-connections 8 --device-connections 4 \
+  --connection-byte-budget 33554432 --metrics-port 3768
+```
+
+每个值都有上下限。每设备容量不能超过每用户容量，每用户容量不能超过全局容量；无效组合会拒绝启动。速率超限返回 429。待处理会话或连接容量超限返回 503，且不会消费新的准入证明或丢弃已签发的一次性会话。默认值是安全边界，而不是受支持用户数量的保证，并且必须低于实测的 systemd 内存、任务和文件描述符限制。
+
+可选指标监听器仅绑定到独立端口上的 `127.0.0.1`。切勿对其进行反向代理。控制服务读取其固定的非识别架构，并仅通过现有的 Authelia 保护运营边界公开。它报告当前连接、等待 room、待处理会话、准入与容量拒绝、转发帧/字节、运行时间以及配置上限。它绝不报告用户、room、principal、ticket、proof、地址或内容。
+
 ## 浏览器登录（集成候选）
 
 ```sh

@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { expect, it } from "vitest";
-import { adminMetricDetails } from "../src/server/metrics.js";
+import { adminMetricDetails, relayMetrics } from "../src/server/metrics.js";
 
 it("returns useful operator details without raw credentials, certificates or payloads", () => {
   const db = new Database(":memory:");
@@ -74,4 +74,34 @@ it("returns useful operator details without raw credentials, certificates or pay
   } finally {
     db.close();
   }
+});
+
+it("accepts only the fixed non-identifying relay aggregate schema", async () => {
+  const payload = {
+    schemaVersion: 1,
+    generatedAt: 1_789_000_000_000,
+    uptimeSeconds: 300,
+    capacity: {
+      handshake_rate: 20, pending_sessions: 100, global_connections: 10,
+      user_connections: 8, device_connections: 4,
+      connection_byte_budget: 33_554_432,
+    },
+    current: { activeConnections: 2, waitingRooms: 1, pendingSessions: 3 },
+    counters: {
+      handshakes: 10, sessionsIssued: 8, connectionsAccepted: 6,
+      rateRejected: 1, sessionCapacityRejected: 2,
+      connectionCapacityRejected: 3, unauthorizedRejected: 4,
+      byteBudgetClosed: 5, forwardedFrames: 9, forwardedBytes: 1024,
+    },
+  };
+  const config = { relayMetricsUrl: "http://127.0.0.1:3768/metrics" } as never;
+  const result = await relayMetrics(config, async () =>
+    new Response(JSON.stringify(payload), { status: 200 }));
+  const { schemaVersion: _schemaVersion, ...aggregate } = payload;
+  expect(result).toEqual({ available: true, ...aggregate });
+  expect(JSON.stringify(result)).not.toMatch(/secret-user|secret-principal|secret-ticket|secret-proof|secret-token/i);
+  expect(await relayMetrics(config, async () =>
+    new Response(JSON.stringify({ ...payload, current: { userId: "secret" } }), { status: 200 })))
+    .toEqual({ available: false });
+  expect(await relayMetrics({} as never)).toEqual({ available: false });
 });

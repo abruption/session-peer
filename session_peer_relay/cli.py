@@ -16,13 +16,23 @@ import session_peer as core
 from .app import Receiver, pair, exchange
 from .identity import private_read, private_write, private_path
 from .native import Policy
-from .relay import Relay
+from .relay import Relay, RelayLimits
 from .store import Store, Rejected
 from .wire import validate_relay_url, direct_address
 
 
 def state_path(value):
     return Path(value or '~/.local/share/session-peer/device').expanduser().resolve()
+
+
+def metrics_port(value):
+    try:
+        port = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError('invalid metrics port') from exc
+    if port != 0 and not 1024 <= port <= 65535:
+        raise argparse.ArgumentTypeError('invalid metrics port')
+    return port
 
 
 def credential(path):
@@ -98,13 +108,39 @@ async def manage(kind, args):
                        or not isinstance(a['room'], str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}', a['room'])
                        or not isinstance(a['hash'], str) or not re.fullmatch(r'[a-f0-9]{64}', a['hash']) for a in accounts)):
             raise Rejected('invalid_admission_accounts')
-        relay = Relay(accounts, control=control)
-        server = await relay.start(args.bind, args.port)
-        emit({'ok': True, 'ready': True, 'port': server.sockets[0].getsockname()[1]})
         try:
+            limits = RelayLimits(
+                handshake_rate=args.handshake_rate,
+                pending_sessions=args.pending_sessions,
+                global_connections=args.global_connections,
+                user_connections=args.user_connections,
+                device_connections=args.device_connections,
+                connection_byte_budget=args.connection_byte_budget,
+            ).validate()
+        except ValueError as exc:
+            if control:
+                control.close()
+            raise Rejected(str(exc)) from None
+        if args.metrics_port and args.metrics_port == args.port:
+            if control:
+                control.close()
+            raise Rejected('invalid_relay_metrics_port')
+        relay = Relay(accounts, control=control, limits=limits)
+        try:
+            server = await relay.start(args.bind, args.port)
+        except BaseException:
+            if control:
+                control.close()
+            raise
+        metrics_server = None
+        try:
+            metrics_server = await relay.start_metrics(args.metrics_port) if args.metrics_port else None
+            emit({'ok': True, 'ready': True, 'port': server.sockets[0].getsockname()[1]})
             await lifetime(args.seconds)
         finally:
             server.close(); await server.wait_closed()
+            if metrics_server:
+                metrics_server.close(); await metrics_server.wait_closed()
             if control:
                 control.close()
         return {'ok': True, 'stopped': True, 'frames': relay.forwarded_frames, 'rejected': relay.rejected}
@@ -224,6 +260,13 @@ def parser(kind):
         source = item.add_mutually_exclusive_group(required=True)
         source.add_argument('--accounts'); source.add_argument('--auth-state')
         item.add_argument('--auth-issuer'); item.add_argument('--auth-replay-state'); server_options(item)
+        item.add_argument('--handshake-rate', type=int, default=20)
+        item.add_argument('--pending-sessions', type=int, default=100)
+        item.add_argument('--global-connections', type=int, default=10)
+        item.add_argument('--user-connections', type=int, default=8)
+        item.add_argument('--device-connections', type=int, default=4)
+        item.add_argument('--connection-byte-budget', type=int, default=32*1024*1024)
+        item.add_argument('--metrics-port', type=metrics_port, default=0, metavar='PORT')
         return p
     command('init'); command('peers')
     item = command('login'); item.add_argument('--server', required=True); item.add_argument('--no-browser', action='store_true')

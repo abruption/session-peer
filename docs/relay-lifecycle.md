@@ -112,6 +112,32 @@ Missing/invalid state fails closed; existing connections recheck revocation ever
 second. Control-service issuance and the Python CLI have passed fixture integration.
 Token verification tests alone do not establish live browser login.
 
+### Hosted capacity and operator metrics
+
+The compatible defaults are explicit and configurable:
+
+```sh
+session-peer relay serve ... \
+  --handshake-rate 20 --pending-sessions 100 \
+  --global-connections 10 --user-connections 8 --device-connections 4 \
+  --connection-byte-budget 33554432 --metrics-port 3768
+```
+
+Every value has lower and upper bounds. Per-device capacity cannot exceed
+per-user capacity, and per-user capacity cannot exceed the global capacity; an
+invalid combination refuses startup. Rate excess returns 429. Pending-session
+or connection capacity returns 503 without consuming a fresh admission proof or
+discarding an already issued one-use session. The defaults are safety bounds,
+not a supported-user-count guarantee, and must remain below measured systemd
+memory, task and file-descriptor limits.
+
+The optional metrics listener binds only to `127.0.0.1` on a separate port. Do
+not reverse-proxy it. The control service reads its fixed, non-identifying schema
+and exposes it only through the existing Authelia-protected operator boundary.
+It reports current connections, waiting rooms, pending sessions, admission and
+capacity rejections, forwarded frames/bytes, uptime and configured limits. It
+never reports users, rooms, principals, tickets, proofs, addresses or content.
+
 ## Browser login (integration candidate)
 
 ```sh

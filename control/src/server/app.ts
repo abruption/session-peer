@@ -6,12 +6,39 @@ import type { Config } from "./config.js";
 import {
   adminMetricDetails,
   adminMetrics,
+  relayMetrics,
   type AdminDetailFilter,
   type AdminDetailView,
 } from "./metrics.js";
 import { ControlError, assert } from "./protocol.js";
 import type { RelayControl } from "./relay-control.js";
 const MAX_BODY = 16384;
+export class BoundedRateLimiter {
+  private readonly buckets = new Map<string, { start: number; count: number }>();
+  constructor(
+    private readonly limit = 60,
+    private readonly windowMs = 60_000,
+    private readonly maxEntries = 4096,
+    private readonly now: () => number = Date.now,
+  ) {
+    if (limit < 1 || windowMs < 1 || maxEntries < 1)
+      throw new Error("invalid_rate_limiter");
+  }
+  check(key: string) {
+    const now = this.now();
+    for (const [candidate, bucket] of this.buckets)
+      if (now - bucket.start >= this.windowMs) this.buckets.delete(candidate);
+    let bucket = this.buckets.get(key);
+    if (!bucket) {
+      if (this.buckets.size >= this.maxEntries) return false;
+      bucket = { start: now, count: 0 };
+      this.buckets.set(key, bucket);
+    }
+    bucket.count++;
+    return bucket.count <= this.limit;
+  }
+  get size() { return this.buckets.size; }
+}
 export function sameOrigin(request: Request, origin: string) {
   const supplied = request.headers.get("origin");
   return (
@@ -48,7 +75,14 @@ export function createAdminMetricsApp(
     if (request.method !== "GET")
       return json({ error: "method_not_allowed" }, 405);
     const view = url.searchParams.get("view");
-    if (!view) return json(adminMetrics(db, config, control.isHealthy()));
+    if (!view) {
+      const relay = await relayMetrics(config);
+      return json(adminMetrics(
+        db, config,
+        control.isHealthy() && (!config.relayMetricsUrl || relay.available),
+        Date.now(), relay,
+      ));
+    }
     if (
       !["users", "signups", "devices", "operations"].includes(view) ||
       [...url.searchParams.keys()].some((key) => !["view", "filter"].includes(key))
@@ -79,7 +113,7 @@ export function createApp(
   config: Config,
   webDir: string,
 ) {
-  const rates = new Map<string, { start: number; count: number }>();
+  const rates = new BoundedRateLimiter();
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
       status,
@@ -232,15 +266,7 @@ export function createApp(
         "account_not_allowed",
         403,
       );
-      const now = Date.now();
-      const current = rates.get(session.user.id);
-      const bucket =
-        current && now - current.start < 60000
-          ? current
-          : { start: now, count: 0 };
-      bucket.count++;
-      rates.set(session.user.id, bucket);
-      assert(bucket.count <= 60, "rate_limited", 429);
+      assert(rates.check(session.user.id), "rate_limited", 429);
       const userId = session.user.id;
       if (path === "/api/relay/devices" && request.method === "GET")
         return json({ devices: control.list(userId) });

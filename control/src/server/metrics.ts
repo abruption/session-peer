@@ -17,6 +17,92 @@ export interface AdminMetrics {
   devices: { total: number; active: number; revoked: number };
   operations: { total: number; committed: number; pending: number };
   stateRevision: number;
+  relay: RelayMetrics;
+}
+
+export type RelayMetrics =
+  | { available: false }
+  | {
+      available: true;
+      generatedAt: number;
+      uptimeSeconds: number;
+      capacity: {
+        handshake_rate: number;
+        pending_sessions: number;
+        global_connections: number;
+        user_connections: number;
+        device_connections: number;
+        connection_byte_budget: number;
+      };
+      current: {
+        activeConnections: number;
+        waitingRooms: number;
+        pendingSessions: number;
+      };
+      counters: {
+        handshakes: number;
+        sessionsIssued: number;
+        connectionsAccepted: number;
+        rateRejected: number;
+        sessionCapacityRejected: number;
+        connectionCapacityRejected: number;
+        unauthorizedRejected: number;
+        byteBudgetClosed: number;
+        forwardedFrames: number;
+        forwardedBytes: number;
+      };
+    };
+type AvailableRelayMetrics = Extract<RelayMetrics, { available: true }>;
+
+const metricInteger = (value: unknown) =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+
+/** Read only the fixed aggregate schema from the dedicated loopback listener. */
+export async function relayMetrics(
+  config: Config,
+  fetcher: typeof fetch = fetch,
+): Promise<RelayMetrics> {
+  if (!config.relayMetricsUrl) return { available: false };
+  try {
+    const response = await fetcher(config.relayMetricsUrl, {
+      method: "GET",
+      headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(1000),
+    });
+    if (!response.ok) return { available: false };
+    const value = (await response.json()) as Record<string, unknown>;
+    const capacity = value.capacity as Record<string, unknown> | undefined;
+    const current = value.current as Record<string, unknown> | undefined;
+    const counters = value.counters as Record<string, unknown> | undefined;
+    const capacityKeys = ["handshake_rate", "pending_sessions", "global_connections",
+      "user_connections", "device_connections", "connection_byte_budget"];
+    const currentKeys = ["activeConnections", "waitingRooms", "pendingSessions"];
+    const counterKeys = ["handshakes", "sessionsIssued", "connectionsAccepted",
+      "rateRejected", "sessionCapacityRejected", "connectionCapacityRejected",
+      "unauthorizedRejected", "byteBudgetClosed", "forwardedFrames", "forwardedBytes"];
+    if (
+      value.schemaVersion !== 1 ||
+      !metricInteger(value.generatedAt) ||
+      !metricInteger(value.uptimeSeconds) ||
+      !capacity || !current || !counters ||
+      Object.keys(capacity).sort().join() !== [...capacityKeys].sort().join() ||
+      Object.keys(current).sort().join() !== [...currentKeys].sort().join() ||
+      Object.keys(counters).sort().join() !== [...counterKeys].sort().join() ||
+      capacityKeys.some((key) => !metricInteger(capacity[key]) || capacity[key] === 0) ||
+      currentKeys.some((key) => !metricInteger(current[key])) ||
+      counterKeys.some((key) => !metricInteger(counters[key]))
+    ) return { available: false };
+    return {
+      available: true,
+      generatedAt: value.generatedAt as number,
+      uptimeSeconds: value.uptimeSeconds as number,
+      capacity: Object.fromEntries(capacityKeys.map((key) => [key, capacity[key]])) as AvailableRelayMetrics["capacity"],
+      current: Object.fromEntries(currentKeys.map((key) => [key, current[key]])) as AvailableRelayMetrics["current"],
+      counters: Object.fromEntries(counterKeys.map((key) => [key, counters[key]])) as AvailableRelayMetrics["counters"],
+    };
+  } catch {
+    return { available: false };
+  }
 }
 
 export type AdminDetailView = "users" | "signups" | "devices" | "operations";
@@ -122,6 +208,7 @@ export function adminMetrics(
   config: Config,
   serviceHealthy: boolean,
   now = Date.now(),
+  relay: RelayMetrics = { available: false },
 ): AdminMetrics {
   const nowSeconds = Math.floor(now / 1000);
   const registeredUsers = count(db, 'SELECT COUNT(*) AS n FROM "user"');
@@ -173,5 +260,6 @@ export function adminMetrics(
       pending: pendingOperations,
     },
     stateRevision: revision?.revision ?? 0,
+    relay,
   };
 }

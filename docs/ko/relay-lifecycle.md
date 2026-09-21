@@ -62,6 +62,21 @@ session-peer relay serve --auth-state /run/session-peer-auth/state.json \
 
 어드미션에는 유효 기간이 짧은 ES256 티켓과 등록된 P-256 디바이스 키의 서명이 필요합니다. Audience, issuer, generation, owner, receiver 및 room이 검사됩니다. 기존 1회용 WebSocket 쿠키를 발급하기 전에 티켓이 1회 소비됩니다. 상태가 누락되었거나 유효하지 않으면 장애 시 닫힘(fails closed) 방식으로 작동하며, 기존 연결은 매초 취소 여부를 재확인합니다. 제어 서비스 발급과 Python CLI는 픽스처 통합을 통과했습니다. 토큰 검증 테스트만으로는 실제 브라우저 로그인이 작동함을 입증하지 못합니다.
 
+### 호스팅 용량 및 운영자 메트릭
+
+호환 기본값은 명시적으로 설정할 수 있습니다:
+
+```sh
+session-peer relay serve ... \
+  --handshake-rate 20 --pending-sessions 100 \
+  --global-connections 10 --user-connections 8 --device-connections 4 \
+  --connection-byte-budget 33554432 --metrics-port 3768
+```
+
+모든 값에는 하한과 상한이 있습니다. 기기별 용량은 사용자별 용량을 초과할 수 없고, 사용자별 용량은 전역 용량을 초과할 수 없습니다. 잘못된 조합은 시작을 거부합니다. 속도 초과는 429를 반환합니다. 대기 세션 또는 연결 용량 초과는 새 어드미션 증명을 소비하거나 이미 발급된 1회용 세션을 버리지 않고 503을 반환합니다. 기본값은 안전 한도이며 지원 사용자 수 보장이 아닙니다. 측정된 systemd 메모리, task 및 파일 디스크립터 한도 아래로 유지해야 합니다.
+
+선택적 메트릭 리스너는 별도 포트의 `127.0.0.1`에만 바인딩됩니다. 이를 리버스 프록시하지 마십시오. 제어 서비스는 고정된 비식별 스키마를 읽어 기존 Authelia 보호 운영자 경계를 통해서만 노출합니다. 현재 연결, 대기 room, 대기 세션, 어드미션 및 용량 거절, 전달 프레임/바이트, 가동 시간과 설정 한도를 보고합니다. 사용자, room, principal, ticket, proof, 주소 또는 내용은 보고하지 않습니다.
+
 ## 브라우저 로그인 (통합 후보)
 
 ```sh
