@@ -105,6 +105,16 @@ class Codex(unittest.TestCase):
         self.assertNotIn("shell", run.call_args.kwargs)
         self.assertEqual(run.call_count, 1)
 
+    def test_queue_uses_private_native_home_for_child_only(self):
+        self.args.codex_native_home = r"C:\Users\alice\.codex"
+        done = subprocess.CompletedProcess([], 0, "accepted", "")
+        with mock.patch.object(peer, "codex_executable", return_value="/mnt/c/codex.exe"), \
+             mock.patch.object(peer.subprocess, "run", return_value=done) as run:
+            result = peer.queue_codex(self.args, "test")
+        self.assertEqual(result["codexHome"], str(self.root.resolve()))
+        self.assertEqual(run.call_args.kwargs["env"]["CODEX_HOME"],
+                         r"C:\Users\alice\.codex")
+
     def test_different_success_output_remains_success(self):
         with mock.patch.object(peer, "codex_executable", return_value="codex"), \
              mock.patch.object(peer.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "accepted", "")):

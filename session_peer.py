@@ -678,7 +678,12 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
             raise NoTargetError(f"No saved Codex thread {thread_id} in {root}")
         return result
     revalidate_codex_home(root, thread_id, home_resolution)
-    env = dict(os.environ, CODEX_HOME=str(root))
+    # Relay receivers on WSL inspect the native Windows state DB through its
+    # mounted POSIX path, but the native codex.exe process needs the Windows
+    # spelling of that same home.  This private adapter value is derived from
+    # operator policy; it is never accepted from a paired request.
+    process_home = getattr(args, "codex_native_home", None) or str(root)
+    env = dict(os.environ, CODEX_HOME=process_home)
     try:
         done = subprocess.run([executable, "queue", "--thread", thread_id, "--message", text],
                               env=env, capture_output=True, encoding="utf-8", errors="replace",

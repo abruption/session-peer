@@ -47,6 +47,31 @@ Claude バインディングは `agent: claude` と、ホームを指定しな�
 
 ペアリングはデバイス鍵の所持を証明します。**ネイティブエージェントへのアクセスを許可するものではありません**: 受信ポリシーでフィンガープリント、操作、およびターゲットエイリアスを個別に許可する必要があります。ピアは実行可能ファイル、ホーム、wake フラグ、SSH 送信先、または任意のネイティブコマンド引数を指定することはできません。ポリシーの変更はレシーバーの再起動後に有効になります。制限事項: 設定可能なターゲットは 8 個、ポリシーデバイスは 128 台です。
 
+## ネイティブ Windows Codex 用の WSL レシーバー
+
+同じ Windows ワークステーションで Codex セッションと CLI がネイティブ実行される場合、レシーバーは WSL2 で実行します。ペアリング済みピアではなく、オペレーターポリシーがマウント済み状態ホームと実行可能ファイルの両方を固定します:
+
+```json
+{
+  "targets": {
+    "windows-review": {
+      "agent": "codex",
+      "target": "codex:FULL-THREAD-UUID",
+      "codexHome": "/mnt/c/Users/alice/.codex",
+      "codexBin": "/mnt/c/Users/alice/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe"
+    }
+  },
+  "peers": {
+    "CLIENT-64-HEX-FINGERPRINT": {
+      "capabilities": ["list", "send"],
+      "targets": ["windows-review"]
+    }
+  }
+}
+```
+
+`codexHome` はローカル Windows ドライブにマウントされた絶対 WSL パスでなければならず、`codexBin` は `codex.exe` という名前の絶対パスにある実行可能な通常ファイルでなければなりません。レシーバーは POSIX パス経由でデータベースを読み、固定引数で `/usr/bin/wslpath` を呼び出し、ドライブ修飾された Windows パスをネイティブ子プロセスの `CODEX_HOME` としてのみ渡します。シェルコマンドは作りません。WSL 以外のホスト、欠落した実行可能ファイル、安全でない変換は、ポリシー読み込み中に `wsl_codex_requires_wsl`、`invalid_codex_executable`、または `wsl_home_conversion_failed` で失敗します。Linux/macOS の Codex ターゲットでは `codexBin` を省略し、既存の動作を維持します。ネイティブ Windows クライアントは通常のローカル CLI を引き続き使用します。このアダプターは Windows Codex を対象とする WSL レシーバー専用です。Windows の writer ロックは POSIX advisory lock ではないため、この明示的なバインディングではネイティブセッションが非アクティブでも固定ホームにキューを入れられます。成功した送信も、そのセッションが消費するまでは `consumptionConfirmed: false` を報告します。
+
 直接接続のレシーバーを起動します（デフォルトはループバック。他のマシンの場合は到達可能なプライベートインターフェースを選択してください）:
 
 ```sh
