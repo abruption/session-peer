@@ -48,16 +48,16 @@ session-peer自体をインストールする必要はありません。
 ## インストール方法
 
 Python CLIは`pipx`や`uv`、または有効化した仮想環境で
-`python -m pip install session-peer`を実行してインストールします。Claude Codeと
-Codex用のエージェントスキルは別にインストールします。
+`python -m pip install session-peer`を実行してインストールします。Claude Code、
+Codex、Antigravity用のエージェントスキルは別にインストールします。
 
 ```bash
 npx -y skills@latest add abruption/session-peer \
   --skill session-peer --global \
-  --agent claude-code --agent codex --copy --yes
+  --agent claude-code --agent codex --agent antigravity --copy --yes
 ```
 
-このコマンドは`SKILL.md`を`~/.claude/skills/session-peer/`と
+このコマンドは`SKILL.md`を`~/.claude/skills/session-peer/`と、CodexとAntigravityが共有する
 `~/.agents/skills/session-peer/`にインストールします。更新は
 `npx -y skills@latest update session-peer --global --yes`で別途行ってください。
 検証済みの`skills@1.7.0`にはNode.js 22.20以降が必要です。

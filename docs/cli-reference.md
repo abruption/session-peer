@@ -121,18 +121,19 @@ pipx install session-peer
 ```
 
 Alternatively, use `uv tool install session-peer`. Python package managers own
-the command; install the [agent skill](#the-skill) separately for Claude Code
-and Codex:
+the command; install the [agent skill](#the-skill) separately for Claude Code,
+Codex, and Antigravity:
 
 ```bash
 npx -y skills@latest add abruption/session-peer \
   --skill session-peer --global \
-  --agent claude-code --agent codex --copy --yes
+  --agent claude-code --agent codex --agent antigravity --copy --yes
 ```
 
-The verified command copies the official repository skill to both
-`~/.claude/skills/session-peer/SKILL.md` and
-`~/.agents/skills/session-peer/SKILL.md`. At the time of this release,
+The verified command copies the official repository skill to
+`~/.claude/skills/session-peer/SKILL.md` and the shared
+`~/.agents/skills/session-peer/SKILL.md` path used for Codex and Antigravity.
+At the time of this release,
 `skills@1.7.0` declares Node.js 22.20 or newer. Review skills before installing
 them because agents follow their instructions with the agent's permissions.
 
@@ -175,7 +176,8 @@ chmod +x session_peer.py
 ### The skill
 
 The recommended `skills` CLI command above installs the same repository-owned
-skill for Claude Code and Codex and records its source for explicit updates.
+skill for Claude Code, Codex, and Antigravity and records its source for
+explicit updates.
 The standalone installer puts the program in `~/.local/share/session-peer/`
 and the skill separately in `~/.claude/skills/session-peer/SKILL.md`. Skill placement
 respects `CLAUDE_CONFIG_DIR`, then `ANTHROPIC_CONFIG_DIR`, before the default.
