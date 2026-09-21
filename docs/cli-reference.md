@@ -34,8 +34,8 @@ English and Korean reports are welcome.
 
 ## Quick start
 
-Install the CLI with `pipx install session-peer` or `uv tool install session-peer`.
-For the standalone CLI plus Claude skill, see [Install](#install).
+Install the CLI with `pipx install session-peer` or `uv tool install session-peer`,
+then install the skill with the open agent skills CLI. See [Install](#install).
 
 ```bash
 session-peer list                              # Claude, Codex + registered Antigravity
@@ -120,15 +120,21 @@ Or with [pipx](https://pipx.pypa.io/) for an isolated install:
 pipx install session-peer
 ```
 
-Alternatively, use `uv tool install session-peer`.
-Package managers install the `session-peer` command but not the [Claude Code skill](#the-skill).
-To add the skill so Claude can use session-peer on its own:
+Alternatively, use `uv tool install session-peer`. Python package managers own
+the command; install the [agent skill](#the-skill) separately for Claude Code
+and Codex:
 
 ```bash
-mkdir -p ~/.claude/skills/session-peer
-curl -fsSL -o ~/.claude/skills/session-peer/SKILL.md \
-  https://raw.githubusercontent.com/abruption/session-peer/main/skills/session-peer/SKILL.md
+npx -y skills@latest add abruption/session-peer \
+  --skill session-peer --global \
+  --agent claude-code --agent codex --copy --yes
 ```
+
+The verified command copies the official repository skill to both
+`~/.claude/skills/session-peer/SKILL.md` and
+`~/.agents/skills/session-peer/SKILL.md`. At the time of this release,
+`skills@1.7.0` declares Node.js 22.20 or newer. Review skills before installing
+them because agents follow their instructions with the agent's permissions.
 
 ### install.sh
 
@@ -168,6 +174,8 @@ chmod +x session_peer.py
 
 ### The skill
 
+The recommended `skills` CLI command above installs the same repository-owned
+skill for Claude Code and Codex and records its source for explicit updates.
 The standalone installer puts the program in `~/.local/share/session-peer/`
 and the skill separately in `~/.claude/skills/session-peer/SKILL.md`. Skill placement
 respects `CLAUDE_CONFIG_DIR`, then `ANTHROPIC_CONFIG_DIR`, before the default.
@@ -352,6 +360,17 @@ without replacing package-owned files. `session-peer update --check` checks the
 latest stable GitHub release, refreshes the shared cache, and reports the exact
 upgrade command, but still does not replace those files.
 
+The agent skill has a separate update lifecycle. Refresh global copies installed
+with the skills CLI by running:
+
+```bash
+npx -y skills@latest update session-peer --global --yes
+```
+
+Upgrading session-peer with pip, pipx, or uv intentionally does not modify agent
+configuration directories. Run both upgrades when both the Python command and
+the agent instructions need updating.
+
 For standalone programs:
 
 ```bash
@@ -369,8 +388,10 @@ from GitHub. Remote version probes inspect only
 remote update installs that standalone path and its CLI link. For a
 package-managed remote CLI, upgrade it with its own manager on that host instead.
 
-Neither local nor remote `update` refreshes the Claude skill. Re-run `install.sh`
-from the desired release checkout to refresh both standalone program and skill.
+Neither local nor remote standalone `session-peer update` refreshes its Claude
+skill copy. Re-run `install.sh` from the desired release checkout to refresh
+both standalone program and skill; installations managed by the skills CLI use
+the separate `skills update` command above.
 Local `session-peer update --check` and `session-peer update` also populate the
 same cache used by automatic notices.
 
