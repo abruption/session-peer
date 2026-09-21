@@ -59,19 +59,21 @@ threads may be inactive. Ask for an explicit reply when completion matters.
 
 ## Installation options
 
-Use `pipx` or `uv`, or run `python -m pip install session-peer` in an activated
-virtual environment. For the standalone CLI plus the agent skill:
+Install the runtime with `pipx` or `uv`, or run `python -m pip install session-peer`
+in an activated virtual environment. Install the agent skill separately from its
+[dedicated repository](https://github.com/abruption/session-peer-skill):
 
 ```bash
-git clone https://github.com/abruption/session-peer
-cd session-peer
-./install.sh
-# Remote installation: ./install.sh --host worker
+npx -y skills@latest add abruption/session-peer-skill \
+  --skill session-peer --global \
+  --agent claude-code --agent codex --agent antigravity \
+  --copy --yes
 ```
 
-The shell installer requires POSIX; on native Windows use a Python package
-manager. Optional MCP tools require Python 3.10+ and `session-peer[mcp]`.
-See [installation details](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#install).
+For air-gapped or SSH deployment, the POSIX `./install.sh [--host worker]` path
+continues to bundle a compatibility copy of the skill. On native Windows use a
+Python package manager for the runtime. Optional MCP tools require Python 3.10+
+and `session-peer[mcp]`. See [installation details](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#install).
 
 ## Let an AI assistant help
 
