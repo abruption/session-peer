@@ -30,9 +30,9 @@ sequenceDiagram
     participant P as session-peer CLI
     participant I as Claude Code標準受信箱
     participant H as Claude Codeセッション
-    C->>P: list（対象セッションを特定）
-    P-->>C: ホスト + セッションID
-    C->>P: send（依頼 + 返信先）
+    C->>P: 対象セッションを特定
+    P-->>C: ホストとセッションIDを返す
+    C->>P: 依頼と返信先を送信
     P->>I: ローカルまたはSSH転送で書き込み
     I-->>H: 依頼を配信
     H->>P: 明示的な返信を送信

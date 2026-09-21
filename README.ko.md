@@ -30,9 +30,9 @@ sequenceDiagram
     participant P as session-peer CLI
     participant I as Claude Code 기본 수신함
     participant H as Claude Code 세션
-    C->>P: list (정확한 세션 탐색)
-    P-->>C: 호스트 + 세션 ID
-    C->>P: send (요청 + 회신 주소)
+    C->>P: 정확한 세션 탐색
+    P-->>C: 호스트와 세션 ID 반환
+    C->>P: 요청과 회신 주소 전송
     P->>I: 로컬 또는 SSH 전송으로 기록
     I-->>H: 요청 전달
     H->>P: 명시적 회신 전송

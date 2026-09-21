@@ -30,9 +30,9 @@ sequenceDiagram
     participant P as session-peer CLI
     participant I as Claude Code原生收件箱
     participant H as Claude Code会话
-    C->>P: list（查找准确会话）
-    P-->>C: 主机 + 会话ID
-    C->>P: send（请求 + 回复地址）
+    C->>P: 查找准确会话
+    P-->>C: 返回主机和会话ID
+    C->>P: 发送请求和回复地址
     P->>I: 通过本地或SSH传输写入
     I-->>H: 传递请求
     H->>P: 发送明确回复
