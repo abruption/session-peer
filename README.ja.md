@@ -14,6 +14,37 @@
 例えば、SSHホスト`worker`の`api-worker`セッションに変更のレビューを依頼します。
 各エージェントの標準の受信箱やキューを使い、受信したメッセージの扱いは受信側が決定します。
 
+## 実際の動作を見る
+
+この26秒の動画は、ローカル転送を使う実際のCodexとClaude Codeのセッションを
+収録したもので、出力の模擬表示はありません。
+
+1. Codexが対象のClaude Codeセッションを正確に見つけます。
+2. Codexがそのセッションの標準受信箱にレビュー依頼を投稿します。
+3. Claude Codeが構造化された返信先を使って応答を送ります。
+4. Codexが自分のセッションで明示的な返信を受け取ります。
+
+```mermaid
+sequenceDiagram
+    participant C as Codexセッション
+    participant P as session-peer CLI
+    participant I as Claude Code標準受信箱
+    participant H as Claude Codeセッション
+    C->>P: 対象セッションを特定
+    P-->>C: ホストとセッションIDを返す
+    C->>P: 依頼と返信先を送信
+    P->>I: ローカルまたはSSH転送で書き込み
+    I-->>H: 依頼を配信
+    H->>P: 明示的な返信を送信
+    P-->>C: Codex標準受信箱へ配信
+```
+
+[![CodexからClaude Codeへ実際にメッセージを送るデモ](docs/assets/session-peer-live-codex-claude-poster.png)](docs/assets/session-peer-live-codex-claude.mp4)
+
+[26秒のデモ動画を見る](docs/assets/session-peer-live-codex-claude.mp4)。
+投稿成功で確認できるのは受信箱への書き込みまでです。最後の明示的な返信により、
+受信セッションが依頼を処理して応答したことを確認できます。
+
 ## クイックスタート
 
 Python 3.9以上が必要です。基本CLIにサードパーティーのPython依存パッケージはありません。

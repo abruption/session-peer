@@ -14,6 +14,36 @@
 例如，请SSH主机`worker`上的`api-worker`会话审查改动。
 session-peer使用代理原生的收件箱和队列，由接收方决定如何处理收到的消息。
 
+## 查看实际运行效果
+
+这段26秒的视频录制了通过本地传输通信的真实Codex与Claude Code会话，
+没有使用模拟输出。
+
+1. Codex准确找到目标Claude Code会话。
+2. Codex向该会话的原生收件箱提交审查请求。
+3. Claude Code使用结构化回复地址发送响应。
+4. Codex在自己的会话中收到明确回复。
+
+```mermaid
+sequenceDiagram
+    participant C as Codex会话
+    participant P as session-peer CLI
+    participant I as Claude Code原生收件箱
+    participant H as Claude Code会话
+    C->>P: 查找准确会话
+    P-->>C: 返回主机和会话ID
+    C->>P: 发送请求和回复地址
+    P->>I: 通过本地或SSH传输写入
+    I-->>H: 传递请求
+    H->>P: 发送明确回复
+    P-->>C: 传递到Codex原生收件箱
+```
+
+[![Codex向Claude Code发送真实消息的演示](docs/assets/session-peer-live-codex-claude-poster.png)](docs/assets/session-peer-live-codex-claude.mp4)
+
+[观看26秒演示视频](docs/assets/session-peer-live-codex-claude.mp4)。
+提交成功仅确认消息已写入收件箱。最后的明确回复可确认接收会话已处理请求并作出响应。
+
 ## 快速开始
 
 需要Python 3.9或更高版本。核心CLI没有第三方Python依赖。
