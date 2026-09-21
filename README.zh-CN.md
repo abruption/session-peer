@@ -24,6 +24,21 @@ session-peer使用代理原生的收件箱和队列，由接收方决定如何�
 3. Claude Code使用结构化回复地址发送响应。
 4. Codex在自己的会话中收到明确回复。
 
+```mermaid
+sequenceDiagram
+    participant C as Codex会话
+    participant P as session-peer CLI
+    participant I as Claude Code原生收件箱
+    participant H as Claude Code会话
+    C->>P: list（查找准确会话）
+    P-->>C: 主机 + 会话ID
+    C->>P: send（请求 + 回复地址）
+    P->>I: 通过本地或SSH传输写入
+    I-->>H: 传递请求
+    H->>P: 发送明确回复
+    P-->>C: 传递到Codex原生收件箱
+```
+
 [![Codex向Claude Code发送真实消息的演示](docs/assets/session-peer-live-codex-claude-poster.png)](docs/assets/session-peer-live-codex-claude.mp4)
 
 [观看26秒演示视频](docs/assets/session-peer-live-codex-claude.mp4)。

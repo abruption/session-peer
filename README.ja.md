@@ -24,6 +24,21 @@
 3. Claude Codeが構造化された返信先を使って応答を送ります。
 4. Codexが自分のセッションで明示的な返信を受け取ります。
 
+```mermaid
+sequenceDiagram
+    participant C as Codexセッション
+    participant P as session-peer CLI
+    participant I as Claude Code標準受信箱
+    participant H as Claude Codeセッション
+    C->>P: list（対象セッションを特定）
+    P-->>C: ホスト + セッションID
+    C->>P: send（依頼 + 返信先）
+    P->>I: ローカルまたはSSH転送で書き込み
+    I-->>H: 依頼を配信
+    H->>P: 明示的な返信を送信
+    P-->>C: Codex標準受信箱へ配信
+```
+
 [![CodexからClaude Codeへ実際にメッセージを送るデモ](docs/assets/session-peer-live-codex-claude-poster.png)](docs/assets/session-peer-live-codex-claude.mp4)
 
 [26秒のデモ動画を見る](docs/assets/session-peer-live-codex-claude.mp4)。

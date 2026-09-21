@@ -25,6 +25,21 @@ transport—there is no mocked output.
 3. Claude Code follows the structured reply address and sends a response.
 4. Codex receives the explicit reply in its own session.
 
+```mermaid
+sequenceDiagram
+    participant C as Codex session
+    participant P as session-peer CLI
+    participant I as Claude Code native inbox
+    participant H as Claude Code session
+    C->>P: list (discover exact session)
+    P-->>C: host + session ID
+    C->>P: send (request + reply address)
+    P->>I: write via local or SSH transport
+    I-->>H: deliver request
+    H->>P: send explicit reply
+    P-->>C: deliver to Codex native inbox
+```
+
 [![Live Codex-to-Claude Code messaging demo](docs/assets/session-peer-live-codex-claude-poster.png)](docs/assets/session-peer-live-codex-claude.mp4)
 
 [Watch the 26-second demo video](docs/assets/session-peer-live-codex-claude.mp4).

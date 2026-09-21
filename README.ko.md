@@ -24,6 +24,21 @@
 3. Claude Code가 구조화된 회신 주소를 따라 응답을 보내요.
 4. Codex가 자신의 세션에서 명시적인 회신을 받아요.
 
+```mermaid
+sequenceDiagram
+    participant C as Codex 세션
+    participant P as session-peer CLI
+    participant I as Claude Code 기본 수신함
+    participant H as Claude Code 세션
+    C->>P: list (정확한 세션 탐색)
+    P-->>C: 호스트 + 세션 ID
+    C->>P: send (요청 + 회신 주소)
+    P->>I: 로컬 또는 SSH 전송으로 기록
+    I-->>H: 요청 전달
+    H->>P: 명시적 회신 전송
+    P-->>C: Codex 기본 수신함으로 전달
+```
+
 [![실제 Codex에서 Claude Code로 메시지를 보내는 데모](docs/assets/session-peer-live-codex-claude-poster.png)](docs/assets/session-peer-live-codex-claude.mp4)
 
 [26초 데모 영상 보기](docs/assets/session-peer-live-codex-claude.mp4).
