@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "session-peer"
 dynamic = ["version"]
-description = "Message coding agent sessions locally and over SSH"
+description = "Discover and message Claude Code, Codex, and Antigravity sessions locally, over SSH, through MCP, or via an optional end-to-end encrypted relay."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
