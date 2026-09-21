@@ -3,6 +3,7 @@
 [개요로 돌아가기](../../README.ko.md)
 
 명령어의 상세 동작, 설치 옵션, 전송 한계 및 과거 검증 내역은 아래와 같습니다.
+기계 소비자는 [v1 호환성 계약](compatibility-v1.md)도 따라야 합니다.
 
 [![PyPI](https://img.shields.io/pypi/v/session-peer)](https://pypi.org/project/session-peer/)
 [![CI](https://github.com/abruption/session-peer/actions/workflows/ci.yml/badge.svg)](https://github.com/abruption/session-peer/actions/workflows/ci.yml)
