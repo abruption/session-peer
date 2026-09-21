@@ -80,7 +80,7 @@ session-peer relay serve --accounts /private/accounts.json \
   --bind 127.0.0.1 --port 3769 --seconds 3600
 ```
 
-永続的な Linux ホスティングの場合、wheel を `/opt/session-peer-relay/venv` にインストールし、ハッシュを `/etc/session-peer-relay/accounts.json` に保存して、レビュー済みの [systemd テンプレート](../../deploy/session-peer-relay.service) を適合させてください。有効化する前に `systemd-analyze verify` で検証してください。テンプレートは、動的ユーザー、ケーパビリティなし、アクセス不可のホームディレクトリ、読み取り専用システム、プライベートな一時ディレクトリ、および明示的なリソース制限で動作します。これは**ブラインドリレー**用であり、ネイティブのレシーバー用ではありません。後者はエージェントが所有するランタイムパスとソケットが必要です。
+永続的な Linux ホスティングの場合、wheel を `/opt/session-peer-relay/venv` にインストールし、ハッシュを `/etc/session-peer-relay/accounts.json` に保存して、レビュー済みの [systemd テンプレート](../../deploy/examples/static-account/session-peer-relay.service) を適合させてください。有効化する前に `systemd-analyze verify` で検証してください。テンプレートは、動的ユーザー、ケーパビリティなし、アクセス不可のホームディレクトリ、読み取り専用システム、プライベートな一時ディレクトリ、および明示的なリソース制限で動作します。これは**ブラインドリレー**用であり、ネイティブのレシーバー用ではありません。後者はエージェントが所有するランタイムパスとソケットが必要です。
 
 ループバックリレーを専用ホスト名の HTTPS/WSS リバースプロキシの背後に配置します:
 

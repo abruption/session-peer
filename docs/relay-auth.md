@@ -331,7 +331,7 @@ restart. All private DB/state parents are owner-only; backups must include the
 control SQLite consistent snapshot, signing key and OAuth policy as separate
 protected resources. This is **not** the central ontology SQLite.
 
-`deploy/session-peer-control.service` is an installation template, not an enabled
+`deploy/examples/authenticated-control/session-peer-control.service` is an installation template, not an enabled
 unit: loopback3770, DynamicUser, exclusive flock writer lock, private persistent
 state, protected homes/system/kernel, an isolated `/opt` mount exposing only its
 read-only control tree, inaccessible other-service data/config/log paths, no

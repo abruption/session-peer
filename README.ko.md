@@ -95,6 +95,7 @@ npx -y skills@latest add abruption/session-peer-skill \
 ## 문서
 
 - [프로젝트 안내 사이트](https://abruption.dev/projects/session-peer/): 핵심 소개, 빠른 시작과 문서 진입점
+- [저장소 문서 지도](https://github.com/abruption/session-peer/blob/main/docs/ko/README.md): 사용자, 통합, 운영, 개발, 이력 문서 분류
 - [CLI 상세](https://github.com/abruption/session-peer/blob/main/docs/ko/cli-reference.md): 명령, JSON, 환경 변수, 업데이트, 제약, 검증 이력
 - [진단·회신](https://github.com/abruption/session-peer/blob/main/docs/ko/diagnostics.md) · [여러 Codex 홈](https://github.com/abruption/session-peer/blob/main/docs/ko/multi-home-list.md)
 - [cc-peer에서 전환](https://github.com/abruption/session-peer/blob/main/docs/ko/cli-reference.md#moving-from-cc-peer) · [릴리스](https://github.com/abruption/session-peer/releases)

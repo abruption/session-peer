@@ -1,4 +1,4 @@
-"""Opt-in relay lab integration tests; no native agent or public network used."""
+"""Product relay protocol regressions retained from the completed relay69 lab."""
 import asyncio
 import hashlib
 import json
@@ -11,6 +11,7 @@ import tempfile
 import time
 import unittest
 import uuid
+from unittest import mock
 
 if sys.version_info < (3, 11):
     raise unittest.SkipTest('relay experiment requires Python 3.11+')
@@ -20,11 +21,11 @@ try:
 except ImportError:
     raise unittest.SkipTest('optional relay experiment dependencies not installed')
 
-from experiments.relay69.app import Receiver, exchange, open_channel, pair, request
-from experiments.relay69.identity import context, fingerprint
-from experiments.relay69.relay import Relay
-from experiments.relay69.store import Store, Rejected
-from experiments.relay69.wire import Secure, Tcp, MAX_MESSAGE, relay_stream
+from session_peer_relay.app import Receiver, exchange, open_channel, pair, request
+from session_peer_relay.identity import context, fingerprint
+from session_peer_relay.relay import Relay
+from session_peer_relay.store import Store, Rejected
+from session_peer_relay.wire import Secure, Tcp, MAX_MESSAGE, relay_stream
 
 
 class RelayLab(unittest.IsolatedAsyncioTestCase):
@@ -33,7 +34,30 @@ class RelayLab(unittest.IsolatedAsyncioTestCase):
         self.root = Path(self.directory.name)
         self.host = Store(self.root/'host')
         self.client = Store(self.root/'client')
-        self.receiver = Receiver(self.host)
+        self.effects = []
+        async def inbox(reader, writer):
+            raw = await reader.readline()
+            if raw:
+                self.effects.append(json.loads(raw))
+            writer.close()
+            await writer.wait_closed()
+        self.socket = self.root/'inbox.sock'
+        self.inbox = await asyncio.start_unix_server(inbox, path=str(self.socket))
+        config = self.root/'claude'
+        (config/'sessions').mkdir(parents=True)
+        (config/'sessions'/f'{os.getpid()}.json').write_text(json.dumps({
+            'pid': os.getpid(), 'name': 'worker', 'cwd': '/fixture',
+            'messagingSocketPath': str(self.socket),
+        }))
+        self.env = mock.patch.dict(os.environ, {'CLAUDE_CONFIG_DIR': str(config)})
+        self.env.start()
+        self.policy = {
+            'targets': {'review': {'agent': 'claude', 'target': 'worker'}},
+            'peers': {self.client.device: {
+                'capabilities': ['list', 'send'], 'targets': ['review'],
+            }},
+        }
+        self.receiver = Receiver(self.host, self.policy)
         self.listener = await self.receiver.listen('127.0.0.1', 0)
         self.direct = '127.0.0.1:'+str(self.listener.sockets[0].getsockname()[1])
         self.host_token, self.client_token = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
@@ -54,8 +78,11 @@ class RelayLab(unittest.IsolatedAsyncioTestCase):
         await self.receiver.close()
         self.relay_server.close()
         await self.relay_server.wait_closed()
+        self.inbox.close()
+        await self.inbox.wait_closed()
         self.client.close()
         self.host.close()
+        self.env.stop()
         self.directory.cleanup()
 
     async def pair(self, route='direct'):
@@ -65,18 +92,21 @@ class RelayLab(unittest.IsolatedAsyncioTestCase):
         await self.pair()
         ident = str(uuid.uuid4())
         for duplicate in (False, True):
-            result = await exchange(self.client, self.host.device, 'send', 'hello', ident, 'direct')
+            result = await exchange(self.client, self.host.device, 'send',
+                                    {'target': 'review', 'message': 'hello'}, ident, 'direct')
             self.assertTrue(result['ok'], result)
             self.assertEqual(result.get('duplicate', False), duplicate)
             self.assertFalse(result['consumptionConfirmed'])
-        self.assertEqual(self.host.db.execute('SELECT COUNT(*) FROM effects').fetchone()[0], 1)
-        result = await exchange(self.client, self.host.device, 'send', 'different', ident, 'direct')
+        self.assertEqual(len(self.effects), 1)
+        result = await exchange(self.client, self.host.device, 'send',
+                                {'target': 'review', 'message': 'different'}, ident, 'direct')
         self.assertEqual(result['reason'], 'message_id_conflict')
 
     async def test_pair_over_relay_payload_is_opaque(self):
         await self.pair('relay')
         secret = 'sentinel-plaintext-'+secrets.token_hex(20)
-        result = await exchange(self.client, self.host.device, 'send', secret,
+        result = await exchange(self.client, self.host.device, 'send',
+                                {'target': 'review', 'message': secret},
                                 route='relay', credential=self.client_token)
         self.assertTrue(result['ok'], result)
         self.assertEqual(result['route'], 'relay')
@@ -122,9 +152,12 @@ class RelayLab(unittest.IsolatedAsyncioTestCase):
         await channel.close()
         rotated = Store(self.root/'rotated')
         try:
+            self.receiver.policy.peers[rotated.device] = {
+                'capabilities': ['list', 'send'], 'targets': ['review'],
+            }
             invitation = self.host.invite({'direct': self.direct})
             await pair(rotated, invitation, 'direct')
-            result = await exchange(rotated, self.host.device, 'list', route='direct')
+            result = await exchange(rotated, self.host.device, 'probe', route='direct')
             self.assertTrue(result['ok'])
         finally:
             rotated.close()
@@ -158,29 +191,31 @@ class RelayLab(unittest.IsolatedAsyncioTestCase):
         await self.pair()
         for field, value in [('sender', 'other'), ('receiver', 'other'),
                              ('expires', time.time()-1), ('op', 'shell')]:
-            msg = request(self.client, self.host.device, 'send', 'no effect')
+            msg = request(self.client, self.host.device, 'send',
+                          {'target': 'review', 'message': 'no effect'})
             msg[field] = value
             with self.subTest(field=field), self.assertRaises(Rejected):
-                self.receiver.dispatch(self.client.device, msg)
+                await self.receiver.dispatch(self.client.device, msg)
         self.host.db.execute('UPDATE peers SET capabilities=? WHERE id=?', ('["list"]', self.client.device))
         with self.assertRaises(Rejected):
-            self.receiver.dispatch(self.client.device, request(self.client, self.host.device, 'send', 'x'))
-        self.assertEqual(self.host.db.execute('SELECT COUNT(*) FROM effects').fetchone()[0], 0)
+            await self.receiver.dispatch(self.client.device, request(
+                self.client, self.host.device, 'send', {'target': 'review', 'message': 'x'}))
+        self.assertEqual(self.effects, [])
 
     async def test_crash_after_effect_is_unknown_after_restart_and_not_reexecuted(self):
         await self.pair()
         ident = str(uuid.uuid4())
-        def crash():
-            self.host.db.execute('INSERT INTO effects VALUES(?,?,?)', (self.client.device, ident, 'hash'))
-            raise RuntimeError('simulated crash after effect')
-        with self.assertRaises(RuntimeError):
-            self.host.submit(self.client.device, ident, 'message', crash)
+        binding = self.policy['targets']['review']
+        canonical = json.dumps({'binding': binding, 'message': 'message'},
+                               sort_keys=True, separators=(',', ':'))
+        self.assertIsNone(self.host.begin(self.client.device, ident, canonical))
+        self.effects.append({'simulated': 'effect'})
         reopened = Store(self.host.root)
         try:
-            result = reopened.submit(self.client.device, ident, 'message', lambda: self.fail('reexecuted'))
+            result = reopened.begin(self.client.device, ident, canonical)
             self.assertEqual(result['status'], 'unknown')
             self.assertFalse(result['retryAllowed'])
-            self.assertEqual(reopened.db.execute('SELECT COUNT(*) FROM effects').fetchone()[0], 1)
+            self.assertEqual(len(self.effects), 1)
         finally:
             reopened.close()
 
@@ -196,12 +231,13 @@ class RelayLab(unittest.IsolatedAsyncioTestCase):
             await original(changed)
         channel.raw.send = tamper
         try:
-            await channel.send(request(self.client, self.host.device, 'send', 'not delivered'))
+            await channel.send(request(self.client, self.host.device, 'send',
+                                       {'target': 'review', 'message': 'not delivered'}))
             with self.assertRaises(Exception):
                 await channel.recv()
         finally:
             await channel.close()
-        self.assertEqual(self.host.db.execute('SELECT COUNT(*) FROM effects').fetchone()[0], 0)
+        self.assertEqual(self.effects, [])
 
     async def test_unauthenticated_relay_rejected(self):
         with self.assertRaises(Exception):
@@ -244,7 +280,7 @@ class RelayLab(unittest.IsolatedAsyncioTestCase):
         self.relay.sessions['ticket'] = (time.monotonic()+60, {'role': 'client', 'room': 'test'})
         self.relay.connections.update(object() for _ in range(10))
         result = await self.relay.process_request(connection, SimpleNamespace(
-            path='/v1/connect', headers=Headers({'Cookie': 'relay69=ticket'})))
+            path='/v1/connect', headers=Headers({'Cookie': 'session_peer=ticket'})))
         self.assertEqual(result.status_code, 503)
         self.relay.connections.clear()
 
@@ -284,18 +320,19 @@ class RelayLab(unittest.IsolatedAsyncioTestCase):
             await original(data)
         channel.raw.send = record
         try:
-            await channel.send(request(self.client, self.host.device, 'send', 'one effect'))
+            await channel.send(request(self.client, self.host.device, 'send',
+                                       {'target': 'review', 'message': 'one effect'}))
             self.assertTrue((await channel.recv())['ok'])
             await original(captured[0])
             with self.assertRaises(Exception):
                 await channel.recv()
         finally:
             await channel.close()
-        self.assertEqual(self.host.db.execute('SELECT COUNT(*) FROM effects').fetchone()[0], 1)
+        self.assertEqual(len(self.effects), 1)
 
     async def test_malicious_inbound_length_is_rejected_before_body(self):
         import struct
-        from experiments.relay69.wire import MAX_MESSAGE
+        from session_peer_relay.wire import MAX_MESSAGE
         await self.pair()
         channel = await open_channel(self.client, self.host.cert, self.invite['routes'], 'direct')
         try:
@@ -305,10 +342,10 @@ class RelayLab(unittest.IsolatedAsyncioTestCase):
                 await channel.recv()
         finally:
             await channel.close()
-        self.assertEqual(self.host.db.execute('SELECT COUNT(*) FROM effects').fetchone()[0], 0)
+        self.assertEqual(self.effects, [])
 
     async def test_relay_origin_credentials_and_expired_cookies_fail_closed(self):
-        from experiments.relay69.wire import validate_relay_url, PinnedConnect
+        from session_peer_relay.wire import validate_relay_url, PinnedConnect
         from types import SimpleNamespace
         from websockets.datastructures import Headers
         for url in ('ws://public.example/v1/connect', 'wss://user:pass@example/v1/connect',
@@ -323,7 +360,7 @@ class RelayLab(unittest.IsolatedAsyncioTestCase):
                 return SimpleNamespace(status_code=status, headers=Headers())
         self.relay.sessions['expired'] = (time.monotonic()-1, {'role': 'client', 'room': 'test'})
         result = await self.relay.process_request(Connection(), SimpleNamespace(
-            path='/v1/connect', headers=Headers({'Cookie': 'relay69=expired'})))
+            path='/v1/connect', headers=Headers({'Cookie': 'session_peer=expired'})))
         self.assertEqual(result.status_code, 401)
 
     async def test_device_keys_are_distinct_and_private(self):

@@ -143,7 +143,7 @@ revision high-water mark and must be preserved for the service's lifetime.
 
 ## KR service backup and restore staging
 
-The deployed KR service uses `deploy/kr/session-peer-backup-snapshot.py` before
+The deployed KR service uses `deploy/ops/abruption-kr/session-peer-backup-snapshot.py` before
 its encrypted Restic job. The helper briefly stops the coordinated stack and
 creates a root-only recovery set containing a transactionally consistent control
 database, the admission signing key, provider configuration, public auth state

@@ -80,7 +80,7 @@ session-peer relay serve --accounts /private/accounts.json \
   --bind 127.0.0.1 --port 3769 --seconds 3600
 ```
 
-영구적인 Linux 호스팅의 경우, wheel을 `/opt/session-peer-relay/venv`에 설치하고, 해시를 `/etc/session-peer-relay/accounts.json`에 저장하며, 검토된 [systemd 템플릿](../../deploy/session-peer-relay.service)을 맞게 수정하십시오. 활성화하기 전에 `systemd-analyze verify`로 검증하십시오. 이 템플릿은 동적 사용자, 권한 없음, 접근 불가능한 홈 디렉터리, 읽기 전용 시스템, 비공개 임시 디렉터리 및 명시적 리소스 제한으로 실행됩니다. 이는 네이티브 수신자가 아닌 **블라인드 릴레이**를 위한 것입니다. 후자는 에이전트 소유의 런타임 경로와 소켓이 필요합니다.
+영구적인 Linux 호스팅의 경우, wheel을 `/opt/session-peer-relay/venv`에 설치하고, 해시를 `/etc/session-peer-relay/accounts.json`에 저장하며, 검토된 [systemd 템플릿](../../deploy/examples/static-account/session-peer-relay.service)을 맞게 수정하십시오. 활성화하기 전에 `systemd-analyze verify`로 검증하십시오. 이 템플릿은 동적 사용자, 권한 없음, 접근 불가능한 홈 디렉터리, 읽기 전용 시스템, 비공개 임시 디렉터리 및 명시적 리소스 제한으로 실행됩니다. 이는 네이티브 수신자가 아닌 **블라인드 릴레이**를 위한 것입니다. 후자는 에이전트 소유의 런타임 경로와 소켓이 필요합니다.
 
 루프백 릴레이를 전용 호스트 이름의 HTTPS/WSS 역방향 프록시 뒤에 둡니다:
 

@@ -323,7 +323,7 @@ iCloud 之外。私有签名密钥仅生成一次，权限为 0600 模式，并�
 control SQLite 一致快照、签名密钥和 OAuth 策略作为单独的
 受保护资源包含在内。这**不是**中央本体 SQLite。
 
-`deploy/session-peer-control.service` 是安装模板，而非已启用的
+`deploy/examples/authenticated-control/session-peer-control.service` 是安装模板，而非已启用的
 单元：回环 3770、DynamicUser、独占 flock 写入锁、私有持久
 状态、受保护的 homes/system/kernel、仅暴露其只读 control 树的隔离
 `/opt` 挂载、不可访问的其他服务 data/config/log 路径、无

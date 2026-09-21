@@ -29,11 +29,7 @@ def canonical_documents():
             if not any(part in LANGUAGES for part in path.relative_to(ROOT).parts)
         )
     )
-    documents.extend(
-        (Path("experiments/relay69/README.md"),
-            Path("experiments/relay69/REPORT.md"),
-            Path("plugins/session-peer/README.md"))
-    )
+    documents.append(Path("plugins/session-peer/README.md"))
     return documents
 
 
@@ -68,7 +64,7 @@ class DocumentationTranslationsTest(unittest.TestCase):
 
     def test_every_canonical_document_has_each_translation(self):
         sources = canonical_documents()
-        self.assertEqual(32, len(sources), "Update the translation manifest for new canonical docs")
+        self.assertEqual(31, len(sources), "Update the translation manifest for new canonical docs")
         canonical_docs = {
             path.relative_to(ROOT / "docs")
             for path in (ROOT / "docs").rglob("*.md")

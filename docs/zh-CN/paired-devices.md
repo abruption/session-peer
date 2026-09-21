@@ -106,7 +106,7 @@ session-peer relay serve --accounts /private/accounts.json \
 
 对于持久化 Linux 托管，请将 wheel 安装到 `/opt/session-peer-relay/venv` 中，
 将哈希存储在 `/etc/session-peer-relay/accounts.json` 中，并调整经审查的
-[systemd 模板](../../deploy/session-peer-relay.service)。在启用前使用
+[systemd 模板](../../deploy/examples/static-account/session-peer-relay.service)。在启用前使用
 `systemd-analyze verify` 进行验证。该模板以动态用户（dynamic user）、
 无特权功能（capabilities）、不可访问的主目录、只读系统、私有临时目录
 和显式资源限制运行。它适用于**盲中继**，而非原生接收端；

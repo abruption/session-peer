@@ -111,7 +111,7 @@ session-peer relay serve --accounts /private/accounts.json \
 
 For persistent Linux hosting, install the wheel into `/opt/session-peer-relay/venv`,
 store hashes in `/etc/session-peer-relay/accounts.json`, and adapt the reviewed
-[systemd template](../deploy/session-peer-relay.service). Validate it with
+[systemd template](../deploy/examples/static-account/session-peer-relay.service). Validate it with
 `systemd-analyze verify` before enabling. The template runs with a dynamic user,
 no capabilities, inaccessible homes, read-only system, private temporary directory
 and explicit resource limits. It is for the **blind relay**, not the native receiver;
