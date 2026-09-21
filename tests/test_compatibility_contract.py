@@ -6,10 +6,6 @@ import unittest
 
 import session_peer as core
 import session_peer_mcp as mcp
-from session_peer_relay.identity import private_write
-from session_peer_relay.lifecycle import backup
-from session_peer_relay.native import Policy
-from session_peer_relay.store import Store
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,6 +50,15 @@ class CompatibilityContract(unittest.TestCase):
                              FIXTURE["mcpPolicy"]["destinations"])
 
     def test_relay_policy_and_backup_manifest_match_product_contracts(self):
+        try:
+            from session_peer_relay.identity import private_write
+            from session_peer_relay.lifecycle import backup
+            from session_peer_relay.native import Policy
+            from session_peer_relay.store import Store
+        except ModuleNotFoundError as error:
+            if error.name not in {"cryptography", "fcntl"}:
+                raise
+            self.skipTest("optional relay dependencies are not installed")
         Policy(FIXTURE["relayPolicy"])
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
