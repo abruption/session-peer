@@ -99,6 +99,7 @@ Install the alpha explicitly with `pipx install 'session-peer[relay]==1.0.0a1'`;
 ## Documentation
 
 - [Project site](https://abruption.dev/projects/session-peer/): a curated overview, quick start, and documentation entry point.
+- [Repository documentation map](https://github.com/abruption/session-peer/blob/main/docs/README.md): user, integration, operator, development, and historical references.
 - [CLI reference](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md): commands, JSON, environment variables, updates, limits, and validation history.
 - [Diagnostics and replies](https://github.com/abruption/session-peer/blob/main/docs/diagnostics.md) · [Multiple Codex homes](https://github.com/abruption/session-peer/blob/main/docs/multi-home-list.md)
 - [Moving from cc-peer](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#moving-from-cc-peer) · [Releases](https://github.com/abruption/session-peer/releases)

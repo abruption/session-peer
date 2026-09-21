@@ -328,7 +328,7 @@ iCloud の外部になければなりません。プライベート署名鍵は�
 control SQLite の一貫したスナップショット、署名鍵、および OAuth ポリシーを個別の
 保護されたリソースとして含める必要があります。これは中央オントロジー SQLite では**ありません**。
 
-`deploy/session-peer-control.service` はインストールテンプレートであり、有効化された
+`deploy/examples/authenticated-control/session-peer-control.service` はインストールテンプレートであり、有効化された
 ユニットではありません: ループバック 3770、DynamicUser、排他的 flock ライターロック、プライベート永続
 状態、保護された homes/system/kernel、読み取り専用の control ツリーのみを公開する隔離された
 `/opt` マウント、アクセス不能な他サービスの data/config/log パス、ケーパビリティ

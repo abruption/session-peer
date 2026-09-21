@@ -327,7 +327,7 @@ iCloud 외부에 있어야 합니다. 비공개 서명 키는 0600 모드로 한
 control SQLite 일관된 스냅샷, 서명 키 및 OAuth 정책이 별도의
 보호된 리소스로 포함되어야 합니다. 이는 중앙 온톨로지 SQLite가 **아닙니다**.
 
-`deploy/session-peer-control.service`는 활성화된 유닛이 아닌 설치 템플릿입니다:
+`deploy/examples/authenticated-control/session-peer-control.service`는 활성화된 유닛이 아닌 설치 템플릿입니다:
 루프백 3770, DynamicUser, 배타적 flock 작성자 락, 비공개 영속
 상태, 보호된 homes/system/kernel, 읽기 전용 control 트리만 노출하는 격리된
 `/opt` 마운트, 접근 불가능한 타 서비스 data/config/log 경로, capability
