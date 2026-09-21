@@ -72,12 +72,6 @@ export class RelayControl {
     private config: Config,
     private now: () => number = Date.now,
   ) {
-    db.exec(`CREATE TABLE IF NOT EXISTS relay_devices (principal TEXT PRIMARY KEY, userId TEXT NOT NULL, keyFingerprint TEXT NOT NULL, certificateFingerprint TEXT NOT NULL, certificatePEM TEXT NOT NULL, keyGeneration INTEGER NOT NULL, name TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
-   CREATE INDEX IF NOT EXISTS relay_devices_owner ON relay_devices(userId);
-   CREATE TABLE IF NOT EXISTS relay_challenges (id TEXT PRIMARY KEY,userId TEXT NOT NULL,operation TEXT NOT NULL,payload TEXT NOT NULL,message TEXT NOT NULL,expiresAt INTEGER NOT NULL);
-   CREATE INDEX IF NOT EXISTS relay_challenge_expiry ON relay_challenges(expiresAt);
-   CREATE TABLE IF NOT EXISTS relay_operations (operationId TEXT PRIMARY KEY,userId TEXT NOT NULL,requestHash TEXT NOT NULL,result TEXT);
-   CREATE INDEX IF NOT EXISTS relay_operations_owner ON relay_operations(userId);`);
     // Earlier unpublished candidates stored an SPKI hash under keyFingerprint.
     // Never reinterpret old live state/receipts silently as certificate DER.
     const legacy = db
@@ -86,13 +80,8 @@ export class RelayControl {
       )
       .get() as { n: number };
     assert(legacy.n === 0, "contract_migration_required", 503);
-    db.exec("CREATE TABLE IF NOT EXISTS relay_contract_metadata (name TEXT PRIMARY KEY, value TEXT NOT NULL)");
     const schema = db.prepare("SELECT value FROM relay_contract_metadata WHERE name='registration'").get() as { value: string } | undefined;
-    if (!schema) {
-      const existing = db.prepare("SELECT (SELECT count(*) FROM relay_devices) + (SELECT count(*) FROM relay_operations) AS n").get() as { n: number };
-      assert(existing.n === 0, "contract_migration_required", 503);
-      db.prepare("INSERT INTO relay_contract_metadata VALUES ('registration','zero_based_v1')").run();
-    } else assert(schema.value === "zero_based_v1", "contract_migration_required", 503);
+    assert(schema?.value === "zero_based_v1", "contract_migration_required", 503);
     const privateDir = privateDirectory(config.dataDir);
     const keyPath = join(privateDir, "signing-key.pem");
     try {
@@ -141,13 +130,9 @@ export class RelayControl {
       "unsafe_public_directory",
     );
     chmodSync(this.publicDir, 0o755);
-    this.db.exec("CREATE TABLE IF NOT EXISTS relay_public_revision (id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL)");
     const revision = this.db.prepare("SELECT revision FROM relay_public_revision WHERE id=1").get() as { revision: number } | undefined;
-    if (!revision) {
-      const count = this.db.prepare("SELECT COUNT(*) AS n FROM relay_devices").get() as { n: number };
-      assert(count.n === 0, "contract_migration_required");
-      this.db.prepare("INSERT INTO relay_public_revision VALUES(1,0)").run();
-    }
+    assert(revision && Number.isSafeInteger(revision.revision) && revision.revision >= 0,
+      "control_state_rollback", 503);
     const previous = join(this.publicDir, "state.json");
     try {
       const st = lstatSync(previous);

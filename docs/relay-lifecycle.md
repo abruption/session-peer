@@ -69,6 +69,28 @@ one-command override that clears this safeguard. Reconcile post-snapshot native
 effects and revoke/fence the old identity before planning recovery. This development
 implementation does not yet provide a complete lost-key recovery workflow.
 
+## Control database upgrades
+
+The control database has a first-party migration ledger in addition to Better
+Auth's schema. A fresh install and every schema-bearing upgrade must run the
+compiled migration explicitly before the HTTP service starts:
+
+```sh
+node dist/server/migrate.js
+```
+
+Stop and fence the publisher and relay first. Take a protected, consistent
+snapshot containing the SQLite database, signing key, public state and replay
+high-water state, then run the command as the control service identity with its
+normal protected configuration and exclusive writer lock. The migration is
+transactional and idempotent and preserves stable principals, generations,
+revocation tombstones, operation receipts and the monotonic public revision.
+
+Normal startup performs validation only. An old, partial, future or corrupt
+schema fails with `migration_required` without DDL. Do not add migration to
+`ExecStartPre`, delete the migration ledger, or automatically restore an older
+snapshot after failure. Keep the stack stopped and review a fenced recovery.
+
 ## Optional control-service admission
 
 The standalone static-token relay remains available. A control-managed relay uses:

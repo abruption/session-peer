@@ -17,12 +17,24 @@ any provider-specific drop-in must use protected LoadCredential files and
 `GOOGLE_CLIENT_SECRET_FILE`, with IDs/allowlist/signup switch in the protected environment file.
 
 Run compiled auth migration and explicit replay initialization only through the
-reviewed same-UID/writer-lock procedure on first setup. Regular service startup
+reviewed same-UID/writer-lock procedure on first setup and every schema-bearing
+upgrade. Stop and fence the stack, run the protected snapshot helper, verify its
+`controlSchemaVersion`, signing-key/JWKS match and public/replay revisions, then
+run `current/dist/server/migrate.js` with the root-owned regular Node runtime as
+the control DynamicUser while its UID is held and the same `writer.lock`,
+LoadCredential inputs and protected environment are active. Inspect the reported
+schema version before starting the regular stack. Regular service startup
 must never reset or automatically initialize missing state. Replay state belongs
 under the private child directory, not the DynamicUser top-level symlink.
 Preserve signing keys, operation receipts, tombstones, revision counter and replay
 highwater across restarts, upgrades and rollbacks; never restore an old snapshot
 as current state without explicit restore fencing.
+
+Migration is not an `ExecStartPre` dependency. On failure, keep the stack stopped,
+retain the snapshot, live database and journal evidence, and investigate under a
+new fenced recovery plan. Do not make an old snapshot current, clear the migration
+ledger, reset the revision, or delete a tombstone/receipt. A normal start against
+an old, partial, future or damaged schema must fail with `migration_required`.
 
 `session-peer-backup-snapshot.py` creates the state input for the KR encrypted
 Restic job. Run it as root. It stops relay, readiness and control explicitly,

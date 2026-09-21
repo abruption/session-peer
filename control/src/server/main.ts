@@ -6,9 +6,11 @@ import { createAuth } from "./auth.js";
 import { RelayControl } from "./relay-control.js";
 import { createAdminMetricsApp, createApp } from "./app.js";
 import { createWatchdog } from "./watchdog.js";
+import { validateFirstPartySchema } from "./migrations.js";
 process.umask(0o077);
 const config = loadConfig();
 const db = openDatabase(config.dataDir);
+validateFirstPartySchema(db);
 const auth = createAuth(db, config);
 const control = new RelayControl(db, config);
 const app = createApp(

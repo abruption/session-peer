@@ -25,6 +25,7 @@ FILES = (
     Path("/var/lib/private/session-peer-relay/private/spent-tickets.json"),
 )
 CONFIG = Path("/etc/session-peer-control")
+CONTROL_SCHEMA_VERSION = 1
 
 
 def run(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -69,7 +70,7 @@ def copy_regular(source: Path, root: Path) -> dict[str, object]:
     }
 
 
-def database_snapshot(root: Path) -> tuple[dict[str, object], dict[str, int]]:
+def database_snapshot(root: Path) -> tuple[dict[str, object], dict[str, int], int]:
     relative = Path(str(CONTROL_DB).lstrip("/"))
     target = root / relative
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -87,6 +88,11 @@ def database_snapshot(root: Path) -> tuple[dict[str, object], dict[str, int]]:
                 "WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
             )
         }
+        versions = [row[0] for row in destination.execute(
+            "SELECT version FROM session_peer_migrations ORDER BY version"
+        )]
+        if versions != [CONTROL_SCHEMA_VERSION]:
+            raise RuntimeError("control_schema_migration_required")
     finally:
         destination.close()
         source.close()
@@ -103,7 +109,7 @@ def database_snapshot(root: Path) -> tuple[dict[str, object], dict[str, int]]:
         "size": target.stat().st_size,
         "sha256": digest(target),
         "integrity": "ok",
-    }, tables)
+    }, tables, versions[0])
 
 
 def signing_kid(root: Path) -> str:
@@ -113,6 +119,33 @@ def signing_kid(root: Path) -> str:
         check=True, capture_output=True,
     )
     return hashlib.sha256(result.stdout).hexdigest()
+
+
+def snapshot_contract(root: Path, control_schema_version: int) -> dict[str, object]:
+    public_state = json.loads((root / str(FILES[2]).lstrip("/")).read_text())
+    replay_state = json.loads((root / str(FILES[3]).lstrip("/")).read_text())
+    public_revision = public_state.get("revision")
+    replay_revision = replay_state.get("revision")
+    if (control_schema_version != CONTROL_SCHEMA_VERSION
+            or type(public_revision) is not int or public_revision < 1
+            or type(replay_revision) is not int or replay_revision < 0
+            or replay_revision > public_revision):
+        raise RuntimeError("snapshot_revision_fence")
+    if replay_revision and not replay_state.get("digest"):
+        raise RuntimeError("snapshot_replay_digest_missing")
+    kid = signing_kid(root)
+    state_kids = [key.get("kid") for key in public_state["jwks"]["keys"]]
+    if kid not in state_kids:
+        raise RuntimeError("signing_key_state_mismatch")
+    return {
+        "controlSchemaVersion": control_schema_version,
+        "publicStateRevision": public_revision,
+        "publicDeviceCount": len(public_state.get("devices", {})),
+        "replayRevision": replay_revision,
+        "replaySpentCount": len(replay_state.get("spent", {})),
+        "replayDigestPresent": bool(replay_state.get("digest")),
+        "signingKid": kid,
+    }
 
 
 def wait_ready() -> None:
@@ -166,7 +199,7 @@ def main() -> int:
         temporary = Path(tempfile.mkdtemp(prefix=".snapshot-", dir=BASE))
         os.chmod(temporary, 0o700)
         records: list[dict[str, object]] = []
-        database, tables = database_snapshot(temporary)
+        database, tables, control_schema_version = database_snapshot(temporary)
         records.append(database)
         for source in FILES:
             if source.exists():
@@ -175,24 +208,14 @@ def main() -> int:
             if source.is_file() and not source.is_symlink():
                 records.append(copy_regular(source, temporary))
 
-        public_state = json.loads((temporary / str(FILES[2]).lstrip("/")).read_text())
-        replay_state = json.loads((temporary / str(FILES[3]).lstrip("/")).read_text())
-        kid = signing_kid(temporary)
-        state_kids = [key.get("kid") for key in public_state["jwks"]["keys"]]
-        if kid not in state_kids:
-            raise RuntimeError("signing_key_state_mismatch")
+        contract = snapshot_contract(temporary, control_schema_version)
         manifest = {
             "schemaVersion": 1,
             "createdAt": int(time.time()),
             "databaseIntegrity": "ok",
             "tableCounts": tables,
-            "publicStateRevision": public_state.get("revision"),
-            "publicDeviceCount": len(public_state.get("devices", {})),
-            "replayRevision": replay_state.get("revision"),
-            "replaySpentCount": len(replay_state.get("spent", {})),
-            "replayDigestPresent": bool(replay_state.get("digest")),
-            "signingKid": kid,
             "files": records,
+            **contract,
         }
         manifest_path = temporary / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
@@ -214,6 +237,7 @@ def main() -> int:
             "replayRevision": manifest["replayRevision"],
             "replaySpentCount": manifest["replaySpentCount"],
             "databaseIntegrity": "ok",
+            "controlSchemaVersion": manifest["controlSchemaVersion"],
             "tableCounts": tables,
             "signingKeyMatchesState": True,
         }, sort_keys=True))
