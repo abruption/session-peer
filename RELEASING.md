@@ -5,20 +5,22 @@ the selected tag and uploads it to PyPI through Trusted Publishing. A draft does
 not publish. Keep preparation, approval, publication and verification separate so
 the public artifacts always point at reviewed code.
 
-## Current candidate: v1.0.0-alpha.1
+## Current candidate: v1.0.0-beta.1
 
-The first 1.0 alpha depends on the authenticated relay RC in #99. Its canonical
-Python/PyPI version is `1.0.0a1`; the human-facing Git tag and GitHub release are
-`v1.0.0-alpha.1`. `packaging.version.Version` treats those values as equal. Do
-not use a bare `v1.0.0-alpha`, which normalizes to alpha zero.
+The first 1.0 beta carries the authenticated relay from alpha.1 and adds the
+frozen compatibility contract, first-party control database migrations, bounded
+capacity metrics and WSL-to-native-Windows Codex delivery from #120–#123. Its
+canonical Python/PyPI version is `1.0.0b1`; the human-facing Git tag and GitHub
+release are `v1.0.0-beta.1`. `packaging.version.Version` treats those values as
+equal. Do not use a bare `v1.0.0-beta`, which normalizes to beta zero.
 
 This release is an explicit prerelease:
 
 - mark the GitHub release **Pre-release** and do not mark it Latest;
-- normal stable package upgrades must continue to select v0.9.0;
+- normal stable package upgrades must continue to select v0.9.1;
 - testers install the exact version with
-  `pipx install 'session-peer[relay]==1.0.0a1'` or the equivalent `uv` command;
-- keep #101 open until GitHub, PyPI and fresh-install verification finish;
+  `pipx install 'session-peer[relay]==1.0.0b1'` or the equivalent `uv` command;
+- keep the v1.0.0-beta milestone open until GitHub, PyPI and fresh-install verification finish;
 - the plugin manifest retains its independent version (0.1.0).
 
 The candidate includes local/SSH operation, optional MCP and Antigravity adapters,
@@ -30,7 +32,7 @@ promise.
 
 The repository must retain the frozen root `cc_peer.py` for legacy self-update
 URLs while excluding it from wheel and sdist. Include all four READMEs, security
-policy, alpha release notes, relay lifecycle/auth documentation and optional
+policy, beta release notes, relay lifecycle/auth documentation and optional
 runtime sources. Never include OAuth credentials, device keys, auth databases,
 replay state, browser profiles, local evidence or conversations.
 
@@ -52,10 +54,9 @@ mapping has not changed.
 
 ## Prepare and verify
 
-1. Merge #99 first. Retarget the release-preparation PR to `main`, update it, and
-   require a clean merge. Do not recreate release changes manually on another
-   branch.
-2. Confirm `session_peer.__version__ == "1.0.0a1"`, the alpha notes are included
+1. Confirm the release branch contains #119–#123 and targets `main`; require a
+   clean merge rather than tagging any of the former stacked base branches.
+2. Confirm `session_peer.__version__ == "1.0.0b1"`, the beta notes are included
    in the sdist, and the four README install commands agree.
 3. Run the complete CI matrix. Locally repeat the core suite, control Node 22/24
    suite, Node/Python integration, build and archive inspection appropriate to
@@ -72,7 +73,7 @@ mapping has not changed.
    may contain `cc_peer.py`, credentials, databases, replay state, private keys,
    browser data or local evidence.
 6. Install wheel and sdist independently in fresh environments. Confirm
-   `session-peer --version` reports `1.0.0a1`, `session-peer list --output-format
+   `session-peer --version` reports `1.0.0b1`, `session-peer list --output-format
    json` works in an empty home, and relay/MCP extras pass `pip check` and help
    smoke tests.
 7. Merge only after required checks pass. Fetch `main`, record its exact commit,
@@ -86,11 +87,11 @@ merge commit changes the release commit.
 ```bash
 git fetch origin main --tags
 release_commit=$(git rev-parse origin/main)
-gh release create v1.0.0-alpha.1 \
+gh release create v1.0.0-beta.1 \
   --repo abruption/session-peer \
   --target "$release_commit" \
-  --title "session-peer v1.0.0-alpha.1" \
-  --notes-file docs/releases/v1.0.0-alpha.1.md \
+  --title "session-peer v1.0.0-beta.1" \
+  --notes-file docs/releases/v1.0.0-beta.1.md \
   --draft --prerelease --latest=false
 ```
 
@@ -103,7 +104,7 @@ Obtain final user approval immediately before publication. Publishing makes the
 GitHub release public and triggers the PyPI upload:
 
 ```bash
-gh release edit v1.0.0-alpha.1 \
+gh release edit v1.0.0-beta.1 \
   --repo abruption/session-peer \
   --draft=false --prerelease --latest=false
 ```
@@ -114,17 +115,17 @@ fails. Preserve the failed run and diagnose it. PyPI versions are immutable.
 ## Verify publication
 
 1. Confirm `publish.yml` succeeded for the expected tag and commit.
-2. Confirm PyPI exposes exactly `session-peer==1.0.0a1`. Download wheel and sdist,
+2. Confirm PyPI exposes exactly `session-peer==1.0.0b1`. Download wheel and sdist,
    compare their hashes with the workflow artifacts, and inspect contents again.
 3. Install the exact PyPI prerelease in fresh environments and repeat version,
    clean-home list, relay-extra and MCP smoke checks.
 4. Confirm GitHub marks the release as prerelease and not latest. The stable
    `releases/latest` endpoint and ordinary update notices must continue to point
-   to v0.9.0.
+   to v0.9.1.
 5. Verify the hosted relay separately; package publication does not prove service
    health, OAuth policy or agent acknowledgement.
-6. Close #101 only after GitHub, PyPI and fresh-install evidence is recorded.
+6. Close the v1.0.0-beta milestone only after GitHub, PyPI and fresh-install evidence is recorded.
 
 Package-managed installations upgrade with their own manager. Standalone stable
-installations keep using `session-peer update`; alpha testers use the exact package
+installations keep using `session-peer update`; beta testers use the exact package
 version. Submission is never proof of consumption or acknowledgement.

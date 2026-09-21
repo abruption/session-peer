@@ -78,11 +78,11 @@ npx -y skills@latest add abruption/session-peer-skill \
 其中提供可复用的请求、授权和密钥处理边界、验证步骤及完成报告格式。
 账户更改、公开访问、付款、重启、合并、发布版本和公开发布仍由用户控制。
 
-## 可选的1.0 Alpha功能
+## 可选的1.0 Beta功能
 
-显式选择的`1.0.0a1`预发布版新增了认证公共中继，并保留v0.9的实验性[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/antigravity.md)桥接。未筛选的`list`也会显示正在运行的已注册桥接。
+显式选择的`1.0.0b1`预发布版推进了认证公共中继，并保留v0.9的实验性[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/antigravity.md)桥接。未筛选的`list`也会显示正在运行的已注册桥接。
 [设备配对与加密中继](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/paired-devices.md)需要Unix、Python 3.11以上及`[relay]`扩展。设备身份固定，目标需在接收端显式授权。盲转发WSS中继无法解密应用消息；托管服务的可用性与软件包分开运营。
-请使用`pipx install 'session-peer[relay]==1.0.0a1'`显式安装Alpha版；普通升级不会选择预发布版本。请先查看[session-peer项目页面](https://abruption.dev/projects/session-peer/)及上方的设备配对文档。Alpha发布不代表长期稳定性，普通本地与SSH命令仍不需要第三方依赖。
+请使用`pipx install 'session-peer[relay]==1.0.0b1'`显式安装Beta版；普通升级不会选择预发布版本。请先查看[session-peer项目页面](https://abruption.dev/projects/session-peer/)及上方的设备配对文档。Beta发布不代表长期稳定性，普通本地与SSH命令仍不需要第三方依赖。
 
 ## 发送前须知
 
