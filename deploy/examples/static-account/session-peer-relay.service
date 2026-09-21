@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 DynamicUser=yes
-ExecStart=/opt/session-peer-relay/venv/bin/session-peer relay serve --accounts %d/accounts.json --bind 127.0.0.1 --port 3769 --seconds 0
+ExecStart=/opt/session-peer-relay/venv/bin/session-peer relay serve --accounts %d/accounts.json --bind 127.0.0.1 --port 3769 --handshake-rate 20 --pending-sessions 100 --global-connections 10 --user-connections 8 --device-connections 4 --connection-byte-budget 33554432 --seconds 0
 LoadCredential=accounts.json:/etc/session-peer-relay/accounts.json
 Restart=on-failure
 RestartSec=3

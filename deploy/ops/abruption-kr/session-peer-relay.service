@@ -17,7 +17,7 @@ User=session-peer-relay
 ExecStartPre=/usr/bin/test -s /run/session-peer-auth/state.json
 # The separate readiness unit validates health/schema/freshness before this
 # existence check; relay's independent product verifier remains authoritative.
-ExecStart=/opt/session-peer-relay/current/venv/bin/session-peer relay serve --auth-state /run/session-peer-auth/state.json --auth-issuer https://relay.abruption.dev --auth-replay-state /var/lib/session-peer-relay/private/spent-tickets.json --bind 127.0.0.1 --port 3769 --seconds 0
+ExecStart=/opt/session-peer-relay/current/venv/bin/session-peer relay serve --auth-state /run/session-peer-auth/state.json --auth-issuer https://relay.abruption.dev --auth-replay-state /var/lib/session-peer-relay/private/spent-tickets.json --bind 127.0.0.1 --port 3769 --metrics-port 3768 --handshake-rate 20 --pending-sessions 100 --global-connections 10 --user-connections 8 --device-connections 4 --connection-byte-budget 33554432 --seconds 0
 StateDirectory=session-peer-relay
 StateDirectoryMode=0700
 # Persistent writable storage is restricted to the replay state directory.

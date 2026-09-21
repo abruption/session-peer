@@ -11,6 +11,15 @@ directory. A compatible relay must consume that directory read-only, retain its
 replay/high-water state, fail closed on stale state and participate in an
 explicit readiness/recovery topology.
 
+The template reads aggregate Python relay metrics only from
+`http://127.0.0.1:3768/metrics`. Configure the managed relay with the matching
+`--metrics-port 3768` plus explicit capacity flags. That listener is separate
+from the public relay port and must not be reverse-proxied. Only the dedicated
+admin listener merges these non-identifying aggregates for the existing
+Authelia-protected portal.
+Use the bounded sizing procedure in the neighboring
+[`static-account` example](../static-account/README.md) before raising any limit.
+
 For every fresh install or upgrade:
 
 1. Stop and fence both the control publisher and relay consumer.

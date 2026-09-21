@@ -28,6 +28,7 @@ Environment=SESSION_PEER_ADMIN_ORIGIN=https://admin.abruption.dev
 Environment=SESSION_PEER_ADMIN_PORT=3771
 Environment=SESSION_PEER_CONTROL_DATA=/var/lib/session-peer-control/private
 Environment=SESSION_PEER_RELAY_PUBLIC=/var/lib/session-peer-control/relay-public
+Environment=SESSION_PEER_RELAY_METRICS_URL=http://127.0.0.1:3768/metrics
 Environment=BETTER_AUTH_SECRET_FILE=%d/auth-secret
 EnvironmentFile=/etc/session-peer-control/control.env
 LoadCredential=auth-secret:/etc/session-peer-control/auth-secret

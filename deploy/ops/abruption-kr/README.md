@@ -16,6 +16,27 @@ Google provider credentials were enabled separately after these unit copies;
 any provider-specific drop-in must use protected LoadCredential files and
 `GOOGLE_CLIENT_SECRET_FILE`, with IDs/allowlist/signup switch in the protected environment file.
 
+The reviewed relay unit explicitly retains the Alpha-compatible safety defaults:
+20 handshakes/second, 100 pending admission sessions, 10 global connections, 8
+per user, 4 per device and 32 MiB forwarded per connection direction. Ten live
+sockets plus the public and metrics listeners remain below `LimitNOFILE=256`,
+`TasksMax=64` and the measured `MemoryMax=256M` envelope; these settings are not
+a user-count or concurrency guarantee. Change them only after a bounded load
+result and a unit/resource review.
+
+For sizing, begin with these limits, run a bounded loopback mix at the expected
+frame size, record peak RSS/file descriptors/tasks/latency and all rejection
+counters, verify that connections and waiting rooms return to zero, and retain
+headroom for Caddy, control and host agents. Change one bound at a time and repeat
+both saturation and recovery before applying it to the installed unit.
+
+Port 3768 is a dedicated loopback-only aggregate metrics listener. The control
+service reads it with `SESSION_PEER_RELAY_METRICS_URL`; Caddy never routes that
+port or `/metrics` on the public relay host. The separate 3771 control listener
+merges current connection/session pressure, rejection counters, traffic,
+uptime and configured capacity for the Authelia-protected admin portal. The
+payload contains no user, room, principal, ticket, proof, address or message.
+
 Run compiled auth migration and explicit replay initialization only through the
 reviewed same-UID/writer-lock procedure on first setup and every schema-bearing
 upgrade. Stop and fence the stack, run the protected snapshot helper, verify its
@@ -82,7 +103,7 @@ with session-peer. The exact `/session-peer` page and
 the sole browser login. The API proxies only to the control service's dedicated
 `127.0.0.1:3771` listener; never expose that listener through the relay host or
 bind it publicly. Public RC signups never inherit portal access. The default
-response contains aggregate counts. Allowlisted drill-down queries may return
+response contains control and relay aggregate counts. Allowlisted drill-down queries may return
 operator-useful names, email addresses, providers, operation IDs and shortened
 principal hints. They never return provider account IDs, internal user IDs, full
 principals, tokens, cookies, proofs, request hashes, certificates or keys.
