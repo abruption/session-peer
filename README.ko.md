@@ -47,8 +47,22 @@ session-peer를 별도로 설치할 필요는 없어요.
 
 ## 설치 방법
 
-`pipx`·`uv`를 사용하거나 활성화된 가상 환경에서 `python -m pip install session-peer`를 실행하세요.
-독립 실행 CLI와 에이전트 스킬을 함께 설치하려면:
+Python CLI는 `pipx`·`uv`를 사용하거나 활성화된 가상 환경에서
+`python -m pip install session-peer`를 실행해 설치하세요. Claude Code·Codex·Antigravity용
+에이전트 스킬은 별도로 설치합니다.
+
+```bash
+npx -y skills@latest add abruption/session-peer \
+  --skill session-peer --global \
+  --agent claude-code --agent codex --agent antigravity --copy --yes
+```
+
+이 명령은 `SKILL.md`를 `~/.claude/skills/session-peer/`와 Codex·Antigravity가 함께
+사용하는 `~/.agents/skills/session-peer/`에 설치해요. 업데이트는
+`npx -y skills@latest update session-peer --global --yes`로 별도 수행하세요.
+현재 검증한 `skills@1.7.0`은 Node.js 22.20 이상이 필요해요.
+
+skills CLI 없이 POSIX 독립 실행 방식으로 설치하려면:
 
 ```bash
 git clone https://github.com/abruption/session-peer

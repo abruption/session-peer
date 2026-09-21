@@ -47,8 +47,22 @@ session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "请�
 
 ## 安装方式
 
-可以使用`pipx`或`uv`，也可以在已激活的虚拟环境中运行`python -m pip install session-peer`。
-如需同时安装独立CLI和代理技能：
+使用`pipx`、`uv`，或在已激活的虚拟环境中运行
+`python -m pip install session-peer`来安装Python CLI。Claude Code、Codex和Antigravity的
+代理技能需单独安装：
+
+```bash
+npx -y skills@latest add abruption/session-peer \
+  --skill session-peer --global \
+  --agent claude-code --agent codex --agent antigravity --copy --yes
+```
+
+此命令会将`SKILL.md`安装到`~/.claude/skills/session-peer/`，以及Codex和Antigravity共用的
+`~/.agents/skills/session-peer/`。请使用
+`npx -y skills@latest update session-peer --global --yes`单独更新技能。
+目前已验证的`skills@1.7.0`需要Node.js 22.20或更高版本。
+
+如需在不使用skills CLI的情况下进行POSIX独立安装：
 
 ```bash
 git clone https://github.com/abruption/session-peer

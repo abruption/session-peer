@@ -48,8 +48,23 @@ threads may be inactive. Ask for an explicit reply when completion matters.
 
 ## Installation options
 
-Use `pipx` or `uv`, or run `python -m pip install session-peer` in an activated
-virtual environment. For the standalone CLI plus the agent skill:
+Install the Python CLI with `pipx` or `uv`, or run
+`python -m pip install session-peer` in an activated virtual environment.
+Install the agent skill separately for Claude Code, Codex, and Antigravity:
+
+```bash
+npx -y skills@latest add abruption/session-peer \
+  --skill session-peer --global \
+  --agent claude-code --agent codex --agent antigravity --copy --yes
+```
+
+This writes `SKILL.md` to `~/.claude/skills/session-peer/` and the shared
+`~/.agents/skills/session-peer/` path used for Codex and Antigravity. Update it
+independently with
+`npx -y skills@latest update session-peer --global --yes`. The currently
+verified `skills@1.7.0` requires Node.js 22.20 or newer.
+
+For a standalone POSIX installation without the skills CLI:
 
 ```bash
 git clone https://github.com/abruption/session-peer
