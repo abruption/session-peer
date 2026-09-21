@@ -315,9 +315,7 @@ GOOGLE_CLIENT_ID=REPLACE_WITH_OPERATOR_APP_ID
 缺失或配置不全的凭据将拒绝启动。已禁用的提供商不得配置
 客户端 ID 或密钥文件。
 
-运行 `npm run db:migrate` 时请使用相同的受保护配置，然后
-运行 `npm start`。迁移是显式的；生产环境不会在每次启动时
-暗中重写认证模式。本地开发仅允许在 localhost 或 127.0.0.1 上使用 HTTP，且不得使用生产密钥。状态必须位于源码之外且位于
+运行已编译的 `node dist/server/migrate.js` 时，请使用相同的受保护配置和独占 writer lock，然后运行 `npm start`。该命令会先迁移 Better Auth 和版本化的 session-peer 第一方架构，再报告已安装的版本。迁移是显式的；生产启动会验证该架构，并以 `migration_required` 失败，而不是暗中创建或重写表。升级前请创建一致且受保护的快照，也不要将迁移放入 `ExecStartPre` 或自动重启路径。本地开发仅允许在 localhost 或 127.0.0.1 上使用 HTTP，且不得使用生产密钥。状态必须位于源码之外且位于
 iCloud 之外。私有签名密钥仅生成一次，权限为 0600 模式，并在
 重启后保留。所有私有数据库/状态父级仅限所有者访问；备份必须将
 control SQLite 一致快照、签名密钥和 OAuth 策略作为单独的

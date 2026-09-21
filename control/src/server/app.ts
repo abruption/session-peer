@@ -79,9 +79,6 @@ export function createApp(
   config: Config,
   webDir: string,
 ) {
-  db.exec(
-    "CREATE TABLE IF NOT EXISTS relay_device_claims (id TEXT PRIMARY KEY,userId TEXT NOT NULL,sessionId TEXT NOT NULL,expiresAt INTEGER NOT NULL)",
-  );
   const rates = new Map<string, { start: number; count: number }>();
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {

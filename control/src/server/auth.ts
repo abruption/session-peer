@@ -16,17 +16,6 @@ export function allowedAccount(
 type SignupRow = { status: "pending" | "active"; expiresAt: number };
 const PUBLIC_SIGNUP_RESERVATION_SECONDS = 600;
 
-function preparePublicSignup(db: Database.Database) {
-  db.exec(`CREATE TABLE IF NOT EXISTS relay_public_signups (
-    providerId TEXT NOT NULL,
-    accountId TEXT NOT NULL,
-    status TEXT NOT NULL CHECK(status IN ('pending','active')),
-    expiresAt INTEGER NOT NULL,
-    createdAt INTEGER NOT NULL,
-    PRIMARY KEY(providerId,accountId)
-  )`);
-}
-
 /**
  * Verify or reserve one provider identity. The short IMMEDIATE transaction
  * keeps concurrent OAuth callbacks from racing the same reservation.
@@ -39,7 +28,6 @@ export function authorizeAccount(
   now = Math.floor(Date.now() / 1000),
 ): boolean {
   if (allowedAccount(config, provider, accountId)) return true;
-  preparePublicSignup(db);
   return db.transaction(() => {
     db.prepare(`DELETE FROM relay_public_signups
       WHERE status='pending' AND expiresAt<?
@@ -81,7 +69,6 @@ function publicAccountAllowed(
   provider: string,
   accountId: string,
 ): boolean {
-  preparePublicSignup(db);
   const account = db
     .prepare("SELECT 1 FROM account WHERE providerId=? AND accountId=?")
     .get(provider, accountId);
@@ -121,7 +108,6 @@ export function operatorUser(
   );
 }
 export function createAuth(db: Database.Database, config: Config) {
-  preparePublicSignup(db);
   const githubProvider = config.providers.github ? github(config.providers.github) : undefined;
   return betterAuth({
     appName: "session-peer",
