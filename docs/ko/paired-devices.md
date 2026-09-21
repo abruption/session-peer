@@ -47,6 +47,31 @@ Claude 바인딩은 `agent: claude`와 홈 없는 정확한 세션 이름/PID를
 
 페어링은 기기 키 소유를 증명합니다. **이는 네이티브 에이전트 접근 권한을 부여하지 않습니다**: 수신 정책이 지문, 작업 및 대상 별칭을 별도로 허용해야 합니다. 피어는 실행 파일, 홈, wake 플래그, SSH 목적지 또는 임의의 네이티브 명령 인자를 제공할 수 없습니다. 정책 변경은 수신자를 재시작한 후에 적용됩니다. 제한: 구성된 대상 8개 및 정책 기기 128개.
 
+## 네이티브 Windows Codex용 WSL 수신자
+
+같은 Windows 워크스테이션에서 Codex 세션과 CLI가 네이티브로 실행될 때 수신자는 WSL2에서 실행합니다. 페어링된 피어가 아니라 운영자 정책이 마운트된 상태 홈과 실행 파일을 모두 고정합니다:
+
+```json
+{
+  "targets": {
+    "windows-review": {
+      "agent": "codex",
+      "target": "codex:FULL-THREAD-UUID",
+      "codexHome": "/mnt/c/Users/alice/.codex",
+      "codexBin": "/mnt/c/Users/alice/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe"
+    }
+  },
+  "peers": {
+    "CLIENT-64-HEX-FINGERPRINT": {
+      "capabilities": ["list", "send"],
+      "targets": ["windows-review"]
+    }
+  }
+}
+```
+
+`codexHome`은 로컬 Windows 드라이브에 마운트된 절대 WSL 경로여야 하고, `codexBin`은 이름이 `codex.exe`인 절대 경로의 실행 가능한 일반 파일이어야 합니다. 수신자는 POSIX 경로로 데이터베이스를 읽고, 고정 인자로 `/usr/bin/wslpath`를 호출한 뒤 드라이브가 명시된 Windows 경로를 네이티브 자식의 `CODEX_HOME`으로만 전달합니다. 셸 명령은 만들지 않습니다. WSL이 아닌 호스트, 누락된 실행 파일 또는 안전하지 않은 변환은 정책 로드 중 `wsl_codex_requires_wsl`, `invalid_codex_executable` 또는 `wsl_home_conversion_failed`로 실패합니다. Linux/macOS Codex 대상은 `codexBin`을 생략하며 기존 동작을 유지합니다. 네이티브 Windows 클라이언트는 계속 일반 로컬 CLI를 사용합니다. 이 어댑터는 Windows Codex를 대상으로 하는 WSL 수신자 전용입니다. Windows writer 잠금은 POSIX advisory lock이 아니므로 이 명시적 바인딩은 네이티브 세션이 비활성일 때도 고정 홈에 큐를 넣을 수 있습니다. 성공한 제출도 그 세션이 소비하기 전까지 `consumptionConfirmed: false`를 보고합니다.
+
 직접 수신자를 시작합니다(기본값은 루프백이며, 다른 머신을 위해 연결 가능한 사설 인터페이스를 선택하십시오):
 
 ```sh

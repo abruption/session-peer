@@ -3,6 +3,7 @@
 [返回概览](../../README.zh-CN.md)
 
 以下是详细的命令行为、安装选项、传输限制和历史验证记录。
+机器consumer还应遵循[v1兼容性契约](compatibility-v1.md)。
 
 [![PyPI](https://img.shields.io/pypi/v/session-peer)](https://pypi.org/project/session-peer/)
 [![CI](https://github.com/abruption/session-peer/actions/workflows/ci.yml/badge.svg)](https://github.com/abruption/session-peer/actions/workflows/ci.yml)

@@ -322,9 +322,14 @@ For enabled GitHub/Google providers add LoadCredential entries and corresponding
 override. Missing half-configured credentials refuse startup. Disabled providers
 must have neither client ID nor secret file configured.
 
-Use the same protected config when running `npm run db:migrate`, then run
-`npm start`. Migration is explicit; production does not silently rewrite the
-auth schema on every startup. Local development permits HTTP only on localhost
+Use the same protected config and exclusive writer lock when running the compiled
+`node dist/server/migrate.js`, then run `npm start`. The command migrates Better
+Auth and the versioned session-peer first-party schema before reporting the
+installed version. Migration is explicit; production startup validates that
+schema and fails with `migration_required` rather than silently creating or
+rewriting tables. Take a consistent protected snapshot before an upgrade and do
+not put migration in `ExecStartPre` or an automatic restart path. Local
+development permits HTTP only on localhost
 or 127.0.0.1 and must not use production secrets. State must be outside source and
 outside iCloud. The private signing key is generated once, mode0600, and survives
 restart. All private DB/state parents are owner-only; backups must include the

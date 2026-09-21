@@ -25,6 +25,7 @@ it("fails closed without a secret and validates exact origins/allowlists", () =>
   expect(c.providers).toEqual({});
   expect(c.publicSignupEnabled).toBe(false);
   expect(c.adminOrigin).toBeUndefined();
+  expect(c.relayMetricsUrl).toBeUndefined();
   expect(
     loadConfig({
       NODE_ENV: "test",
@@ -38,6 +39,19 @@ it("fails closed without a secret and validates exact origins/allowlists", () =>
       SESSION_PEER_ADMIN_ORIGIN: "http://admin.example",
     }),
   ).toThrow("invalid_admin_origin");
+  expect(loadConfig({
+    BETTER_AUTH_SECRET: "x".repeat(40),
+    SESSION_PEER_RELAY_METRICS_URL: "http://127.0.0.1:3768/metrics",
+  }).relayMetricsUrl).toBe("http://127.0.0.1:3768/metrics");
+  for (const value of [
+    "https://127.0.0.1:3768/metrics",
+    "http://localhost:3768/metrics",
+    "http://127.0.0.1:3768/other",
+    "http://127.0.0.1:3768/metrics?secret=x",
+  ]) expect(() => loadConfig({
+    BETTER_AUTH_SECRET: "x".repeat(40),
+    SESSION_PEER_RELAY_METRICS_URL: value,
+  })).toThrow("invalid_relay_metrics_url");
   expect(() =>
     loadConfig({
       BETTER_AUTH_SECRET: "x".repeat(40),

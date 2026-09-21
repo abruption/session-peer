@@ -98,6 +98,38 @@ class ControlIntegration(unittest.IsolatedAsyncioTestCase):
         return self.auth.authorize(headers['Authorization'].removeprefix('Bearer '),
                                    headers['X-Session-Peer-Proof'])
 
+    async def test_sanitized_alpha_database_migrates_without_losing_authority(self):
+        root = self.root/'alpha-control'
+        root.mkdir(mode=0o700)
+        log = (root/'process.log').open('w')
+        self.addCleanup(log.close)
+        fixture = Path(__file__).parent/'fixtures/control-server.mjs'
+        env = {**os.environ, 'SESSION_PEER_CONTROL_ALPHA_FIXTURE': '1'}
+        process = subprocess.Popen(['node', str(fixture), str(root)], env=env,
+                                   stdout=log, stderr=log)
+        try:
+            ready = root/'ready.json'
+            deadline = time.monotonic()+15
+            while not ready.exists():
+                if process.poll() is not None or time.monotonic() > deadline:
+                    self.fail('Alpha Node fixture failed to migrate; inspect its private process.log')
+                await asyncio.sleep(0.05)
+            preserved = json.loads(ready.read_text())['migrationPreserved']
+            self.assertEqual(preserved['user'], {
+                'id': 'alpha-user', 'email': 'alpha@example.invalid'})
+            self.assertEqual(preserved['device']['keyGeneration'], 2)
+            self.assertEqual(preserved['device']['revoked'], 1)
+            self.assertEqual(preserved['operation']['operationId'],
+                             '00000000-0000-4000-8000-000000000115')
+            self.assertEqual(json.loads(preserved['operation']['result']),
+                             {'committed': True})
+            self.assertEqual(preserved['revision'], 42)  # startup publishes the next revision
+            self.assertEqual(preserved['schema'], 1)
+        finally:
+            if process.poll() is None:
+                process.terminate()
+            await asyncio.to_thread(process.wait, 5)
+
     async def test_real_node_enrollment_admission_and_revocation(self):
         account = self.authorize(self.headers(self.client))
         self.assertEqual(account['keyFingerprint'], self.client.key_id)

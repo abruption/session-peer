@@ -5,6 +5,8 @@ export interface Config {
   origin: string;
   /** Optional loopback-only operator endpoint exposed through Authelia. */
   adminOrigin?: string;
+  /** Dedicated loopback-only Python relay metrics endpoint. */
+  relayMetricsUrl?: string;
   production: boolean;
   dataDir: string;
   publicDir: string;
@@ -66,6 +68,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       throw new Error("invalid_admin_origin");
     adminOrigin = adminUrl.origin;
   }
+  let relayMetricsUrl: string | undefined;
+  if (env.SESSION_PEER_RELAY_METRICS_URL) {
+    const metricsUrl = new URL(env.SESSION_PEER_RELAY_METRICS_URL);
+    if (
+      metricsUrl.protocol !== "http:" ||
+      metricsUrl.hostname !== "127.0.0.1" ||
+      !metricsUrl.port ||
+      metricsUrl.pathname !== "/metrics" ||
+      metricsUrl.username ||
+      metricsUrl.password ||
+      metricsUrl.search ||
+      metricsUrl.hash
+    )
+      throw new Error("invalid_relay_metrics_url");
+    relayMetricsUrl = metricsUrl.href;
+  }
   const secret = env.BETTER_AUTH_SECRET_FILE
     ? readSecret(env.BETTER_AUTH_SECRET_FILE, env)
     : env.BETTER_AUTH_SECRET;
@@ -116,6 +134,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     origin,
     ...(adminOrigin ? { adminOrigin } : {}),
+    ...(relayMetricsUrl ? { relayMetricsUrl } : {}),
     production,
     secret,
     allowlist,

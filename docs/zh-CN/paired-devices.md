@@ -65,6 +65,31 @@ Antigravity 绑定使用 `agent: antigravity`、`target: antigravity:UUID`
 wake 标志、SSH 目的地或任意原生命令参数。策略变更在重启接收端后生效。
 限制：最多八个已配置目标和 128 个策略设备。
 
+## 面向原生 Windows Codex 的 WSL 接收端
+
+当 Codex 会话和 CLI 在同一台 Windows 工作站上原生运行时，请在 WSL2 中运行接收端。由操作员策略而不是已配对的对端固定挂载的状态主目录和可执行文件：
+
+```json
+{
+  "targets": {
+    "windows-review": {
+      "agent": "codex",
+      "target": "codex:FULL-THREAD-UUID",
+      "codexHome": "/mnt/c/Users/alice/.codex",
+      "codexBin": "/mnt/c/Users/alice/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe"
+    }
+  },
+  "peers": {
+    "CLIENT-64-HEX-FINGERPRINT": {
+      "capabilities": ["list", "send"],
+      "targets": ["windows-review"]
+    }
+  }
+}
+```
+
+`codexHome` 必须是挂载在本地 Windows 驱动器上的绝对 WSL 路径，`codexBin` 必须是名为 `codex.exe` 的绝对路径、可执行普通文件。接收端通过 POSIX 路径读取数据库，以固定参数调用 `/usr/bin/wslpath`，并且只把生成的带驱动器限定符的 Windows 路径作为原生子进程的 `CODEX_HOME`。它不会构造 shell 命令。非 WSL 主机、缺失的可执行文件或不安全的转换会在加载策略时分别以 `wsl_codex_requires_wsl`、`invalid_codex_executable` 或 `wsl_home_conversion_failed` 失败。Linux/macOS Codex 目标省略 `codexBin` 并保持现有行为。原生 Windows 客户端继续使用普通本地 CLI；此适配器仅用于以 Windows Codex 为目标的 WSL 接收端。Windows writer 锁不是 POSIX advisory lock，因此这一显式绑定允许在原生会话未激活时向固定主目录排队。成功提交后，在该会话实际消费之前仍会报告 `consumptionConfirmed: false`。
+
 启动直接连接接收端（默认为环回；若针对其他机器，请选择可访问的私有接口）：
 
 ```sh

@@ -9,8 +9,26 @@ it("starts real compiled server only on loopback; enforces host, body limit and 
   const root = mkdtempSync(join(tmpdir(), "sp-control-http-"));
   const port = 38771;
   const adminPort = 38772;
+  const relayMetricsPort = 38773;
   const origin = `http://127.0.0.1:${port}`;
   const adminOrigin = `http://127.0.0.1:${adminPort}`;
+  const { createServer } = await import("node:http");
+  const relayMetricsServer = createServer((_request, response) => {
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({
+      schemaVersion: 1, generatedAt: 1_789_000_000_000, uptimeSeconds: 30,
+      capacity: { handshake_rate: 20, pending_sessions: 100,
+        global_connections: 10, user_connections: 8, device_connections: 4,
+        connection_byte_budget: 33_554_432 },
+      current: { activeConnections: 2, waitingRooms: 1, pendingSessions: 3 },
+      counters: { handshakes: 10, sessionsIssued: 9, connectionsAccepted: 8,
+        rateRejected: 1, sessionCapacityRejected: 2, connectionCapacityRejected: 3,
+        unauthorizedRejected: 4, byteBudgetClosed: 5,
+        forwardedFrames: 6, forwardedBytes: 7 },
+    }));
+  });
+  await new Promise<void>((resolve) => relayMetricsServer.listen(
+    relayMetricsPort, "127.0.0.1", resolve));
   const env = {
     ...process.env,
     NODE_ENV: "development",
@@ -20,6 +38,7 @@ it("starts real compiled server only on loopback; enforces host, body limit and 
     SESSION_PEER_ADMIN_PORT: String(adminPort),
     SESSION_PEER_CONTROL_DATA: join(root, "private"),
     SESSION_PEER_RELAY_PUBLIC: join(root, "public"),
+    SESSION_PEER_RELAY_METRICS_URL: `http://127.0.0.1:${relayMetricsPort}/metrics`,
     SESSION_PEER_ALLOWED_ACCOUNTS: "[]",
     PORT: String(port),
   };
@@ -83,6 +102,12 @@ it("starts real compiled server only on loopback; enforces host, body limit and 
       signup: { registeredUsers: 0, publicUsers: 0 },
       devices: { total: 0, active: 0, revoked: 0 },
       operations: { total: 0, committed: 0, pending: 0 },
+      relay: {
+        available: true,
+        current: { activeConnections: 2, waitingRooms: 1, pendingSessions: 3 },
+        counters: { rateRejected: 1, connectionCapacityRejected: 3,
+          forwardedFrames: 6, forwardedBytes: 7 },
+      },
     });
     expect(JSON.stringify(metrics)).not.toMatch(/email|principal|userId|accountId/i);
     const details = await (
@@ -175,6 +200,8 @@ it("starts real compiled server only on loopback; enforces host, body limit and 
   } finally {
     child.kill("SIGTERM");
     await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    await new Promise<void>((resolve, reject) => relayMetricsServer.close((error) =>
+      error ? reject(error) : resolve()));
     rmSync(root, { recursive: true, force: true });
   }
 }, 15000);

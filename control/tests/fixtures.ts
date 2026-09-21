@@ -12,6 +12,7 @@ import { createApp } from "../src/server/app.js";
 import type { Config } from "../src/server/config.js";
 import type { Registration } from "../src/server/protocol.js";
 import { certificate } from "../src/server/protocol.js";
+import { runFirstPartyMigrations } from "../src/server/migrations.js";
 export function identity(
   root: string,
   name: string,
@@ -73,6 +74,7 @@ export async function fixture(overrides: Partial<Config> = {}) {
   const db = openDatabase(config.dataDir);
   const auth = createAuth(db, config);
   await (await getMigrations(auth.options)).runMigrations();
+  runFirstPartyMigrations(db);
   const context = await auth.$context;
   const owner = await context.internalAdapter.createUser(
     { name: "Owner", email: "owner@test.invalid", emailVerified: true },

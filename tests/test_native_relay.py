@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import secrets
 import ssl
+import subprocess
 import time
 import sys
 import tempfile
@@ -23,7 +24,7 @@ except ImportError:
 
 from session_peer_relay.app import Receiver, exchange, pair, open_channel, request
 from session_peer_relay.wire import relay_stream, direct_address
-from session_peer_relay.native import Policy
+from session_peer_relay.native import Policy, options, windows_codex_home
 from session_peer_relay.relay import Relay
 from session_peer_relay.store import Store, Rejected
 from session_peer_relay.identity import private_read, private_write
@@ -213,6 +214,7 @@ class PolicyTests(unittest.TestCase):
     def test_disallow_peer_controlled_command_home_and_wake(self):
         for binding in ({'agent':'codex','target':'codex:'+str(uuid.uuid4())},
                         {'agent':'claude','target':'worker','command':'sh'},
+                        {'agent':'claude','target':'worker','codexBin':'/bin/true'},
                         {'agent':'claude','target':'worker','wake':True},
                         {'agent':'claude','target':'codex:'+str(uuid.uuid4())}):
             with self.assertRaises((Rejected,ValueError)):Policy({'targets':{'a':binding},'peers':{}})
@@ -231,6 +233,70 @@ class PolicyTests(unittest.TestCase):
         result = json.loads(out.getvalue())
         self.assertEqual(result['status'], 'unknown')
         self.assertFalse(result['retryAllowed'])
+
+    def test_wsl_codex_policy_derives_windows_home_and_fixed_binary(self):
+        with tempfile.TemporaryDirectory() as folder:
+            executable = Path(folder)/'codex.exe'
+            executable.write_bytes(b'MZ fixture')
+            executable.chmod(0o700)
+            binding = {'agent':'codex','target':'codex:'+str(uuid.uuid4()),
+                       'codexHome':'/mnt/c/Users/alice/.codex',
+                       'codexBin':str(executable)}
+            converted = mock.Mock(return_value=r'C:\Users\alice\.codex')
+            with mock.patch('session_peer_relay.native.windows_codex_home', converted):
+                Policy({'targets':{'windows':binding},'peers':{}})
+                args = options(binding)
+            self.assertEqual(args.codex_bin, str(executable))
+            self.assertEqual(args.codex_native_home, r'C:\Users\alice\.codex')
+            self.assertTrue(args.allow_inactive_codex_home)
+            converted.assert_called_with('/mnt/c/Users/alice/.codex')
+
+    def test_posix_codex_policy_keeps_live_writer_requirement(self):
+        binding = {'agent':'codex','target':'codex:'+str(uuid.uuid4()),
+                   'codexHome':'/home/alice/.codex'}
+        args = options(binding)
+        self.assertIsNone(args.codex_bin)
+        self.assertIsNone(args.codex_native_home)
+        self.assertFalse(args.allow_inactive_codex_home)
+
+    def test_wsl_codex_policy_rejects_other_commands_and_platforms(self):
+        target = 'codex:'+str(uuid.uuid4())
+        with tempfile.TemporaryDirectory() as folder:
+            program = Path(folder)/'not-codex.exe'
+            program.write_bytes(b'MZ fixture')
+            program.chmod(0o700)
+            base = {'agent':'codex','target':target,'codexHome':'/mnt/c/home'}
+            with self.assertRaisesRegex(Rejected, 'invalid_codex_executable'):
+                Policy({'targets':{'a':{**base,'codexBin':str(program)}},'peers':{}})
+            program.rename(Path(folder)/'codex.exe')
+            link_dir = Path(folder)/'link'; link_dir.mkdir()
+            link = link_dir/'codex.exe'; link.symlink_to(Path(folder)/'codex.exe')
+            with self.assertRaisesRegex(Rejected, 'invalid_codex_executable'):
+                Policy({'targets':{'a':{**base,'codexBin':str(link)}},'peers':{}})
+            with mock.patch('session_peer_relay.native.is_wsl', return_value=False):
+                with self.assertRaisesRegex(Rejected, 'wsl_codex_requires_wsl'):
+                    Policy({'targets':{'a':{**base,'codexBin':str(Path(folder)/'codex.exe')}},'peers':{}})
+
+    def test_windows_home_conversion_uses_fixed_argv_and_validates_output(self):
+        completed = subprocess.CompletedProcess([], 0, 'C:\\Users\\alice\\.codex\n', '')
+        with mock.patch('session_peer_relay.native.is_wsl', return_value=True), \
+             mock.patch('session_peer_relay.native.Path.is_file', return_value=True), \
+             mock.patch('session_peer_relay.native.os.access', return_value=True), \
+             mock.patch('session_peer_relay.native.subprocess.run', return_value=completed) as run:
+            self.assertEqual(windows_codex_home('/mnt/c/Users/alice/.codex'),
+                             r'C:\Users\alice\.codex')
+        self.assertEqual(run.call_args.args[0],
+                         ['/usr/bin/wslpath', '-w', '/mnt/c/Users/alice/.codex'])
+        self.assertNotIn('shell', run.call_args.kwargs)
+        for value in ('relative', '/mnt/c/home', r'\\server\share',
+                      r'C:\Users\bad?', 'C:\\bad\nvalue'):
+            done = subprocess.CompletedProcess([], 0, value, '')
+            with mock.patch('session_peer_relay.native.is_wsl', return_value=True), \
+                 mock.patch('session_peer_relay.native.Path.is_file', return_value=True), \
+                 mock.patch('session_peer_relay.native.os.access', return_value=True), \
+                 mock.patch('session_peer_relay.native.subprocess.run', return_value=done):
+                with self.assertRaisesRegex(Rejected, 'wsl_home_conversion_failed'):
+                    windows_codex_home('/mnt/c/home')
 
     def test_direct_route_validation(self):
         self.assertEqual(direct_address('[::1]:443'), ('::1',443))

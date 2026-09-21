@@ -66,6 +66,21 @@
           <button class="stat" data-view="operations" data-filter="pending" data-title="대기 작업"><span>대기</span><strong id="operations-pending">—</strong></button>
           <div class="stat"><span>상태 리비전</span><strong id="revision">—</strong></div>
         </section>
+        <section><h2>릴레이 현재 상태</h2>
+          <div class="stat"><span>활성 / 한도</span><strong id="relay-active">—</strong></div>
+          <div class="stat"><span>대기 room</span><strong id="relay-waiting">—</strong></div>
+          <div class="stat"><span>미소비 세션 / 한도</span><strong id="relay-sessions">—</strong></div>
+        </section>
+        <section><h2>릴레이 거절</h2>
+          <div class="stat"><span>속도 제한</span><strong id="relay-rate-rejected">—</strong></div>
+          <div class="stat"><span>용량 제한</span><strong id="relay-capacity-rejected">—</strong></div>
+          <div class="stat"><span>바이트 한도 종료</span><strong id="relay-byte-budget">—</strong></div>
+        </section>
+        <section><h2>릴레이 트래픽</h2>
+          <div class="stat"><span>전달 프레임</span><strong id="relay-frames">—</strong></div>
+          <div class="stat"><span>전달 바이트</span><strong id="relay-bytes">—</strong></div>
+          <div class="stat"><span>가동 시간</span><strong id="relay-uptime">—</strong></div>
+        </section>
       </div>
       <footer><span id="updated">아직 갱신되지 않음</span><a href="/">관리 홈으로</a></footer>
     </main>
@@ -96,6 +111,11 @@
           set('signup-mode',m.signup.mode==='open'?'공개':'닫힘'); set('registered-users',m.signup.registeredUsers); set('public-users',m.signup.publicUsers); set('pending-signups',m.signup.pendingReservations);
           set('devices-total',m.devices.total); set('devices-active',m.devices.active); set('devices-revoked',m.devices.revoked);
           set('operations-total',m.operations.total); set('operations-committed',m.operations.committed); set('operations-pending',m.operations.pending); set('revision',m.stateRevision);
+          if(m.relay&&m.relay.available){const r=m.relay;
+            set('relay-active',r.current.activeConnections+' / '+r.capacity.global_connections); set('relay-waiting',r.current.waitingRooms); set('relay-sessions',r.current.pendingSessions+' / '+r.capacity.pending_sessions);
+            set('relay-rate-rejected',r.counters.rateRejected); set('relay-capacity-rejected',r.counters.sessionCapacityRejected+r.counters.connectionCapacityRejected); set('relay-byte-budget',r.counters.byteBudgetClosed);
+            set('relay-frames',r.counters.forwardedFrames); set('relay-bytes',r.counters.forwardedBytes.toLocaleString('ko-KR')); set('relay-uptime',Math.floor(r.uptimeSeconds/60).toLocaleString('ko-KR')+'분');
+          }else{['relay-active','relay-waiting','relay-sessions','relay-rate-rejected','relay-capacity-rejected','relay-byte-budget','relay-frames','relay-bytes','relay-uptime'].forEach(id=>set(id,'—'));}
           set('updated','마지막 갱신 '+new Date(m.generatedAt).toLocaleString('ko-KR'));
         }catch{ health.className='status unhealthy'; health.lastElementChild.textContent='불러오기 실패'; }
       }

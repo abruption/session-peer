@@ -69,6 +69,28 @@ one-command override that clears this safeguard. Reconcile post-snapshot native
 effects and revoke/fence the old identity before planning recovery. This development
 implementation does not yet provide a complete lost-key recovery workflow.
 
+## Control database upgrades
+
+The control database has a first-party migration ledger in addition to Better
+Auth's schema. A fresh install and every schema-bearing upgrade must run the
+compiled migration explicitly before the HTTP service starts:
+
+```sh
+node dist/server/migrate.js
+```
+
+Stop and fence the publisher and relay first. Take a protected, consistent
+snapshot containing the SQLite database, signing key, public state and replay
+high-water state, then run the command as the control service identity with its
+normal protected configuration and exclusive writer lock. The migration is
+transactional and idempotent and preserves stable principals, generations,
+revocation tombstones, operation receipts and the monotonic public revision.
+
+Normal startup performs validation only. An old, partial, future or corrupt
+schema fails with `migration_required` without DDL. Do not add migration to
+`ExecStartPre`, delete the migration ledger, or automatically restore an older
+snapshot after failure. Keep the stack stopped and review a fenced recovery.
+
 ## Optional control-service admission
 
 The standalone static-token relay remains available. A control-managed relay uses:
@@ -89,6 +111,32 @@ A ticket is consumed once before issuing the existing one-use WebSocket cookie.
 Missing/invalid state fails closed; existing connections recheck revocation every
 second. Control-service issuance and the Python CLI have passed fixture integration.
 Token verification tests alone do not establish live browser login.
+
+### Hosted capacity and operator metrics
+
+The compatible defaults are explicit and configurable:
+
+```sh
+session-peer relay serve ... \
+  --handshake-rate 20 --pending-sessions 100 \
+  --global-connections 10 --user-connections 8 --device-connections 4 \
+  --connection-byte-budget 33554432 --metrics-port 3768
+```
+
+Every value has lower and upper bounds. Per-device capacity cannot exceed
+per-user capacity, and per-user capacity cannot exceed the global capacity; an
+invalid combination refuses startup. Rate excess returns 429. Pending-session
+or connection capacity returns 503 without consuming a fresh admission proof or
+discarding an already issued one-use session. The defaults are safety bounds,
+not a supported-user-count guarantee, and must remain below measured systemd
+memory, task and file-descriptor limits.
+
+The optional metrics listener binds only to `127.0.0.1` on a separate port. Do
+not reverse-proxy it. The control service reads its fixed, non-identifying schema
+and exposes it only through the existing Authelia-protected operator boundary.
+It reports current connections, waiting rooms, pending sessions, admission and
+capacity rejections, forwarded frames/bytes, uptime and configured limits. It
+never reports users, rooms, principals, tickets, proofs, addresses or content.
 
 ## Browser login (integration candidate)
 
