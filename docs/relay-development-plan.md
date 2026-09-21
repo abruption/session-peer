@@ -4,6 +4,8 @@ Goal: integrate real-agent paired direct/E2EE relay delivery, validate installat
 and operation, prepare v0.9.0 release PR, then after merge publish tag/PyPI and
 perform operational validation before v1.0.0-rc.
 
+Any later modularization or relay evolution must preserve the [v1 compatibility contract](compatibility-v1.md).
+
 Authoritative starting state: main 39fedf8 contains #86 only. #87/#88 merged into
 refactor/47-agent-transports, not main. Integration branch feat/69-native-relay
 cherry-picks those approved changes with provenance onto main. Main CI run

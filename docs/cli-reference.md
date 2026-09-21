@@ -3,6 +3,7 @@
 [Back to the overview](../README.md)
 
 Detailed command behavior, installation options, transport limits, and historical validation follow below.
+Machine consumers should also follow the [v1 compatibility contract](compatibility-v1.md).
 
 [![PyPI](https://img.shields.io/pypi/v/session-peer)](https://pypi.org/project/session-peer/)
 [![CI](https://github.com/abruption/session-peer/actions/workflows/ci.yml/badge.svg)](https://github.com/abruption/session-peer/actions/workflows/ci.yml)

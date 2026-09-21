@@ -1,23 +1,29 @@
 {
-  "canonicalLocale": "en",
   "schemaVersion": 1,
+  "canonicalLocale": "en",
+  "translatedLocales": [
+    "ko",
+    "ja",
+    "zh-CN"
+  ],
   "sources": {
     "README.md": "551ae5d5c9403185ea13305d5b71cef3ce21f8761ad3d3039d73ab2638cf8daf",
     "RELEASING.md": "cfbe28076a6126b7691aeda1172e7315ee4eb61ab80312c7e63d5d577e316184",
     "SECURITY.md": "83551e78e3525cb7e2614b303f7c6758bbddf0442bfe1b3e4529635cf2fec918",
-    "docs/README.md": "3061ee59816751d50a3589b7d8bec8dcf069c95154e484de05b258b9ab034757",
+    "docs/README.md": "e667de555d50d269d0650c11dfc390c5ec552abcdaa3d551758699f0bafbb04b",
     "docs/agent-adapters.md": "bf185d3121c94829bb412071a25c4d943302e10a6b2e713111e653b8f8c3ea91",
     "docs/ai-assistant-guide.md": "9624ec96b92fb688fae3be3c94cb3564c77985091be451fbf1f056a1af9b9d9c",
     "docs/antigravity.md": "6937c0208464dc536ce810abd70e449b65cb72e1d937a3d818339f46a9ab11d4",
     "docs/architecture/agent-transports.md": "859af9c28d2cd12830bb1a084d9a5d03f3ede637a52e7ff7271f509edfaeaf7b",
-    "docs/cli-reference.md": "87a5dea0bc0d9bbf5cbee9c092736709b7fdbc8b99923d1fb7445d0594a571fc",
+    "docs/cli-reference.md": "2e0a9fe2b47fa816864bfbb7199eb8af38f0c476ae1f89d94e2427742dd9cc22",
+    "docs/compatibility-v1.md": "7e551aad37a369faff7e370728376763efb54c2c9e9cfd8556a0c19aabc3d103",
     "docs/diagnostics.md": "e7c757655a08c3a0180e375a7bdd67c034f6916e800968054aa1cc98ec1ca4aa",
     "docs/download-metrics.md": "ded60e7b84d14ce779f8d639516b4e390358a06ef76b677dc9c1f997fb626a9f",
     "docs/mcp.md": "e99689b8e6a222babc9438be2b2aabee953c3e0b2f967c6582065569529c32da",
     "docs/multi-home-list.md": "f8d8e3adf727e4842ea7c4d45e8f6523b11d0513bf2509d4d1204645875e6489",
     "docs/paired-devices.md": "df6331349ba2c34a81d7dd9a4298665f18306af110086bad4bf1e1e2c1dd4a7d",
     "docs/relay-auth.md": "b2ff176cb93ffa2a42c81111d8b152f66ec6d85e846c64ad33d62d6aa41faf8c",
-    "docs/relay-development-plan.md": "f33ea62a59809ea708f679e5a0ec5fbfd7e40948c730adce3a7b214a1409cbad",
+    "docs/relay-development-plan.md": "0abf750b36275ea4e467a0020e560277f08689f2d574aed7674133705383b1ff",
     "docs/relay-edge-policy.md": "c1c7f7a1c4303943c78ca334dab4034f66c0c272e40c007d07c3da2a496155eb",
     "docs/relay-google-bootstrap.md": "bf6ce95c1ba39a56b765542d90e49c24211de5dd7cecb453819dfc35388bed9d",
     "docs/relay-lifecycle.md": "b9ce6d5b39548e9cdb555d81947f624941007e13e98fb8fef278ced2af666699",
@@ -28,15 +34,10 @@
     "docs/releases/v0.7.0.md": "fa1081169a302c596246a29ea7a1a9c48aa697f586bf24740e9ebe5541970d74",
     "docs/releases/v0.8.0.md": "317f238c008aa7679653c0cd74a8de3fb58108d3602d88e63bd5bf486744052c",
     "docs/releases/v0.9.0.md": "fa057fed64fdb1c454a25be2b28fcbeb926d4b0163cfb61b026d9409418c1052",
-    "docs/releases/v1.0.0-alpha.1.md": "59004f0eb2db2dcc19a832eb260e48473ba388bf094aec38364a88db8c9d3c0b",
+    "docs/releases/v1.0.0-alpha.1.md": "b231b3c1c276199a5aa9f699d9f5e2911104c1080a61fa35340128d7e8994be3",
     "docs/validation/69-rc.md": "4e9a2183e8ca98a6db36a7b58dfebe0f2c02b33ae6534ffcda9352ab7198337f",
     "docs/validation/85-antigravity.md": "468ba1702a60c57079730ab5b7545b0b1968f11cc6832f0ac88460664ba87723",
     "docs/wake.md": "e382df91b14f91b026280c4e12dfbdb047f2bf16e73186b959c62bb67d6b4d8c",
     "plugins/session-peer/README.md": "a4eeae54caac9ad824d740f7f319561f060bc9c2bbbbf7def2bdd8e36dbcd1c6"
-  },
-  "translatedLocales": [
-    "ko",
-    "ja",
-    "zh-CN"
-  ]
+  }
 }

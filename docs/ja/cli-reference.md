@@ -3,6 +3,7 @@
 [概要に戻る](../../README.ja.md)
 
 コマンドの詳細な動作、インストールオプション、トランスポートの制限、および過去の検証結果について以下に説明します。
+機械consumerは[v1互換性契約](compatibility-v1.md)にも従ってください。
 
 [![PyPI](https://img.shields.io/pypi/v/session-peer)](https://pypi.org/project/session-peer/)
 [![CI](https://github.com/abruption/session-peer/actions/workflows/ci.yml/badge.svg)](https://github.com/abruption/session-peer/actions/workflows/ci.yml)

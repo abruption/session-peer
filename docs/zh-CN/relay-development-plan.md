@@ -2,6 +2,8 @@
 
 目标：集成真实代理配对直接/E2EE 中继投递，验证安装与操作，准备 v0.9.0 发布 PR，合并后发布标签/PyPI，并在 v1.0.0-rc 之前执行运维验证。
 
+后续modularization或relay变更必须保留[v1兼容性契约](compatibility-v1.md)。
+
 权威起始状态：main 39fedf8 仅包含 #86。#87/#88 已合并到 refactor/47-agent-transports，而非 main。集成分支 feat/69-native-relay 将这些经批准的变更及其溯源 cherry-pick 到 main。Main CI 运行 35185418394 已通过。在以下所有关卡通过之前，此分支不是发布版本。
 
 设计决策：
