@@ -14,6 +14,22 @@
 예를 들어 SSH 호스트 `worker`의 `api-worker` 세션에 변경 검토를 요청해요.
 각 에이전트의 기본 수신함과 큐를 사용하며, 메시지 처리 방식은 수신 에이전트가 결정해요.
 
+## 실제 동작 보기
+
+이 26초 영상은 로컬 전송을 사용하는 실제 Codex·Claude Code 세션을 녹화했으며,
+연출된 출력은 없어요.
+
+1. Codex가 정확한 Claude Code 세션을 찾아요.
+2. Codex가 해당 세션의 기본 수신함에 검토 요청을 게시해요.
+3. Claude Code가 구조화된 회신 주소를 따라 응답을 보내요.
+4. Codex가 자신의 세션에서 명시적인 회신을 받아요.
+
+[![실제 Codex에서 Claude Code로 메시지를 보내는 데모](docs/assets/session-peer-live-codex-claude-poster.png)](docs/assets/session-peer-live-codex-claude.mp4)
+
+[26초 데모 영상 보기](docs/assets/session-peer-live-codex-claude.mp4).
+게시 성공으로 확인되는 것은 수신함 기록뿐이에요. 마지막의 명시적인 회신으로 수신 세션이
+요청을 처리하고 응답을 보냈음을 확인할 수 있어요.
+
 ## 빠른 시작
 
 Python 3.9 이상이 필요해요. 기본 CLI는 외부 Python 패키지에 의존하지 않아요.

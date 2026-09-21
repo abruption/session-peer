@@ -15,6 +15,22 @@ a task. For example, ask `api-worker` on SSH host `worker` to review a change.
 session-peer uses native agent inboxes and queues; the receiving agent controls
 how incoming messages are handled.
 
+## See it in action
+
+This 26-second recording uses live Codex and Claude Code sessions over the local
+transport—there is no mocked output.
+
+1. Codex discovers the exact Claude Code session.
+2. Codex posts a review request to the session's native inbox.
+3. Claude Code follows the structured reply address and sends a response.
+4. Codex receives the explicit reply in its own session.
+
+[![Live Codex-to-Claude Code messaging demo](docs/assets/session-peer-live-codex-claude-poster.png)](docs/assets/session-peer-live-codex-claude.mp4)
+
+[Watch the 26-second demo video](docs/assets/session-peer-live-codex-claude.mp4).
+A successful post confirms only the inbox write. The explicit reply at the end
+confirms that the receiving session consumed the request and responded.
+
 ## Quick start
 
 Python 3.9+. The core CLI has no third-party Python dependencies.
