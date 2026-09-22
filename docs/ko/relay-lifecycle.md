@@ -28,13 +28,30 @@ session-peer device backup --state /private/device-state \
   --policy /private/policy.json --out /private/new-snapshot
 session-peer device restore --state /private/new-restored-state \
   --backup /private/new-snapshot
+session-peer device recovery-begin --state /private/new-restored-state \
+  --new-state /private/fresh-state --operation-id FULL-UUID
+session-peer device recovery-status --state /private/fresh-state
+session-peer device login --state /private/fresh-state --server https://relay.example.com
+session-peer device recovery-fence --state /private/fresh-state --name replacement
+session-peer device recovery-request --state /private/fresh-state \
+  --peer PEER-PRINCIPAL --direct HOST:PORT --out /private/recovery-request.json
+session-peer device recovery-approve --state /private/peer-state \
+  --request /private/recovery-request.json --out /private/recovery-approval.json
+session-peer device recovery-commit --state /private/fresh-state \
+  --approval /private/recovery-approval.json
+session-peer device recovery-activate --state /private/new-restored-state \
+  --new-state /private/fresh-state
 ```
 
 Diagnostics는 전역 10,000개 요청 한도, 남은 행 수, 보류 중인 알 수 없는 결과, SQLite/WAL 크기 및 여유 디스크 공간을 보고합니다. 알림, 경고 및 심각 임계값은 70%, 85%, 95%입니다. 용량이 가득 차면 새 제출이 거부되지만, 기존 영수증 및 관리 기능은 계속 사용할 수 있습니다. 공간을 확보하기 위해 영수증 증거가 정리되는 일은 결코 없습니다. 용량 예약과 영수증 생성은 트랜잭션으로 처리됩니다.
 
 백업은 배타적 상태 잠금을 필요로 하며 신원 버전, 정책, 일관된 SQLite 스냅샷 및 매니페스트를 포함합니다. 출력 결과는 키가 포함된 비공개 **암호화되지 않은 스테이징 디렉터리**입니다. 보관을 위해 승인된 암호화 백업 시스템을 사용하십시오. 소스 제어를 통해 디렉터리를 공개하거나 이동하지 마십시오. 상태를 백업해도 릴레이나 OAuth 제어 서비스로 키가 복사되지는 않습니다.
 
-복원은 비공개 스테이징 디렉터리를 준비하고, 영구 복구 마커를 커밋한 후에만 대상 위치를 원자적으로 게시합니다. 중단된 스테이징은 사용할 수 없습니다. 기존 영수증은 계속 쿼리할 수 있습니다. 누락된 영수증은 미실행을 증명하기보다는 알 수 없음을 반환합니다. 발신 및 수신 전송, 키 로테이션 변경 및 새로운 페어링/등록은 모두 계속 차단됩니다. 영수증 상태 쿼리는 계속 사용할 수 있습니다. 이 안전장치를 해제하는 단일 명령 재정의는 존재하지 않습니다. 복구를 계획하기 전에 스냅샷 이후의 네이티브 효과를 조정하고 기존 신원을 취소/격리하십시오. 이 개발 구현체는 아직 완전한 키 분실 복구 워크플로를 제공하지 않습니다.
+복원은 비공개 스테이징 디렉터리를 준비하고 종단 복구 tombstone을 커밋한 후에만 대상 위치를 원자적으로 게시합니다. 중단된 스테이징은 사용할 수 없습니다. 복원된 디렉터리는 읽기 전용 보관 신원으로 유지됩니다. 기존 영수증은 계속 조회할 수 있고, 누락된 영수증은 알 수 없음으로 남으며, 기존 마커를 삭제해도 tombstone이 제거되거나 전송이 다시 활성화되지 않습니다. 별도의 빈 상태에서 복구를 시작하십시오. 결정론적 상태 출력은 키, 토큰, 메시지 본문 또는 피어 인증서를 노출하지 않고 복원 세대, 알려진 피어/라우트, 미해결 영수증과 네이티브 효과, 제어 소유권 및 정확한 잔여 게이트를 보고합니다.
+
+각 알 수 없는 항목은 고정 작업 ID와 recovery-reconcile로 분류하십시오. 복구는 영수증을 삭제하거나 네이티브 효과를 재실행하지 않습니다. 관리형 디바이스는 새 상태를 동일 소유자 계정에 로그인한 뒤 recovery-fence를 실행합니다. 제어 트랜잭션은 새 키 소유 증명 후에만 기존 principal을 취소하고 별도의 generation-zero principal을 등록합니다. OAuth 소유권만으로 기존 키를 되살리거나 로테이션할 수 없습니다. 직접 연결 전용 복구는 이 제어 게이트만 생략하며 피어 게이트는 생략하지 않습니다.
+
+각 피어 운영자는 서명된 복구 요청을 받아 해당 피어의 활성 상태에서 recovery-approve를 실행하고 서명된 승인을 반환합니다. 승인은 기존 엔드포인트 pin 취소와 새 pin 저장을 원자적으로 수행하며, 승인을 가져오면 피어 자체 pin과 라우트가 새 상태에 커밋됩니다. 응답 유실 후에는 동일한 파일과 고정 ID를 재사용하십시오. 영수증/효과가 알 수 없음이거나 피어가 오프라인 또는 부분 커밋 상태이면 활성화가 실패합니다. 성공한 활성화는 새 상태에만 적용되며 기존 principal, tombstone, 영수증 및 키는 격리된 감사 이력으로 유지됩니다.
 
 ## 제어 데이터베이스 업그레이드
 

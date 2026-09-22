@@ -292,6 +292,8 @@ export function createApp(
           return json(control.challenge(userId, body));
         if (path === "/api/relay/devices")
           return json(control.register(userId, body), 201);
+        if (path === "/api/relay/recovery")
+          return json(control.recover(userId, body), 201);
         if (path === "/api/relay/admission")
           return json(await control.admit(userId, body));
         const revoke = /^\/api\/relay\/devices\/([a-f0-9]{64})\/revoke$/.exec(

@@ -147,6 +147,59 @@ async def manage(kind, args):
     if args.action == 'restore':
         from .lifecycle import restore
         return restore(args.backup, args.state)
+    if args.action.startswith('recovery-'):
+        from . import recovery
+        if args.action in ('recovery-begin', 'recovery-activate'):
+            old_path, new_path = state_path(args.state), state_path(args.new_state)
+            if old_path == new_path or old_path in new_path.parents or new_path in old_path.parents:
+                raise Rejected('recovery_states_must_be_separate')
+            old = Store(old_path, exclusive=True)
+            try:
+                fresh = Store(new_path, exclusive=True)
+                try:
+                    if args.action == 'recovery-begin':
+                        return recovery.begin(old, fresh, args.operation_id)
+                    return recovery.activate(old, fresh)
+                finally:
+                    fresh.close()
+            finally:
+                old.close()
+        store = Store(state_path(args.state), exclusive=True)
+        try:
+            if args.action == 'recovery-status':
+                return recovery.status(store)
+            if args.action == 'recovery-reconcile':
+                return recovery.reconcile(store, args.operation_id, args.direction,
+                                          args.peer, args.request_id, args.classification)
+            if args.action == 'recovery-request':
+                routes = {}
+                if args.direct:
+                    direct_address(args.direct); routes['direct'] = args.direct
+                if args.relay:
+                    validate_relay_url(args.relay); routes['relay'] = args.relay
+                if not routes:
+                    raise Rejected('route_required')
+                private_write(args.out, json.dumps(recovery.peer_request(store, args.peer, routes)))
+                return {'ok': True, 'recoveryRequestSaved': True, 'peer': args.peer}
+            if args.action == 'recovery-approve':
+                request = json.loads(private_read(args.request))
+                response = recovery.peer_approve(store, request)
+                private_write(args.out, json.dumps(response))
+                return {'ok': True, 'recoveryApprovalSaved': True,
+                        'newPrincipal': response['newPrincipal']}
+            if args.action == 'recovery-commit':
+                return recovery.peer_commit(store, json.loads(private_read(args.approval)))
+            if args.action == 'recovery-fence':
+                from .control import recover
+                plan = recovery._load(store)
+                if not plan['control']['required']:
+                    raise Rejected('control_fence_not_required')
+                receipt = recover(store, plan['oldPrincipal'], args.name,
+                                  plan['control']['operationId'])
+                return recovery.record_control(store, receipt)
+            raise Rejected('invalid_command')
+        finally:
+            store.close()
     store = Store(state_path(args.state), exclusive=args.action in ('rotate', 'backup'))
     try:
         if args.action == 'init':
@@ -274,6 +327,19 @@ def parser(kind):
     command('diagnostics')
     item = command('backup'); item.add_argument('--out', required=True); item.add_argument('--policy', required=True)
     item = command('restore', False); item.add_argument('--state', required=True); item.add_argument('--backup', required=True)
+    item = command('recovery-begin'); item.add_argument('--new-state', required=True)
+    item.add_argument('--operation-id', required=True)
+    command('recovery-status')
+    item = command('recovery-reconcile'); item.add_argument('--operation-id', required=True)
+    item.add_argument('--direction', choices=('native', 'outgoing'), required=True)
+    item.add_argument('--peer', required=True); item.add_argument('--request-id', required=True)
+    item.add_argument('--classification', choices=('already_processed', 'not_processed', 'unknown'), required=True)
+    item = command('recovery-request'); item.add_argument('--peer', required=True)
+    item.add_argument('--out', required=True); item.add_argument('--direct'); item.add_argument('--relay')
+    item = command('recovery-approve'); item.add_argument('--request', required=True); item.add_argument('--out', required=True)
+    item = command('recovery-commit'); item.add_argument('--approval', required=True)
+    item = command('recovery-fence'); item.add_argument('--name', required=True)
+    item = command('recovery-activate'); item.add_argument('--new-state', required=True)
     command('rotation-status')
     item = command('rotate'); item.add_argument('--operation-id', required=True)
     item.add_argument('--login', action='store_true')

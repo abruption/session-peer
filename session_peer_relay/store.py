@@ -22,7 +22,24 @@ class Store:
         self.root = Path(root)
         if (self.root/'restore-incomplete').exists():
             raise Rejected('restore_incomplete')
-        self.device = initialize(self.root)
+        # A quarantined archive is usable for local evidence/recovery planning
+        # even when the old private key is genuinely lost. Normal states still
+        # require a complete key/certificate pair before their database opens.
+        quarantined = False
+        database = self.root/'device.sqlite'
+        if database.exists() and (self.root/'identity.pem').exists():
+            private_path(database)
+            probe = sqlite3.connect(database.as_uri()+'?mode=ro', uri=True)
+            try:
+                quarantined = probe.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recovery_tombstones'"
+                ).fetchone() is not None and probe.execute(
+                    'SELECT 1 FROM recovery_tombstones LIMIT 1').fetchone() is not None
+            finally:
+                probe.close()
+        self.device = (fingerprint(private_read(self.root/'identity.pem')) if quarantined
+                       else initialize(self.root))
+        self._archival_quarantine = quarantined
         fd = os.open(self.root/'state.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         self.lock = os.fdopen(fd, 'w')
         private_path(self.root/'state.lock')
@@ -60,6 +77,10 @@ class Store:
             cert TEXT NOT NULL,generation INTEGER NOT NULL,status TEXT NOT NULL,expires REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS rotations(peer TEXT,id TEXT,hash TEXT,proposal TEXT,status TEXT,
             PRIMARY KEY(peer,id));
+        CREATE TABLE IF NOT EXISTS recovery_tombstones(principal TEXT PRIMARY KEY,
+            generation INTEGER NOT NULL,snapshot REAL NOT NULL,reason TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS recovery_approvals(id TEXT PRIMARY KEY,hash TEXT NOT NULL,
+            old_peer TEXT NOT NULL,new_peer TEXT NOT NULL,response TEXT NOT NULL);
         ''')
         self.db.execute('INSERT OR IGNORE INTO metadata VALUES("principal",?)', (self.device,))
         self.device = self.db.execute('SELECT value FROM metadata WHERE key="principal"').fetchone()[0]
@@ -72,7 +93,8 @@ class Store:
         if self.identity_root != self.root:
             private_path(self.root/'keys', True)
             private_path(self.identity_root, True)
-            initialize(self.identity_root)
+            if not self._archival_quarantine:
+                initialize(self.identity_root)
         self.cert = private_read(self.identity_root/'identity.pem')
         self.key_id = fingerprint(self.cert)
         self.generation = int(self.db.execute('SELECT value FROM metadata WHERE key="generation"').fetchone()[0])
@@ -107,7 +129,13 @@ class Store:
         self.db.execute('INSERT OR IGNORE INTO peer_keys VALUES(?,?,?,?,"active",0)', (key, principal, cert, generation))
 
     def recovery_required(self):
-        return self.db.execute('SELECT 1 FROM metadata WHERE key="recovery_required"').fetchone() is not None
+        if self.db.execute('SELECT 1 FROM recovery_tombstones LIMIT 1').fetchone():
+            return True
+        if self.db.execute('SELECT 1 FROM metadata WHERE key="recovery_required"').fetchone():
+            return True
+        origin = self.db.execute('SELECT 1 FROM metadata WHERE key="recovery_origin"').fetchone()
+        activated = self.db.execute('SELECT 1 FROM metadata WHERE key="recovery_activation"').fetchone()
+        return bool(origin and not activated)
 
     def invite(self, routes):
         if self.recovery_required():

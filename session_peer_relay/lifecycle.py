@@ -104,7 +104,13 @@ def restore(source, destination):
             if db.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
                 raise Rejected('backup_database_corrupt')
             db.execute('PRAGMA synchronous=FULL')
-            db.execute('INSERT OR REPLACE INTO metadata VALUES("recovery_required",?)', (json.dumps({'snapshotAt': manifest['createdAt'], 'reason': 'possible_post_snapshot_effects'}),))
+            reason = 'possible_post_snapshot_effects'
+            db.execute('CREATE TABLE IF NOT EXISTS recovery_tombstones(principal TEXT PRIMARY KEY,'
+                       'generation INTEGER NOT NULL,snapshot REAL NOT NULL,reason TEXT NOT NULL)')
+            db.execute('INSERT OR REPLACE INTO recovery_tombstones VALUES(?,?,?,?)',
+                       (manifest['device'], manifest['generation'], manifest['createdAt'], reason))
+            db.execute('INSERT OR REPLACE INTO metadata VALUES("recovery_required",?)',
+                       (json.dumps({'snapshotAt': manifest['createdAt'], 'reason': reason}),))
             db.commit()
         finally:
             db.close()

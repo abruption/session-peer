@@ -33,12 +33,14 @@ import {
   fields,
   object,
   principal,
+  recovery,
   registration,
   operationId,
   room,
   sha256,
   verifyProof,
   type Registration,
+  type Recovery,
 } from "./protocol.js";
 interface DeviceRow {
   principal: string;
@@ -258,7 +260,7 @@ export class RelayControl {
     assert(!active || !d.revoked, "device_revoked", 403);
     return d;
   }
-  private operationRecord(userId: string, p: Registration) {
+  private operationRecord(userId: string, p: Registration | Recovery) {
     const row = this.db
       .prepare("SELECT * FROM relay_operations WHERE operationId=?")
       .get(p.operationId) as
@@ -272,7 +274,7 @@ export class RelayControl {
       );
     return row;
   }
-  private reserveOperation(userId: string, p: Registration) {
+  private reserveOperation(userId: string, p: Registration | Recovery) {
     const row = this.operationRecord(userId, p);
     if (row) {
       assert(row.result === null, "operation_already_committed", 409);
@@ -323,22 +325,46 @@ export class RelayControl {
     );
     return { current, next };
   }
+  private validateRecovery(userId: string, p: Recovery) {
+    this.device(p.oldPrincipal, userId, false);
+    const completed = this.db.prepare(
+      "SELECT operationId FROM relay_operations WHERE userId=? AND result IS NOT NULL AND json_extract(result,'$.oldPrincipal')=?",
+    ).get(userId, p.oldPrincipal) as { operationId: string } | undefined;
+    assert(!completed || completed.operationId === p.operationId,
+      "recovery_already_completed", 409);
+    const existing = this.db.prepare("SELECT * FROM relay_devices WHERE principal=?")
+      .get(p.principal) as DeviceRow | undefined;
+    assert(!existing, "new_principal_already_registered", 409);
+    const next = certificate(p.certificatePEM, this.now());
+    assert(p.principal === next.certificateFingerprint, "invalid_initial_principal");
+    const n = this.db.prepare("SELECT count(*) AS n FROM relay_devices WHERE userId=?")
+      .get(userId) as { n: number };
+    assert(n.n < 32, "device_limit", 409);
+    return { next };
+  }
   challenge(userId: string, input: unknown) {
     const o = object(input);
     fields(o, ["operation", "payload"]);
     assert(
-      o.operation === "register" || o.operation === "admission",
+      o.operation === "register" || o.operation === "recover" || o.operation === "admission",
       "invalid_operation",
     );
     const payload =
       o.operation === "register"
         ? registration(o.payload)
+        : o.operation === "recover"
+          ? recovery(o.payload)
         : admission(o.payload);
     if (o.operation === "register") {
       const p = registration(payload);
       const row = this.operationRecord(userId, p);
       assert(!row?.result, "operation_already_committed", 409);
       this.validateRegistration(userId, p);
+    } else if (o.operation === "recover") {
+      const p = recovery(payload);
+      const row = this.operationRecord(userId, p);
+      assert(!row?.result, "operation_already_committed", 409);
+      this.validateRecovery(userId, p);
     } else {
       const a = admission(payload);
       this.device(a.devicePrincipal, userId);
@@ -365,8 +391,8 @@ export class RelayControl {
       sha256(body),
     ].join("\n");
     this.db.transaction(() => {
-      if (o.operation === "register")
-        this.reserveOperation(userId, registration(payload));
+      if (o.operation === "register" || o.operation === "recover")
+        this.reserveOperation(userId, o.operation === "register" ? registration(payload) : recovery(payload));
       this.db
         .prepare("INSERT INTO relay_challenges VALUES (?,?,?,?,?,?)")
         .run(
@@ -386,14 +412,14 @@ export class RelayControl {
       typeof o.challengeId === "string" && typeof o.proof === "string",
       "invalid_proof",
     );
-    const excluded =
-      operation === "register"
-        ? ["challengeId", "proof", "previousKeyProof"]
-        : ["challengeId", "proof"];
+    const excluded = operation === "register"
+      ? ["challengeId", "proof", "previousKeyProof"]
+      : ["challengeId", "proof"];
     const payload = Object.fromEntries(
       Object.entries(o).filter(([k]) => !excluded.includes(k)),
     );
-    operation === "register" ? registration(payload) : admission(payload);
+    operation === "register" ? registration(payload)
+      : operation === "recover" ? recovery(payload) : admission(payload);
     const c = this.db
       .prepare("SELECT * FROM relay_challenges WHERE id=?")
       .get(o.challengeId) as ChallengeRow | undefined;
@@ -408,6 +434,8 @@ export class RelayControl {
     const pem =
       operation === "register"
         ? registration(payload).certificatePEM
+        : operation === "recover"
+          ? recovery(payload).certificatePEM
         : this.device(admission(payload).devicePrincipal, userId)
             .certificatePEM;
     const cert = certificate(pem, this.now());
@@ -517,6 +545,43 @@ export class RelayControl {
           "UPDATE relay_operations SET result=? WHERE operationId=? AND userId=?",
         )
         .run(JSON.stringify(result), p.operationId, userId);
+      this.publish(revision);
+      return result;
+    })();
+  }
+  recover(userId: string, input: unknown) {
+    assert(this.healthy, "state_unavailable", 503);
+    const o = object(input);
+    fields(o, ["oldPrincipal", "principal", "certificatePEM", "keyGeneration", "name",
+      "operationId", "challengeId", "proof"]);
+    const p = recovery(Object.fromEntries(
+      Object.entries(o).filter(([k]) => !["challengeId", "proof"].includes(k)),
+    ));
+    assert(typeof o.challengeId === "string" && typeof o.proof === "string", "invalid_proof");
+    const existing = this.operationRecord(userId, p);
+    assert(existing, "operation_not_found", 404);
+    if (existing.result !== null) return JSON.parse(existing.result);
+    const revision = this.reserveRevision();
+    return this.db.transaction(() => {
+      const row = this.operationRecord(userId, p);
+      assert(row, "operation_not_found", 404);
+      if (row.result !== null) return JSON.parse(row.result);
+      const { next } = this.validateRecovery(userId, p);
+      const proof = this.consume(userId, "recover", o);
+      this.db.prepare(
+        "UPDATE relay_devices SET revoked=1 WHERE principal=? AND userId=?",
+      ).run(p.oldPrincipal, userId);
+      this.db.prepare("INSERT INTO relay_devices VALUES (?,?,?,?,?,?,?,0)").run(
+        p.principal, userId, next.keyFingerprint, next.certificateFingerprint,
+        p.certificatePEM, 0, p.name,
+      );
+      this.db.prepare("DELETE FROM relay_challenges WHERE userId=?").run(userId);
+      const result = { operationId: p.operationId, committed: true,
+        oldPrincipal: p.oldPrincipal, principal: p.principal,
+        keyFingerprint: next.keyFingerprint, keyGeneration: 0 };
+      this.db.prepare(
+        "UPDATE relay_operations SET result=? WHERE operationId=? AND userId=?",
+      ).run(JSON.stringify(result), p.operationId, userId);
       this.publish(revision);
       return result;
     })();

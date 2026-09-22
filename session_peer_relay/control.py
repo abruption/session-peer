@@ -137,17 +137,28 @@ def registration_receipt(payload, result):
     return expected
 
 
+def recovery_receipt(payload, result):
+    expected = {'operationId': payload['operationId'], 'oldPrincipal': payload['oldPrincipal'],
+                'principal': payload['principal'],
+                'keyFingerprint': fingerprint(payload['certificatePEM']),
+                'keyGeneration': 0, 'committed': True}
+    if not isinstance(result, dict) or any(result.get(key) != value for key, value in expected.items()):
+        raise Rejected('invalid_operation_receipt')
+    return expected
+
+
 def prove(store, operation, payload, path, previous_directory=None):
     login_state = session(store)
     try:
         challenge = call(login_state['server'], '/api/relay/challenge', {'operation': operation, 'payload': payload}, login_state['token'])
     except Rejected as exc:
-        if operation != 'register' or str(exc) != 'operation_already_committed':
+        if operation not in ('register', 'recover') or str(exc) != 'operation_already_committed':
             raise
         # The challenge endpoint checks the full original payload digest before
         # returning this code. Query its durable result instead of signing again.
         result = call(login_state['server'], '/api/relay/operations/'+payload['operationId'], token=login_state['token'])
-        return registration_receipt(payload, result)
+        return (registration_receipt(payload, result) if operation == 'register'
+                else recovery_receipt(payload, result))
     message = challenge.get('proofMessage')
     if not isinstance(message, str) or not message.startswith('session-peer-control-v1:') or len(message) > 8192:
         raise Rejected('invalid_control_challenge')
@@ -155,7 +166,11 @@ def prove(store, operation, payload, path, previous_directory=None):
     if previous_directory:
         request['previousKeyProof'] = sign(store, message, directory=previous_directory)
     result = call(login_state['server'], path, request, login_state['token'])
-    return registration_receipt(payload, result) if operation == 'register' else result
+    if operation == 'register':
+        return registration_receipt(payload, result)
+    if operation == 'recover':
+        return recovery_receipt(payload, result)
+    return result
 
 
 def enroll(store, name, operation_id=None):
@@ -174,6 +189,16 @@ def enroll(store, name, operation_id=None):
     result = prove(store, 'register', payload, '/api/relay/devices', previous)
     store.db.execute('INSERT OR REPLACE INTO metadata VALUES("control_name",?)', (name,))
     return {'ok': True, **result}
+
+
+def recover(store, old_principal, name, operation_id):
+    """Atomically fence an owned old principal and register this fresh key."""
+    payload = {'oldPrincipal': old_principal, 'principal': store.device,
+               'certificatePEM': store.cert, 'keyGeneration': 0,
+               'name': name, 'operationId': operation_id}
+    result = prove(store, 'recover', payload, '/api/relay/recovery')
+    store.db.execute('INSERT OR REPLACE INTO metadata VALUES("control_name",?)', (name,))
+    return result
 
 
 class DeviceCredential:
