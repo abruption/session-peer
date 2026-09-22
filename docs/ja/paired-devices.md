@@ -58,7 +58,8 @@ Claude バインディングは `agent: claude` と、ホームを指定しな�
       "agent": "codex",
       "target": "codex:FULL-THREAD-UUID",
       "codexHome": "/mnt/c/Users/alice/.codex",
-      "codexBin": "/mnt/c/Users/alice/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe"
+      "codexBin": "/mnt/c/Users/alice/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe",
+      "codexPython": "/mnt/c/Python313/python.exe"
     }
   },
   "peers": {
@@ -70,7 +71,13 @@ Claude バインディングは `agent: claude` と、ホームを指定しな�
 }
 ```
 
-`codexHome` はローカル Windows ドライブにマウントされた絶対 WSL パスでなければならず、`codexBin` は `codex.exe` という名前の絶対パスにある実行可能な通常ファイルでなければなりません。レシーバーは POSIX パス経由でデータベースを読み、固定引数で `/usr/bin/wslpath` を呼び出し、ドライブ修飾された Windows パスをネイティブ子プロセスの `CODEX_HOME` としてのみ渡します。シェルコマンドは作りません。WSL 以外のホスト、欠落した実行可能ファイル、安全でない変換は、ポリシー読み込み中に `wsl_codex_requires_wsl`、`invalid_codex_executable`、または `wsl_home_conversion_failed` で失敗します。Linux/macOS の Codex ターゲットでは `codexBin` を省略し、既存の動作を維持します。ネイティブ Windows クライアントは通常のローカル CLI を引き続き使用します。このアダプターは Windows Codex を対象とする WSL レシーバー専用です。Windows の writer ロックは POSIX advisory lock ではないため、この明示的なバインディングではネイティブセッションが非アクティブでも固定ホームにキューを入れられます。成功した送信も、そのセッションが消費するまでは `consumptionConfirmed: false` を報告します。
+`codexHome` はローカル Windows ドライブ上の絶対 WSL パスです。`codexBin` と必須の `codexPython` はそれぞれ `codex.exe` と `python.exe` という名前の絶対パスで、管理者が管理する実行可能な通常ファイルでなければなりません（シンボリックリンク不可）。Microsoft Store の実行エイリアスではなく、インストール済みのネイティブ Windows Python 3.9+ を指定します。
+
+固定引数の `/usr/bin/wslpath` で変換し、standalone コアをネイティブ Python にストリーミングします。シェルは使用しません。Windows SQLite/WAL と writer ロックをネイティブ側で検査し、一意の所有者・同一ユーザー SID・プロセス作成時刻・Codex 実行ファイルを確認します。Linux SQLite で Windows DB を開いたり writer 検査を省略したりしません。非アクティブ・曖昧・検査不能な writer は拒否します。既存の WSL ポリシーにも `codexPython` が必要で、未指定・不正な場合は `native_windows_python_required` または `invalid_codex_python` で拒否します。
+
+Linux/macOS ターゲットは両実行ファイルフィールドを省略します。Windows クライアントは通常のローカル CLI を使用します。送信成功も `consumptionConfirmed: false` であり、消費確認には独立した応答が必要です。ポリシーやレシーバーの更新後も unknown 送信を自動再試行しないでください。
+
+ネイティブローカル CLI 対応は、すべての Windows SSH シェルへの対応を意味しません。ソースをストリーミングする SSH には動作する python3 と POSIX 互換リモートシェルが必要です。Windows Store 実行エイリアスでは不十分です。ローカルのネイティブ CLI または Python をインストールした WSL SSH エンドポイントを使用してください。
 
 直接接続のレシーバーを起動します（デフォルトはループバック。他のマシンの場合は到達可能なプライベートインターフェースを選択してください）:
 

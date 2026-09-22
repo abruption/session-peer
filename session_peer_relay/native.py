@@ -51,6 +51,8 @@ def windows_codex_home(home):
 def validate_wsl_codex(binding):
     executable = binding.get('codexBin')
     if executable is None:
+        if 'codexPython' in binding:
+            raise Rejected('unexpected_codex_python')
         return None
     if binding.get('agent') != 'codex':
         raise Rejected('unexpected_executable')
@@ -62,7 +64,18 @@ def validate_wsl_codex(binding):
             or path.is_symlink()
             or not path.is_file() or not os.access(path, os.X_OK)):
         raise Rejected('invalid_codex_executable')
-    return windows_codex_home(binding['codexHome'])
+    native_home = windows_codex_home(binding['codexHome'])
+    python = binding.get('codexPython')
+    if not isinstance(python, str) or not python:
+        raise Rejected('native_windows_python_required')
+    if '\0' in python or len(python) > 4096:
+        raise Rejected('invalid_codex_python')
+    interpreter = Path(python)
+    if (not interpreter.is_absolute() or interpreter.name.casefold() != 'python.exe'
+            or interpreter.is_symlink() or not interpreter.is_file()
+            or not os.access(interpreter, os.X_OK)):
+        raise Rejected('invalid_codex_python')
+    return native_home
 
 
 class Policy:
@@ -76,7 +89,7 @@ class Policy:
         for alias, binding in self.targets.items():
             if not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}', alias) or not isinstance(binding, dict):
                 raise Rejected('invalid_target_alias')
-            if set(binding) - {'agent', 'target', 'codexHome', 'codexBin', 'antigravityHome'}:
+            if set(binding) - {'agent', 'target', 'codexHome', 'codexBin', 'codexPython', 'antigravityHome'}:
                 raise Rejected('invalid_target_binding')
             agent, target = binding.get('agent'), binding.get('target')
             if agent not in ('claude', 'codex', 'antigravity') or not isinstance(target, str) or not 0 < len(target) <= 256 or '\0' in target:
@@ -116,14 +129,52 @@ def options(binding):
     args.codex_home = binding.get('codexHome')
     args.codex_bin = binding.get('codexBin')
     args.codex_native_home = validate_wsl_codex(binding)
-    # Native Windows file locks are not observable as POSIX advisory locks in
-    # WSL.  The operator's explicit codexBin binding is therefore also the
-    # bounded opt-in to queue for that fixed home when no WSL writer is visible.
-    # Ordinary Linux/macOS relay bindings retain the live-writer requirement.
-    args.allow_inactive_codex_home = args.codex_bin is not None
+    # Native Windows bindings execute discovery and send in native Python;
+    # SQLite WAL and writer locks must never be inspected across the WSL mount.
+    args.allow_inactive_codex_home = False
     args.antigravity_home = binding.get('antigravityHome')
     args.all = True
     return args
+
+
+def invoke_windows_codex(binding, operation, text=None):
+    """Stream our core to a fixed operator-approved native Windows interpreter."""
+    native_home = validate_wsl_codex(binding)
+    native_bin = windows_codex_home(binding['codexBin'])
+    if operation not in ('list', 'resolve', 'send'):
+        raise Rejected('invalid_operation')
+    args = ['list' if operation == 'list' else 'send', '--codex-home', native_home,
+            '--codex-bin', native_bin, '--output-format', 'json']
+    if operation == 'list':
+        args += ['--agent', 'codex', '--all']
+    else:
+        if not isinstance(text, str) or not text.strip() or len(text.encode()) > 32768 or '\0' in text:
+            raise Rejected('invalid_message')
+        args += ['--to', binding['target'], '--message', text, '--no-from', '--no-reply-to']
+        if operation == 'resolve':
+            args += ['--dry-run']
+    try:
+        source = Path(core.__file__).resolve().read_bytes()
+        done = subprocess.run(
+            [binding['codexPython'], '-', *args], input=source,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            timeout=32 if operation == 'send' else 8,
+        )
+        if len(done.stdout) > 60 * 1024:
+            raise ValueError('oversized_native_result')
+        result = json.loads(done.stdout)
+        if not isinstance(result, dict) or result.get('ok') is not True or done.returncode:
+            raise ValueError('native_failed')
+        if operation == 'list':
+            target = binding['target'].removeprefix('codex:')
+            rows = [row for row in result['sessions'] if row.get('agent') == 'codex' and row.get('id') == target]
+            return {'ok': True, 'sessions': rows, 'discovery': {'codex': result['discovery']['codex']}}
+        result['consumptionConfirmed'] = False
+        return result
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return {'ok': False, 'status': 'unknown' if operation == 'send' else 'refused',
+                'reason': 'native_outcome_unknown' if operation == 'send' else 'native_windows_inspection_failed',
+                'retryAllowed': False, 'consumptionConfirmed': False}
 
 
 class Native:
@@ -139,7 +190,7 @@ class Native:
                 stderr=asyncio.subprocess.DEVNULL)
             try:
                 payload = json.dumps({'binding': binding, 'operation': operation, 'text': text}).encode()
-                out, _ = await asyncio.wait_for(process.communicate(payload), 35 if operation == 'send' else 5)
+                out, _ = await asyncio.wait_for(process.communicate(payload), 35 if operation == 'send' else 12)
                 if process.returncode or len(out) > 60*1024:
                     raise ValueError('worker_failed')
                 value = json.loads(out)

@@ -3,7 +3,7 @@ import json
 import sys
 
 import session_peer as core
-from .native import Policy, options
+from .native import Policy, options, invoke_windows_codex
 
 
 def main():
@@ -16,7 +16,9 @@ def main():
             raise ValueError('invalid_operation')
         adapter = core.AGENTS.get(binding['agent'])
         args = options(binding)
-        if op in ('send', 'resolve'):
+        if binding.get('codexBin') is not None:
+            result = invoke_windows_codex(binding, op, text)
+        elif op in ('send', 'resolve'):
             args.dry_run = op == 'resolve'
             if not isinstance(text, str) or not text.strip() or len(text.encode()) > 32768 or '\0' in text:
                 raise ValueError('invalid_message')

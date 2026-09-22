@@ -147,9 +147,15 @@ def _read_win_auth(pid: int) -> str | None:
             data = json.loads(key_file.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        auth = {"type": "auth"}
-        auth.update(data)
-        return json.dumps(auth, ensure_ascii=False)
+        if not isinstance(data, dict):
+            continue
+        token = data.get("peerToken")
+        if not isinstance(token, str) or not token.strip():
+            continue
+        # The registry schema is not the wire protocol. Windows requires a
+        # first-line {"type": "auth", "token": ...}; forwarding peerToken and
+        # process metadata verbatim causes the receiver to drop the connection.
+        return json.dumps({"type": "auth", "token": token}, ensure_ascii=False)
     return None
 
 

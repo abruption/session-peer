@@ -179,6 +179,145 @@ def _codex_lock_snapshot(path: Path) -> tuple[int, int, int, int] | None:
     return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns
 
 
+def _windows_probe_lock(descriptor: int) -> tuple[str, str]:
+    """Probe the native byte-range lock without writing or truncating the file."""
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+
+    class Overlapped(ctypes.Structure):
+        _fields_ = [("internal", ctypes.c_size_t), ("internalHigh", ctypes.c_size_t),
+                    ("offset", wintypes.DWORD), ("offsetHigh", wintypes.DWORD),
+                    ("event", wintypes.HANDLE)]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.LockFileEx.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
+                                 wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(Overlapped)]
+    kernel.UnlockFileEx.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
+                                   wintypes.DWORD, ctypes.POINTER(Overlapped)]
+    handle, overlap = msvcrt.get_osfhandle(descriptor), Overlapped()
+    # FAIL_IMMEDIATELY | EXCLUSIVE; cover Codex's full-file lock range.
+    if not kernel.LockFileEx(handle, 3, 0, 0xffffffff, 0xffffffff, ctypes.byref(overlap)):
+        if ctypes.get_last_error() == 33:  # ERROR_LOCK_VIOLATION, not access denied
+            return "held", "kernel_lock_held"
+        return "unknown", "lock_probe_failed"
+    if not kernel.UnlockFileEx(handle, 0, 0xffffffff, 0xffffffff, ctypes.byref(overlap)):
+        return "unknown", "lock_probe_release_failed"
+    return "free", "kernel_lock_free"
+
+
+# A subprocess bounds Restart Manager inspection and works for streamed standalone
+# execution too. No process arguments, credentials, shutdown or restart operations.
+_WINDOWS_PROCESS_INSPECTOR = r'''
+import ctypes as c
+from ctypes import wintypes as w
+import json, ntpath, sys
+
+class Unique(c.Structure):
+    _fields_ = [('pid', w.DWORD), ('start', w.FILETIME)]
+class Process(c.Structure):
+    _fields_ = [('process', Unique), ('app', w.WCHAR * 256), ('service', w.WCHAR * 64),
+                ('kind', w.DWORD), ('status', w.ULONG), ('session', w.DWORD), ('restartable', w.BOOL)]
+class TokenUser(c.Structure):
+    _fields_ = [('sid', w.LPVOID), ('attributes', w.DWORD)]
+
+k = c.WinDLL('kernel32', use_last_error=True)
+a = c.WinDLL('advapi32', use_last_error=True)
+k.OpenProcess.argtypes = [w.DWORD, w.BOOL, w.DWORD]
+k.OpenProcess.restype = w.HANDLE
+k.CloseHandle.argtypes = [w.HANDLE]
+k.QueryFullProcessImageNameW.argtypes = [w.HANDLE, w.DWORD, w.LPWSTR, c.POINTER(w.DWORD)]
+k.GetProcessTimes.argtypes = [w.HANDLE] + [c.POINTER(w.FILETIME)] * 4
+k.LocalFree.argtypes = [w.HLOCAL]
+k.LocalFree.restype = w.HLOCAL
+a.OpenProcessToken.argtypes = [w.HANDLE, w.DWORD, c.POINTER(w.HANDLE)]
+a.GetTokenInformation.argtypes = [w.HANDLE, c.c_int, w.LPVOID, w.DWORD, c.POINTER(w.DWORD)]
+a.ConvertSidToStringSidW.argtypes = [w.LPVOID, c.POINTER(w.LPWSTR)]
+
+def checked(value):
+    if not value: raise OSError('native process inspection failed')
+
+def identity(pid, expected_start=None):
+    handle = k.OpenProcess(0x1000, False, pid)
+    checked(handle)
+    try:
+        creation, end, kernel, user = (w.FILETIME() for _ in range(4))
+        checked(k.GetProcessTimes(handle, c.byref(creation), c.byref(end), c.byref(kernel), c.byref(user)))
+        start = (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+        if expected_start is not None and expected_start != start: raise ValueError('pid reused')
+        image, size = c.create_unicode_buffer(32768), w.DWORD(32768)
+        checked(k.QueryFullProcessImageNameW(handle, 0, image, c.byref(size)))
+        token = w.HANDLE()
+        checked(a.OpenProcessToken(handle, 8, c.byref(token)))
+        try:
+            needed = w.DWORD()
+            a.GetTokenInformation(token, 1, None, 0, c.byref(needed))
+            if not 0 < needed.value <= 65536: raise ValueError('invalid token info size')
+            buffer = c.create_string_buffer(needed.value)
+            checked(a.GetTokenInformation(token, 1, buffer, needed.value, c.byref(needed)))
+            sid = c.cast(buffer, c.POINTER(TokenUser)).contents.sid
+            text = w.LPWSTR()
+            checked(a.ConvertSidToStringSidW(sid, c.byref(text)))
+            try: uid = text.value
+            finally: k.LocalFree(c.cast(text, w.HLOCAL))
+        finally: k.CloseHandle(token)
+        return {'pid': pid, 'uid': uid, 'command': ntpath.basename(image.value), 'startTime': str(start)}
+    finally: k.CloseHandle(handle)
+
+def openers(path):
+    rm = c.WinDLL('Rstrtmgr')
+    rm.RmStartSession.argtypes = [c.POINTER(w.DWORD), w.DWORD, w.LPWSTR]
+    rm.RmRegisterResources.argtypes = [w.DWORD, w.UINT, c.POINTER(w.LPCWSTR), w.UINT, c.POINTER(Unique), w.UINT, c.POINTER(w.LPCWSTR)]
+    rm.RmGetList.argtypes = [w.DWORD, c.POINTER(w.UINT), c.POINTER(w.UINT), c.POINTER(Process), c.POINTER(w.DWORD)]
+    rm.RmEndSession.argtypes = [w.DWORD]
+    session, key = w.DWORD(), c.create_unicode_buffer(33)
+    checked(rm.RmStartSession(c.byref(session), 0, key) == 0)
+    try:
+        files = (w.LPCWSTR * 1)(path)
+        checked(rm.RmRegisterResources(session, 1, files, 0, None, 0, None) == 0)
+        needed, count, reasons = w.UINT(), w.UINT(128), w.DWORD()
+        rows = (Process * 128)()
+        checked(rm.RmGetList(session, c.byref(needed), c.byref(count), rows, c.byref(reasons)) == 0)
+        if count.value > 128: raise ValueError('too many owners')
+        return [identity(row.process.pid, (row.process.start.dwHighDateTime << 32) | row.process.start.dwLowDateTime)
+                for row in rows[:count.value]]
+    finally: rm.RmEndSession(session)
+
+try:
+    result = [identity(int(sys.argv[2]))] if sys.argv[1] == 'identity' else openers(sys.argv[2])
+    print(json.dumps(result))
+except Exception:
+    sys.exit(1)
+'''
+
+
+def _windows_process_inspect(mode: str, value: str) -> list[dict] | None:
+    try:
+        done = subprocess.run(
+            [sys.executable, "-c", _WINDOWS_PROCESS_INSPECTOR, mode, value],
+            capture_output=True, encoding="utf-8", timeout=DETECT_TIMEOUT,
+        )
+        if done.returncode or len(done.stdout) > 64 * 1024:
+            return None
+        rows = json.loads(done.stdout)
+        if not isinstance(rows, list) or len(rows) > 128:
+            return None
+        if any(not isinstance(row, dict) or type(row.get("pid")) is not int
+               or row["pid"] <= 0 or any(not isinstance(row.get(key), str) or not row[key]
+                                        for key in ("uid", "command", "startTime")) for row in rows):
+            return None
+        return rows
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def _codex_current_user():
+    if sys.platform == "win32":
+        rows = _windows_process_inspect("identity", str(os.getpid()))
+        return rows[0]["uid"] if rows and len(rows) == 1 else None
+    return os.getuid() if hasattr(os, "getuid") else None
+
+
 def probe_codex_writer_lock(path: Path) -> tuple[str, str]:
     """Probe Codex's real advisory lock without changing the lock file."""
     try:
@@ -191,7 +330,7 @@ def probe_codex_writer_lock(path: Path) -> tuple[str, str]:
         return "unknown", "lock_symlink"
     if not stat.S_ISREG(before.st_mode):
         return "unknown", "lock_not_regular"
-    if fcntl is None:
+    if fcntl is None and sys.platform != "win32":
         return "unknown", "lock_probe_unsupported"
 
     descriptor = None
@@ -201,6 +340,8 @@ def probe_codex_writer_lock(path: Path) -> tuple[str, str]:
         opened = os.fstat(descriptor)
         if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
             return "unknown", "lock_changed_while_opening"
+        if sys.platform == "win32":
+            return _windows_probe_lock(descriptor)
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
@@ -272,6 +413,9 @@ def _process_start_time(pid: int) -> str | None:
 
 
 def _codex_lock_openers(path: Path) -> tuple[list[dict], str | None]:
+    if sys.platform == "win32":
+        rows = _windows_process_inspect("openers", str(path))
+        return (rows, None) if rows is not None else ([], "windows_owner_inspection_failed")
     executable = _lsof_executable()
     if executable is None:
         return [], "lsof_unavailable"
@@ -329,10 +473,12 @@ def inspect_codex_writer(home: Path, thread_id: str) -> dict:
         return {**result, "reason": "lock_owner_changed"}
     if first.get("startTime") is None:
         return {**result, "reason": "lock_owner_start_time_unknown"}
-    current_uid = os.getuid() if hasattr(os, "getuid") else None
+    current_uid = _codex_current_user()
     if current_uid is None or first.get("uid") != current_uid:
         return {**result, "reason": "lock_owner_wrong_user"}
     command = str(first.get("command") or "").lower()
+    if sys.platform == "win32" and command.endswith(".exe"):
+        command = command[:-4]
     if command != "codex" and not command.startswith("codex-"):
         return {**result, "reason": "lock_owner_not_codex"}
     return {
