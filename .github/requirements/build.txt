@@ -1,0 +1,4 @@
+# Exact direct tooling pins keep release builds reviewable. Dependabot updates
+# this file; transitive build isolation is constrained by pyproject.toml.
+build==1.6.1
+packaging==26.3

@@ -17,13 +17,13 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         node: ['22', '24']
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: ${{ matrix.node }}
           cache: npm
           cache-dependency-path: control/package-lock.json
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
         with:
           python-version: '3.13'
       - run: npm ci
@@ -53,8 +53,8 @@ jobs:
           - os: windows-latest
             python: '3.13'
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
         with:
           python-version: ${{ matrix.python }}
       - name: Compile
@@ -75,8 +75,8 @@ jobs:
     name: documentation tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
         with:
           python-version: '3.13'
       - run: python -m unittest discover -s tests/docs -t . -v
@@ -85,11 +85,11 @@ jobs:
     name: wheel and sdist
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
         with:
           python-version: '3.13'
-      - run: python -m pip install build
+      - run: python -m pip install --requirement .github/requirements/build.txt
       - run: python -m build
       - name: Verify distribution contents
         env:
@@ -109,7 +109,7 @@ jobs:
     name: shellcheck install.sh
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
       - name: shellcheck
         # SC2016 (no expansion in single quotes) is the point: the heredoc we
         # pipe to ssh must reach the remote shell with $HOME intact.
@@ -121,8 +121,8 @@ jobs:
     name: install smoke test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
         with:
           python-version: '3.13'
       - name: Fresh install
@@ -153,11 +153,11 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         python: ['3.10', '3.13']
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m pip install '.[mcp]' build
+      - run: python -m pip install '.[mcp]' --requirement .github/requirements/build.txt
       - run: python -m unittest discover -s tests/mcp_integration -t . -v
       - run: python -m build
       - name: Verify optional module in distributions
@@ -172,11 +172,11 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         python: ['3.11', '3.13']
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m pip install '.[relay,mcp]' build
+      - run: python -m pip install '.[relay,mcp]' --requirement .github/requirements/build.txt
       - run: python -m unittest discover -s tests/relay -t . -v
       - run: python -m build
       - name: Verify optional transport packaging
@@ -187,3 +187,46 @@ jobs:
         run: |
           session-peer device --help
           session-peer relay --help
+
+  dependency-audit:
+    name: Python runtime dependency audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.13'
+      - run: python -m pip install --requirement .github/requirements/audit.txt
+      - name: Install only runtime dependencies in an isolated environment
+        run: |
+          python -m venv /tmp/session-peer-runtime-audit
+          /tmp/session-peer-runtime-audit/bin/pip install '.[relay,mcp]'
+      - name: Audit installed Python runtime dependencies
+        run: |
+          audit_path=$(/tmp/session-peer-runtime-audit/bin/python -c 'import site; print(site.getsitepackages()[0])')
+          python -m pip_audit --path "$audit_path"
+
+  release-gate:
+    name: release gate
+    if: ${{ always() }}
+    needs: [relay-control, test, docs, package, shell, install-smoke, mcp, relay, dependency-audit]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every release-critical job
+        env:
+          RELAY_CONTROL: ${{ needs.relay-control.result }}
+          TEST: ${{ needs.test.result }}
+          DOCS: ${{ needs.docs.result }}
+          PACKAGE: ${{ needs.package.result }}
+          SHELL: ${{ needs.shell.result }}
+          INSTALL_SMOKE: ${{ needs.install-smoke.result }}
+          MCP: ${{ needs.mcp.result }}
+          RELAY: ${{ needs.relay.result }}
+          DEPENDENCY_AUDIT: ${{ needs.dependency-audit.result }}
+        run: |
+          for result in "$RELAY_CONTROL" "$TEST" "$DOCS" "$PACKAGE" "$SHELL" \
+            "$INSTALL_SMOKE" "$MCP" "$RELAY" "$DEPENDENCY_AUDIT"; do
+            test "$result" = success
+          done
