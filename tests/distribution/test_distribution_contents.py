@@ -68,6 +68,8 @@ class DistributionContents(unittest.TestCase):
             "pyproject.toml",
             "session_peer.py",
             "session_peer_mcp.py",
+            "tools/generate_session_peer.py",
+            *self.source_files("session_peer_core"),
             *self.source_files("session_peer_relay"),
             *self.source_files("docs"),
             *self.source_files("deploy/examples"),

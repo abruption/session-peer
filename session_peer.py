@@ -6,6 +6,9 @@ same standard-library-only script on the destination, without a remote install.
 Successful submission is not evidence of consumption or acknowledgement.
 """
 
+# Generated into session_peer.py by tools/generate_session_peer.py. Edit the
+# canonical segments in session_peer_core/, then regenerate the standalone file.
+
 from __future__ import annotations
 
 import argparse
@@ -90,6 +93,11 @@ class CcPeerError(Exception):
 
 class NoTargetError(CcPeerError):
     """A requested saved session cannot be resolved."""
+
+
+# --------------------------------------------------------------------------
+# Codex discovery, home ownership, queue submission and wake.
+# --------------------------------------------------------------------------
 
 
 def codex_home(args: argparse.Namespace) -> Path:
