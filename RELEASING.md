@@ -5,6 +5,21 @@ the selected tag and uploads it to PyPI through Trusted Publishing. A draft does
 not publish. Keep preparation, approval, publication and verification separate so
 the public artifacts always point at reviewed code.
 
+Protected main requires one stable release gate and an up-to-date pull request.
+The aggregate runs even after a dependency fails and succeeds only when every
+release-critical job succeeds: all Linux, macOS and Windows Python combinations;
+documentation and shell checks; wheel, sdist and standalone installation; the
+MCP and relay matrices; Node control and Node/Python integration; and Python and
+Node runtime dependency audits. Matrix expansion remains covered by its job
+result, while a structural test requires the aggregate to depend on every other
+CI job so renaming or adding a job cannot silently remove it from the gate.
+
+The required gate uses deterministic fixtures. Live OAuth, model calls,
+production relay traffic and production mutation remain separate operator
+evidence. All third-party actions are pinned to full commit hashes. Dependabot
+submits reviewable updates for Actions, Python build and audit tools, and Node
+dependencies; updates pass the same gate rather than floating into a release.
+
 ## Current candidate: v1.0.0-beta.1
 
 The first 1.0 beta carries the authenticated relay from alpha.1 and adds the
@@ -50,7 +65,8 @@ PyPI project owner should retain this Trusted Publisher mapping:
 | GitHub environment | `pypi` |
 
 A previous successful release is evidence, not a guarantee that the owner-side
-mapping has not changed.
+mapping has not changed. The repository stores no long-lived PyPI credential;
+the environment and PyPI exchange GitHub's short-lived OIDC identity.
 
 ## Prepare and verify
 
@@ -61,6 +77,8 @@ mapping has not changed.
 3. Run the complete CI matrix. Locally repeat the core suite, control Node 22/24
    suite, Node/Python integration, build and archive inspection appropriate to
    the final diff. Live model submissions are not part of release preparation.
+   The stable aggregate release gate and the resulting main-branch run must both
+   pass before tagging.
 4. Build once from the exact candidate:
 
    ```bash
@@ -109,14 +127,35 @@ gh release edit v1.0.0-beta.1 \
   --draft=false --prerelease --latest=false
 ```
 
+Publication fails closed unless the tag and normalized package version agree,
+the tag resolves to the event commit contained in protected main, and the release
+target is main or that exact commit. The clean source is built twice with the
+commit timestamp and both wheel and sdist must be byte-for-byte reproducible.
+Exact archive contents are checked before the two artifacts are installed in
+separate environments.
+
+The workflow preserves SHA256SUMS and release-provenance.json with the repository,
+commit, tag, workflow run and exact artifact hashes, and records GitHub build
+provenance. Python and Node runtime audits must pass. Trusted Publishing then
+uploads only those verified distributions through OIDC and requests PyPI PEP 740
+attestations. Existing PyPI files remain a hard error rather than being skipped.
+
 Do not create a second release or retry with modified artifacts if the workflow
-fails. Preserve the failed run and diagnose it. PyPI versions are immutable.
+fails. Preserve the failed run, its logs and any uploaded evidence, then diagnose
+the first failed gate. PyPI filenames and versions are immutable: never overwrite
+or reuse one. Fix forward through a reviewed change and a new version and tag. A
+partial publication or hash mismatch stops promotion; yanking a release does not
+make its version reusable. Audit findings require reviewed dependency changes,
+not forced automatic fixes, destructive lockfile rewrites or unreviewed
+downgrades.
 
 ## Verify publication
 
 1. Confirm `publish.yml` succeeded for the expected tag and commit.
-2. Confirm PyPI exposes exactly `session-peer==1.0.0b1`. Download wheel and sdist,
-   compare their hashes with the workflow artifacts, and inspect contents again.
+2. Confirm PyPI exposes exactly `session-peer==1.0.0b1`. The workflow downloads
+   the complete PyPI file set, compares its hashes with the preserved candidates,
+   and installs the downloaded wheel and sdist independently. Preserve both
+   workflow evidence artifacts and the run URL.
 3. Install the exact PyPI prerelease in fresh environments and repeat version,
    clean-home list, relay-extra and MCP smoke checks.
 4. Confirm GitHub marks the release as prerelease and not latest. The stable
