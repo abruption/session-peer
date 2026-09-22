@@ -2,16 +2,18 @@
 
 GitHub リリースを公開すると `.github/workflows/publish.yml` がトリガーされ、選択されたタグがビルドされて Trusted Publishing 経由で PyPI にアップロードされます。下書きは公開されません。公開アーティファクトが常にレビュー済みコードを指すよう、準備、承認、公開、検証を分離してください。
 
-## 現在の候補: v1.0.0-rc.1
+RC2 公開と安定版昇格は別の条件です。公開された正確な RC2 を全 5 ホストで検証し、影響経路の独立 ACK とレシーバー変更後の 4 時間観察が完了するまで、Windows の 4 issue と RC2 マイルストーンを開いたままにしてください。[RC2 検証計画](docs/ja/releases/v1.0.0-rc.2.md)に従い、RC1 やバージョン変更前の証拠で代替しないでください。
 
-最初の 1.0 リリース候補はベータ契約を引き継ぎ、#130、#132–#134、#147、#148 のベータ後 recovery workflow、完全な release gate、厳密な配布検査、実際の demo、決定論的な core modularization を追加します。正規の Python/PyPI バージョンは `1.0.0rc1` であり、人間向けの Git タグおよび GitHub リリースは `v1.0.0-rc.1` です。`packaging.version.Version` はこれらの値を同一として扱います。RC ゼロに正規化される単なる `v1.0.0-rc` は使用しないでください。
+## 現在の候補: v1.0.0-rc.2
+
+2 番目の 1.0 リリース候補は RC1 契約を維持し、#158 の Windows 修正として Claude パイプ認証 (#157)、ネイティブ Codex writer 検証 (#153)、WSL→ネイティブ Codex の検出・送信 (#156)、SSH Python 診断 (#151) を追加します。Claude と SSH の修正は安定版 v0.9.2 にも公開済みです。正規の Python/PyPI バージョンは `1.0.0rc2` であり、人間向けの Git タグおよび GitHub リリースは `v1.0.0-rc.2` です。`packaging.version.Version` はこれらの値を同一として扱います。RC ゼロに正規化される単なる `v1.0.0-rc` は使用しないでください。
 
 このリリースは明示的なプレリリースです:
 
 - GitHub リリースに **Pre-release** のマークを付け、Latest のマークを付けないでください。
-- 通常の安定版パッケージのアップグレードでは、引き続き v0.9.1 が選択される必要があります。
-- テスターは `pipx install 'session-peer[relay]==1.0.0rc1'` または同等の `uv` コマンドを使用して正確なバージョンをインストールします。
-- GitHub、PyPI、およびクリーンインストールでの検証が完了するまで、v1.0.0-rc マイルストーンをオープンなままにしてください。
+- 通常の安定版パッケージのアップグレードでは、引き続き v0.9.2 が選択される必要があります。
+- テスターは `pipx install 'session-peer[relay]==1.0.0rc2'` または同等の `uv` コマンドを使用して正確なバージョンをインストールします。
+- GitHub、PyPI、およびクリーンインストールでの検証が完了するまで、v1.0.0-rc.2 マイルストーンをオープンなままにしてください。
 - プラグインマニフェストは独立したバージョン（0.1.0）を維持します。
 
 候補には、ローカル/SSH 運用、オプションの MCP および Antigravity アダプター、ペアリングされた直接/リレートランスポート、マネージド入場管理（managed admission）、パブリック OAuth サインアップ、アクティブ失効（active revocation）と recovery、運用者メトリクス、およびレビュー済みの KR デプロイアーティファクトが含まれます。リレー extra には Unix と Python 3.11+ が必要です。デフォルトのコアは Python 3.9+ で依存関係なしのまま維持されます。ホストされたリレーは運用サービスであり、パッケージ提供の保証ではありません。
@@ -34,8 +36,8 @@ GitHub 環境は `pypi` であり、アクティブなワークフローは `pub
 
 ## 準備と検証
 
-1. リリースブランチがベータ基準と #130、#132–#134、#147、#148、#141 を含み、`main` を対象としていることを確認します。
-2. `session_peer.__version__ == "1.0.0rc1"` であること、リリース候補ノートが sdist に含まれていること、および 4 つの README のインストールコマンドが一致していることを確認します。
+1. リリースブランチが RC1 基準とマージ済みの #158 を含み、`main` を対象にしていることを確認します。安定版保守ブランチを main にマージしないでください。
+2. `session_peer.__version__ == "1.0.0rc2"` であること、リリース候補ノートが sdist に含まれていること、および 4 つの README のインストールコマンドが一致していることを確認します。
 3. 完全な CI マトリクスを実行します。コアスイート、コントロール Node 22/24 スイート、Node/Python 統合、および最終 diff に適したビルドとアーカイブの検査をローカルで繰り返します。ライブモデルの送信はリリース準備の一部ではありません。
 4. 正確な候補から一度だけビルドします:
 
@@ -44,7 +46,7 @@ GitHub 環境は `pypi` であり、アクティブなワークフローは `pub
    ```
 
 5. 両方のアーカイブを検査します。wheel には `session_peer.py`、`session_peer_mcp.py`、`session_peer_relay/`、およびメタデータが含まれます。sdist には承認されたドキュメントとデプロイテンプレートも含まれます。どちらのアーカイブにも、`cc_peer.py`、認証情報、データベース、リプレイ状態、秘密鍵、ブラウザデータ、またはローカル証拠を含めることはできません。
-6. クリーンな環境に wheel と sdist を個別にインストールします。`session-peer --version` が `1.0.0rc1` を報告すること、空のホームディレクトリで `session-peer list --output-format
+6. クリーンな環境に wheel と sdist を個別にインストールします。`session-peer --version` が `1.0.0rc2` を報告すること、空のホームディレクトリで `session-peer list --output-format
    json` works in an empty home, and relay/MCP extras pass `pip check` と help スモークテストに合格することを確認します。
 7. 必要なチェックに合格した後にのみマージします。`main` をフェッチし、その正確なコミットを記録して、そのコミットにおけるバージョンと意図された変更を確認します。
 
@@ -55,11 +57,11 @@ GitHub 環境は `pypi` であり、アクティブなワークフローは `pub
 ```bash
 git fetch origin main --tags
 release_commit=$(git rev-parse origin/main)
-gh release create v1.0.0-rc.1 \
+gh release create v1.0.0-rc.2 \
   --repo abruption/session-peer \
   --target "$release_commit" \
-  --title "session-peer v1.0.0-rc.1" \
-  --notes-file docs/releases/v1.0.0-rc.1.md \
+  --title "session-peer v1.0.0-rc.2" \
+  --notes-file docs/releases/v1.0.0-rc.2.md \
   --draft --prerelease --latest=false
 ```
 
@@ -70,7 +72,7 @@ gh release create v1.0.0-rc.1 \
 公開の直前に最終的なユーザー承認を得てください。公開により GitHub リリースがパブリックになり、PyPI へのアップロードがトリガーされます:
 
 ```bash
-gh release edit v1.0.0-rc.1 \
+gh release edit v1.0.0-rc.2 \
   --repo abruption/session-peer \
   --draft=false --prerelease --latest=false
 ```
@@ -80,10 +82,10 @@ gh release edit v1.0.0-rc.1 \
 ## 公開の検証
 
 1. 期待されるタグとコミットに対して `publish.yml` が成功したことを確認します。
-2. PyPI が正確に `session-peer==1.0.0rc1` を公開していることを確認します。wheel と sdist をダウンロードし、それらのハッシュをワークフローアーティファクトと比較して、内容を再度検査します。
+2. PyPI が正確に `session-peer==1.0.0rc2` を公開していることを確認します。wheel と sdist をダウンロードし、それらのハッシュをワークフローアーティファクトと比較して、内容を再度検査します。
 3. クリーンな環境に正確な PyPI プレリリースをインストールし、バージョン、クリーンホームでの list、リレー extra、および MCP のスモークチェックを繰り返します。
-4. GitHub がリリースをプレリリースとしてマークし、latest としてマークしていないことを確認します。安定版の `releases/latest` エンドポイントおよび通常のアップデート通知は、引き続き v0.9.1 を指している必要があります。
+4. GitHub がリリースをプレリリースとしてマークし、latest としてマークしていないことを確認します。安定版の `releases/latest` エンドポイントおよび通常のアップデート通知は、引き続き v0.9.2 を指している必要があります。
 5. ホストされたリレーは個別に検証してください。パッケージの公開は、サービスの健全性、OAuth ポリシー、またはエージェントの受領確認を証明するものではありません。
-6. GitHub、PyPI、およびクリーンインストールの証拠が記録された後にのみ v1.0.0-rc マイルストーンをクローズしてください。
+6. GitHub、PyPI、およびクリーンインストールの証拠が記録された後にのみ v1.0.0-rc.2 マイルストーンをクローズしてください。
 
 パッケージマネージャーで管理されたインストールは独自のマネージャーでアップグレードします。スタンドアロンの安定版インストールは引き続き `session-peer update` を使用し、リリース候補テスターは正確なパッケージバージョンを使用します。提出は決して受領や確認の証明にはなりません。
