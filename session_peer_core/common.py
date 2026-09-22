@@ -42,7 +42,7 @@ from typing import NamedTuple, TypedDict
 
 try:
     import fcntl
-except ImportError:  # Windows has no POSIX flock; activity stays unknown there.
+except ImportError:  # Native Windows uses its own read-only writer inspection.
     fcntl = None
 
 __version__ = "1.0.0rc1"

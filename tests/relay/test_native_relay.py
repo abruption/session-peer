@@ -239,16 +239,19 @@ class PolicyTests(unittest.TestCase):
             executable = Path(folder)/'codex.exe'
             executable.write_bytes(b'MZ fixture')
             executable.chmod(0o700)
+            python = Path(folder)/'python.exe'
+            python.write_bytes(b'MZ fixture')
+            python.chmod(0o700)
             binding = {'agent':'codex','target':'codex:'+str(uuid.uuid4()),
                        'codexHome':'/mnt/c/Users/alice/.codex',
-                       'codexBin':str(executable)}
+                       'codexBin':str(executable), 'codexPython':str(python)}
             converted = mock.Mock(return_value=r'C:\Users\alice\.codex')
             with mock.patch('session_peer_relay.native.windows_codex_home', converted):
                 Policy({'targets':{'windows':binding},'peers':{}})
                 args = options(binding)
             self.assertEqual(args.codex_bin, str(executable))
             self.assertEqual(args.codex_native_home, r'C:\Users\alice\.codex')
-            self.assertTrue(args.allow_inactive_codex_home)
+            self.assertFalse(args.allow_inactive_codex_home)
             converted.assert_called_with('/mnt/c/Users/alice/.codex')
 
     def test_posix_codex_policy_keeps_live_writer_requirement(self):
@@ -258,6 +261,27 @@ class PolicyTests(unittest.TestCase):
         self.assertIsNone(args.codex_bin)
         self.assertIsNone(args.codex_native_home)
         self.assertFalse(args.allow_inactive_codex_home)
+
+    def test_wsl_codex_requires_fixed_native_python(self):
+        with tempfile.TemporaryDirectory() as folder:
+            executable = Path(folder)/'codex.exe'
+            executable.write_bytes(b'fixture')
+            executable.chmod(0o700)
+            binding = {'agent':'codex','target':'codex:'+str(uuid.uuid4()),
+                       'codexHome':'/mnt/c/home','codexBin':str(executable)}
+            with mock.patch('session_peer_relay.native.windows_codex_home', return_value=r'C:\home'):
+                with self.assertRaisesRegex(Rejected, 'native_windows_python_required'):
+                    options(binding)
+                for python in ('relative/python.exe', str(executable), '/missing/python.exe', 'bad\0path'):
+                    with self.subTest(python=python), self.assertRaisesRegex(Rejected, 'invalid_codex_python'):
+                        options({**binding, 'codexPython':python})
+                link = Path(folder)/'python.exe'
+                link.symlink_to(executable)
+                with self.assertRaisesRegex(Rejected, 'invalid_codex_python'):
+                    options({**binding, 'codexPython':str(link)})
+            with self.assertRaisesRegex(Rejected, 'unexpected_codex_python'):
+                options({'agent':'codex','target':binding['target'],
+                         'codexHome':'/fixture','codexPython':str(executable)})
 
     def test_wsl_codex_policy_rejects_other_commands_and_platforms(self):
         target = 'codex:'+str(uuid.uuid4())

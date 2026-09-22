@@ -149,6 +149,20 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     )
     if failure:
         raise ssh_failure_error(host, ssh_info, failure, detail)
+    runtime_output = (completed.stdout + "\n" + completed.stderr).strip().lower()
+    if (runtime_output == "python"
+            or "python was not found" in runtime_output
+            or ("python3" in runtime_output and any(marker in runtime_output for marker in (
+                "command not found", "not recognized as", "no such file", "python3: not found",
+            )))):
+        raise CcPeerError(
+            f"{host}: remote python3 did not start a usable interpreter. "
+            "Source-streamed SSH requires a working python3 and a POSIX-compatible "
+            "remote shell. A Windows Store execution alias is not sufficient. "
+            "For native Windows, run the installed CLI locally, or use a WSL SSH "
+            "endpoint with Python installed. No fallback or resend was attempted.",
+            {**ssh_info, "remoteRuntimeFailure": "python3_unavailable_or_unsupported_shell"},
+        )
     if not stdout:
         raise CcPeerError(f"{host}: {detail}", ssh_info)
     try:

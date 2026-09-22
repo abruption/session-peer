@@ -79,7 +79,8 @@ the mounted state home and executable:
       "agent": "codex",
       "target": "codex:FULL-THREAD-UUID",
       "codexHome": "/mnt/c/Users/alice/.codex",
-      "codexBin": "/mnt/c/Users/alice/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe"
+      "codexBin": "/mnt/c/Users/alice/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe",
+      "codexPython": "/mnt/c/Python313/python.exe"
     }
   },
   "peers": {
@@ -92,18 +93,30 @@ the mounted state home and executable:
 ```
 
 `codexHome` must be an absolute WSL path on a mounted local Windows drive and
-`codexBin` must be an absolute, executable regular file named `codex.exe`. The
-receiver reads the database through the POSIX path, invokes `/usr/bin/wslpath`
-with fixed arguments and passes the resulting drive-qualified Windows path only
-as `CODEX_HOME` to the native child. It never constructs a shell command. A
-non-WSL host, missing executable or unsafe conversion fails during policy loading
-with `wsl_codex_requires_wsl`, `invalid_codex_executable` or
-`wsl_home_conversion_failed`. Linux/macOS Codex targets omit `codexBin` and keep
-their existing behavior. Native Windows clients continue to use the ordinary
-local CLI; this adapter is only for a WSL receiver that targets Windows Codex.
-Because Windows writer locks are not POSIX advisory locks, this explicit binding
-may queue for the fixed home while the native session is inactive. A successful
-submission still reports `consumptionConfirmed: false` until that session consumes it.
+`codexBin` must be an absolute, executable regular file named `codex.exe`.
+`codexPython` is also required: select an installed native Windows Python 3.9+
+interpreter named `python.exe`, not a Microsoft Store execution alias. Both
+executables must be non-symlink files controlled by the operator.
+
+The receiver uses fixed `/usr/bin/wslpath` arguments and streams its standalone
+core into that native interpreter, without constructing a shell command. Native
+Python reads the Windows SQLite/WAL state and verifies the native writer lock,
+unique owner, same-user SID, process creation time and Codex executable identity.
+It does not open that database through Linux SQLite or bypass writer checks.
+Inactive, ambiguous or uninspectable writers fail closed. Existing WSL bindings
+must add `codexPython`; missing or invalid interpreters are rejected with
+`native_windows_python_required` or `invalid_codex_python`.
+
+Linux/macOS targets omit both executable fields. Native Windows clients continue
+to use the ordinary local CLI; this adapter is for a WSL receiver targeting
+Windows Codex. Successful submission reports `consumptionConfirmed: false`;
+only an independently observed reply proves consumption. Never retry an unknown
+send automatically, including after a policy or receiver upgrade.
+
+Native local CLI support does not imply support for every native Windows SSH
+shell. Source-streamed SSH requires working python3 and a POSIX-compatible
+remote shell; a Windows Store execution alias is insufficient. Use the native
+CLI locally or a WSL SSH endpoint with Python installed.
 
 Start a direct receiver (loopback by default; choose a reachable private interface
 for another machine):

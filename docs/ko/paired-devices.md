@@ -58,7 +58,8 @@ Claude 바인딩은 `agent: claude`와 홈 없는 정확한 세션 이름/PID를
       "agent": "codex",
       "target": "codex:FULL-THREAD-UUID",
       "codexHome": "/mnt/c/Users/alice/.codex",
-      "codexBin": "/mnt/c/Users/alice/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe"
+      "codexBin": "/mnt/c/Users/alice/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe",
+      "codexPython": "/mnt/c/Python313/python.exe"
     }
   },
   "peers": {
@@ -70,7 +71,13 @@ Claude 바인딩은 `agent: claude`와 홈 없는 정확한 세션 이름/PID를
 }
 ```
 
-`codexHome`은 로컬 Windows 드라이브에 마운트된 절대 WSL 경로여야 하고, `codexBin`은 이름이 `codex.exe`인 절대 경로의 실행 가능한 일반 파일이어야 합니다. 수신자는 POSIX 경로로 데이터베이스를 읽고, 고정 인자로 `/usr/bin/wslpath`를 호출한 뒤 드라이브가 명시된 Windows 경로를 네이티브 자식의 `CODEX_HOME`으로만 전달합니다. 셸 명령은 만들지 않습니다. WSL이 아닌 호스트, 누락된 실행 파일 또는 안전하지 않은 변환은 정책 로드 중 `wsl_codex_requires_wsl`, `invalid_codex_executable` 또는 `wsl_home_conversion_failed`로 실패합니다. Linux/macOS Codex 대상은 `codexBin`을 생략하며 기존 동작을 유지합니다. 네이티브 Windows 클라이언트는 계속 일반 로컬 CLI를 사용합니다. 이 어댑터는 Windows Codex를 대상으로 하는 WSL 수신자 전용입니다. Windows writer 잠금은 POSIX advisory lock이 아니므로 이 명시적 바인딩은 네이티브 세션이 비활성일 때도 고정 홈에 큐를 넣을 수 있습니다. 성공한 제출도 그 세션이 소비하기 전까지 `consumptionConfirmed: false`를 보고합니다.
+`codexHome`은 로컬 Windows 드라이브에 마운트된 절대 WSL 경로입니다. `codexBin`과 필수 항목 `codexPython`은 각각 `codex.exe`, `python.exe`라는 이름의 절대 경로이며 운영자가 관리하는 실행 가능한 일반 파일이어야 합니다(심볼릭 링크 금지). 인터프리터에는 Microsoft Store 실행 별칭이 아닌 설치된 네이티브 Windows Python 3.9+를 지정합니다.
+
+고정 인자의 `/usr/bin/wslpath`로 경로를 변환하고 자체 standalone 코드를 네이티브 Python으로 스트리밍합니다. 셸 명령은 만들지 않습니다. Windows SQLite/WAL과 writer 잠금은 네이티브 Python이 확인하며 유일한 소유자·동일 사용자 SID·프로세스 생성 시각·Codex 실행 파일 신원을 검증합니다. Linux SQLite로 Windows DB를 열거나 writer 검사를 우회하지 않습니다. 비활성·모호·검사 불가능한 writer는 거부합니다. 기존 WSL 정책에도 `codexPython`을 추가해야 하며 누락·잘못된 인터프리터는 `native_windows_python_required` 또는 `invalid_codex_python`으로 거부합니다.
+
+Linux/macOS 대상은 두 실행 파일 필드를 모두 생략합니다. Windows 클라이언트는 일반 로컬 CLI를 계속 사용합니다. 성공한 제출도 `consumptionConfirmed: false`이며 소비는 별도의 실제 응답으로 확인해야 합니다. 정책이나 수신자를 갱신해도 기존 unknown 전송을 자동 재시도하지 마십시오.
+
+네이티브 로컬 CLI 지원이 모든 Windows SSH 셸 지원을 뜻하지는 않습니다. 소스 스트리밍 SSH에는 동작하는 python3와 POSIX 호환 원격 셸이 필요하며 Windows Store 실행 별칭만으로는 부족합니다. 네이티브 CLI를 로컬에서 사용하거나 Python이 설치된 WSL SSH 엔드포인트를 사용하십시오.
 
 직접 수신자를 시작합니다(기본값은 루프백이며, 다른 머신을 위해 연결 가능한 사설 인터페이스를 선택하십시오):
 
