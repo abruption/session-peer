@@ -51,6 +51,7 @@ pattern = '__version__ = "(?P<version>[^"]+)"'
 [tool.hatch.build.targets.sdist]
 exclude = ["/experiments", "/deploy/ops", "/control/node_modules", "/control/dist"]
 include = [
+    "/.gitattributes",
     "/session_peer_core",
     "/session_peer_relay",
     "/session_peer.py",

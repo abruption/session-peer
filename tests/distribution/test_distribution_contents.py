@@ -58,6 +58,7 @@ class DistributionContents(unittest.TestCase):
     def test_sdist_contains_exact_source_and_documentation_contract(self):
         expected = {
             ".agents/plugins/marketplace.json",
+            ".gitattributes",
             ".gitignore",
             "LICENSE",
             "README.md",
