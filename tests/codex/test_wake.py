@@ -13,7 +13,7 @@ import unittest
 from unittest import mock
 
 import session_peer as peer
-from tests.test_codex import THREAD
+from tests.codex.support import THREAD
 
 
 @unittest.skipUnless(sys.platform in ('darwin', 'linux'), 'POSIX wake')
@@ -112,7 +112,7 @@ class Wake(unittest.TestCase):
         preflight.assert_not_called()
 
     def test_native_process_contract_and_deadline(self):
-        fixture = Path(__file__).parent/'fixtures'/'codex_app_server.py'
+        fixture = Path(__file__).parents[1] / 'fixtures' / 'codex_app_server.py'
         real_popen = subprocess.Popen
         processes = []
         def spawn(argv, **kwargs):

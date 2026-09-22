@@ -4,7 +4,7 @@ import unittest
 import uuid
 from unittest import mock
 
-from tests import test_native_relay as native_tests
+from tests.relay import test_native_relay as native_tests
 from session_peer_relay.app import exchange, open_channel, request
 from session_peer_relay.rotation import local_prepare, remote_prepare, rotate
 from session_peer_relay.store import Store, Rejected

@@ -155,7 +155,7 @@ class Contracts(unittest.TestCase):
 
     def test_streamed_source_supports_third_adapter_without_dispatch_changes(self):
         source = Path(peer.__file__).read_text()
-        fixture = (Path(__file__).parent / "fixtures/agent_adapter.py").read_text()
+        fixture = (Path(__file__).parents[1] / "fixtures/agent_adapter.py").read_text()
         marker = 'if __name__ == "__main__":'
         source = source.replace(marker, fixture + '\ninstall(sys.modules[__name__])\n\n' + marker)
         original_run = subprocess.run

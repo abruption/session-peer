@@ -7,7 +7,7 @@ import unittest
 import urllib.request
 from types import SimpleNamespace
 
-from tests import test_native_relay as platform_guard
+from tests.relay import test_native_relay as platform_guard
 from websockets.datastructures import Headers
 
 from session_peer_relay.relay import Relay, RelayLimits

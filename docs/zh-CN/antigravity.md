@@ -105,7 +105,7 @@ Reply-To URI 携带 agent/UUID，而不是主目录固定。
 
 ## 验证
 
-`python3 -m unittest tests.test_antigravity -v` 涵盖分片/无效/超大帧、
+`python3 -m unittest discover -s tests/adapters -t . -v` 涵盖分片/无效/超大帧、
 精确目标/代际检查、PID 重用、权限、请求冲突、超时、dry-run、
 SSH 结构化结果、发送者身份和 MCP 允许列表。真实的 Unix 套接字 +
 子进程测试夹具在没有模型凭据的情况下测试 SIGTERM 清理和陈旧重启。

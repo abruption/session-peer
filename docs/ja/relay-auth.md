@@ -405,6 +405,6 @@ OAuth、Mac ユーザーブラウザ、Python JWT 統合、24 時間稼働、ま
 
 初回登録では `expectedGeneration` を省略しなければなりません。これはローテーションで必須です。
 古い候補で使用されていた世代を推測したり暗黙的に変換したりしないでください。
-`tests/test_control_integration.py` にある実行可能な Node/Python フィクスチャは、
+`tests/control_integration/test_control_integration.py` にある実行可能な Node/Python フィクスチャは、
 登録、入場、失効した認証情報、所有者間の拒否、および応答消失を
 伴うローテーションをカバーしています。シードされたフィクスチャセッションは、実際の OAuth の証拠ではありません。

@@ -17,7 +17,7 @@ import urllib.request
 import uuid
 from unittest import mock
 
-from tests import test_native_relay as native_tests
+from tests.relay import test_native_relay as native_tests
 from websockets.exceptions import ConnectionClosed
 from session_peer_relay import control
 from session_peer_relay import cli
@@ -38,7 +38,7 @@ class ControlIntegration(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         await native_tests.NativeRelay.asyncSetUp(self)
         self.addAsyncCleanup(native_tests.NativeRelay.asyncTearDown, self)
-        fixture = Path(__file__).parent/'fixtures/control-server.mjs'
+        fixture = Path(__file__).parents[1] / 'fixtures' / 'control-server.mjs'
         node_root = self.root/'control'
         node_root.mkdir(mode=0o700)
         log = (node_root/'process.log').open('w')
@@ -103,7 +103,7 @@ class ControlIntegration(unittest.IsolatedAsyncioTestCase):
         root.mkdir(mode=0o700)
         log = (root/'process.log').open('w')
         self.addCleanup(log.close)
-        fixture = Path(__file__).parent/'fixtures/control-server.mjs'
+        fixture = Path(__file__).parents[1] / 'fixtures' / 'control-server.mjs'
         env = {**os.environ, 'SESSION_PEER_CONTROL_ALPHA_FIXTURE': '1'}
         process = subprocess.Popen(['node', str(fixture), str(root)], env=env,
                                    stdout=log, stderr=log)

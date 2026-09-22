@@ -8,7 +8,7 @@ import session_peer as core
 import session_peer_mcp as mcp
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = json.loads((ROOT / "tests/fixtures/compatibility-v1.json").read_text())
 
 

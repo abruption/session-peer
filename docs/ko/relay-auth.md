@@ -404,6 +404,6 @@ OAuth, Mac 사용자 브라우저, Python JWT 통합, 24시간 운영 또는 실
 
 초기 등록 시에는 `expectedGeneration`을 반드시 생략해야 하며, 로테이션 시에는 필수입니다.
 이전 후보에서 사용된 세대를 추론하거나 암묵적으로 변환하지 마십시오.
-`tests/test_control_integration.py`에 있는 실행 가능한 Node/Python 픽스처는
+`tests/control_integration/test_control_integration.py`에 있는 실행 가능한 Node/Python 픽스처는
 등록, 진입, 폐기된 자격 증명, 소유자 간 거부 및 응답 유실이
 동반된 로테이션을 다룹니다. 시드된 픽스처 세션은 실제 OAuth의 증거가 아닙니다.

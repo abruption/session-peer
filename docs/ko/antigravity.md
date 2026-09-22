@@ -62,4 +62,4 @@ MCP에는 명시적인 대상 `agents: ["antigravity"]` 및 `send` 권한이 필
 
 ## 검증
 
-`python3 -m unittest tests.test_antigravity -v`는 조각화되거나/잘못되거나/크기가 초과된 프레임, 정확한 대상/세대 검사, PID 재사용, 권한, 요청 충돌, 타임아웃, dry-run, SSH 구조화 결과, 발신자 신원 및 MCP 허용 목록을 다룹니다. 실제 Unix 소켓 + 자식 프로세스 픽스처는 모델 자격 증명 없이 SIGTERM 정리 및 오래된 상태에서의 재시작을 테스트합니다. 실시간 테스트 경계 및 남은 작업에 대해서는 [개발 검증](validation/85-antigravity.md)을 참조하십시오.
+`python3 -m unittest discover -s tests/adapters -t . -v`는 조각화되거나/잘못되거나/크기가 초과된 프레임, 정확한 대상/세대 검사, PID 재사용, 권한, 요청 충돌, 타임아웃, dry-run, SSH 구조화 결과, 발신자 신원 및 MCP 허용 목록을 다룹니다. 실제 Unix 소켓 + 자식 프로세스 픽스처는 모델 자격 증명 없이 SIGTERM 정리 및 오래된 상태에서의 재시작을 테스트합니다. 실시간 테스트 경계 및 남은 작업에 대해서는 [개발 검증](validation/85-antigravity.md)을 참조하십시오.

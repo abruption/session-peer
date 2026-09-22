@@ -120,7 +120,7 @@ ambiguous and fail closed. A Reply-To URI carries agent/UUID, not a home pin.
 
 ## Validation
 
-`python3 -m unittest tests.test_antigravity -v` covers fragmented/invalid/oversized
+`python3 -m unittest discover -s tests/adapters -t . -v` covers fragmented/invalid/oversized
 frames, exact-target/generation checks, PID reuse, permissions, request conflicts,
 timeouts, dry-run, SSH structured outcomes, sender identity and MCP allowlists.
 A real Unix socket + child-process fixture tests SIGTERM cleanup and stale restart

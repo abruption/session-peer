@@ -9,7 +9,7 @@ import unittest
 import uuid
 from unittest import mock
 
-from tests import test_native_relay as platform_guard
+from tests.relay import test_native_relay as platform_guard
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
