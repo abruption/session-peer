@@ -72,6 +72,14 @@ export interface Registration {
   operationId: string;
   expectedGeneration?: number;
 }
+export interface Recovery {
+  oldPrincipal: string;
+  principal: string;
+  certificatePEM: string;
+  keyGeneration: 0;
+  name: string;
+  operationId: string;
+}
 export interface Admission {
   role: "client" | "receiver";
   devicePrincipal: string;
@@ -113,6 +121,20 @@ export function registration(value: unknown): Registration {
     "invalid_device_name",
   );
   return o as unknown as Registration;
+}
+export function recovery(value: unknown): Recovery {
+  const o = object(value);
+  fields(o, ["oldPrincipal", "principal", "certificatePEM", "keyGeneration", "name", "operationId"]);
+  operationId(o.operationId);
+  principal(o.oldPrincipal);
+  principal(o.principal);
+  assert(o.oldPrincipal !== o.principal, "unchanged_principal", 409);
+  assert(typeof o.certificatePEM === "string" && o.certificatePEM.length <= 8192,
+    "invalid_certificate");
+  assert(o.keyGeneration === 0, "invalid_generation");
+  assert(typeof o.name === "string" && o.name.trim().length > 0 &&
+    o.name.length <= 80 && !/[\x00-\x1f\x7f]/.test(o.name), "invalid_device_name");
+  return o as unknown as Recovery;
 }
 export function admission(value: unknown): Admission {
   const o = object(value);

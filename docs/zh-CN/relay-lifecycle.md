@@ -28,13 +28,30 @@ session-peer device backup --state /private/device-state \
   --policy /private/policy.json --out /private/new-snapshot
 session-peer device restore --state /private/new-restored-state \
   --backup /private/new-snapshot
+session-peer device recovery-begin --state /private/new-restored-state \
+  --new-state /private/fresh-state --operation-id FULL-UUID
+session-peer device recovery-status --state /private/fresh-state
+session-peer device login --state /private/fresh-state --server https://relay.example.com
+session-peer device recovery-fence --state /private/fresh-state --name replacement
+session-peer device recovery-request --state /private/fresh-state \
+  --peer PEER-PRINCIPAL --direct HOST:PORT --out /private/recovery-request.json
+session-peer device recovery-approve --state /private/peer-state \
+  --request /private/recovery-request.json --out /private/recovery-approval.json
+session-peer device recovery-commit --state /private/fresh-state \
+  --approval /private/recovery-approval.json
+session-peer device recovery-activate --state /private/new-restored-state \
+  --new-state /private/fresh-state
 ```
 
 Diagnostics 报告全局 10,000 次请求限制、剩余行数、待处理的未知结果、SQLite/WAL 大小以及可用磁盘空间。通知、警告和严重阈值分别为 70%、85% 和 95%。达到容量上限时，新的提交会被拒绝；现有的收据和管理功能仍然可用。绝不会为了腾出空间而修剪收据证据。容量预留和收据创建是事务性的。
 
 备份需要排他性状态锁，并包含身份版本、策略、一致的 SQLite 快照以及清单。输出是包含密钥的私有**未加密暂存目录**；请使用经批准的加密备份系统进行保留。切勿通过源代码版本控制发布或移动该目录。备份状态不会将密钥复制到中继或 OAuth 控制服务。
 
-恢复会准备一个私有暂存目录，提交持久的恢复标记，然后才以原子方式发布目标。中断的暂存无法使用。现有收据仍可查询；缺失的收据返回未知，而不是证明未执行。传出和传入发送、密钥轮换变更以及新的配对/注册均保持受阻。收据状态查询仍然可用。不存在可以清除此保护措施的单命令覆盖。在规划恢复之前，请对账快照后的本地效应，并吊销/隔离旧身份。此开发实现尚未提供完整的丢失密钥恢复工作流。
+恢复会准备一个私有暂存目录，提交终态恢复 tombstone，然后才以原子方式发布目标。中断的暂存无法使用。恢复目录始终是只读归档身份：现有收据仍可查询，缺失收据仍为未知，删除旧标记也不会移除 tombstone 或重新启用发送。请在独立的空状态中开始恢复。确定性的状态输出会报告恢复代系、已知对等节点/路由、未解决收据与本地效应、控制所有权以及准确的剩余门禁，而不会暴露密钥、令牌、消息正文或对等证书。
+
+请使用固定操作 ID 和 recovery-reconcile 对每个未知项进行分类。恢复绝不会删除收据或重放本地效应。对于托管设备，请将新状态登录到同一所有者账户，然后运行 recovery-fence。控制事务只有在证明新密钥持有权后，才会吊销旧 principal 并注册独立的 generation-zero principal。仅有 OAuth 所有权不能复活或轮换旧密钥。仅直接连接的恢复会跳过该控制门禁，但不会削弱任何对等门禁。
+
+每个对等节点的运营者接收已签名恢复请求，在该节点的活跃状态上运行 recovery-approve，并返回已签名批准。批准会原子地吊销旧端点 pin 并保存新 pin；导入批准会把对等节点自身的 pin 和路由提交到新状态。响应丢失后请复用相同文件和固定 ID。任何收据/效应仍为未知，或任何对等节点离线、只部分提交时，激活都会失败。成功激活只影响新状态；旧 principal、tombstone、收据和密钥仍作为隔离审计历史保留。
 
 ## 控制数据库升级
 

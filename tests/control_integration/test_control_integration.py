@@ -170,6 +170,54 @@ class ControlIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outputs[0], outputs[1])
         self.assertEqual(states[0], states[1])
 
+    async def test_public_control_lost_key_recovery_uses_fresh_proof_and_explicit_peer_pin(self):
+        from session_peer_relay import recovery
+        from session_peer_relay.lifecycle import backup, restore
+        policy = self.root/'recovery-policy.json'
+        private_write(policy, json.dumps(self.policy))
+        snapshot, archived_path = self.root/'recovery-snapshot', self.root/'recovery-archive'
+        backup(self.client, snapshot, policy)
+        restore(snapshot, archived_path)
+        archived = Store(archived_path)
+        fresh = Store(self.root/'recovered-client')
+        try:
+            plan_id = str(uuid.uuid4())
+            report = recovery.begin(archived, fresh, plan_id)['recovery']
+            self.assertEqual(report['control']['ownership'], 'login_required')
+            self.assertIn('control_login', report['remainingGates'])
+            self.login(fresh)
+            self.assertEqual(recovery.status(fresh)['recovery']['control']['ownership'],
+                             'authenticated')
+            old_account = self.authorize(self.headers(self.client))
+            plan = recovery._load(fresh)
+            receipt = control.recover(fresh, archived.device, 'recovered-fixture',
+                                      plan['control']['operationId'])
+            # A response-loss retry returns the durable receipt and does not create
+            # another replacement or un-revoke the archived principal.
+            self.assertEqual(receipt, control.recover(
+                fresh, archived.device, 'recovered-fixture', plan['control']['operationId']))
+            recovery.record_control(fresh, receipt)
+            self.assertFalse(self.auth.active(old_account))
+            self.assertTrue(fresh.recovery_required())
+
+            request = recovery.peer_request(fresh, self.host.device,
+                                            {'direct': '127.0.0.1:49999'})
+            approval = recovery.peer_approve(self.host, request)
+            recovery.peer_commit(fresh, approval)
+            recovery.activate(archived, fresh)
+            self.assertFalse(fresh.recovery_required())
+            self.assertTrue(archived.recovery_required())
+            account = self.authorize(self.headers(fresh))
+            self.assertEqual(account['keyFingerprint'], fresh.key_id)
+            self.assertEqual(account['keyGeneration'], 0)
+            devices = control.call(self.info['origin'], '/api/relay/devices',
+                                   token=self.info['accounts'][0]['token'])['devices']
+            self.assertTrue(next(d for d in devices if d['principal'] == archived.device)['revoked'])
+            self.assertFalse(next(d for d in devices if d['principal'] == fresh.device)['revoked'])
+        finally:
+            fresh.close()
+            archived.close()
+
     async def test_managed_rotation_preserves_native_receipt_and_lost_response_retry(self):
         ident, operation = str(uuid.uuid4()), str(uuid.uuid4())
         body = {'target': 'review', 'message': 'cross-language rotation fixture'}

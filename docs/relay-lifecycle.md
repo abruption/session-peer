@@ -45,6 +45,19 @@ session-peer device backup --state /private/device-state \
   --policy /private/policy.json --out /private/new-snapshot
 session-peer device restore --state /private/new-restored-state \
   --backup /private/new-snapshot
+session-peer device recovery-begin --state /private/new-restored-state \
+  --new-state /private/fresh-state --operation-id FULL-UUID
+session-peer device recovery-status --state /private/fresh-state
+session-peer device login --state /private/fresh-state --server https://relay.example.com
+session-peer device recovery-fence --state /private/fresh-state --name replacement
+session-peer device recovery-request --state /private/fresh-state \
+  --peer PEER-PRINCIPAL --direct HOST:PORT --out /private/recovery-request.json
+session-peer device recovery-approve --state /private/peer-state \
+  --request /private/recovery-request.json --out /private/recovery-approval.json
+session-peer device recovery-commit --state /private/fresh-state \
+  --approval /private/recovery-approval.json
+session-peer device recovery-activate --state /private/new-restored-state \
+  --new-state /private/fresh-state
 ```
 
 Diagnostics reports the global 10,000-request limit, remaining rows, pending
@@ -59,15 +72,29 @@ staging directory** containing keys; use the approved encrypted backup system fo
 retention. Do not publish or move the directory through source control. Backing up
 state does not copy keys to the relay or to the OAuth control service.
 
-Restore prepares a private staging directory, commits a persistent recovery marker,
+Restore prepares a private staging directory, commits a terminal recovery tombstone,
 and only then publishes the destination atomically. Interrupted staging is unusable.
-Existing
-receipts remain queryable; a missing receipt returns unknown rather than proving
-non-execution. Both outgoing and incoming sends, key-rotation changes and new
-pairing/enrollment remain blocked. Receipt-status queries remain available. There is no
-one-command override that clears this safeguard. Reconcile post-snapshot native
-effects and revoke/fence the old identity before planning recovery. This development
-implementation does not yet provide a complete lost-key recovery workflow.
+The restored directory remains a read-only archival identity: existing receipts stay
+queryable, a missing receipt remains unknown, and deleting the legacy marker does not
+remove the tombstone or reactivate sends. Begin recovery into a separate empty state;
+the deterministic status reports the restored generation, known peers/routes,
+unresolved receipts and native effects, control ownership, and exact remaining gates
+without keys, tokens, message bodies, or peer certificates.
+
+Classify each unknown item with recovery-reconcile and a fixed operation ID; recovery
+never deletes a receipt or replays a native effect. For a managed device, log the fresh
+state into the same owner account and run recovery-fence. The control transaction
+revokes the old principal and registers a distinct generation-zero principal only
+after fresh-key possession proof. OAuth ownership alone cannot revive or rotate the
+old key. A direct-only recovery skips that control gate but no peer gate.
+
+Each peer operator receives a signed recovery request, runs recovery-approve against
+that peer's active state, and returns the signed approval. Approval atomically revokes
+the old endpoint pin and stores the fresh pin; importing it commits the peer's own pin
+and routes into the fresh state. Reuse the files and fixed IDs after response loss.
+Activation fails while any receipt/effect is unknown or any peer is offline or only
+partially committed. Successful activation affects only the fresh state; the old
+principal, tombstone, receipts, and keys remain quarantined audit history.
 
 ## Control database upgrades
 

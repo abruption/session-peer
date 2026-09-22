@@ -28,13 +28,30 @@ session-peer device backup --state /private/device-state \
   --policy /private/policy.json --out /private/new-snapshot
 session-peer device restore --state /private/new-restored-state \
   --backup /private/new-snapshot
+session-peer device recovery-begin --state /private/new-restored-state \
+  --new-state /private/fresh-state --operation-id FULL-UUID
+session-peer device recovery-status --state /private/fresh-state
+session-peer device login --state /private/fresh-state --server https://relay.example.com
+session-peer device recovery-fence --state /private/fresh-state --name replacement
+session-peer device recovery-request --state /private/fresh-state \
+  --peer PEER-PRINCIPAL --direct HOST:PORT --out /private/recovery-request.json
+session-peer device recovery-approve --state /private/peer-state \
+  --request /private/recovery-request.json --out /private/recovery-approval.json
+session-peer device recovery-commit --state /private/fresh-state \
+  --approval /private/recovery-approval.json
+session-peer device recovery-activate --state /private/new-restored-state \
+  --new-state /private/fresh-state
 ```
 
 Diagnostics は、グローバルな10,000リクエスト制限、残りの行数、保留中の不明な結果、SQLite/WAL のサイズ、および空きディスク容量を報告します。通知、警告、重大のしきい値はそれぞれ 70%、85%、95% です。容量上限に達すると新しい送信は拒否されますが、既存の受領証および管理機能は引き続き利用可能です。空き容量を確保するために受領証のエビデンスが削除されることはありません。容量予約と受領証の作成はトランザクションとして行われます。
 
 バックアップには排他的な状態ロックが必要であり、アイデンティティバージョン、ポリシー、一貫性のある SQLite スナップショット、およびマニフェストが含まれます。出力はキーを含むプライベートな**暗号化されていないステージングディレクトリ**です。保存には承認された暗号化バックアップシステムを使用してください。ソース管理を通じてディレクトリを公開または移動しないでください。状態をバックアップしても、リレーや OAuth 制御サービスに鍵がコピーされることはありません。
 
-復元はプライベートなステージングディレクトリを準備し、永続的な回復マーカーをコミットした後にのみ、ターゲットをアトミックに公開します。中断されたステージングは使用できません。既存の受領証は引き続きクエリ可能です。欠落している受領証は、実行されなかったことを証明するのではなく、不明を返します。送信および受信、キーローテーションの変更、新しいペアリング/登録はすべてブロックされたままになります。受領証ステータスのクエリは引き続き利用可能です。この安全策を解除する単一コマンドのオーバーライドは存在しません。回復を計画する前に、スナップショット作成後のネイティブな影響を調整し、古いアイデンティティを失効/フェンスしてください。この開発実装では、完全な鍵紛失回復ワークフローはまだ提供されていません。
+復元はプライベートなステージングディレクトリを準備し、終端回復 tombstone をコミットした後にのみ、ターゲットをアトミックに公開します。中断されたステージングは使用できません。復元先は読み取り専用のアーカイブアイデンティティとして残ります。既存の受領証は照会でき、欠落した受領証は不明のままであり、旧マーカーを削除しても tombstone が消えたり送信が再有効化されたりしません。別の空の状態で回復を開始してください。決定論的な状態出力は、鍵、トークン、メッセージ本文、ピア証明書を公開せず、復元世代、既知のピア/ルート、未解決の受領証とネイティブ効果、制御所有権、正確な残存ゲートを報告します。
+
+各不明項目は固定操作 ID と recovery-reconcile で分類してください。回復は受領証を削除せず、ネイティブ効果を再実行しません。管理対象デバイスでは新しい状態を同じ所有者アカウントにログインし、recovery-fence を実行します。制御トランザクションは新しい鍵の所持証明後にのみ古い principal を失効させ、別の generation-zero principal を登録します。OAuth 所有権だけでは古い鍵を復活またはローテーションできません。直接接続専用の回復はこの制御ゲートだけを省略し、ピアゲートは省略しません。
+
+各ピア運用者は署名済み回復要求を受け取り、そのピアのアクティブ状態で recovery-approve を実行して署名済み承認を返します。承認は古いエンドポイント pin の失効と新しい pin の保存をアトミックに行い、承認を取り込むとピア自身の pin とルートが新しい状態へコミットされます。応答喪失後は同じファイルと固定 ID を再利用してください。受領証/効果が不明、またはピアがオフラインもしくは部分コミットの場合、アクティベーションは失敗します。成功したアクティベーションは新しい状態だけに適用され、古い principal、tombstone、受領証、鍵は隔離された監査履歴として残ります。
 
 ## 制御データベースのアップグレード
 

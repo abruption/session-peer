@@ -696,4 +696,62 @@ describe("journaled registration and renewal", () => {
       "contract_migration_required",
     );
   });
+  it("atomically fences an old principal and enrolls a fresh recovery key with a durable receipt", async () => {
+    f = await fixture();
+    const old = identity(f.root, "OldRecovery", "o");
+    const fresh = identity(f.root, "FreshRecovery", "n");
+    f.control.register(
+      f.owner.id,
+      f.proven(f.owner.id, "register", old.payload, old.privateKey),
+    );
+    // Recovery may continue from an explicit pre-existing owner revocation,
+    // but it never revives that principal.
+    f.control.revoke(f.owner.id, old.payload.principal);
+    const payload = {
+      oldPrincipal: old.payload.principal,
+      principal: fresh.payload.principal,
+      certificatePEM: fresh.payload.certificatePEM,
+      keyGeneration: 0 as const,
+      name: "recovered endpoint",
+      operationId: randomUUID(),
+    };
+    const request = f.proven(f.owner.id, "recover", payload, fresh.privateKey);
+    expect(() => f!.control.recover(f!.owner.id, { ...request, proof: "bad" }))
+      .toThrow("invalid_proof");
+    const receipt = f.control.recover(f.owner.id, request);
+    expect(receipt).toEqual({ operationId: payload.operationId, committed: true,
+      oldPrincipal: old.payload.principal, principal: fresh.payload.principal,
+      keyFingerprint: fresh.payload.principal, keyGeneration: 0 });
+    expect(f.control.recover(f.owner.id, request)).toEqual(receipt);
+    expect(f.control.operation(f.owner.id, payload.operationId)).toEqual(receipt);
+    const devices = f.control.list(f.owner.id);
+    expect(devices.find((d) => d.principal === old.payload.principal)?.revoked).toBe(true);
+    expect(devices.find((d) => d.principal === fresh.payload.principal)?.revoked).toBe(false);
+    expect(() => f!.control.challenge(f!.owner.id, { operation: "register",
+      payload: { ...old.payload, operationId: randomUUID() } })).toThrow("device_revoked");
+    expect(() => f!.control.challenge(f!.owner.id, { operation: "recover", payload }))
+      .toThrow("operation_already_committed");
+    const another = identity(f.root, "AnotherRecovery", "x");
+    expect(() => f!.control.challenge(f!.owner.id, { operation: "recover", payload: {
+      ...payload, principal: another.payload.principal,
+      certificatePEM: another.payload.certificatePEM, operationId: randomUUID(),
+    } })).toThrow("recovery_already_completed");
+  });
+  it("rolls back both sides of recovery when public-state publication fails", async () => {
+    f = await fixture();
+    const old = identity(f.root, "RollbackOld", "o");
+    const fresh = identity(f.root, "RollbackFresh", "n");
+    f.control.register(f.owner.id,
+      f.proven(f.owner.id, "register", old.payload, old.privateKey));
+    const payload = { oldPrincipal: old.payload.principal,
+      principal: fresh.payload.principal, certificatePEM: fresh.payload.certificatePEM,
+      keyGeneration: 0 as const, name: "rollback recovery", operationId: randomUUID() };
+    const request = f.proven(f.owner.id, "recover", payload, fresh.privateKey);
+    renameSync(f.config.publicDir, f.config.publicDir + "-away");
+    expect(() => f!.control.recover(f!.owner.id, request)).toThrow("state_publication_failed");
+    expect(f.control.list(f.owner.id)).toMatchObject([
+      { principal: old.payload.principal, revoked: false },
+    ]);
+    expect(f.control.operation(f.owner.id, payload.operationId).committed).toBe(false);
+  });
 });
