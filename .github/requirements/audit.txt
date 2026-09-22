@@ -1,0 +1,2 @@
+# The audit tool is not a project runtime dependency.
+pip-audit==2.10.1
