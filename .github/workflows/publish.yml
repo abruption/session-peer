@@ -4,45 +4,255 @@ on:
   release:
     types: [published]
 
+# Grant each job only what it needs. PyPI authentication remains OIDC-only.
+permissions: {}
+
+concurrency:
+  group: maintenance-publish
+  cancel-in-progress: false
+
 jobs:
   build:
+    name: build and attest release artifacts
     runs-on: ubuntu-latest
+    permissions:
+      attestations: write
+      actions: read
+      pull-requests: read
+      contents: read
+      id-token: write
+    outputs:
+      version: ${{ steps.source.outputs.version }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
         with:
           python-version: '3.13'
-      - name: Build
-        run: |
-          pip install build
-          python -m build
-      - name: Verify release version and transport artifacts
+      - name: Install pinned build tooling
+        run: python -m pip install --requirement .github/requirements/build.txt
+      - name: Fetch the protected maintenance reference
+        run: git fetch --no-tags origin +refs/heads/release/0.9.x:refs/remotes/origin/release/0.9.x
+      - name: Verify maintenance tag, target, commit, tip and pinned baseline
+        id: source
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TARGET: ${{ github.event.release.target_commitish }}
+          RELEASE_SHA: ${{ github.sha }}
         run: |
-          python - <<'PYTHON'
-          import glob, os, zipfile
-          from packaging.version import Version
-          import session_peer
-          assert Version(os.environ["RELEASE_TAG"].removeprefix("v")) == Version(session_peer.__version__)
-          with zipfile.ZipFile(glob.glob("dist/*.whl")[0]) as wheel:
-              assert "session_peer_relay/cli.py" in wheel.namelist()
-              assert "cc_peer.py" not in wheel.namelist()
-          PYTHON
-      - uses: actions/upload-artifact@v4
+          version=$(python .github/scripts/release_artifacts.py verify-source \
+            --tag "$RELEASE_TAG" --target "$RELEASE_TARGET" --expected-sha "$RELEASE_SHA")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Require protected branch, merged PR and exact-commit CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: python .github/scripts/release_artifacts.py verify-governance --commit "$RELEASE_SHA"
+      - name: Build twice from the exact release source
+        run: |
+          SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
+          export SOURCE_DATE_EPOCH
+          python -m build --outdir dist
+          python -m build --outdir rebuilt
+      - name: Verify exact archive contents
+        env:
+          SESSION_PEER_DIST_DIR: dist
+        run: python -m unittest tests.test_distribution_contents -v
+      - name: Require reproducible artifacts and write release evidence
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          python .github/scripts/release_artifacts.py compare \
+            --first dist --second rebuilt --version "$RELEASE_VERSION"
+          python .github/scripts/release_artifacts.py verify-artifacts \
+            --dist dist --version "$RELEASE_VERSION" --write-manifest
+          python .github/scripts/release_artifacts.py write-provenance \
+            --dist dist --version "$RELEASE_VERSION" \
+            --repository "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" \
+            --tag "$RELEASE_TAG" --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" --workflow-ref "$GITHUB_WORKFLOW_REF"
+      - name: Upload immutable release candidates
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: dist
+          name: release-dist-${{ github.event.release.tag_name }}
           path: dist/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Record GitHub build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
+
+  test-wheel:
+    name: install release wheel
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-dist-${{ github.event.release.tag_name }}
+          path: dist/
+      - name: Verify and install only the wheel
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          python .github/scripts/release_artifacts.py verify-manifest \
+            --dist dist --version "$RELEASE_VERSION"
+          python -m venv /tmp/session-peer-release-wheel
+          /tmp/session-peer-release-wheel/bin/pip install --no-deps dist/*.whl
+          test "$(/tmp/session-peer-release-wheel/bin/python -c 'import session_peer; print(session_peer.__version__)')" = "$RELEASE_VERSION"
+          /tmp/session-peer-release-wheel/bin/session-peer --help
+
+  test-sdist:
+    name: install release sdist
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-dist-${{ github.event.release.tag_name }}
+          path: dist/
+      - name: Verify and install only the sdist
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          python .github/scripts/release_artifacts.py verify-manifest \
+            --dist dist --version "$RELEASE_VERSION"
+          python -m venv /tmp/session-peer-release-sdist
+          /tmp/session-peer-release-sdist/bin/pip install --no-deps dist/*.tar.gz
+          test "$(/tmp/session-peer-release-sdist/bin/python -c 'import session_peer; print(session_peer.__version__)')" = "$RELEASE_VERSION"
+          /tmp/session-peer-release-sdist/bin/session-peer --help
+
+  dependency-audit:
+    name: release dependency audits
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.13'
+      - run: python -m pip install --requirement .github/requirements/audit.txt
+      - name: Audit Python runtime dependencies
+        run: |
+          python -m venv /tmp/session-peer-release-audit
+          /tmp/session-peer-release-audit/bin/pip install '.[relay,mcp]'
+          audit_path=$(/tmp/session-peer-release-audit/bin/python -c 'import site; print(site.getsitepackages()[0])')
+          python -m pip_audit --path "$audit_path"
 
   publish:
-    needs: build
+    name: publish with PyPI Trusted Publishing
+    needs: [build, test-wheel, test-sdist, dependency-audit]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
+      actions: read
+      pull-requests: read
+      contents: read
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
-          name: dist
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-dist-${{ github.event.release.tag_name }}
           path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Recheck maintenance policy immediately before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: python .github/scripts/release_artifacts.py verify-governance --commit "$RELEASE_SHA"
+      - name: Reverify the exact files handed to the publisher
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          python .github/scripts/release_artifacts.py verify-manifest --dist dist --version "$RELEASE_VERSION"
+          mkdir publish
+          cp dist/*.whl dist/*.tar.gz publish/
+          python .github/scripts/release_artifacts.py compare \
+            --first dist --second publish --version "$RELEASE_VERSION"
+      - name: Publish immutable files and PEP 740 attestations
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          attestations: true
+          packages-dir: publish/
+          skip-existing: false
+          verify-metadata: true
+
+  verify-pypi:
+    name: verify published PyPI artifacts
+    needs: [build, publish]
+    if: ${{ needs.publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-dist-${{ github.event.release.tag_name }}
+          path: expected/
+      - name: Download and match the PyPI file set and hashes
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          python .github/scripts/release_artifacts.py download-pypi \
+            --expected expected --output pypi --version "$RELEASE_VERSION"
+          python .github/scripts/release_artifacts.py compare \
+            --first expected --second pypi --version "$RELEASE_VERSION"
+      - name: Independently install the downloaded wheel and sdist
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          python -m venv /tmp/session-peer-pypi-wheel
+          /tmp/session-peer-pypi-wheel/bin/pip install --no-deps pypi/*.whl
+          test "$(/tmp/session-peer-pypi-wheel/bin/python -c 'import session_peer; print(session_peer.__version__)')" = "$RELEASE_VERSION"
+          /tmp/session-peer-pypi-wheel/bin/session-peer --help
+          python -m venv /tmp/session-peer-pypi-sdist
+          /tmp/session-peer-pypi-sdist/bin/pip install --no-deps pypi/*.tar.gz
+          test "$(/tmp/session-peer-pypi-sdist/bin/python -c 'import session_peer; print(session_peer.__version__)')" = "$RELEASE_VERSION"
+          /tmp/session-peer-pypi-sdist/bin/session-peer --help
+      - name: Preserve post-publication verification evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pypi-verification-${{ github.event.release.tag_name }}
+          path: |
+            expected/SHA256SUMS
+            expected/release-provenance.json
+            pypi/*.whl
+            pypi/*.tar.gz
+          if-no-files-found: warn
+          retention-days: 90
