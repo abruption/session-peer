@@ -6,8 +6,11 @@ import unittest
 import uuid
 from unittest import mock
 
-from session_peer_relay import recovery
-from session_peer_relay.store import Rejected, Store
+try:
+    from session_peer_relay import recovery
+    from session_peer_relay.store import Rejected, Store
+except ModuleNotFoundError:
+    raise unittest.SkipTest('optional relay dependencies not installed')
 
 
 class Recovery(unittest.TestCase):
