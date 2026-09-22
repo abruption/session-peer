@@ -1,17 +1,20 @@
 # ADR: internal agent and execution transport contracts
 
 Status: accepted for the post-v0.8 refactor (#47). This is an internal source
-contract, not a public external-plugin ABI. The package version remains 0.8.0
-until a separately prepared release.
+contract, not a public external-plugin ABI.
 
 ## Decision
 
-Keep the dependency-free `session_peer.py` standalone artifact and define the
-contracts in that file. SSH streams its source to destination-side `python3 -`;
-ordinary remote operations still require no installed session-peer service or
-package. Splitting the runtime into importable files now would require a bundle
-builder, remote module installation, or a second distribution mechanism. None is
-needed to validate the agent/transport boundary.
+Keep the dependency-free `session_peer.py` standalone artifact while maintaining
+its canonical source as ordered functional segments in `session_peer_core/`.
+`tools/generate_session_peer.py` deterministically concatenates those segments;
+CI rejects the checked-in artifact when it is stale.
+
+The segments intentionally form one flat namespace rather than an importable
+runtime module graph. This preserves existing imports and monkey-patching
+contracts. SSH still streams the generated source to destination-side `python3 -`,
+so ordinary remote operations require no installed session-peer service, source
+package or second distribution mechanism.
 
 An agent owns native identity, discovery, validation, submission, diagnosis,
 agent-specific command options, and presentation. A transport owns where those

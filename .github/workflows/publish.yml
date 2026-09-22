@@ -29,6 +29,8 @@ jobs:
         run: python -m pip install --requirement .github/requirements/build.txt
       - name: Fetch the protected main reference
         run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+      - name: Verify generated standalone source
+        run: python tools/generate_session_peer.py --check
       - name: Verify release tag, target, commit, and protected-main ancestry
         id: source
         env:
