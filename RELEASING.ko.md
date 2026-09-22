@@ -2,16 +2,18 @@
 
 GitHub 릴리스를 게시하면 `.github/workflows/publish.yml`이 트리거되어 선택한 태그를 빌드하고 Trusted Publishing을 통해 PyPI에 업로드합니다. 드래프트는 게시되지 않습니다. 공개 아티팩트가 항상 검토된 코드를 가리키도록 준비, 승인, 게시 및 검증 단계를 분리하여 유지하십시오.
 
-## 현재 후보: v1.0.0-rc.1
+RC2 배포와 정식 버전 승격은 별도 조건입니다. 게시된 정확한 RC2를 5개 호스트에 검증하고, 영향받은 경로의 독립적인 ACK와 수신자 변경 후 4시간 관찰을 완료할 때까지 Windows 이슈 4개와 RC2 마일스톤을 유지하십시오. [RC2 검증 계획](docs/ko/releases/v1.0.0-rc.2.md)을 따르며 RC1 및 버전 변경 전 증거로 대체하지 않습니다.
 
-첫 번째 1.0 릴리스 후보는 베타 계약을 이어받고 #130, #132–#134, #147 및 #148의 베타 이후 복구 workflow, 완전한 release gate, 정확한 배포 검사, 실제 demo 및 결정론적 core 모듈화를 추가합니다. 표준 Python/PyPI 버전은 `1.0.0rc1`이며, 사용자용 Git 태그 및 GitHub 릴리스는 `v1.0.0-rc.1`입니다. `packaging.version.Version`은 이 값들을 동일하게 취급합니다. RC 제로로 정규화되는 단순 `v1.0.0-rc`는 사용하지 마십시오.
+## 현재 후보: v1.0.0-rc.2
+
+두 번째 1.0 릴리스 후보는 RC1 계약을 유지하면서 #158의 Windows 수정, 즉 Claude 파이프 인증(#157), 네이티브 Codex writer 검증(#153), WSL→네이티브 Codex 조회·전송(#156), SSH Python 진단(#151)을 추가합니다. Claude와 SSH 수정은 안정 버전 v0.9.2에도 배포됐습니다. 표준 Python/PyPI 버전은 `1.0.0rc2`이며, 사용자용 Git 태그 및 GitHub 릴리스는 `v1.0.0-rc.2`입니다. `packaging.version.Version`은 이 값들을 동일하게 취급합니다. RC 제로로 정규화되는 단순 `v1.0.0-rc`는 사용하지 마십시오.
 
 이번 릴리스는 명시적인 시험판(prerelease)입니다:
 
 - GitHub 릴리스를 **Pre-release**로 표시하고 Latest로 표시하지 마십시오.
-- 일반 안정 버전 패키지 업그레이드는 v0.9.1을 계속 선택해야 합니다.
-- 테스터는 `pipx install 'session-peer[relay]==1.0.0rc1'` 또는 이에 상응하는 `uv` 명령어로 정확한 버전을 설치합니다.
-- GitHub, PyPI 및 클린 설치 검증이 완료될 때까지 v1.0.0-rc 마일스톤을 열린 상태로 유지하십시오.
+- 일반 안정 버전 패키지 업그레이드는 v0.9.2을 계속 선택해야 합니다.
+- 테스터는 `pipx install 'session-peer[relay]==1.0.0rc2'` 또는 이에 상응하는 `uv` 명령어로 정확한 버전을 설치합니다.
+- GitHub, PyPI 및 클린 설치 검증이 완료될 때까지 v1.0.0-rc.2 마일스톤을 열린 상태로 유지하십시오.
 - 플러그인 매니페스트는 독자적인 버전(0.1.0)을 유지합니다.
 
 후보 버전에는 로컬/SSH 작동, 선택적 MCP 및 Antigravity 어댑터, 페어링된 직접/릴레이 전송, 관리형 허가(managed admission), 공개 OAuth 가입, 능동적 해지(active revocation)와 복구, 운영자 메트릭 및 검토된 KR 배포 아티팩트가 포함됩니다. 릴레이 엑스트라는 Unix 및 Python 3.11+를 필요로 합니다. 기본 코어는 Python 3.9+에서 의존성 없이 유지됩니다. 호스팅된 릴레이는 운영 서비스이며 패키지 가용성에 대한 약속이 아닙니다.
@@ -34,8 +36,8 @@ GitHub 환경은 `pypi`이고 활성 워크플로는 `publish.yml`입니다. PyP
 
 ## 준비 및 검증
 
-1. 릴리스 브랜치가 베타 기준선과 #130, #132–#134, #147, #148 및 #141을 포함하고 `main`을 대상으로 하는지 확인하십시오.
-2. `session_peer.__version__ == "1.0.0rc1"`인지 확인하고, 릴리스 후보 노트가 sdist에 포함되어 있는지, 4개 README의 설치 명령어가 일치하는지 확인하십시오.
+1. 릴리스 브랜치가 RC1 기준선과 병합된 #158을 포함하고 `main`을 대상으로 하는지 확인하십시오. 안정 버전 유지보수 브랜치를 main에 병합하지 마십시오.
+2. `session_peer.__version__ == "1.0.0rc2"`인지 확인하고, 릴리스 후보 노트가 sdist에 포함되어 있는지, 4개 README의 설치 명령어가 일치하는지 확인하십시오.
 3. 전체 CI 매트릭스를 실행합니다. 로컬에서 코어 스위트, 컨트롤 Node 22/24 스위트, Node/Python 통합, 최종 diff에 적합한 빌드 및 아카이브 검사를 반복하십시오. 라이브 모델 제출은 릴리스 준비 과정에 포함되지 않습니다.
 4. 정확한 후보로부터 한 번 빌드합니다:
 
@@ -44,7 +46,7 @@ GitHub 환경은 `pypi`이고 활성 워크플로는 `publish.yml`입니다. PyP
    ```
 
 5. 두 아카이브를 모두 검사합니다. wheel에는 `session_peer.py`, `session_peer_mcp.py`, `session_peer_relay/` 및 메타데이터가 포함됩니다. sdist에는 승인된 문서 및 배포 템플릿도 포함됩니다. 어떤 아카이브에도 `cc_peer.py`, 자격 증명, 데이터베이스, 재생 상태, 개인 키, 브라우저 데이터 또는 로컬 증거가 포함되어서는 안 됩니다.
-6. 깨끗한 환경에 wheel과 sdist를 각각 독립적으로 설치합니다. `session-peer --version`이 `1.0.0rc1`을 보고하는지, 비어 있는 홈 디렉터리에서 `session-peer list --output-format
+6. 깨끗한 환경에 wheel과 sdist를 각각 독립적으로 설치합니다. `session-peer --version`이 `1.0.0rc2`을 보고하는지, 비어 있는 홈 디렉터리에서 `session-peer list --output-format
    json` works in an empty home, and relay/MCP extras pass `pip check` 및 help 스모크 테스트를 통과하는지 확인하십시오.
 7. 필수 검사가 통과된 후에만 병합합니다. `main`을 가져와서(fetch) 정확한 커밋을 기록하고, 해당 커밋에서 버전과 의도된 변경 사항을 확인하십시오.
 
@@ -55,11 +57,11 @@ GitHub 환경은 `pypi`이고 활성 워크플로는 `publish.yml`입니다. PyP
 ```bash
 git fetch origin main --tags
 release_commit=$(git rev-parse origin/main)
-gh release create v1.0.0-rc.1 \
+gh release create v1.0.0-rc.2 \
   --repo abruption/session-peer \
   --target "$release_commit" \
-  --title "session-peer v1.0.0-rc.1" \
-  --notes-file docs/releases/v1.0.0-rc.1.md \
+  --title "session-peer v1.0.0-rc.2" \
+  --notes-file docs/releases/v1.0.0-rc.2.md \
   --draft --prerelease --latest=false
 ```
 
@@ -70,7 +72,7 @@ gh release create v1.0.0-rc.1 \
 게시 직전에 최종 사용자 승인을 받으십시오. 게시하면 GitHub 릴리스가 공개되고 PyPI 업로드가 트리거됩니다:
 
 ```bash
-gh release edit v1.0.0-rc.1 \
+gh release edit v1.0.0-rc.2 \
   --repo abruption/session-peer \
   --draft=false --prerelease --latest=false
 ```
@@ -80,10 +82,10 @@ gh release edit v1.0.0-rc.1 \
 ## 게시 검증
 
 1. 예상되는 태그 및 커밋에 대해 `publish.yml`이 성공했는지 확인하십시오.
-2. PyPI가 정확히 `session-peer==1.0.0rc1`을 노출하는지 확인하십시오. wheel과 sdist를 다운로드하여 워크플로 아티팩트와 해시를 비교하고 내용을 다시 검사하십시오.
+2. PyPI가 정확히 `session-peer==1.0.0rc2`을 노출하는지 확인하십시오. wheel과 sdist를 다운로드하여 워크플로 아티팩트와 해시를 비교하고 내용을 다시 검사하십시오.
 3. 깨끗한 환경에 정확한 PyPI 시험판을 설치하고 버전, 클린 홈 list, 릴레이 엑스트라 및 MCP 스모크 검사를 반복하십시오.
-4. GitHub가 해당 릴리스를 prerelease로 표시하고 latest로 표시하지 않았는지 확인하십시오. 안정 버전 `releases/latest` 엔드포인트 및 일반 업데이트 알림은 v0.9.1을 계속 가리켜야 합니다.
+4. GitHub가 해당 릴리스를 prerelease로 표시하고 latest로 표시하지 않았는지 확인하십시오. 안정 버전 `releases/latest` 엔드포인트 및 일반 업데이트 알림은 v0.9.2을 계속 가리켜야 합니다.
 5. 호스팅된 릴레이는 별도로 검증하십시오. 패키지 게시가 서비스 정상 상태, OAuth 정책 또는 에이전트 인정을 증명하지는 않습니다.
-6. GitHub, PyPI 및 클린 설치 증거가 기록된 후에만 v1.0.0-rc 마일스톤을 닫으십시오.
+6. GitHub, PyPI 및 클린 설치 증거가 기록된 후에만 v1.0.0-rc.2 마일스톤을 닫으십시오.
 
 패키지 관리자로 설치한 환경은 자체 패키지 관리자로 업그레이드합니다. 독립형 안정 설치는 `session-peer update`를 계속 사용하고, 릴리스 후보 테스터는 정확한 패키지 버전을 사용합니다. 제출이 소비나 인정을 증명하는 것은 절대 아닙니다.
