@@ -123,6 +123,30 @@ class RelayLab(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result['ok'], result)
         self.assertEqual(result['route'], 'relay')
 
+    async def test_relay_setup_timeout_recovers_with_one_native_effect(self):
+        from session_peer_relay import wire
+        await self.pair()
+        original = wire.admission
+        attempts = []
+
+        def interrupted_admission(url, credential):
+            if credential == self.client_token:
+                attempts.append(credential)
+                if len(attempts) == 1:
+                    raise TimeoutError('fixture response timeout; never log credentials')
+            return original(url, credential)
+
+        ident = str(uuid.uuid4())
+        with mock.patch.object(wire, 'admission', side_effect=interrupted_admission):
+            result = await exchange(self.client, self.host.device, 'send',
+                                    {'target': 'review', 'message': 'one effect after setup timeout'},
+                                    ident, 'relay', self.client_token)
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['requestId'], ident)
+        self.assertFalse(result['consumptionConfirmed'])
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(len(self.effects), 1)
+
     async def test_relay_outage_does_not_break_direct(self):
         await self.pair()
         self.relay_server.close()

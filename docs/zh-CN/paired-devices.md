@@ -5,6 +5,12 @@ Claude、Codex 或已注册的 Antigravity 端点。通常的本地/SSH 命令
 保持无外部依赖。这是一个显式的 CLI 工作流；不会安装移动端应用程序、
 NAT 穿透、WireGuard 隧道或自动公开服务。
 
+## 连接失败诊断与安全的连接重试
+
+`no_authenticated_route` 保留 `retryAllowed:false` 和 `consumptionConfirmed:false`。新增的 `routeFailures` 数组给出每条失败路径的 `stage`、允许列表中的 `reason` 和 `attempts`；HTTP 拒绝还可能包含 `httpStatus`。可以区分控制请求/响应、Relay 准入、WebSocket 升级、连接匹配和对端连接失败，但不会记录 URL、凭据、原始异常或消息正文。接收端每分钟最多向 stderr 输出一条经过清理的 `relay_connection_failed` 警告。
+
+仅在**应用消息提交前的 Relay 连接超时**时，等待 0.5 秒后再尝试连接一次。使用新的准入票据和通道，不重用已消耗的票据，也不重发代理消息。HTTP 拒绝、身份/证书错误和未知失败不会重试。直接路径获选时仍可取消 Relay 尝试。提交后丢失响应仍为 `unknown`，不重发、不切换路径。此有限缓解措施不代表公开网络故障已经解决；部署后必须重新验证实际 ACK 和长时间运行。
+
 ## 安装
 
 在两台设备上的隔离环境中从 PyPI 安装 session-peer v0.9.0 或更高版本：

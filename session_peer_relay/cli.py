@@ -19,6 +19,15 @@ from .native import Policy
 from .relay import Relay, RelayLimits
 from .store import Store, Rejected
 from .wire import validate_relay_url, direct_address
+from .transport_errors import NoAuthenticatedRoute, TransportFailure
+
+
+def connection_diagnostics(exc):
+    if isinstance(exc, NoAuthenticatedRoute):
+        return {'routeFailures': exc.route_failures}
+    if isinstance(exc, TransportFailure):
+        return {'connectionFailure': exc.diagnostic()}
+    return {}
 
 
 def state_path(value):
@@ -373,7 +382,7 @@ def main(kind, argv):
         result = asyncio.run(manage(kind, args))
     except Exception as exc:
         result = {'ok': False, 'reason': str(exc) if isinstance(exc, Rejected) else type(exc).__name__,
-                  'retryAllowed': False}
+                  'retryAllowed': False, **connection_diagnostics(exc)}
     emit(result)
     return 0 if result.get('ok') else 1
 
@@ -413,7 +422,7 @@ def invoke_core(args):
         result = asyncio.run(core_exchange(args))
     except Exception as exc:
         result = {'ok': False, 'reason': str(exc) if isinstance(exc, Rejected) else type(exc).__name__,
-                  'retryAllowed': False, 'consumptionConfirmed': False}
+                  'retryAllowed': False, 'consumptionConfirmed': False, **connection_diagnostics(exc)}
     result.update(device=args.device, host='device:'+args.device, transport='paired_device')
     human = 'Device result: '+str(result.get('status', 'ok' if result.get('ok') else result.get('reason')))
     if args.command == 'list':

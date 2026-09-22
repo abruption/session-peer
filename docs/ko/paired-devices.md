@@ -2,6 +2,12 @@
 
 이 선택형 Unix/Python 3.11+ 트랜스포트는 운영자가 정의한 Claude, Codex 또는 등록된 Antigravity 엔드포인트로 요청을 전달합니다. 일반적인 로컬/SSH 명령은 의존성 없는 상태로 유지됩니다. 이는 명시적인 CLI 워크플로이며, 모바일 애플리케이션, NAT 통과, WireGuard 터널 또는 자동 공용 서비스는 설치되지 않습니다.
 
+## 연결 실패 진단과 안전한 연결 재시도
+
+`no_authenticated_route`는 `retryAllowed:false`, `consumptionConfirmed:false`를 유지합니다. 추가된 `routeFailures` 배열은 경로별 `stage`, 허용 목록의 `reason`, `attempts`를 표시하며 HTTP 거부에는 `httpStatus`가 포함될 수 있습니다. 제어 요청/응답, Relay 입장, WebSocket 업그레이드, 연결 매칭, 피어 연결 실패를 구분하되 URL·자격증명·원문 예외·메시지 본문은 기록하지 않습니다. 수신자는 정제된 `relay_connection_failed` 경고를 stderr에 분당 최대 한 번 출력합니다.
+
+**애플리케이션 메시지 제출 전 Relay 연결 시간 초과**에만 0.5초 후 한 번 더 연결합니다. 새 입장 티켓과 채널을 사용하며 소비된 티켓이나 에이전트 메시지를 재전송하지 않습니다. HTTP 거부, 인증/인증서 오류, 알 수 없는 실패는 재시도하지 않습니다. 직접 연결이 선택되면 Relay 시도는 취소될 수 있습니다. 제출 후 응답 손실은 여전히 `unknown`이며 재전송이나 경로 전환을 하지 않습니다. 이 제한된 완화 조치가 공개 경로 장애 해결을 입증하지는 않습니다. 배포 후 실제 ACK와 장시간 검증을 다시 통과해야 합니다.
+
 ## 설치
 
 양쪽 기기 모두 격리된 환경에서 PyPI의 session-peer v0.9.0 이상을 설치합니다:

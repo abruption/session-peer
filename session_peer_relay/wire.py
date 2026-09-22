@@ -9,6 +9,9 @@ import urllib.error
 import urllib.parse
 
 from websockets.asyncio.client import connect
+from websockets.exceptions import InvalidStatus
+
+from .transport_errors import failure, TransportFailure
 
 MAX_FRAME = 256 * 1024
 MAX_MESSAGE = 64 * 1024
@@ -79,32 +82,47 @@ def admission(url, credential):
     validate_relay_url(url)
     target = url.replace('wss://', 'https://', 1).replace('ws://', 'http://', 1)
     target = target.removesuffix('/v1/connect') + '/v1/session'
-    headers = credential.headers(url) if hasattr(credential, 'headers') else {'Authorization': 'Bearer '+credential}
+    try:
+        headers = credential.headers(url) if hasattr(credential, 'headers') else {'Authorization': 'Bearer '+credential}
+    except Exception as exc:
+        raise failure('control_admission', exc) from None
     req = urllib.request.Request(target, headers={**headers, 'User-Agent': 'session-peer/0.9-relay'})
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *args, **kwargs):
             return None
     try:
         with urllib.request.build_opener(NoRedirect).open(req, timeout=TIMEOUT) as response:
-            return response.headers['Set-Cookie'].split(';', 1)[0]
+            cookie = response.headers.get('Set-Cookie')
+            if not cookie:
+                raise TransportFailure('relay_admission', 'invalid_admission_response')
+            return cookie.split(';', 1)[0]
     except urllib.error.HTTPError as exc:
         exc.close()
-        raise ValueError('Relay admission rejected') from None
+        raise TransportFailure('relay_admission', 'http_rejected', http_status=exc.code) from None
+    except Exception as exc:
+        raise failure('relay_admission', exc) from None
 
 
 async def relay_stream(url, credential, attach_timeout=12):
     cookie = await asyncio.to_thread(admission, url, credential)
-    ws = await PinnedConnect(url, additional_headers={'Cookie': cookie}, compression=None,
-                       user_agent_header='session-peer/0.9-relay',
-                       max_size=MAX_FRAME, max_queue=4, write_limit=32768,
-                       open_timeout=TIMEOUT, close_timeout=2)
+    try:
+        ws = await PinnedConnect(url, additional_headers={'Cookie': cookie}, compression=None,
+                           user_agent_header='session-peer/0.9-relay',
+                           max_size=MAX_FRAME, max_queue=4, write_limit=32768,
+                           open_timeout=TIMEOUT, close_timeout=2)
+    except InvalidStatus as exc:
+        raise TransportFailure('relay_websocket', 'http_rejected', http_status=exc.response.status_code) from None
+    except Exception as exc:
+        raise failure('relay_websocket', exc) from None
     try:
         ready = json.loads(await asyncio.wait_for(ws.recv(), attach_timeout))
         if ready != {'relayAttached': True}:
-            raise ValueError('Relay attach rejected')
+            raise TransportFailure('relay_attach', 'invalid_attach_response')
         return Ws(ws)
-    except BaseException:
+    except BaseException as exc:
         await ws.close()
+        if isinstance(exc, Exception):
+            raise failure('relay_attach', exc) from None
         raise
 
 

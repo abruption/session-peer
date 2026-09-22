@@ -5,6 +5,25 @@ Claude, Codex or registered Antigravity endpoints. The usual local/SSH commands
 stay dependency-free. This is an explicit CLI workflow; no mobile application,
 NAT traversal, WireGuard tunnel or automatic public service is installed.
 
+## Connection failures and safe setup retry
+
+`no_authenticated_route` retains `retryAllowed:false` and
+`consumptionConfirmed:false`. Its additive `routeFailures` array identifies each
+failed route's `stage`, allowlisted `reason`, and `attempts`; HTTP refusals may
+include `httpStatus`. Control requests/responses, Relay admission, WebSocket
+upgrade, attach, and peer connection failures can be distinguished without
+logging URLs, credentials, exception text or message bodies. The receiver emits
+at most one sanitized `relay_connection_failed` warning per minute to stderr.
+
+Only a Relay **setup timeout before application submission** gets one additional
+connection attempt, after 0.5 seconds. It obtains a fresh admission ticket and
+channel; it does not reuse a spent ticket or repeat an agent message. HTTP
+refusals, authentication/certificate errors and unknown failures are not retried.
+Direct-path selection can still cancel the Relay attempt. After application
+submission, a lost response remains `unknown`, with no resend or route failover.
+This bounded mitigation is not proof that a public-edge outage is fixed: repeat
+real ACK and long-running validation after deployment before closing a gate.
+
 ## Install
 
 Install session-peer v0.9.0 or later from PyPI in an isolated environment on both devices:

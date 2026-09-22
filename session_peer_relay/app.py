@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import logging
 from pathlib import Path
 import time
 import uuid
@@ -14,6 +15,7 @@ from .store import Store, Rejected
 from .wire import Secure, Tcp, relay_stream, direct_address
 from .native import Policy, Native
 from .rotation import remote_prepare, remote_commit, remote_status
+from .transport_errors import failure, NoAuthenticatedRoute
 
 
 class Receiver:
@@ -24,6 +26,7 @@ class Receiver:
         self.tasks = set()
         self.connections = set()
         self.rejected = 0
+        self.relay_failure_last_logged = float('-inf')
 
     async def watch_peer(self, channel):
         while True:
@@ -167,7 +170,14 @@ class Receiver:
                 self.spawn(raw)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
+                # One aggregate diagnostic per minute, never raw exceptions,
+                # headers, endpoint identities or message bodies.
+                now = time.monotonic()
+                if now - self.relay_failure_last_logged >= 60:
+                    self.relay_failure_last_logged = now
+                    logging.getLogger(__name__).warning('relay_connection_failed %s',
+                        json.dumps(failure('relay_connect', exc).diagnostic(), sort_keys=True))
                 await asyncio.sleep(delay)
                 delay = min(5, delay*2)
 
@@ -254,7 +264,7 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
         raise Rejected('unpaired_device')
     routes = record['routes']
 
-    async def ready(kind):
+    async def ready_once(kind):
         channel = await open_channel(store, record['certificate'], routes, kind, credential)
         try:
             await channel.send(request(store, peer, 'probe'))
@@ -267,6 +277,23 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
         except BaseException:
             await channel.close()
             raise
+
+    diagnostics = {}
+
+    async def ready(kind):
+        # Retry only a connection timeout BEFORE application submission. A fresh
+        # admission proof/ticket and channel are acquired; never replay a send.
+        for attempt in (1, 2):
+            try:
+                return await ready_once(kind)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                detail = failure('peer_connect', exc)
+                diagnostics[kind] = {'route': kind, **detail.diagnostic(), 'attempts': attempt}
+                if kind != 'relay' or not detail.transient or attempt == 2:
+                    raise
+                await asyncio.sleep(.5)
 
     kinds = [kind for kind in ('direct', 'relay') if kind in routes] if route == 'auto' else [route]
     tasks = {asyncio.create_task(ready(kind)): kind for kind in kinds}
@@ -282,7 +309,7 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
                     else:
                         await task.result()[1].close()
         if winner is None:
-            raise Rejected('no_authenticated_route')
+            raise NoAuthenticatedRoute([diagnostics[kind] for kind in kinds if kind in diagnostics])
     finally:
         for task in tasks:
             if not task.done():
