@@ -42,7 +42,7 @@ try:
 except ImportError:  # Windows has no POSIX flock; activity stays unknown there.
     fcntl = None
 
-__version__ = "0.9.1"
+__version__ = "0.9.2"
 GITHUB_REPO = "abruption/session-peer"
 
 # Claude Code refuses a same-machine message once its serialized form passes
@@ -1013,9 +1013,15 @@ def _read_win_auth(pid: int) -> str | None:
             data = json.loads(key_file.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        auth = {"type": "auth"}
-        auth.update(data)
-        return json.dumps(auth, ensure_ascii=False)
+        if not isinstance(data, dict):
+            continue
+        token = data.get("peerToken")
+        if not isinstance(token, str) or not token.strip():
+            continue
+        # The registry schema is not the wire protocol. Windows requires a
+        # first-line {"type": "auth", "token": ...}; forwarding peerToken and
+        # process metadata verbatim causes the receiver to drop the connection.
+        return json.dumps({"type": "auth", "token": token}, ensure_ascii=False)
     return None
 
 
@@ -1687,6 +1693,20 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     )
     if failure:
         raise ssh_failure_error(host, ssh_info, failure, detail)
+    runtime_output = (completed.stdout + "\n" + completed.stderr).strip().lower()
+    if (runtime_output == "python"
+            or "python was not found" in runtime_output
+            or ("python3" in runtime_output and any(marker in runtime_output for marker in (
+                "command not found", "not recognized as", "no such file", "python3: not found",
+            )))):
+        raise CcPeerError(
+            f"{host}: remote python3 did not start a usable interpreter. "
+            "Source-streamed SSH requires a working python3 and a POSIX-compatible "
+            "remote shell. A Windows Store execution alias is not sufficient. "
+            "For native Windows, run the installed CLI locally, or use a WSL SSH "
+            "endpoint with Python installed. No fallback or resend was attempted.",
+            {**ssh_info, "remoteRuntimeFailure": "python3_unavailable_or_unsupported_shell"},
+        )
     if not stdout:
         raise CcPeerError(f"{host}: {detail}", ssh_info)
     try:
