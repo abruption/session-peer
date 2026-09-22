@@ -40,9 +40,9 @@ sequenceDiagram
     P-->>C: Deliver to Codex native inbox
 ```
 
-[![Live Codex-to-Claude Code messaging demo](docs/assets/session-peer-live-codex-claude-poster.png)](docs/assets/session-peer-live-codex-claude.mp4)
+![Live Codex-to-Claude Code messaging demo](docs/assets/session-peer-live-codex-claude.gif)
 
-[Watch the 26-second demo video](docs/assets/session-peer-live-codex-claude.mp4).
+26-second looping demo: Codex sends a request to Claude Code and receives an explicit reply.
 A successful post confirms only the inbox write. The explicit reply at the end
 confirms that the receiving session consumed the request and responded.
 

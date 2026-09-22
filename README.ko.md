@@ -39,9 +39,9 @@ sequenceDiagram
     P-->>C: Codex 기본 수신함으로 전달
 ```
 
-[![실제 Codex에서 Claude Code로 메시지를 보내는 데모](docs/assets/session-peer-live-codex-claude-poster.png)](docs/assets/session-peer-live-codex-claude.mp4)
+![실제 Codex에서 Claude Code로 메시지를 보내는 데모](docs/assets/session-peer-live-codex-claude.gif)
 
-[26초 데모 영상 보기](docs/assets/session-peer-live-codex-claude.mp4).
+26초 반복 데모: Codex가 Claude Code에 요청을 보내고 명시적인 회신을 받아요.
 게시 성공으로 확인되는 것은 수신함 기록뿐이에요. 마지막의 명시적인 회신으로 수신 세션이
 요청을 처리하고 응답을 보냈음을 확인할 수 있어요.
 

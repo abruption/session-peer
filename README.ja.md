@@ -39,9 +39,9 @@ sequenceDiagram
     P-->>C: Codex標準受信箱へ配信
 ```
 
-[![CodexからClaude Codeへ実際にメッセージを送るデモ](docs/assets/session-peer-live-codex-claude-poster.png)](docs/assets/session-peer-live-codex-claude.mp4)
+![CodexからClaude Codeへ実際にメッセージを送るデモ](docs/assets/session-peer-live-codex-claude.gif)
 
-[26秒のデモ動画を見る](docs/assets/session-peer-live-codex-claude.mp4)。
+26秒のループデモ：CodexがClaude Codeにリクエストを送り、明示的な返信を受け取ります。
 投稿成功で確認できるのは受信箱への書き込みまでです。最後の明示的な返信により、
 受信セッションが依頼を処理して応答したことを確認できます。
 

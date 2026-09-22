@@ -39,9 +39,9 @@ sequenceDiagram
     P-->>C: 传递到Codex原生收件箱
 ```
 
-[![Codex向Claude Code发送真实消息的演示](docs/assets/session-peer-live-codex-claude-poster.png)](docs/assets/session-peer-live-codex-claude.mp4)
+![Codex向Claude Code发送真实消息的演示](docs/assets/session-peer-live-codex-claude.gif)
 
-[观看26秒演示视频](docs/assets/session-peer-live-codex-claude.mp4)。
+26秒循环演示：Codex向Claude Code发送请求并收到明确回复。
 提交成功仅确认消息已写入收件箱。最后的明确回复可确认接收会话已处理请求并作出响应。
 
 ## 快速开始
