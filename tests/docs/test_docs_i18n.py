@@ -10,7 +10,7 @@ import unittest
 from urllib.parse import unquote, urlparse
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 LANGUAGES = ("ko", "ja", "zh-CN")
 FENCE_RE = re.compile(r"```[^\n]*\n.*?```", re.DOTALL)
 INLINE_CODE_RE = re.compile(r"(?<!`)`([^`\n]+)`(?!`)")

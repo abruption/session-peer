@@ -415,6 +415,6 @@ through uncertain responses and query its owner-only historical receipt with
 
 Initial registration must omit `expectedGeneration`; it is required for rotation.
 Do not infer or silently convert the generation used by older candidates.
-The executable Node/Python fixture in `tests/test_control_integration.py` covers
+The executable Node/Python fixture in `tests/control_integration/test_control_integration.py` covers
 registration, admission, revoked credentials, cross-owner rejection and rotation
 with response loss. Seeded fixture sessions are not evidence of actual OAuth.

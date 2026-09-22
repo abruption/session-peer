@@ -8,7 +8,7 @@ import time
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from tests import test_native_relay as platform_guard
+from tests.relay import test_native_relay as platform_guard
 from session_peer_relay.control import login, origin, DeviceCredential, enroll
 from session_peer_relay.identity import private_write
 from session_peer_relay.store import Store, Rejected

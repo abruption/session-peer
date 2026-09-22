@@ -93,7 +93,7 @@ execute trusted code. This change supplies no sandbox or external loading flag.
 
 ## Validation
 
-`tests/test_adapters.py` exercises a common Claude/Codex/fixture contract, third
+`tests/adapters/test_adapters.py` exercises a common Claude/Codex/fixture contract, third
 agent CLI and Reply-To routing, capabilities, incompatible registrations,
 malformed results, exception containment, MCP policy and native submission counts.
 A source-registered fixture is inserted only into a test copy of the streamed

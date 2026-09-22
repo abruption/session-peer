@@ -1,6 +1,6 @@
 """Unit tests for cc-peer. Standard library only, no network, no SSH.
 
-Run with:  python3 -m unittest tests.test_cc_peer -v
+Run with:  python3 -m unittest tests.core.test_cc_peer -v
 
 Every case here corresponds to something that was once wrong and shipped —
 the injection paths, the caps that weren't enforced, the reply line that

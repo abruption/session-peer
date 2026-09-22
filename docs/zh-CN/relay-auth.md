@@ -400,6 +400,6 @@ OAuth、Mac 用户浏览器、Python JWT 集成、24 小时运行或真实 Claud
 
 初始注册必须省略 `expectedGeneration`；轮换时则必须提供。
 切勿推断或暗中转换较旧候选版本所使用的世代。
-`tests/test_control_integration.py` 中的可执行 Node/Python 夹具涵盖了
+`tests/control_integration/test_control_integration.py` 中的可执行 Node/Python 夹具涵盖了
 注册、准入、已吊销凭据、跨所有者拒绝以及带响应丢失的
 轮换。预置的测试夹具会话并不能作为实际 OAuth 的证据。
