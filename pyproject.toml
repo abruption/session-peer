@@ -37,7 +37,7 @@ Repository = "https://github.com/abruption/session-peer"
 Issues = "https://github.com/abruption/session-peer/issues"
 
 [project.optional-dependencies]
-relay = ["websockets>=17.1,<18; python_version >= '3.11'", "cryptography>=50,<51; python_version >= '3.11'"]
+relay = ["websockets>=17.1,<18; python_version >= '3.11'", "cryptography>=50.0.1,<51; python_version >= '3.11'"]
 mcp = ["mcp>=1.12,<2; python_version >= '3.10'"]
 
 [project.scripts]
