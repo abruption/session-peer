@@ -115,11 +115,11 @@ validation steps, and a completion-report format. You remain in control of
 account changes, public exposure, payments, reboots, merges, releases, and
 publication.
 
-## Optional 1.0 beta features
+## Optional 1.0 release candidate features
 
-The opt-in `1.0.0b1` prerelease advances the authenticated public relay and keeps the v0.9 experimental [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md) bridge. Unfiltered `list` also includes live registered bridges.
+The opt-in `1.0.0rc1` release candidate carries the authenticated public relay toward the stable v1 contract and keeps the experimental [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md) bridge. Unfiltered `list` also includes live registered bridges.
 [Paired devices / encrypted relay](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md) require Unix, Python 3.11+ and the `[relay]` extra. Device identities are pinned and targets need explicit authorization on the receiving endpoint. The blind WSS relay cannot decrypt application messages; hosted-service availability remains separate from the package.
-Install the beta explicitly with `pipx install 'session-peer[relay]==1.0.0b1'`; normal upgrades do not select prereleases. Start with the [session-peer project page](https://abruption.dev/projects/session-peer/) and the paired-device guide above. Beta publication does not imply long-term stability. Ordinary local/SSH commands remain dependency-free.
+Install the release candidate explicitly with `pipx install 'session-peer[relay]==1.0.0rc1'`; normal upgrades do not select prereleases. Start with the [session-peer project page](https://abruption.dev/projects/session-peer/) and the paired-device guide above. RC publication does not establish hosted-service availability. Ordinary local/SSH commands remain dependency-free.
 
 ## Before you send
 

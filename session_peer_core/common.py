@@ -45,7 +45,7 @@ try:
 except ImportError:  # Windows has no POSIX flock; activity stays unknown there.
     fcntl = None
 
-__version__ = "1.0.0b1"
+__version__ = "1.0.0rc1"
 GITHUB_REPO = "abruption/session-peer"
 
 # Claude Code refuses a same-machine message once its serialized form passes

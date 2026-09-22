@@ -24,5 +24,5 @@
 
 - [v1兼容性契约](compatibility-v1.md)对stable、versioned、migrated、internal和experimental surface分类。
 - [代理传输架构](architecture/agent-transports.md)和[中继开发计划](relay-development-plan.md)介绍实现边界。
-- [发布说明](releases/v1.0.0-beta.1.md)描述已发布行为；[验证记录](validation/69-rc.md)保留范围明确的证据及限制。
+- [发布说明](releases/v1.0.0-rc.1.md)描述当前候选版本；[验证记录](validation/69-rc.md)保留范围明确的证据及限制。
 - relay69原型完成后，其独有回归测试已迁移到产品中继测试套件，原型源代码已删除。废弃的原型代码仍保留在Git历史中。
