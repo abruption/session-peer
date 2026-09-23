@@ -5,6 +5,7 @@ import hashlib
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 import json
+import logging
 import secrets
 import time
 
@@ -42,7 +43,7 @@ class RelayLimits:
 
 
 class Relay:
-    def __init__(self, accounts, *, capture=None, control=None, limits=None):
+    def __init__(self, accounts, *, capture=None, control=None, limits=None, diagnostic_events=False):
         # Provisioned admission hashes are independent of end-to-end TLS identities.
         self.accounts = accounts
         self.control = control
@@ -51,12 +52,16 @@ class Relay:
         self.waiting = {}
         self.connections = set()
         self.capture = capture  # in-memory adversarial test hook, never enabled by CLI
+        self.diagnostic_events = diagnostic_events
         self.bytes = 0
         self.forwarded_frames = 0
         self.rejected = 0
         self.requests = []
         self.started_at = time.time()
         self.started_monotonic = time.monotonic()
+        # Fixed production bounds; tests may shorten them on an isolated Relay.
+        self.receiver_wait = 60
+        self.client_wait = 10
         self.counters = {
             'handshakes': 0,
             'sessionsIssued': 0,
@@ -66,7 +71,21 @@ class Relay:
             'connectionCapacityRejected': 0,
             'unauthorizedRejected': 0,
             'byteBudgetClosed': 0,
+            'roomsOpened': 0,
+            'receiverRoomsOpened': 0,
+            'clientFirstRooms': 0,
+            'roomsPaired': 0,
+            'attachSentReceiver': 0,
+            'attachSentClient': 0,
+            'receiverIdleExpired': 0,
+            'clientWaitExpired': 0,
+            'roomsClosedBeforeAttach': 0,
         }
+
+    def diagnostic_event(self, event, **values):
+        if self.diagnostic_events:
+            logging.getLogger(__name__).warning('relay_room %s',
+                json.dumps({'event': event, **values}, sort_keys=True))
 
     def metrics(self):
         now = time.monotonic()
@@ -175,6 +194,9 @@ class Relay:
         other_role = 'client' if account['role'] == 'receiver' else 'receiver'
         slot = self.waiting.get(key)
         watcher = None
+        paired = False
+        attach_sent = False
+        close_reason = 'socket_closed'
         if self.control:
             async def watch_authorization():
                 while True:
@@ -184,29 +206,52 @@ class Relay:
                         return
             watcher = asyncio.create_task(watch_authorization())
         if slot is None:
-            slot = {'members': {}, 'ready': asyncio.Event()}
+            slot = {'members': {}, 'joined': {}, 'closedByRelay': set(), 'ready': asyncio.Event(),
+                    'opened': time.monotonic(), 'id': secrets.token_hex(8)}
             self.waiting[key] = slot
+            self.counters['roomsOpened'] += 1
+            self.counters['receiverRoomsOpened' if account['role'] == 'receiver' else 'clientFirstRooms'] += 1
+            self.diagnostic_event('room_open', roomId=slot['id'], openedBy=account['role'])
         try:
             if account['role'] in slot['members']:
+                close_reason = 'role_busy'
                 await ws.close(1013, 'role_busy')
                 return
             slot['members'][account['role']] = ws
+            slot['joined'][account['role']] = time.monotonic()
             if other_role in slot['members']:
                 # Both forwarding handlers exist before attach notification.
                 self.waiting.pop(key, None)
                 slot['ready'].set()
+                self.counters['roomsPaired'] += 1
+                receiver_age = time.monotonic()-slot['joined']['receiver']
+                self.diagnostic_event('room_paired', roomId=slot['id'],
+                    receiverWsAgeMs=max(0, round(receiver_age*1000)))
             ready = asyncio.create_task(slot['ready'].wait())
             closed = asyncio.create_task(ws.wait_closed())
             try:
-                await asyncio.wait({ready, closed}, timeout=60 if account['role'] == 'receiver' else 10, return_when=asyncio.FIRST_COMPLETED)
+                await asyncio.wait({ready, closed}, timeout=self.receiver_wait if account['role'] == 'receiver' else self.client_wait, return_when=asyncio.FIRST_COMPLETED)
                 if not slot['ready'].is_set() or closed.done():
+                    if not closed.done() and not slot['ready'].is_set():
+                        close_reason = 'receiver_idle_expiry' if account['role'] == 'receiver' else 'client_wait_expiry'
+                        counter = 'receiverIdleExpired' if account['role'] == 'receiver' else 'clientWaitExpired'
+                        self.counters[counter] += 1
                     return
+                paired = True
             finally:
                 ready.cancel()
                 closed.cancel()
                 await asyncio.gather(ready, closed, return_exceptions=True)
             other = slot['members'][other_role]
-            await ws.send(json.dumps({'relayAttached': True}))
+            try:
+                await ws.send(json.dumps({'relayAttached': True}))
+            except BaseException:
+                close_reason = 'attach_notify_failed'
+                raise
+            self.counters['attachSentReceiver' if account['role'] == 'receiver' else 'attachSentClient'] += 1
+            self.diagnostic_event('attach_sent', roomId=slot['id'], role=account['role'])
+            attach_sent = True
+            close_reason = 'attached_closed'
             forwarded_bytes = 0
             async with asyncio.timeout(max(0, ws.lab_expiry-time.monotonic())):
                 async for data in ws:
@@ -222,10 +267,23 @@ class Relay:
                         break
                     if self.capture is not None:
                         self.capture.append(data)
-                    await asyncio.wait_for(other.send(data), 2)
+                    try:
+                        await asyncio.wait_for(other.send(data), 2)
+                    except TimeoutError:
+                        close_reason = 'forward_send_timeout'
+                        raise
+            if close_reason == 'attached_closed':
+                if account['role'] in slot['closedByRelay']:
+                    close_reason = 'peer_closed'
+                elif getattr(ws, 'close_code', None) == 1001:
+                    close_reason = 'remote_going_away'
+        except TimeoutError:
+            if close_reason != 'forward_send_timeout':
+                close_reason = 'stream_lifetime_expiry'
         except Exception:
             # No request headers, tokens, body or endpoint fingerprints in logs.
-            pass
+            if close_reason != 'attach_notify_failed':
+                close_reason = 'forwarding_error'
         finally:
             if watcher:
                 watcher.cancel()
@@ -235,10 +293,21 @@ class Relay:
                 slot['members'].pop(account['role'], None)
                 if self.waiting.get(key) is slot:
                     self.waiting.pop(key, None)
+                    self.counters['roomsClosedBeforeAttach'] += 1
+                    self.diagnostic_event('room_close', roomId=slot['id'],
+                        reason=close_reason, ageMs=max(0, round((time.monotonic()-slot['opened'])*1000)))
                 other = slot['members'].get(other_role)
                 if other:
+                    slot['closedByRelay'].add(other_role)
                     await other.close(1001, 'peer_closed')
-            await ws.close()
+            try:
+                await ws.close()
+            finally:
+                if paired:
+                    code = getattr(ws, 'close_code', None)
+                    self.diagnostic_event('stream_close', roomId=slot['id'], role=account['role'],
+                        reason=close_reason, attachSent=attach_sent,
+                        closeCode=code if type(code) is int and 1000 <= code <= 4999 else None)
 
     async def start(self, host, port):
         return await serve(self.handler, host, port, process_request=self.process_request,

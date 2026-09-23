@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 from .identity import fingerprint, private_read, private_write
 from .store import Rejected
+from .transport_errors import failure, TransportFailure
 
 CLIENT_ID = 'session-peer-cli'
 
@@ -43,11 +44,17 @@ def call(server, path, body=None, token=None):
         response = urllib.request.build_opener(NoRedirect).open(req, timeout=10)
     except urllib.error.HTTPError as exc:
         response = exc
-    except Exception:
-        raise Rejected('control_unreachable') from None
-    with response:
-        raw = response.read(65537)
-        status = response.code
+    except Exception as exc:
+        raise failure('control_request', exc) from None
+    status = response.code
+    try:
+        with response:
+            raw = response.read(65537)
+    except Exception as exc:
+        # A received refusal remains non-retryable even if its body times out.
+        if status >= 400:
+            raise TransportFailure('control_response', 'control_request_refused', http_status=status) from None
+        raise failure('control_response', exc) from None
     try:
         if len(raw) > 65536:
             raise ValueError()
@@ -55,14 +62,14 @@ def call(server, path, body=None, token=None):
         if not isinstance(value, dict):
             raise ValueError()
     except Exception:
-        raise Rejected('invalid_control_response') from None
+        raise TransportFailure('control_response', 'invalid_control_response', http_status=status) from None
     if status >= 400:
         error = value.get('error', value.get('code', 'control_request_refused'))
         # Only known protocol errors may reach logs/output; server strings may contain secrets.
         known = {'authorization_pending', 'slow_down', 'access_denied', 'expired_token',
                  'invalid_grant', 'invalid_client', 'operation_already_committed',
                  'operation_conflict', 'operation_not_found'}
-        raise Rejected(error if error in known else 'control_request_refused')
+        raise TransportFailure('control_response', error if isinstance(error, str) and error in known else 'control_request_refused', http_status=status)
     return value
 
 

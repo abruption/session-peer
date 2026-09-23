@@ -19,6 +19,15 @@ from .native import Policy
 from .relay import Relay, RelayLimits
 from .store import Store, Rejected
 from .wire import validate_relay_url, direct_address
+from .transport_errors import NoAuthenticatedRoute, TransportFailure
+
+
+def connection_diagnostics(exc):
+    if isinstance(exc, NoAuthenticatedRoute):
+        return {'routeFailures': exc.route_failures}
+    if isinstance(exc, TransportFailure):
+        return {'connectionFailure': exc.diagnostic()}
+    return {}
 
 
 def state_path(value):
@@ -125,7 +134,8 @@ async def manage(kind, args):
             if control:
                 control.close()
             raise Rejected('invalid_relay_metrics_port')
-        relay = Relay(accounts, control=control, limits=limits)
+        relay = Relay(accounts, control=control, limits=limits,
+                      diagnostic_events=getattr(args, 'diagnostic_events', False))
         try:
             server = await relay.start(args.bind, args.port)
         except BaseException:
@@ -267,7 +277,8 @@ async def manage(kind, args):
                     receiver_lock.close()
                     raise Rejected('receiver_already_running') from None
                 policy = json.loads(private_read(args.policy))
-                receiver = Receiver(store, policy)
+                receiver = Receiver(store, policy,
+                                    diagnostic_events=getattr(args, 'diagnostic_events', False))
                 # Never create a public listener merely because a relay is configured.
                 server = await receiver.listen(args.bind, args.port)
                 task = None
@@ -320,6 +331,7 @@ def parser(kind):
         item.add_argument('--device-connections', type=int, default=4)
         item.add_argument('--connection-byte-budget', type=int, default=32*1024*1024)
         item.add_argument('--metrics-port', type=metrics_port, default=0, metavar='PORT')
+        item.add_argument('--diagnostic-events', action='store_true')
         return p
     command('init'); command('peers')
     item = command('login'); item.add_argument('--server', required=True); item.add_argument('--no-browser', action='store_true')
@@ -351,6 +363,7 @@ def parser(kind):
     item.add_argument('--direct'); item.add_argument('--relay')
     item = command('serve'); item.add_argument('--policy', required=True)
     item.add_argument('--login', action='store_true')
+    item.add_argument('--diagnostic-events', action='store_true')
     item.add_argument('--relay'); item.add_argument('--admission-file'); server_options(item)
     item = command('revoke'); item.add_argument('--peer', required=True)
     for name in ('pair', 'status'):
@@ -373,7 +386,7 @@ def main(kind, argv):
         result = asyncio.run(manage(kind, args))
     except Exception as exc:
         result = {'ok': False, 'reason': str(exc) if isinstance(exc, Rejected) else type(exc).__name__,
-                  'retryAllowed': False}
+                  'retryAllowed': False, **connection_diagnostics(exc)}
     emit(result)
     return 0 if result.get('ok') else 1
 
@@ -413,7 +426,7 @@ def invoke_core(args):
         result = asyncio.run(core_exchange(args))
     except Exception as exc:
         result = {'ok': False, 'reason': str(exc) if isinstance(exc, Rejected) else type(exc).__name__,
-                  'retryAllowed': False, 'consumptionConfirmed': False}
+                  'retryAllowed': False, 'consumptionConfirmed': False, **connection_diagnostics(exc)}
     result.update(device=args.device, host='device:'+args.device, transport='paired_device')
     human = 'Device result: '+str(result.get('status', 'ok' if result.get('ok') else result.get('reason')))
     if args.command == 'list':

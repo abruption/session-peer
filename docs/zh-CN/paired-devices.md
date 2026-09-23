@@ -5,6 +5,18 @@ Claude、Codex 或已注册的 Antigravity 端点。通常的本地/SSH 命令
 保持无外部依赖。这是一个显式的 CLI 工作流；不会安装移动端应用程序、
 NAT 穿透、WireGuard 隧道或自动公开服务。
 
+## 连接失败诊断与安全的连接重试
+
+`no_authenticated_route` 保留 `retryAllowed:false` 和 `consumptionConfirmed:false`。`routeFailures` 给出每条失败路径最后一次的 `stage`、允许列表中的 `reason` 和 `attempts`。有界的 `attemptHistory` 保留每次尝试的阶段、原因和 `elapsedMs`；HTTP 拒绝还可能包含 `httpStatus`，WebSocket 关闭可能包含 `closeCode`。控制、准入、升级、attach、对端 TLS 和 probe 故障可以区分，但不会记录 URL、凭据、原始异常或消息正文。第二次尝试成功时会有 `setupDegraded:true`、`setupAttempts:2` 和 `setupFailureHistory`，不能算作干净的稳定性测试通过。
+
+仅在**WebSocket 升级前的控制或准入超时**时，等待 0.5 秒后再尝试连接一次。attach、对端 TLS 和 probe 超时不会重试。WebSocket 升级超时也不重试，因为 origin 可能已经配对并消耗了接收端房间。使用新的准入票据和通道，不重用已消耗的票据，也不重发代理消息。HTTP 拒绝、身份/证书错误和未知失败也不会重试。直接路径获选时仍可取消 Relay 尝试。提交后丢失响应仍为 `unknown`，不重发、不切换路径。此有限缓解措施不代表公开网络故障已经解决；部署后必须重新验证实际 ACK 和长时间运行。
+
+接收端每分钟最多向 stderr 输出一条经过清理的 `relay_connection_failed` 警告。疑似正常空闲到期的关闭与故障警告分开。显式使用 `device serve --diagnostic-events` 和 `relay serve --diagnostic-events` 时，只向 stderr 记录房间、attach、关闭阶段、耗时、允许列表内的原因及关闭代码。默认关闭；不会记录设备身份、房间名、URL、标头、凭据或正文。Relay 指标还会增加房间创建与配对、每条连接的 attach 发送以及到期计数。attach 发送不能证明客户端已收到。接收端的 `idle_expiry_like` 不能证明服务器端原因。
+
+WebSocket 关闭的 `closeSource` 区分代码来自接收还是发送。Relay 计数器区分接收端先到和客户端先到的房间。`receiverWsAgeMs` 只表示等待时长，不能证明连接健康；需要对照配对时间与接收端的 `attach_received`、对端 TLS 事件。
+
+`stream_close.closeCode` 是从远端收到的关闭代码。`1006` 表示未收到关闭帧，可能提示连接停滞。`peer_closed` 表示另一条连接结束后 Relay 关闭了本连接；`remote_going_away` 表示远端在 Relay 未发起关闭时自行发送了 1001 代码。
+
 ## 安装
 
 在两台设备上的隔离环境中从 PyPI 安装 session-peer v0.9.0 或更高版本：
