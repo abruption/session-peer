@@ -2,18 +2,18 @@
 
 发布 GitHub Release 会触发 `.github/workflows/publish.yml`，该工作流构建选定的标签并通过 Trusted Publishing 将其上传到 PyPI。草稿不会发布。请将准备、批准、发布和验证步骤分开，以确保公开构件始终指向经过审查的代码。
 
-RC2 发布与正式版升级属于不同条件。必须在全部五个主机验证精确的已发布 RC2、取得受影响路由的独立 ACK，并完成接收端变更后的四小时观察，才可关闭四个 Windows issue 及 RC2 里程碑。遵循 [RC2 验证计划](docs/zh-CN/releases/v1.0.0-rc.2.md)，RC1 或版本更新前的证据不能替代。
+RC3 发布与正式版升级属于不同条件。必须在全部五个主机以独立 ACK 证据和不间断的四小时观察验证精确的已发布 RC3 之后，才可关闭 #161、#163、#164 及 RC3 里程碑。遵循 [RC3 验证计划](docs/zh-CN/releases/v1.0.0-rc.3.md)，RC2 证据或离线复现不能替代。
 
-## 当前候选版本：v1.0.0-rc.2
+## 当前候选版本：v1.0.0-rc.3
 
-第二个 1.0 候选发布版保留 RC1 契约，加入 #158 的 Windows 修复：Claude 管道认证 (#157)、原生 Codex writer 验证 (#153)、WSL→原生 Codex 发现与发送 (#156) 和 SSH Python 诊断 (#151)。Claude 与 SSH 修复也已在稳定版 v0.9.2 发布。其规范的 Python/PyPI 版本为 `1.0.0rc2`；面向用户的 Git 标签和 GitHub Release 为 `v1.0.0-rc.2`。`packaging.version.Version` 将这些值视为等同。不要使用裸 `v1.0.0-rc`，它会标准化为 RC 零。
+第三个 1.0 候选发布版保留包含 #158 Windows 修复的 RC2 契约，并针对 #161 跟踪的公共中继路由失败，加入限制提交前设置重试的路由诊断 (#162)，以及缩短接收端重连空档与 role_busy 指标 (#168)。RC2 的 Claude 与 SSH 修复也已在稳定版 v0.9.2 发布。其规范的 Python/PyPI 版本为 `1.0.0rc3`；面向用户的 Git 标签和 GitHub Release 为 `v1.0.0-rc.3`。`packaging.version.Version` 将这些值视为等同。不要使用裸 `v1.0.0-rc`，它会标准化为 RC 零。
 
 本次发布是明确的预发布版本：
 
 - 将 GitHub Release 标记为 **Pre-release**，切勿标记为 Latest；
 - 正常的稳定包升级必须继续选择 v0.9.2；
-- 测试人员使用 `pipx install 'session-peer[relay]==1.0.0rc2'` 或等效的 `uv` 命令安装精确版本；
-- 在 GitHub、PyPI 以及全新安装验证完成之前，保持 v1.0.0-rc.2 里程碑处于开启状态；
+- 测试人员使用 `pipx install 'session-peer[relay]==1.0.0rc3'` 或等效的 `uv` 命令安装精确版本；
+- 在 GitHub、PyPI 以及全新安装验证完成之前，保持 v1.0.0-rc.3 里程碑处于开启状态；
 - 插件清单保留其独立版本（0.1.0）。
 
 该候选版本包括本地/SSH 运行、可选的 MCP 和 Antigravity 适配器、配对的直接/中继传输、托管准入、公开 OAuth 注册、主动吊销与 recovery、运维人员指标以及经过审查的 KR 部署构件。relay 额外依赖项需要 Unix 和 Python 3.11+。默认核心在 Python 3.9+ 上保持无外部依赖。托管的中继属于运维服务，不构成软件包可用性承诺。
@@ -36,8 +36,8 @@ GitHub 环境为 `pypi`，活动工作流为 `publish.yml`。PyPI 项目所有�
 
 ## 准备与验证
 
-1. 确认发布分支包含 RC1 基线和已合并的 #158，并以 `main` 为目标。不要将稳定版维护分支合并到 main。
-2. 确认 `session_peer.__version__ == "1.0.0rc2"`，候选发布说明已包含在 sdist 中，且四个 README 中的安装命令保持一致。
+1. 确认发布分支包含已合并的 #158、#162 和 #168，并以 `main` 为目标。不要将稳定版维护分支合并到 main。
+2. 确认 `session_peer.__version__ == "1.0.0rc3"`，候选发布说明已包含在 sdist 中，且四个 README 中的安装命令保持一致。
 3. 运行完整的 CI 矩阵。在本地重复运行核心套件、控制 Node 22/24 套件、Node/Python 集成，以及与最终 diff 相对应的构建和归档检查。实时模型提交不属于发布准备的一部分。
 4. 从确切的候选版本构建一次：
 
@@ -46,7 +46,7 @@ GitHub 环境为 `pypi`，活动工作流为 `publish.yml`。PyPI 项目所有�
    ```
 
 5. 检查两个归档文件。wheel 包含 `session_peer.py`、`session_peer_mcp.py`、`session_peer_relay/` 及元数据。sdist 还包含经过批准的文档和部署模板。两个归档文件均不得包含 `cc_peer.py`、凭据、数据库、重放状态、私钥、浏览器数据或本地证据。
-6. 在全新环境中分别独立安装 wheel 和 sdist。确认 `session-peer --version` 报告 `1.0.0rc2`，`session-peer list --output-format
+6. 在全新环境中分别独立安装 wheel 和 sdist。确认 `session-peer --version` 报告 `1.0.0rc3`，`session-peer list --output-format
    json` works in an empty home, and relay/MCP extras pass `pip check` 和 help 冒烟测试。
 7. 仅在所需检查通过后进行合并。获取 `main`，记录其确切 commit，并在该 commit 上验证版本及预期更改。
 
@@ -57,11 +57,11 @@ GitHub 环境为 `pypi`，活动工作流为 `publish.yml`。PyPI 项目所有�
 ```bash
 git fetch origin main --tags
 release_commit=$(git rev-parse origin/main)
-gh release create v1.0.0-rc.2 \
+gh release create v1.0.0-rc.3 \
   --repo abruption/session-peer \
   --target "$release_commit" \
-  --title "session-peer v1.0.0-rc.2" \
-  --notes-file docs/releases/v1.0.0-rc.2.md \
+  --title "session-peer v1.0.0-rc.3" \
+  --notes-file docs/releases/v1.0.0-rc.3.md \
   --draft --prerelease --latest=false
 ```
 
@@ -72,7 +72,7 @@ gh release create v1.0.0-rc.2 \
 在发布前立即获取最终用户批准。发布操作将使 GitHub Release 公开并触发 PyPI 上传：
 
 ```bash
-gh release edit v1.0.0-rc.2 \
+gh release edit v1.0.0-rc.3 \
   --repo abruption/session-peer \
   --draft=false --prerelease --latest=false
 ```
@@ -82,10 +82,10 @@ gh release edit v1.0.0-rc.2 \
 ## 验证发布
 
 1. 确认 `publish.yml` 针对预期的标签和 commit 执行成功。
-2. 确认 PyPI 准确提供了 `session-peer==1.0.0rc2`。下载 wheel 和 sdist，将其哈希值与工作流构件进行比较，并再次检查内容。
+2. 确认 PyPI 准确提供了 `session-peer==1.0.0rc3`。下载 wheel 和 sdist，将其哈希值与工作流构件进行比较，并再次检查内容。
 3. 在全新环境中安装确切的 PyPI 预发布版本，并重复版本、空主目录 list、relay 额外依赖项和 MCP 冒烟检查。
 4. 确认 GitHub 将该发布标记为预发布且未标记为 latest。稳定的 `releases/latest` 端点和常规更新通知必须继续指向 v0.9.2。
 5. 单独验证托管的中继；软件包发布并不能证明服务健康状况、OAuth 策略或代理确认情况。
-6. 仅在记录 GitHub、PyPI 及全新安装证据后关闭 v1.0.0-rc.2 里程碑。
+6. 仅在记录 GitHub、PyPI 及全新安装证据后关闭 v1.0.0-rc.3 里程碑。
 
 通过包管理器安装的环境使用其自身的管理器进行升级。独立的稳定安装继续使用 `session-peer update`；候选发布版测试人员使用精确的软件包版本。提交绝不是已被采用或确认的证明。

@@ -20,16 +20,17 @@ evidence. All third-party actions are pinned to full commit hashes. Dependabot
 submits reviewable updates for Actions, Python build and audit tools, and Node
 dependencies; updates pass the same gate rather than floating into a release.
 
-RC2 publication and stable promotion are separate gates. Keep the four Windows issues and the RC2 milestone open until the exact published RC2 is validated on all five hosts, affected routes have independent ACK evidence, and the receiver-change four-hour campaign is complete. Follow the [RC2 validation plan](docs/releases/v1.0.0-rc.2.md); RC1 and pre-version-bump evidence are not substitutes.
+RC3 publication and stable promotion are separate gates. Keep #161, #163, #164 and the RC3 milestone open until the exact published RC3 is validated on all five hosts with independent ACK evidence and an uninterrupted four-hour campaign. Follow the [RC3 validation plan](docs/releases/v1.0.0-rc.3.md); RC2 evidence and offline reproductions are not substitutes.
 
-## Current candidate: v1.0.0-rc.2
+## Current candidate: v1.0.0-rc.3
 
-The second 1.0 release candidate retains the RC1 contract and adds the Windows
-fixes from #158: Claude pipe authentication (#157), native Codex writer evidence
-(#153), WSL-to-native Codex discovery/delivery (#156), and actionable SSH Python
-diagnostics (#151). The Claude and SSH fixes are also released in stable v0.9.2.
-Its canonical Python/PyPI version is `1.0.0rc2`; the human-facing Git tag
-and GitHub release are `v1.0.0-rc.2`. `packaging.version.Version` treats those
+The third 1.0 release candidate retains the RC2 contract, including the Windows
+fixes from #158, and addresses the public Relay route failures tracked in #161:
+sanitized route diagnostics with a bounded pre-submit setup retry (#162), and
+shorter receiver reconnect gaps with role_busy metrics (#168). The Claude and SSH
+fixes from RC2 are also released in stable v0.9.2.
+Its canonical Python/PyPI version is `1.0.0rc3`; the human-facing Git tag
+and GitHub release are `v1.0.0-rc.3`. `packaging.version.Version` treats those
 values as equal. Do not use a bare `v1.0.0-rc`, which normalizes to RC zero.
 
 This release is an explicit prerelease:
@@ -37,8 +38,8 @@ This release is an explicit prerelease:
 - mark the GitHub release **Pre-release** and do not mark it Latest;
 - normal stable package upgrades must continue to select v0.9.2;
 - testers install the exact version with
-  `pipx install 'session-peer[relay]==1.0.0rc2'` or the equivalent `uv` command;
-- keep the v1.0.0-rc.2 milestone open until GitHub, PyPI and fresh-install verification finish;
+  `pipx install 'session-peer[relay]==1.0.0rc3'` or the equivalent `uv` command;
+- keep the v1.0.0-rc.3 milestone open until GitHub, PyPI and fresh-install verification finish;
 - the plugin manifest retains its independent version (0.1.0).
 
 The candidate includes local/SSH operation, optional MCP and Antigravity adapters,
@@ -73,9 +74,9 @@ the environment and PyPI exchange GitHub's short-lived OIDC identity.
 
 ## Prepare and verify
 
-1. Confirm the release branch contains the RC1 baseline and merged #158,
+1. Confirm the release branch contains merged #158, #162 and #168,
    and targets `main`. Do not merge the stable maintenance branch into main.
-2. Confirm `session_peer.__version__ == "1.0.0rc2"`, the release candidate notes are included
+2. Confirm `session_peer.__version__ == "1.0.0rc3"`, the release candidate notes are included
    in the sdist, and the four README install commands agree.
 3. Run the complete CI matrix. Locally repeat the core suite, control Node 22/24
    suite, Node/Python integration, build and archive inspection appropriate to
@@ -94,7 +95,7 @@ the environment and PyPI exchange GitHub's short-lived OIDC identity.
    may contain `cc_peer.py`, credentials, databases, replay state, private keys,
    browser data or local evidence.
 6. Install wheel and sdist independently in fresh environments. Confirm
-   `session-peer --version` reports `1.0.0rc2`, `session-peer list --output-format
+   `session-peer --version` reports `1.0.0rc3`, `session-peer list --output-format
    json` works in an empty home, and relay/MCP extras pass `pip check` and help
    smoke tests.
 7. Merge only after required checks pass. Fetch `main`, record its exact commit,
@@ -108,11 +109,11 @@ merge commit changes the release commit.
 ```bash
 git fetch origin main --tags
 release_commit=$(git rev-parse origin/main)
-gh release create v1.0.0-rc.2 \
+gh release create v1.0.0-rc.3 \
   --repo abruption/session-peer \
   --target "$release_commit" \
-  --title "session-peer v1.0.0-rc.2" \
-  --notes-file docs/releases/v1.0.0-rc.2.md \
+  --title "session-peer v1.0.0-rc.3" \
+  --notes-file docs/releases/v1.0.0-rc.3.md \
   --draft --prerelease --latest=false
 ```
 
@@ -125,7 +126,7 @@ Obtain final user approval immediately before publication. Publishing makes the
 GitHub release public and triggers the PyPI upload:
 
 ```bash
-gh release edit v1.0.0-rc.2 \
+gh release edit v1.0.0-rc.3 \
   --repo abruption/session-peer \
   --draft=false --prerelease --latest=false
 ```
@@ -155,7 +156,7 @@ downgrades.
 ## Verify publication
 
 1. Confirm `publish.yml` succeeded for the expected tag and commit.
-2. Confirm PyPI exposes exactly `session-peer==1.0.0rc2`. The workflow downloads
+2. Confirm PyPI exposes exactly `session-peer==1.0.0rc3`. The workflow downloads
    the complete PyPI file set, compares its hashes with the preserved candidates,
    and installs the downloaded wheel and sdist independently. Preserve both
    workflow evidence artifacts and the run URL.
@@ -166,7 +167,7 @@ downgrades.
    to v0.9.2.
 5. Verify the hosted relay separately; package publication does not prove service
    health, OAuth policy or agent acknowledgement.
-6. Close the v1.0.0-rc.2 milestone only after GitHub, PyPI and fresh-install evidence is recorded.
+6. Close the v1.0.0-rc.3 milestone only after GitHub, PyPI and fresh-install evidence is recorded.
 
 Package-managed installations upgrade with their own manager. Standalone stable
 installations keep using `session-peer update`; release candidate testers use the exact package

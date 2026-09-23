@@ -45,7 +45,7 @@ try:
 except ImportError:  # Native Windows uses its own read-only writer inspection.
     fcntl = None
 
-__version__ = "1.0.0rc2"
+__version__ = "1.0.0rc3"
 GITHUB_REPO = "abruption/session-peer"
 
 # Claude Code refuses a same-machine message once its serialized form passes

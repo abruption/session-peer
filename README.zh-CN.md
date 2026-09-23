@@ -110,9 +110,9 @@ npx -y skills@latest add abruption/session-peer-skill \
 
 ## 可选的1.0候选发布功能
 
-显式选择的`1.0.0rc2`候选发布版推动认证公共中继迈向稳定v1契约，并保留实验性[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/antigravity.md)桥接。未筛选的`list`也会显示正在运行的已注册桥接。
+显式选择的`1.0.0rc3`候选发布版推动认证公共中继迈向稳定v1契约，并保留实验性[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/antigravity.md)桥接。未筛选的`list`也会显示正在运行的已注册桥接。
 [设备配对与加密中继](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/paired-devices.md)需要Unix、Python 3.11以上及`[relay]`扩展。设备身份固定，目标需在接收端显式授权。盲转发WSS中继无法解密应用消息；托管服务的可用性与软件包分开运营。
-请使用`pipx install 'session-peer[relay]==1.0.0rc2'`显式安装候选发布版；普通升级不会选择预发布版本。请先查看[session-peer项目页面](https://abruption.dev/projects/session-peer/)及上方的设备配对文档。RC发布不保证托管服务可用性，普通本地与SSH命令仍不需要第三方依赖。
+请使用`pipx install 'session-peer[relay]==1.0.0rc3'`显式安装候选发布版；普通升级不会选择预发布版本。请先查看[session-peer项目页面](https://abruption.dev/projects/session-peer/)及上方的设备配对文档。RC发布不保证托管服务可用性，普通本地与SSH命令仍不需要第三方依赖。
 
 ## 发送前须知
 
