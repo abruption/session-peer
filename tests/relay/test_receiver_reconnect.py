@@ -5,6 +5,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+from tests.relay import test_native_relay as platform_guard  # skips without relay extras
 from session_peer_relay import app, wire
 from session_peer_relay.transport_errors import TransportFailure
 
