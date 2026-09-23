@@ -5,6 +5,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+from tests.relay import test_native_relay as platform_guard
 from session_peer_relay import app
 from session_peer_relay.cli import parser
 from session_peer_relay.relay import Relay

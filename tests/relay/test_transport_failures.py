@@ -8,10 +8,10 @@ import unittest
 import urllib.error
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
-from websockets.exceptions import ConnectionClosedOK
-from websockets.frames import Close
 
 from tests.relay import test_native_relay as platform_guard
+from websockets.exceptions import ConnectionClosedOK
+from websockets.frames import Close
 from session_peer_relay import app, cli, control, wire
 from session_peer_relay.store import Rejected
 from session_peer_relay.transport_errors import TransportFailure, NoAuthenticatedRoute, failure
