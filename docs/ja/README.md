@@ -25,5 +25,5 @@
 
 - [v1互換性契約](compatibility-v1.md)はstable、versioned、migrated、internal、experimentalなsurfaceを分類します。
 - [エージェント転送アーキテクチャ](architecture/agent-transports.md)と[リレー開発計画](relay-development-plan.md)は実装境界を説明します。
-- [リリースノート](releases/v1.0.0-rc.3.md)は現在の候補を説明し、[検証記録](validation/69-rc.md)は範囲付きの証拠と制限を保存します。
+- [リリースノート](releases/v1.0.0-rc.4.md)は現在の候補を説明し、[検証記録](validation/69-rc.md)は範囲付きの証拠と制限を保存します。
 - 完了したrelay69プロトタイプのソースは、固有の回帰テストを製品リレースイートへ移した後に削除しました。旧プロトタイプコードはGit履歴に残ります。
