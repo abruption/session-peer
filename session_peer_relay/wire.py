@@ -124,7 +124,10 @@ async def relay_stream(url, credential, attach_timeout=12, on_event=None):
         ws = await PinnedConnect(url, additional_headers={'Cookie': cookie}, compression=None,
                            user_agent_header='session-peer/0.9-relay',
                            max_size=MAX_FRAME, max_queue=4, write_limit=32768,
-                           open_timeout=TIMEOUT, close_timeout=2)
+                           open_timeout=TIMEOUT, close_timeout=2,
+                           # Match the Relay's 10/10 keepalive so a stalled leg is
+                           # detected within about 20 s instead of about 40 s.
+                           ping_interval=10, ping_timeout=10)
     except InvalidStatus as exc:
         raise TransportFailure('relay_websocket', 'http_rejected', http_status=exc.response.status_code) from None
     except Exception as exc:

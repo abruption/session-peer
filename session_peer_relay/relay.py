@@ -80,6 +80,8 @@ class Relay:
             'receiverIdleExpired': 0,
             'clientWaitExpired': 0,
             'roomsClosedBeforeAttach': 0,
+            'receiverRoleBusy': 0,
+            'clientRoleBusy': 0,
         }
 
     def diagnostic_event(self, event, **values):
@@ -215,6 +217,10 @@ class Relay:
         try:
             if account['role'] in slot['members']:
                 close_reason = 'role_busy'
+                # Counted per role so a leg the Relay still holds while its
+                # endpoint reconnects is visible in metrics.
+                self.counters['receiverRoleBusy' if account['role'] == 'receiver' else 'clientRoleBusy'] += 1
+                self.diagnostic_event('role_busy', roomId=slot['id'], role=account['role'])
                 await ws.close(1013, 'role_busy')
                 return
             slot['members'][account['role']] = ws

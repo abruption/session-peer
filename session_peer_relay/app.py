@@ -206,6 +206,13 @@ class Receiver:
                 idle = (detail.stage == 'relay_attach' and detail.close_code == 1000
                         and detail.close_source == 'received'
                         and websocket_opened is not None and 50 <= now-websocket_opened <= 70)
+                # A normal Relay close of a room that stayed open is an expected
+                # idle expiry, not a failure: reconnect promptly instead of
+                # escalating the backoff. Rooms closed within a second keep the
+                # exponential backoff so a misbehaving Relay cannot cause a hot loop.
+                expired = (detail.stage == 'relay_attach' and detail.close_code == 1000
+                           and detail.close_source == 'received'
+                           and websocket_opened is not None and now-websocket_opened >= 1)
                 self.lifecycle_event('websocket_closed' if websocket_opened is not None else 'setup_failed',
                     reason='idle_expiry_like' if idle else detail.diagnostic()['reason'],
                     stage=detail.stage, closeCode=detail.close_code, closeSource=detail.close_source,
@@ -217,8 +224,10 @@ class Receiver:
                     self.relay_failure_last_logged = now
                     logging.getLogger(__name__).warning('relay_connection_failed %s',
                         json.dumps(detail.diagnostic(), sort_keys=True))
+                if expired:
+                    delay = .5
                 await asyncio.sleep(delay)
-                delay = min(5, delay*2)
+                delay = .5 if expired else min(5, delay*2)
 
     async def close(self):
         tasks = list(self.tasks)
