@@ -15,7 +15,9 @@ NAT 穿透、WireGuard 隧道或自动公开服务。
 
 WebSocket 关闭的 `closeSource` 区分代码来自接收还是发送。Relay 计数器区分接收端先到和客户端先到的房间。`receiverWsAgeMs` 只表示等待时长，不能证明连接健康；需要对照配对时间与接收端的 `attach_received`、对端 TLS 事件。
 
-`stream_close.closeCode` 是从远端收到的关闭代码。`1006` 表示未收到关闭帧，可能提示连接停滞。`peer_closed` 表示另一条连接结束后 Relay 关闭了本连接；`remote_going_away` 表示远端在 Relay 未发起关闭时自行发送了 1001 代码。
+`stream_close.closeCode` 是从远端收到的关闭代码。`1006` 表示未收到关闭帧，可能提示连接停滞。`peer_closed` 表示另一条连接结束后 Relay 关闭了本连接；`remote_going_away` 表示远端在 Relay 未发起关闭时自行发送了 1001 代码。`receiverRoleBusy`、`clientRoleBusy` 统计同一房间中被拒绝的重复连接；接收端计数上升可能意味着接收端重连时 Relay 仍持有旧连接。
+
+若等待房间已开启至少 1 秒后被 Relay 正常关闭，接收端会在 0.5 秒后重连，而不会增加退避时间。其他失败以及 1 秒内关闭的房间仍按指数退避，最长 5 秒。Relay 连接两端均使用 10 秒的 WebSocket ping 间隔与超时，因此停滞连接约 20 秒即可检测到，而不是约 40 秒。这些改动只缩短重连空档，并不能修复停滞的网络路径。
 
 ## 安装
 

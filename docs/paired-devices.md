@@ -48,6 +48,17 @@ receiver's `attach_received` and peer-TLS events before inferring a stale leg.
 `1006` means no close frame was received (a possible stalled leg).
 `peer_closed` means the Relay closed this leg after its counterpart ended;
 `remote_going_away` means the remote endpoint sent 1001 without a Relay-initiated close.
+`receiverRoleBusy` and `clientRoleBusy` count refused duplicate legs for the same
+room; a rising receiver count can mean the Relay still holds an old leg while the
+receiver reconnects.
+
+A receiver whose waiting room stayed open for at least one second and was then
+closed normally by the Relay reconnects after 0.5 seconds instead of escalating
+its backoff. Other failures, and rooms closed within one second, still back off
+exponentially up to 5 seconds. Relay legs use a 10-second WebSocket ping interval
+and timeout on both endpoints, so a stalled leg is detected in about 20 seconds
+rather than about 40. These reduce reconnect gaps; they do not repair a stalled
+network path.
 
 ## Install
 
