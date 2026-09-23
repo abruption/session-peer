@@ -12,6 +12,8 @@
 
 WebSocket 종료의 `closeSource`는 코드가 수신됐는지 송신됐는지 구분합니다. Relay 지표는 수신자 선착·클라이언트 선착 방을 구분합니다. `receiverWsAgeMs`는 수신자 대기 시간이지 연결 생존의 증거가 아닙니다. 방 페어링과 수신자의 `attach_received`·피어 TLS 이벤트 시각을 대조해야 합니다.
 
+`stream_close.closeCode`는 원격에서 수신한 종료 코드입니다. `1006`은 종료 프레임을 받지 못했다는 뜻이며 레그 정체 가능성을 시사합니다. `peer_closed`는 상대 레그가 끝나 Relay가 이 레그를 닫은 경우, `remote_going_away`는 Relay의 닫기 요청 없이 원격 엔드포인트가 1001을 보낸 경우입니다.
+
 ## 설치
 
 양쪽 기기 모두 격리된 환경에서 PyPI의 session-peer v0.9.0 이상을 설치합니다:

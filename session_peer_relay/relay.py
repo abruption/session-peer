@@ -206,7 +206,7 @@ class Relay:
                         return
             watcher = asyncio.create_task(watch_authorization())
         if slot is None:
-            slot = {'members': {}, 'joined': {}, 'ready': asyncio.Event(),
+            slot = {'members': {}, 'joined': {}, 'closedByRelay': set(), 'ready': asyncio.Event(),
                     'opened': time.monotonic(), 'id': secrets.token_hex(8)}
             self.waiting[key] = slot
             self.counters['roomsOpened'] += 1
@@ -272,8 +272,11 @@ class Relay:
                     except TimeoutError:
                         close_reason = 'forward_send_timeout'
                         raise
-            if getattr(ws, 'close_code', None) == 1001 and close_reason == 'attached_closed':
-                close_reason = 'peer_closed'
+            if close_reason == 'attached_closed':
+                if account['role'] in slot['closedByRelay']:
+                    close_reason = 'peer_closed'
+                elif getattr(ws, 'close_code', None) == 1001:
+                    close_reason = 'remote_going_away'
         except TimeoutError:
             if close_reason != 'forward_send_timeout':
                 close_reason = 'stream_lifetime_expiry'
@@ -295,6 +298,7 @@ class Relay:
                         reason=close_reason, ageMs=max(0, round((time.monotonic()-slot['opened'])*1000)))
                 other = slot['members'].get(other_role)
                 if other:
+                    slot['closedByRelay'].add(other_role)
                     await other.close(1001, 'peer_closed')
             try:
                 await ws.close()

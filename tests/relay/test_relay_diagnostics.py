@@ -1,5 +1,6 @@
 """Metadata-only lifecycle evidence and scaled stale-room fixtures."""
 import asyncio
+import json
 import time
 import unittest
 from types import SimpleNamespace
@@ -32,6 +33,11 @@ class FakeWebSocket:
         await self.closed.wait()
 
     async def close(self, code=1000, reason=''):
+        if not self.closed.is_set():
+            self.close_code = code
+        self.closed.set()
+
+    async def remote_close(self, code):
         self.close_code = code
         self.closed.set()
 
@@ -50,6 +56,41 @@ class RelayLifecycle(unittest.IsolatedAsyncioTestCase):
         async with asyncio.timeout(1):
             while not predicate():
                 await asyncio.sleep(.002)
+
+    async def paired_close_events(self, role, code):
+        relay = Relay([], diagnostic_events=True)
+        receiver = FakeWebSocket('receiver')
+        client = FakeWebSocket('client')
+        tasks = []
+        with self.assertLogs('session_peer_relay.relay', level='WARNING') as logs:
+            try:
+                tasks.append(asyncio.create_task(relay.handler(receiver)))
+                await self.wait_for(lambda: relay.metrics()['current']['waitingRooms'] == 1)
+                tasks.append(asyncio.create_task(relay.handler(client)))
+                await self.wait_for(lambda: relay.metrics()['counters']['attachSentReceiver'] == 1
+                                    and relay.metrics()['counters']['attachSentClient'] == 1)
+                await (receiver if role == 'receiver' else client).remote_close(code)
+                await asyncio.wait_for(asyncio.gather(*tasks), 1)
+            finally:
+                await receiver.close()
+                await client.close()
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+        self.assertNotIn('SECRET-ROOM', '\n'.join(logs.output))
+        return [json.loads(row.split('relay_room ', 1)[1]) for row in logs.output
+                if 'relay_room ' in row]
+
+    async def test_relay_closes_other_leg_as_peer_closed(self):
+        events = await self.paired_close_events('receiver', 1000)
+        self.assertTrue(any(row['event'] == 'stream_close' and row['role'] == 'client'
+                            and row['reason'] == 'peer_closed' for row in events))
+
+    async def test_remote_1001_is_not_mislabelled_as_peer_closed(self):
+        events = await self.paired_close_events('client', 1001)
+        self.assertTrue(any(row['event'] == 'stream_close' and row['role'] == 'client'
+                            and row['reason'] == 'remote_going_away' and row['closeCode'] == 1001
+                            for row in events))
 
     async def test_idle_receiver_expiry_is_counted_without_identity(self):
         relay = Relay([], diagnostic_events=True)

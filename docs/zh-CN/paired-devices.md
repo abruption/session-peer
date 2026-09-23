@@ -15,6 +15,8 @@ NAT 穿透、WireGuard 隧道或自动公开服务。
 
 WebSocket 关闭的 `closeSource` 区分代码来自接收还是发送。Relay 计数器区分接收端先到和客户端先到的房间。`receiverWsAgeMs` 只表示等待时长，不能证明连接健康；需要对照配对时间与接收端的 `attach_received`、对端 TLS 事件。
 
+`stream_close.closeCode` 是从远端收到的关闭代码。`1006` 表示未收到关闭帧，可能提示连接停滞。`peer_closed` 表示另一条连接结束后 Relay 关闭了本连接；`remote_going_away` 表示远端在 Relay 未发起关闭时自行发送了 1001 代码。
+
 ## 安装
 
 在两台设备上的隔离环境中从 PyPI 安装 session-peer v0.9.0 或更高版本：

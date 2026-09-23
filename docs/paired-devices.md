@@ -44,6 +44,10 @@ that the client received it. A WebSocket close near 60 seconds is only
 `receiverWsAgeMs` measures how long the receiver waited before pairing; it
 cannot prove that its connection was healthy. Compare room-pair time with the
 receiver's `attach_received` and peer-TLS events before inferring a stale leg.
+`stream_close.closeCode` is the code received from the remote endpoint;
+`1006` means no close frame was received (a possible stalled leg).
+`peer_closed` means the Relay closed this leg after its counterpart ended;
+`remote_going_away` means the remote endpoint sent 1001 without a Relay-initiated close.
 
 ## Install
 
