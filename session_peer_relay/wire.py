@@ -4,6 +4,7 @@ import hashlib
 import json
 import ssl
 import struct
+import time
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -103,8 +104,22 @@ def admission(url, credential):
         raise failure('relay_admission', exc) from None
 
 
-async def relay_stream(url, credential, attach_timeout=12):
-    cookie = await asyncio.to_thread(admission, url, credential)
+async def relay_stream(url, credential, attach_timeout=12, on_event=None):
+    def observe(event, started):
+        if on_event is not None:
+            try:
+                on_event(event, elapsed_ms=max(0, round((time.monotonic()-started)*1000)))
+            except Exception:
+                # Diagnostic sinks must never alter admission or forwarding.
+                pass
+
+    started = time.monotonic()
+    try:
+        cookie = await asyncio.to_thread(admission, url, credential)
+    except Exception as exc:
+        raise failure('relay_admission', exc) from None
+    observe('admission_complete', started)
+    started = time.monotonic()
     try:
         ws = await PinnedConnect(url, additional_headers={'Cookie': cookie}, compression=None,
                            user_agent_header='session-peer/0.9-relay',
@@ -114,10 +129,13 @@ async def relay_stream(url, credential, attach_timeout=12):
         raise TransportFailure('relay_websocket', 'http_rejected', http_status=exc.response.status_code) from None
     except Exception as exc:
         raise failure('relay_websocket', exc) from None
+    observe('websocket_open', started)
+    started = time.monotonic()
     try:
         ready = json.loads(await asyncio.wait_for(ws.recv(), attach_timeout))
         if ready != {'relayAttached': True}:
             raise TransportFailure('relay_attach', 'invalid_attach_response')
+        observe('attach_received', started)
         return Ws(ws)
     except BaseException as exc:
         await ws.close()

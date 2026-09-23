@@ -12,14 +12,14 @@ import uuid
 import session_peer as core
 from .identity import context, fingerprint
 from .store import Store, Rejected
-from .wire import Secure, Tcp, relay_stream, direct_address
+from .wire import Secure, Tcp, Ws, relay_stream, direct_address
 from .native import Policy, Native
 from .rotation import remote_prepare, remote_commit, remote_status
-from .transport_errors import failure, NoAuthenticatedRoute
+from .transport_errors import failure, NoAuthenticatedRoute, TransportFailure
 
 
 class Receiver:
-    def __init__(self, store, policy):
+    def __init__(self, store, policy, *, diagnostic_events=False):
         self.store = store
         self.policy = Policy(policy)
         self.native = Native()
@@ -27,6 +27,12 @@ class Receiver:
         self.connections = set()
         self.rejected = 0
         self.relay_failure_last_logged = float('-inf')
+        self.diagnostic_events = diagnostic_events
+
+    def lifecycle_event(self, event, **values):
+        if self.diagnostic_events:
+            logging.getLogger(__name__).warning('relay_lifecycle %s',
+                json.dumps({'event': event, **values}, sort_keys=True))
 
     async def watch_peer(self, channel):
         while True:
@@ -122,7 +128,18 @@ class Receiver:
         watch = None
         try:
             channel = Secure(raw, context(self.store.identity_root, True, self.store.trusted()), server=True)
-            await channel.handshake()
+            started = time.monotonic()
+            try:
+                await channel.handshake()
+            except Exception as exc:
+                if isinstance(raw, Ws):
+                    self.lifecycle_event('peer_tls', outcome='failed',
+                        elapsedMs=round((time.monotonic()-started)*1000),
+                        reason=failure('peer_tls', exc).diagnostic()['reason'])
+                raise
+            if isinstance(raw, Ws):
+                self.lifecycle_event('peer_tls', outcome='ok',
+                    elapsedMs=round((time.monotonic()-started)*1000))
             if channel.peer:
                 watch = asyncio.create_task(self.watch_peer(channel))
             # Bound unauthenticated pairing attempts per TLS connection.
@@ -163,21 +180,42 @@ class Receiver:
 
     async def relay_listener(self, url, credential):
         delay = .5
+        gap_started = None
+        websocket_opened = None
+        def observed(event, *, elapsed_ms):
+            nonlocal gap_started, websocket_opened
+            now = time.monotonic()
+            if event == 'websocket_open':
+                websocket_opened = now
+                if gap_started is not None:
+                    self.lifecycle_event('reconnect_gap', elapsedMs=round((now-gap_started)*1000))
+                    gap_started = None
+            self.lifecycle_event(event, elapsedMs=elapsed_ms)
         while True:
             try:
-                raw = await relay_stream(url, credential, attach_timeout=65)
+                raw = await relay_stream(url, credential, attach_timeout=65, on_event=observed)
                 delay = .5
                 self.spawn(raw)
+                websocket_opened = None  # Attached socket is consumed; the next is not open yet.
+                gap_started = time.monotonic()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                # One aggregate diagnostic per minute, never raw exceptions,
-                # headers, endpoint identities or message bodies.
+                detail = failure('relay_connect', exc)
                 now = time.monotonic()
-                if now - self.relay_failure_last_logged >= 60:
+                idle = (detail.stage == 'relay_attach' and detail.close_code == 1000
+                        and websocket_opened is not None and 50 <= now-websocket_opened <= 70)
+                self.lifecycle_event('websocket_closed' if websocket_opened is not None else 'setup_failed',
+                    reason='idle_expiry_like' if idle else detail.diagnostic()['reason'],
+                    stage=detail.stage, closeCode=detail.close_code,
+                    websocketAgeMs=round((now-websocket_opened)*1000) if websocket_opened is not None else None)
+                websocket_opened = None
+                gap_started = now
+                # Expected idle expiry is a lifecycle event, not a failure warning.
+                if not idle and now - self.relay_failure_last_logged >= 60:
                     self.relay_failure_last_logged = now
                     logging.getLogger(__name__).warning('relay_connection_failed %s',
-                        json.dumps(failure('relay_connect', exc).diagnostic(), sort_keys=True))
+                        json.dumps(detail.diagnostic(), sort_keys=True))
                 await asyncio.sleep(delay)
                 delay = min(5, delay*2)
 
@@ -204,6 +242,10 @@ async def open_channel(store, certificate, routes, route, credential=None, boots
     try:
         await channel.handshake()
         return channel
+    except TimeoutError:
+        with contextlib.suppress(Exception):
+            await raw.close()
+        raise TransportFailure('peer_tls', 'timeout', transient=True) from None
     except BaseException:
         await raw.close()
         raise
@@ -274,24 +316,40 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
             if op.startswith('rotation.') and 'identity-rotation-v1' not in response.get('features', []):
                 raise Rejected('rotation_unsupported')
             return kind, channel
+        except TimeoutError:
+            with contextlib.suppress(Exception):
+                await channel.close()
+            raise TransportFailure('peer_probe', 'timeout', transient=True) from None
         except BaseException:
             await channel.close()
             raise
 
     diagnostics = {}
+    history = {}
+    setup_attempts = {}
 
     async def ready(kind):
         # Retry only a connection timeout BEFORE application submission. A fresh
         # admission proof/ticket and channel are acquired; never replay a send.
         for attempt in (1, 2):
+            started = time.monotonic()
             try:
-                return await ready_once(kind)
+                result = await ready_once(kind)
+                setup_attempts[kind] = attempt
+                return result
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 detail = failure('peer_connect', exc)
                 diagnostics[kind] = {'route': kind, **detail.diagnostic(), 'attempts': attempt}
-                if kind != 'relay' or not detail.transient or attempt == 2:
+                history.setdefault(kind, []).append({'attempt': attempt, **detail.diagnostic(),
+                    'elapsedMs': max(0, round((time.monotonic()-started)*1000))})
+                # A timeout after attach may have consumed the receiver's only
+                # waiting room. Retrying then hides the first failure and cannot
+                # safely be treated as a fresh-room recovery.
+                if (kind != 'relay' or not detail.transient or attempt == 2
+                        or detail.stage not in {'control_request', 'control_response',
+                            'control_admission', 'relay_admission', 'relay_websocket'}):
                     raise
                 await asyncio.sleep(.5)
 
@@ -309,7 +367,8 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
                     else:
                         await task.result()[1].close()
         if winner is None:
-            raise NoAuthenticatedRoute([diagnostics[kind] for kind in kinds if kind in diagnostics])
+            raise NoAuthenticatedRoute([{**diagnostics[kind], 'attemptHistory': history[kind]}
+                                        for kind in kinds if kind in diagnostics])
     finally:
         for task in tasks:
             if not task.done():
@@ -320,15 +379,17 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
                     and (winner is None or task.result()[1] is not winner[1])):
                 await task.result()[1].close()
     kind, channel = winner
+    setup = ({'setupAttempts': setup_attempts[kind], 'setupDegraded': True,
+              'setupFailureHistory': history[kind]} if setup_attempts[kind] > 1 else {})
     value = request(store, peer, op, body, ident)
     try:
         # Exactly one application submission, after path selection. No failover resend.
         await channel.send(value)
         result = await channel.recv()
         return {**result, 'route': kind, 'receiverAccepted': result.get('ok', False),
-                'relayAttached': kind == 'relay', 'requestId': value['id']}
+                'relayAttached': kind == 'relay', 'requestId': value['id'], **setup}
     except Exception:
         return {'ok': False, 'status': 'unknown', 'requestId': value['id'],
-                'route': kind, 'retryAllowed': False, 'consumptionConfirmed': False}
+                'route': kind, 'retryAllowed': False, 'consumptionConfirmed': False, **setup}
     finally:
         await channel.close()

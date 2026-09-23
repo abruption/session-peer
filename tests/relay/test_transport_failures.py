@@ -8,6 +8,8 @@ import unittest
 import urllib.error
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
+from websockets.exceptions import ConnectionClosedOK
+from websockets.frames import Close
 
 from tests.relay import test_native_relay as platform_guard
 from session_peer_relay import app, cli, control, wire
@@ -27,6 +29,10 @@ class TransportDiagnostics(unittest.TestCase):
         detail = failure('control_request', urllib.error.URLError(TimeoutError(SECRET)))
         self.assertEqual(detail.diagnostic(), {'stage':'control_request','reason':'timeout'})
         self.assertTrue(detail.transient)
+        closed = failure('relay_attach', ConnectionClosedOK(Close(1000, SECRET), None))
+        self.assertEqual(closed.diagnostic(),
+                         {'stage': 'relay_attach', 'reason': 'connection_closed', 'closeCode': 1000})
+        self.assertNotIn(SECRET, json.dumps(closed.diagnostic()))
 
     def test_control_body_timeout_closes_response_and_is_sanitized(self):
         response = Mock()
@@ -115,6 +121,9 @@ class RouteSetup(unittest.IsolatedAsyncioTestCase):
         with patch.object(app,'open_channel',new=AsyncMock(side_effect=[TransportFailure('relay_websocket','timeout',transient=True),channel])) as connect,patch.object(app.asyncio,'sleep',new=AsyncMock()):
             result=await app.exchange(self.store,self.peer,'send',{'target':'worker','message':SECRET},route='relay')
         self.assertTrue(result['ok']);self.assertFalse(result['consumptionConfirmed'])
+        self.assertEqual(result['setupAttempts'], 2)
+        self.assertTrue(result['setupDegraded'])
+        self.assertEqual(result['setupFailureHistory'][0]['stage'], 'relay_websocket')
         self.assertEqual(connect.await_count,2)
         self.assertEqual([call.args[0]['op'] for call in channel.send.await_args_list],['probe','send'])
         channel.close.assert_awaited_once()
@@ -125,8 +134,38 @@ class RouteSetup(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(NoAuthenticatedRoute) as caught:
                 await app.exchange(self.store,self.peer,'send',{'target':'worker','message':SECRET},route='relay')
         self.assertEqual(connect.await_count,2)
-        self.assertEqual(caught.exception.route_failures,[{'route':'relay','stage':'control_response','reason':'timeout','attempts':2}])
+        rows = caught.exception.route_failures
+        self.assertEqual(rows[0]['stage'], 'control_response')
+        self.assertEqual(rows[0]['attempts'], 2)
+        self.assertEqual([item['attempt'] for item in rows[0]['attemptHistory']], [1, 2])
+        self.assertTrue(all(item['stage'] == 'control_response' and item['elapsedMs'] >= 0
+                            for item in rows[0]['attemptHistory']))
         self.assertNotIn(SECRET,json.dumps(caught.exception.route_failures))
+
+    async def test_first_attempt_survives_different_second_failure(self):
+        failures = [TransportFailure('control_response', 'timeout', transient=True),
+                    TransportFailure('relay_attach', 'connection_closed', close_code=1000)]
+        with patch.object(app, 'open_channel', new=AsyncMock(side_effect=failures)) as connect, \
+             patch.object(app.asyncio, 'sleep', new=AsyncMock()):
+            with self.assertRaises(NoAuthenticatedRoute) as caught:
+                await app.exchange(self.store, self.peer, 'list', route='relay')
+        self.assertEqual(connect.await_count, 2)
+        row = caught.exception.route_failures[0]
+        self.assertEqual(row['stage'], 'relay_attach')
+        self.assertEqual([(item['stage'], item.get('closeCode')) for item in row['attemptHistory']],
+                         [('control_response', None), ('relay_attach', 1000)])
+
+    async def test_peer_tls_and_probe_timeouts_are_not_retried(self):
+        channel = self.channel([TimeoutError(SECRET)])
+        for exc, expected in ((TransportFailure('peer_tls', 'timeout', transient=True), 'peer_tls'),
+                              (channel, 'peer_probe')):
+            with self.subTest(stage=expected):
+                source = AsyncMock(side_effect=exc) if expected == 'peer_tls' else AsyncMock(return_value=channel)
+                with patch.object(app, 'open_channel', new=source) as connect:
+                    with self.assertRaises(NoAuthenticatedRoute) as caught:
+                        await app.exchange(self.store, self.peer, 'list', route='relay')
+                self.assertEqual(connect.await_count, 1)
+                self.assertEqual(caught.exception.route_failures[0]['stage'], expected)
 
     async def test_auth_tls_and_other_errors_are_not_retried(self):
         for exc in (TransportFailure('relay_admission','http_rejected',http_status=401),
@@ -169,6 +208,13 @@ class RouteSetup(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(TransportFailure) as caught:
                 await wire.relay_stream('ws://127.0.0.1:2/v1/connect',SECRET)
         self.assertEqual(caught.exception.stage,'relay_attach');ws.close.assert_awaited_once()
+        closed = SimpleNamespace(recv=AsyncMock(side_effect=ConnectionClosedOK(Close(1000, SECRET), None)),
+                                 close=AsyncMock())
+        with patch.object(wire,'admission',return_value='session_peer='+SECRET), \
+             patch.object(wire,'PinnedConnect',new=AsyncMock(return_value=closed)):
+            with self.assertRaises(TransportFailure) as caught:
+                await wire.relay_stream('ws://127.0.0.1:2/v1/connect', SECRET)
+        self.assertEqual(caught.exception.diagnostic()['closeCode'], 1000)
 
     async def test_receiver_diagnostics_are_rate_limited_and_secret_free(self):
         receiver=app.Receiver(self.store,{'targets':{'worker':{'agent':'claude','target':'worker'}},'peers':{}})

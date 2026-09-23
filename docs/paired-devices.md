@@ -9,20 +9,34 @@ NAT traversal, WireGuard tunnel or automatic public service is installed.
 
 `no_authenticated_route` retains `retryAllowed:false` and
 `consumptionConfirmed:false`. Its additive `routeFailures` array identifies each
-failed route's `stage`, allowlisted `reason`, and `attempts`; HTTP refusals may
-include `httpStatus`. Control requests/responses, Relay admission, WebSocket
-upgrade, attach, and peer connection failures can be distinguished without
-logging URLs, credentials, exception text or message bodies. The receiver emits
-at most one sanitized `relay_connection_failed` warning per minute to stderr.
+failed route's final `stage`, allowlisted `reason`, and `attempts`. The bounded
+`attemptHistory` preserves each attempt's stage, reason and `elapsedMs`; HTTP
+refusals may include `httpStatus`, and WebSocket closes may include `closeCode`.
+Control, admission, upgrade, attach, peer TLS and probe failures remain distinct
+without logging URLs, credentials, exception text or message bodies. A successful
+second setup attempt has `setupDegraded:true`, `setupAttempts:2` and
+`setupFailureHistory`; it is not a clean stability pass.
 
-Only a Relay **setup timeout before application submission** gets one additional
-connection attempt, after 0.5 seconds. It obtains a fresh admission ticket and
+Only a **pre-attach control, admission or WebSocket setup timeout** gets one
+additional Relay connection attempt, after 0.5 seconds. Attach, peer TLS and
+probe timeouts are not retried. A retry obtains a fresh admission ticket and
 channel; it does not reuse a spent ticket or repeat an agent message. HTTP
 refusals, authentication/certificate errors and unknown failures are not retried.
 Direct-path selection can still cancel the Relay attempt. After application
 submission, a lost response remains `unknown`, with no resend or route failover.
 This bounded mitigation is not proof that a public-edge outage is fixed: repeat
 real ACK and long-running validation after deployment before closing a gate.
+
+The receiver emits at most one sanitized `relay_connection_failed` warning per
+minute; a close consistent with ordinary idle expiry is treated as lifecycle,
+not a failure warning. `device serve --diagnostic-events` and
+`relay serve --diagnostic-events` opt in to metadata-only stderr lifecycle events
+(room/attach/close stages, durations, allowlisted reasons and close codes). They
+are off by default; events never contain device identity, room name, URL,
+headers, credentials or payload. Relay metrics include additive room-open/pair,
+per-leg attach-send and expiry counters. Sending an attach notice is not proof
+that the client received it. A WebSocket close near 60 seconds is only
+`idle_expiry_like` from the receiver's perspective, not proof of server cause.
 
 ## Install
 

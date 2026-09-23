@@ -4,9 +4,11 @@
 
 ## 接続失敗の診断と安全な接続再試行
 
-`no_authenticated_route` は `retryAllowed:false` と `consumptionConfirmed:false` を維持します。追加の `routeFailures` 配列は経路ごとの `stage`、許可リスト内の `reason`、`attempts` を示し、HTTP 拒否では `httpStatus` を含む場合があります。制御リクエスト/レスポンス、Relay 入場、WebSocket アップグレード、接続マッチング、ピア接続の失敗を区別し、URL・認証情報・生の例外・メッセージ本文は記録しません。受信側は安全化した `relay_connection_failed` 警告を stderr に毎分最大一回出力します。
+`no_authenticated_route` は `retryAllowed:false` と `consumptionConfirmed:false` を維持します。`routeFailures` は経路ごとの最後の `stage`、許可リスト内の `reason`、`attempts` を示します。限定された `attemptHistory` は各試行の段階・理由・`elapsedMs` を保持し、HTTP 拒否には `httpStatus`、WebSocket の切断には `closeCode` が含まれる場合があります。制御、入場、アップグレード、attach、ピア TLS、probe の失敗を区別し、URL・認証情報・生の例外・メッセージ本文は記録しません。2 回目で成功した場合は `setupDegraded:true`、`setupAttempts:2`、`setupFailureHistory` が付き、正常な安定性試験の合格とは見なしません。
 
-**アプリケーションメッセージ送信前の Relay 接続タイムアウト**のみ、0.5 秒後に一回追加で接続します。新しい入場チケットとチャネルを使い、消費済みチケットやエージェントへのメッセージを再送しません。HTTP 拒否、認証/証明書エラー、不明な失敗は再試行しません。直接経路が選択されると Relay 試行は取り消せます。送信後の応答喪失は引き続き `unknown` で、再送や経路切り替えは行いません。この限定的な緩和策は公開経路の障害解消を証明しません。デプロイ後に実際の ACK と長時間検証を再実施してください。
+**attach 前の制御・入場・WebSocket 設定タイムアウト**のみ、0.5 秒後にもう一度 Relay に接続します。attach、ピア TLS、probe のタイムアウトは再試行しません。新しい入場チケットとチャネルを使い、消費済みチケットやエージェントへのメッセージを再送しません。HTTP 拒否、認証/証明書エラー、不明な失敗も再試行しません。直接経路が選択されると Relay 試行は取り消せます。送信後の応答喪失は引き続き `unknown` で、再送や経路切り替えは行いません。この限定的な緩和策は公開経路の障害解消を証明しません。デプロイ後に実際の ACK と長時間検証を再実施してください。
+
+受信側は安全化した `relay_connection_failed` 警告を stderr に毎分最大一回出力します。通常のアイドル期限切れに見える切断は失敗警告と分けます。`device serve --diagnostic-events` と `relay serve --diagnostic-events` を明示すると、ルーム・attach・切断の段階、所要時間、許可リスト内の理由と切断コードだけを stderr に記録します。既定では無効で、デバイス ID、ルーム名、URL、ヘッダー、認証情報、本文は記録しません。Relay メトリクスにはルーム作成・ペアリング、各レグへの attach 送信、期限切れのカウンターも追加されます。attach 送信はクライアント受信の証明ではありません。受信側の `idle_expiry_like` はサーバー原因の確証ではありません。
 
 ## インストール
 

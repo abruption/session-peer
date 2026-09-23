@@ -134,7 +134,8 @@ async def manage(kind, args):
             if control:
                 control.close()
             raise Rejected('invalid_relay_metrics_port')
-        relay = Relay(accounts, control=control, limits=limits)
+        relay = Relay(accounts, control=control, limits=limits,
+                      diagnostic_events=getattr(args, 'diagnostic_events', False))
         try:
             server = await relay.start(args.bind, args.port)
         except BaseException:
@@ -276,7 +277,8 @@ async def manage(kind, args):
                     receiver_lock.close()
                     raise Rejected('receiver_already_running') from None
                 policy = json.loads(private_read(args.policy))
-                receiver = Receiver(store, policy)
+                receiver = Receiver(store, policy,
+                                    diagnostic_events=getattr(args, 'diagnostic_events', False))
                 # Never create a public listener merely because a relay is configured.
                 server = await receiver.listen(args.bind, args.port)
                 task = None
@@ -329,6 +331,7 @@ def parser(kind):
         item.add_argument('--device-connections', type=int, default=4)
         item.add_argument('--connection-byte-budget', type=int, default=32*1024*1024)
         item.add_argument('--metrics-port', type=metrics_port, default=0, metavar='PORT')
+        item.add_argument('--diagnostic-events', action='store_true')
         return p
     command('init'); command('peers')
     item = command('login'); item.add_argument('--server', required=True); item.add_argument('--no-browser', action='store_true')
@@ -360,6 +363,7 @@ def parser(kind):
     item.add_argument('--direct'); item.add_argument('--relay')
     item = command('serve'); item.add_argument('--policy', required=True)
     item.add_argument('--login', action='store_true')
+    item.add_argument('--diagnostic-events', action='store_true')
     item.add_argument('--relay'); item.add_argument('--admission-file'); server_options(item)
     item = command('revoke'); item.add_argument('--peer', required=True)
     for name in ('pair', 'status'):
