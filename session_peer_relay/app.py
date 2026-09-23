@@ -204,10 +204,11 @@ class Receiver:
                 detail = failure('relay_connect', exc)
                 now = time.monotonic()
                 idle = (detail.stage == 'relay_attach' and detail.close_code == 1000
+                        and detail.close_source == 'received'
                         and websocket_opened is not None and 50 <= now-websocket_opened <= 70)
                 self.lifecycle_event('websocket_closed' if websocket_opened is not None else 'setup_failed',
                     reason='idle_expiry_like' if idle else detail.diagnostic()['reason'],
-                    stage=detail.stage, closeCode=detail.close_code,
+                    stage=detail.stage, closeCode=detail.close_code, closeSource=detail.close_source,
                     websocketAgeMs=round((now-websocket_opened)*1000) if websocket_opened is not None else None)
                 websocket_opened = None
                 gap_started = now
@@ -349,7 +350,7 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
                 # safely be treated as a fresh-room recovery.
                 if (kind != 'relay' or not detail.transient or attempt == 2
                         or detail.stage not in {'control_request', 'control_response',
-                            'control_admission', 'relay_admission', 'relay_websocket'}):
+                            'control_admission', 'relay_admission'}):
                     raise
                 await asyncio.sleep(.5)
 

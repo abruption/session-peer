@@ -72,6 +72,8 @@ class Relay:
             'unauthorizedRejected': 0,
             'byteBudgetClosed': 0,
             'roomsOpened': 0,
+            'receiverRoomsOpened': 0,
+            'clientFirstRooms': 0,
             'roomsPaired': 0,
             'attachSentReceiver': 0,
             'attachSentClient': 0,
@@ -192,7 +194,8 @@ class Relay:
         other_role = 'client' if account['role'] == 'receiver' else 'receiver'
         slot = self.waiting.get(key)
         watcher = None
-        attached = False
+        paired = False
+        attach_sent = False
         close_reason = 'socket_closed'
         if self.control:
             async def watch_authorization():
@@ -207,7 +210,8 @@ class Relay:
                     'opened': time.monotonic(), 'id': secrets.token_hex(8)}
             self.waiting[key] = slot
             self.counters['roomsOpened'] += 1
-            self.diagnostic_event('room_open', roomId=slot['id'])
+            self.counters['receiverRoomsOpened' if account['role'] == 'receiver' else 'clientFirstRooms'] += 1
+            self.diagnostic_event('room_open', roomId=slot['id'], openedBy=account['role'])
         try:
             if account['role'] in slot['members']:
                 close_reason = 'role_busy'
@@ -233,15 +237,20 @@ class Relay:
                         counter = 'receiverIdleExpired' if account['role'] == 'receiver' else 'clientWaitExpired'
                         self.counters[counter] += 1
                     return
+                paired = True
             finally:
                 ready.cancel()
                 closed.cancel()
                 await asyncio.gather(ready, closed, return_exceptions=True)
             other = slot['members'][other_role]
-            await ws.send(json.dumps({'relayAttached': True}))
+            try:
+                await ws.send(json.dumps({'relayAttached': True}))
+            except BaseException:
+                close_reason = 'attach_notify_failed'
+                raise
             self.counters['attachSentReceiver' if account['role'] == 'receiver' else 'attachSentClient'] += 1
             self.diagnostic_event('attach_sent', roomId=slot['id'], role=account['role'])
-            attached = True
+            attach_sent = True
             close_reason = 'attached_closed'
             forwarded_bytes = 0
             async with asyncio.timeout(max(0, ws.lab_expiry-time.monotonic())):
@@ -258,10 +267,20 @@ class Relay:
                         break
                     if self.capture is not None:
                         self.capture.append(data)
-                    await asyncio.wait_for(other.send(data), 2)
+                    try:
+                        await asyncio.wait_for(other.send(data), 2)
+                    except TimeoutError:
+                        close_reason = 'forward_send_timeout'
+                        raise
+            if getattr(ws, 'close_code', None) == 1001 and close_reason == 'attached_closed':
+                close_reason = 'peer_closed'
+        except TimeoutError:
+            if close_reason != 'forward_send_timeout':
+                close_reason = 'stream_lifetime_expiry'
         except Exception:
             # No request headers, tokens, body or endpoint fingerprints in logs.
-            close_reason = 'forwarding_error'
+            if close_reason != 'attach_notify_failed':
+                close_reason = 'forwarding_error'
         finally:
             if watcher:
                 watcher.cancel()
@@ -277,11 +296,14 @@ class Relay:
                 other = slot['members'].get(other_role)
                 if other:
                     await other.close(1001, 'peer_closed')
-            if attached:
-                code = getattr(ws, 'close_code', None)
-                self.diagnostic_event('stream_close', roomId=slot['id'], role=account['role'],
-                    reason=close_reason, closeCode=code if type(code) is int and 1000 <= code <= 4999 else None)
-            await ws.close()
+            try:
+                await ws.close()
+            finally:
+                if paired:
+                    code = getattr(ws, 'close_code', None)
+                    self.diagnostic_event('stream_close', roomId=slot['id'], role=account['role'],
+                        reason=close_reason, attachSent=attach_sent,
+                        closeCode=code if type(code) is int and 1000 <= code <= 4999 else None)
 
     async def start(self, host, port):
         return await serve(self.handler, host, port, process_request=self.process_request,

@@ -13,16 +13,18 @@ from session_peer_relay.transport_errors import TransportFailure
 
 
 class FakeWebSocket:
-    def __init__(self, role, *, stalled=False):
+    def __init__(self, role, *, stalled=False, stalled_data=False, frames=None):
         self.lab_account = {'room': 'SECRET-ROOM', 'role': role}
         self.lab_expiry = time.monotonic() + 10
         self.stalled = stalled
+        self.stalled_data = stalled_data
+        self.frames = list(frames or [])
         self.closed = asyncio.Event()
         self.close_code = None
         self.sent = []
 
     async def send(self, value):
-        if self.stalled:
+        if self.stalled or (self.stalled_data and isinstance(value, bytes)):
             await self.closed.wait()
         self.sent.append(value)
 
@@ -37,6 +39,8 @@ class FakeWebSocket:
         return self
 
     async def __anext__(self):
+        if self.frames:
+            return self.frames.pop(0)
         await self.closed.wait()
         raise StopAsyncIteration
 
@@ -54,9 +58,12 @@ class RelayLifecycle(unittest.IsolatedAsyncioTestCase):
         with self.assertLogs('session_peer_relay.relay', level='WARNING') as logs:
             await relay.handler(receiver)
         self.assertEqual(relay.metrics()['counters']['receiverIdleExpired'], 1)
+        self.assertEqual(relay.metrics()['counters']['receiverRoomsOpened'], 1)
+        self.assertEqual(relay.metrics()['counters']['clientFirstRooms'], 0)
         self.assertEqual(relay.metrics()['counters']['roomsClosedBeforeAttach'], 1)
         self.assertEqual(relay.metrics()['current']['waitingRooms'], 0)
         self.assertTrue(any('receiver_idle_expiry' in row for row in logs.output))
+        self.assertTrue(any('"openedBy": "receiver"' in row for row in logs.output))
         self.assertNotIn('SECRET-ROOM', '\n'.join(logs.output))
 
     async def test_re_admission_delay_longer_than_client_wait_leaves_no_pair(self):
@@ -77,6 +84,7 @@ class RelayLifecycle(unittest.IsolatedAsyncioTestCase):
         try:
             await asyncio.wait_for(client_task, 1)
             self.assertEqual(relay.metrics()['counters']['clientWaitExpired'], 1)
+            self.assertEqual(relay.metrics()['counters']['clientFirstRooms'], 1)
             self.assertEqual(relay.metrics()['counters']['roomsPaired'], 0)
         finally:
             await late_receiver.close()
@@ -112,7 +120,33 @@ class RelayLifecycle(unittest.IsolatedAsyncioTestCase):
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
         self.assertTrue(any('room_paired' in row for row in logs.output))
+        self.assertTrue(any('"reason": "attach_notify_failed"' in row for row in logs.output))
         self.assertNotIn('SECRET-ROOM', '\n'.join(logs.output))
+
+    async def test_stream_lifetime_and_forward_timeout_are_distinct(self):
+        for expected in ('stream_lifetime_expiry', 'forward_send_timeout'):
+            with self.subTest(reason=expected):
+                relay = Relay([], diagnostic_events=True)
+                receiver = FakeWebSocket('receiver', stalled_data=expected == 'forward_send_timeout')
+                client = FakeWebSocket('client', frames=[b'opaque'] if expected == 'forward_send_timeout' else [])
+                if expected == 'stream_lifetime_expiry':
+                    receiver.lab_expiry = client.lab_expiry = time.monotonic() + .04
+                tasks = []
+                with self.assertLogs('session_peer_relay.relay', level='WARNING') as logs:
+                    try:
+                        tasks.append(asyncio.create_task(relay.handler(receiver)))
+                        await self.wait_for(lambda: relay.metrics()['current']['waitingRooms'] == 1)
+                        tasks.append(asyncio.create_task(relay.handler(client)))
+                        await asyncio.wait_for(asyncio.gather(*tasks), 3)
+                    finally:
+                        await receiver.close()
+                        await client.close()
+                        for task in tasks:
+                            task.cancel()
+                        await asyncio.gather(*tasks, return_exceptions=True)
+                self.assertTrue(any('"reason": "'+expected+'"' in row for row in logs.output))
+                self.assertTrue(any('"closeCode": 1000' in row for row in logs.output))
+                self.assertNotIn('SECRET-ROOM', '\n'.join(logs.output))
 
 
 class ReceiverLifecycle(unittest.IsolatedAsyncioTestCase):
@@ -128,6 +162,7 @@ class ReceiverLifecycle(unittest.IsolatedAsyncioTestCase):
         receiver = app.Receiver(Mock(), {'targets': {'worker': {'agent': 'claude', 'target': 'worker'}},
                                          'peers': {}}, diagnostic_events=True)
         calls = 0
+        clock = [0]
 
         async def connect(url, credential, *, attach_timeout, on_event):
             nonlocal calls
@@ -135,10 +170,12 @@ class ReceiverLifecycle(unittest.IsolatedAsyncioTestCase):
             if calls == 2:
                 raise asyncio.CancelledError()
             on_event('websocket_open', elapsed_ms=2)
-            raise TransportFailure('relay_attach', 'connection_closed', close_code=1000)
+            clock[0] = 60
+            raise TransportFailure('relay_attach', 'connection_closed', close_code=1000,
+                                   close_source='received')
 
         with patch.object(app, 'relay_stream', side_effect=connect), \
-             patch.object(app, 'time', SimpleNamespace(monotonic=Mock(side_effect=[0, 60]))), \
+             patch.object(app, 'time', SimpleNamespace(monotonic=lambda: clock[0])), \
              patch.object(app.asyncio, 'sleep', new=AsyncMock()), \
              patch.object(app.logging, 'getLogger') as logger:
             with self.assertRaises(asyncio.CancelledError):
@@ -148,25 +185,56 @@ class ReceiverLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any('relay_connection_failed' in row for row in rows))
         self.assertNotIn('SECRET', '\n'.join(rows))
 
+    async def test_sent_close_code_is_not_classified_as_idle_expiry(self):
+        receiver = app.Receiver(Mock(), {'targets': {'worker': {'agent': 'claude', 'target': 'worker'}},
+                                         'peers': {}}, diagnostic_events=True)
+        calls = 0
+        clock = [0]
+
+        async def connect(url, credential, *, attach_timeout, on_event):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise asyncio.CancelledError()
+            on_event('websocket_open', elapsed_ms=2)
+            clock[0] = 60
+            raise TransportFailure('relay_attach', 'connection_closed', close_code=1011,
+                                   close_source='sent')
+
+        with patch.object(app, 'relay_stream', side_effect=connect), \
+             patch.object(app, 'time', SimpleNamespace(monotonic=lambda: clock[0])), \
+             patch.object(app.asyncio, 'sleep', new=AsyncMock()), \
+             patch.object(app.logging, 'getLogger') as logger:
+            with self.assertRaises(asyncio.CancelledError):
+                await receiver.relay_listener('wss://relay.example.test/v1/connect', 'SECRET')
+        rows = [str(call) for call in logger.return_value.warning.call_args_list]
+        self.assertTrue(any('relay_connection_failed' in row for row in rows))
+        self.assertFalse(any('idle_expiry_like' in row for row in rows))
+
     async def test_consumed_room_is_not_reused_for_next_setup_failure(self):
         receiver = app.Receiver(Mock(), {'targets': {'worker': {'agent': 'claude', 'target': 'worker'}},
                                          'peers': {}}, diagnostic_events=True)
         calls = 0
+        clock = [0]
 
         async def connect(url, credential, *, attach_timeout, on_event):
             nonlocal calls
             calls += 1
             if calls == 1:
+                clock[0] = 1
                 on_event('websocket_open', elapsed_ms=2)
                 on_event('attach_received', elapsed_ms=3)
                 return object()
             if calls == 2:
+                clock[0] = 2
                 raise TransportFailure('relay_admission', 'timeout', transient=True)
+            clock[0] = 3
+            on_event('websocket_open', elapsed_ms=2)
             raise asyncio.CancelledError()
 
         with patch.object(receiver, 'spawn') as spawn, \
              patch.object(app, 'relay_stream', side_effect=connect), \
-             patch.object(app, 'time', SimpleNamespace(monotonic=Mock(side_effect=[0, 1, 2, 3]))), \
+             patch.object(app, 'time', SimpleNamespace(monotonic=lambda: clock[0])), \
              patch.object(app.asyncio, 'sleep', new=AsyncMock()), \
              patch.object(app.logging, 'getLogger') as logger:
             with self.assertRaises(asyncio.CancelledError):
@@ -174,6 +242,7 @@ class ReceiverLifecycle(unittest.IsolatedAsyncioTestCase):
         spawn.assert_called_once()
         rows = [str(call) for call in logger.return_value.warning.call_args_list]
         self.assertTrue(any('setup_failed' in row for row in rows))
+        self.assertTrue(any('reconnect_gap' in row for row in rows))
         self.assertFalse(any('websocket_closed' in row for row in rows))
 
 

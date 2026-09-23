@@ -8,13 +8,15 @@ from .store import Rejected
 
 
 class TransportFailure(Rejected):
-    def __init__(self, stage, reason, *, transient=False, http_status=None, close_code=None):
+    def __init__(self, stage, reason, *, transient=False, http_status=None,
+                 close_code=None, close_source=None):
         super().__init__(reason)
         self.stage = stage
         self.transient = transient
         self.http_status = http_status
         self.close_code = (int(close_code) if isinstance(close_code, int)
                            and not isinstance(close_code, bool) and 1000 <= close_code <= 4999 else None)
+        self.close_source = close_source if self.close_code is not None and close_source in {'received', 'sent'} else None
 
     def diagnostic(self):
         value = {'stage': self.stage, 'reason': str(self)}
@@ -22,6 +24,8 @@ class TransportFailure(Rejected):
             value['httpStatus'] = self.http_status
         if self.close_code is not None:
             value['closeCode'] = self.close_code
+            if self.close_source is not None:
+                value['closeSource'] = self.close_source
         return value
 
 
@@ -39,7 +43,8 @@ def failure(stage, exc):
     if isinstance(cause, ConnectionClosed):
         close = cause.rcvd or cause.sent
         code = close.code if close else None
-        return TransportFailure(stage, 'connection_closed', close_code=code)
+        source = 'received' if cause.rcvd is not None else 'sent' if cause.sent is not None else None
+        return TransportFailure(stage, 'connection_closed', close_code=code, close_source=source)
     if isinstance(cause, (ConnectionError, OSError)):
         return TransportFailure(stage, 'connection_failed')
     if isinstance(exc, Rejected):

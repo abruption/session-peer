@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from tests.relay import test_native_relay as platform_guard
-from websockets.exceptions import ConnectionClosedOK
+from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 from websockets.frames import Close
 from session_peer_relay import app, cli, control, wire
 from session_peer_relay.store import Rejected
@@ -31,7 +31,11 @@ class TransportDiagnostics(unittest.TestCase):
         self.assertTrue(detail.transient)
         closed = failure('relay_attach', ConnectionClosedOK(Close(1000, SECRET), None))
         self.assertEqual(closed.diagnostic(),
-                         {'stage': 'relay_attach', 'reason': 'connection_closed', 'closeCode': 1000})
+                         {'stage': 'relay_attach', 'reason': 'connection_closed',
+                          'closeCode': 1000, 'closeSource': 'received'})
+        sent = failure('relay_attach', ConnectionClosedError(None, Close(1011, SECRET)))
+        self.assertEqual(sent.diagnostic()['closeSource'], 'sent')
+        self.assertEqual(sent.diagnostic()['closeCode'], 1011)
         self.assertNotIn(SECRET, json.dumps(closed.diagnostic()))
 
     def test_control_body_timeout_closes_response_and_is_sanitized(self):
@@ -118,12 +122,12 @@ class RouteSetup(unittest.IsolatedAsyncioTestCase):
 
     async def test_timeout_retries_setup_then_submits_exactly_once(self):
         channel=self.channel([{'ok':True,'device':self.peer},{'ok':True,'status':'queued','consumptionConfirmed':False}])
-        with patch.object(app,'open_channel',new=AsyncMock(side_effect=[TransportFailure('relay_websocket','timeout',transient=True),channel])) as connect,patch.object(app.asyncio,'sleep',new=AsyncMock()):
+        with patch.object(app,'open_channel',new=AsyncMock(side_effect=[TransportFailure('relay_admission','timeout',transient=True),channel])) as connect,patch.object(app.asyncio,'sleep',new=AsyncMock()):
             result=await app.exchange(self.store,self.peer,'send',{'target':'worker','message':SECRET},route='relay')
         self.assertTrue(result['ok']);self.assertFalse(result['consumptionConfirmed'])
         self.assertEqual(result['setupAttempts'], 2)
         self.assertTrue(result['setupDegraded'])
-        self.assertEqual(result['setupFailureHistory'][0]['stage'], 'relay_websocket')
+        self.assertEqual(result['setupFailureHistory'][0]['stage'], 'relay_admission')
         self.assertEqual(connect.await_count,2)
         self.assertEqual([call.args[0]['op'] for call in channel.send.await_args_list],['probe','send'])
         channel.close.assert_awaited_once()
@@ -166,6 +170,14 @@ class RouteSetup(unittest.IsolatedAsyncioTestCase):
                         await app.exchange(self.store, self.peer, 'list', route='relay')
                 self.assertEqual(connect.await_count, 1)
                 self.assertEqual(caught.exception.route_failures[0]['stage'], expected)
+
+    async def test_websocket_upgrade_timeout_is_not_retried_after_possible_room_pairing(self):
+        with patch.object(app, 'open_channel', new=AsyncMock(
+                side_effect=TransportFailure('relay_websocket', 'timeout', transient=True))) as connect:
+            with self.assertRaises(NoAuthenticatedRoute) as caught:
+                await app.exchange(self.store, self.peer, 'list', route='relay')
+        self.assertEqual(connect.await_count, 1)
+        self.assertEqual(caught.exception.route_failures[0]['attempts'], 1)
 
     async def test_auth_tls_and_other_errors_are_not_retried(self):
         for exc in (TransportFailure('relay_admission','http_rejected',http_status=401),

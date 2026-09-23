@@ -6,9 +6,11 @@
 
 `no_authenticated_route`는 `retryAllowed:false`, `consumptionConfirmed:false`를 유지합니다. `routeFailures`는 경로별 마지막 `stage`, 허용 목록의 `reason`, `attempts`를 표시합니다. 제한된 `attemptHistory`는 각 시도의 단계·사유·`elapsedMs`를 보존하며 HTTP 거부에는 `httpStatus`, WebSocket 종료에는 `closeCode`가 포함될 수 있습니다. 제어, 입장, 업그레이드, attach, 피어 TLS 및 probe 실패를 구분하되 URL·자격증명·원문 예외·메시지 본문은 기록하지 않습니다. 두 번째 연결이 성공하면 `setupDegraded:true`, `setupAttempts:2`, `setupFailureHistory`가 표시되며 깨끗한 안정성 통과로 계산하지 않습니다.
 
-**attach 전 제어·입장·WebSocket 설정 시간 초과**에만 0.5초 후 한 번 더 Relay에 연결합니다. attach, 피어 TLS 및 probe 시간 초과는 재시도하지 않습니다. 새 입장 티켓과 채널을 사용하며 소비된 티켓이나 에이전트 메시지를 재전송하지 않습니다. HTTP 거부, 인증/인증서 오류, 알 수 없는 실패도 재시도하지 않습니다. 직접 연결이 선택되면 Relay 시도는 취소될 수 있습니다. 제출 후 응답 손실은 여전히 `unknown`이며 재전송이나 경로 전환을 하지 않습니다. 이 제한된 완화 조치가 공개 경로 장애 해결을 입증하지는 않습니다. 배포 후 실제 ACK와 장시간 검증을 다시 통과해야 합니다.
+**WebSocket 업그레이드 전 제어·입장 시간 초과**에만 0.5초 후 한 번 더 Relay에 연결합니다. attach, 피어 TLS 및 probe 시간 초과는 재시도하지 않습니다. WebSocket 업그레이드 시간 초과도 원본에서 이미 수신자 방을 페어링했을 수 있어 재시도하지 않습니다. 새 입장 티켓과 채널을 사용하며 소비된 티켓이나 에이전트 메시지를 재전송하지 않습니다. HTTP 거부, 인증/인증서 오류, 알 수 없는 실패도 재시도하지 않습니다. 직접 연결이 선택되면 Relay 시도는 취소될 수 있습니다. 제출 후 응답 손실은 여전히 `unknown`이며 재전송이나 경로 전환을 하지 않습니다. 이 제한된 완화 조치가 공개 경로 장애 해결을 입증하지는 않습니다. 배포 후 실제 ACK와 장시간 검증을 다시 통과해야 합니다.
 
 수신자는 정제된 `relay_connection_failed` 경고를 stderr에 분당 최대 한 번 출력합니다. 정상 유휴 만료로 보이는 종료는 실패 경고와 분리합니다. `device serve --diagnostic-events`와 `relay serve --diagnostic-events`를 명시적으로 사용하면 방·attach·종료 단계, 소요 시간, 허용 목록의 사유·종료 코드만 stderr에 기록합니다. 기본값은 꺼짐이며 기기 신원, 방 이름, URL, 헤더, 자격증명, 본문은 기록하지 않습니다. Relay 지표에는 방 열림·페어링, 각 레그의 attach 전송 및 만료 카운터가 추가됩니다. attach 전송은 클라이언트 수신의 증명이 아닙니다. 수신자 관점의 `idle_expiry_like`는 서버 원인의 확증이 아닙니다.
+
+WebSocket 종료의 `closeSource`는 코드가 수신됐는지 송신됐는지 구분합니다. Relay 지표는 수신자 선착·클라이언트 선착 방을 구분합니다. `receiverWsAgeMs`는 수신자 대기 시간이지 연결 생존의 증거가 아닙니다. 방 페어링과 수신자의 `attach_received`·피어 TLS 이벤트 시각을 대조해야 합니다.
 
 ## 설치
 
