@@ -63,6 +63,18 @@ backs up SQLite through its online backup API while the writers are stopped,
 copies the signing key, provider configuration, public state and replay
 high-water into a root-only snapshot, verifies the signing key against the
 published JWKS, and restarts only a stack that was active before the snapshot.
+The helper requires an explicit `--run` flag. `--help`, an unknown argument, or
+an omitted flag must not stop services or create a snapshot:
+
+```bash
+sudo /usr/local/sbin/session-peer-backup-snapshot.py --run
+```
+
+Before installing a revised helper, inspect the KR Restic job and any manual
+callers and update their invocation to include `--run`; otherwise the job fails
+closed without making a snapshot. Copy the reviewed helper to the installed
+path only through the normal deployment procedure, then verify the installed
+`--help` and invalid-argument behavior without invoking `--run`.
 The regular DR job must fail closed if this helper fails and include all of:
 
 - `/var/lib/session-peer-backup/snapshots`
