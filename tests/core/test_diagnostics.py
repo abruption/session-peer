@@ -161,7 +161,7 @@ class ClaudeDoctor(unittest.TestCase):
             "pid": 12, "name": "worker", "messagingSocketPath": str(self.root / "missing.sock"),
         }))
         with mock.patch.object(peer, "sessions_dir", return_value=self.root), \
-             mock.patch.object(peer, "pid_alive", return_value=True):
+             mock.patch.object(peer, "claude_process_state", return_value=(True, None)):
             result = peer.diagnose_claude()
         self.assertEqual(result["status"], "inbox_unavailable")
         self.assertEqual(result["checks"][0]["code"], "inbox_unavailable")
@@ -176,7 +176,7 @@ class ClaudeDoctor(unittest.TestCase):
             "pid": 12, "name": "worker", "messagingSocketPath": str(path),
         }))
         with mock.patch.object(peer, "sessions_dir", return_value=self.root), \
-             mock.patch.object(peer, "pid_alive", return_value=True):
+             mock.patch.object(peer, "claude_process_state", return_value=(True, None)):
             result = peer.diagnose_claude()
         self.assertEqual(result["status"], "available")
         self.assertEqual(result["checks"][0]["verification"], "filesystem_only")
