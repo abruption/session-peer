@@ -19,6 +19,8 @@ WebSocket 关闭的 `closeSource` 区分代码来自接收还是发送。Relay �
 
 显式启用的 Relay 和接收端生命周期事件包含 `eventTimeUtcMs`（UTC Unix 毫秒）。客户端每次尝试建立 Relay 连接都会生成新的随机 UUIDv4 `attemptId`，并在成功结果或逐次失败元数据中记录。新版 Relay 在已配对房间事件中记录该 ID，并通过 attach 通知传给新版接收端；接收端的 `attach_received` 和 peer-TLS 事件也记录同一 ID。该 ID 不由身份、房间名、请求 ID 或消息内容派生，也不会改变授权或重试安全性。归因失败时，应确认完全相同的 `attemptId` 只对应一个 Relay 房间和一条接收端连接，并在比较 UTC 时间时考虑时钟偏差。若事件缺失、重复或某条连接使用旧版本，不要仅凭时间或汇总计数推断，应记为 `unattributed`。
 
+如果公开路径停滞再次出现，可在显式启用的 Relay `stream_close` 事件中比较每条连接的 `ingressFrames`/`ingressBytes`、`egressCompletedFrames`/`egressCompletedBytes` 以及首末帧 UTC 时间。这些是加密 WebSocket 帧计数，不是消息数。发送完成只表示 Relay 的套接字 send 已返回，不能证明 Cloudflare、接收端、TLS 或应用程序收到了这些字节。先比较同一房间和 `attemptId` 下的两个角色，再对照接收端事件。事件缺失或匹配模糊时仍应记为 `unattributed`。仅凭计数无法判定 Cloudflare、OCI 或中间链路的责任。元数据时间和帧大小也会透露活动信息，因此应将 opt-in 日志私密且限期保存。
+
 若等待房间已开启至少 1 秒后被 Relay 正常关闭，接收端会在 0.5 秒后重连，而不会增加退避时间。其他失败以及 1 秒内关闭的房间仍按指数退避，最长 5 秒。Relay 连接两端均使用 10 秒的 WebSocket ping 间隔与超时，因此停滞连接约 20 秒即可检测到，而不是约 40 秒。这些改动只缩短重连空档，并不能修复停滞的网络路径。
 
 ## 安装

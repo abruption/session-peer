@@ -16,6 +16,8 @@ WebSocket 종료의 `closeSource`는 코드가 수신됐는지 송신됐는지 �
 
 명시적으로 켠 Relay·수신자 수명주기 이벤트에는 `eventTimeUtcMs`(UTC Unix 밀리초)가 포함됩니다. 클라이언트는 Relay 연결 시도마다 임의 UUIDv4 `attemptId`를 새로 만들고 성공 결과 또는 시도별 실패 메타데이터에 기록합니다. 새 Relay는 이 ID를 페어링된 방 이벤트에 기록하고 새 수신자에게 attach 알림으로 전달합니다. 수신자의 `attach_received`·peer-TLS 이벤트에도 같은 ID가 남습니다. 이 ID는 신원·방 이름·요청 ID·메시지 내용에서 파생되지 않으며 인가나 재전송 안전성을 바꾸지 않습니다. 실패를 귀속하려면 정확한 `attemptId`가 Relay 방 하나와 수신자 레그 하나에만 대응하는지 확인하고 시계 오차를 고려해 UTC 시각을 대조하십시오. 이벤트가 없거나 중복되거나 구버전 레그라면 시각·집계값만으로 추정하지 말고 `unattributed`로 기록하십시오.
 
+공개 경로 정체가 재발하면 명시적으로 켠 Relay의 `stream_close` 이벤트에서 각 레그의 `ingressFrames`/`ingressBytes`, `egressCompletedFrames`/`egressCompletedBytes` 및 첫·마지막 UTC 프레임 시각을 비교할 수 있습니다. 이는 암호화된 WebSocket 프레임 수이지 메시지 수가 아닙니다. 송신 완료는 Relay의 소켓 send가 반환됐다는 뜻일 뿐 Cloudflare·수신자·TLS·애플리케이션이 바이트를 소비했다는 증거가 아닙니다. 같은 방·`attemptId` 아래 두 역할을 비교한 뒤 수신자 이벤트와 대조하십시오. 이벤트가 없거나 매칭이 모호하면 `unattributed`로 유지합니다. 카운터만으로 Cloudflare·OCI·중간 홉의 귀책을 정할 수 없습니다. 메타데이터 시각과 프레임 크기만으로도 활동이 드러날 수 있으므로 opt-in 로그를 비공개·한정 보존하십시오.
+
 1초 이상 열려 있던 대기 방이 Relay에 의해 정상 종료되면 수신자는 백오프를 늘리지 않고 0.5초 뒤 다시 연결합니다. 그 밖의 실패와 1초 안에 닫힌 방은 계속 최대 5초까지 지수 백오프합니다. Relay 레그는 양쪽 모두 10초 WebSocket ping 간격·제한을 사용하므로 정체된 레그를 약 40초가 아닌 약 20초 안에 감지합니다. 이는 재연결 공백을 줄일 뿐 정체된 네트워크 경로를 고치지는 않습니다.
 
 ## 설치
