@@ -1106,18 +1106,50 @@ def sessions_dir() -> Path:
 IS_WINDOWS = sys.platform == "win32"
 
 
+def windows_process_start_ms(pid: int) -> int | None:
+    """Read a live Windows process creation time without trusting a stale PID."""
+    if pid <= 1:
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class FILETIME(ctypes.Structure):
+        _fields_ = [("low", wintypes.DWORD), ("high", wintypes.DWORD)]
+
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.GetProcessTimes.argtypes = (wintypes.HANDLE, ctypes.POINTER(FILETIME),
+                                         ctypes.POINTER(FILETIME), ctypes.POINTER(FILETIME),
+                                         ctypes.POINTER(FILETIME))
+    kernel32.GetProcessTimes.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(0x1000 | 0x100000, False, pid)
+    if not handle:
+        return None
+    try:
+        if kernel32.WaitForSingleObject(handle, 0) != 0x102:  # WAIT_TIMEOUT: still running
+            return None
+        created, exited, kernel, user = FILETIME(), FILETIME(), FILETIME(), FILETIME()
+        if not kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited),
+                                        ctypes.byref(kernel), ctypes.byref(user)):
+            return None
+        if kernel32.WaitForSingleObject(handle, 0) != 0x102:
+            return None
+        ticks = (created.high << 32) | created.low
+        return (ticks - 116444736000000000) // 10000
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def pid_alive(pid: int) -> bool:
     if pid <= 1:
         return False
     if IS_WINDOWS:
-        import ctypes
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if not handle:
-            return False
-        kernel32.CloseHandle(handle)
-        return True
+        return windows_process_start_ms(pid) is not None
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -1125,6 +1157,24 @@ def pid_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def claude_process_state(record: dict, record_pid: int) -> tuple[bool, str | None]:
+    """Fail closed when a Windows session record outlives its process identity."""
+    pid = record.get("pid")
+    if type(pid) is not int or pid != record_pid:
+        return False, "record_pid_mismatch"
+    if not IS_WINDOWS:
+        return pid_alive(pid), None
+    current_start = windows_process_start_ms(pid)
+    if current_start is None:
+        return False, "process_not_live"
+    recorded_start = record.get("startedAt")
+    if type(recorded_start) is not int or recorded_start <= 0:
+        return False, "missing_start_time"
+    if current_start > recorded_start + 2000:
+        return False, "pid_reused"
+    return True, None
 
 
 def discover(include_unreachable: bool = False) -> list[dict]:
@@ -1155,7 +1205,7 @@ def discover(include_unreachable: bool = False) -> list[dict]:
             continue
 
         sock = record.get("messagingSocketPath") or ""
-        alive = pid_alive(pid)
+        alive, stale_reason = claude_process_state(record, int(record_file.stem))
         if IS_WINDOWS:
             has_inbox = bool(sock) and sock.startswith("\\\\.\\pipe\\")
         else:
@@ -1174,6 +1224,8 @@ def discover(include_unreachable: bool = False) -> list[dict]:
             "alive": alive,
             "reachable": alive and has_inbox,
         }
+        if stale_reason:
+            entry["staleReason"] = stale_reason
         if entry["reachable"] or include_unreachable:
             found.append(entry)
 
@@ -2162,7 +2214,7 @@ def diagnose_claude() -> dict:
     directory = sessions_dir()
     result = {
         "sessionsDir": str(directory), "records": 0, "invalidRecords": 0,
-        "aliveSessions": 0, "availableInboxes": 0, "checks": [],
+        "aliveSessions": 0, "availableInboxes": 0, "staleRecords": 0, "checks": [],
     }
     try:
         mode = directory.stat().st_mode
@@ -2223,7 +2275,9 @@ def diagnose_claude() -> dict:
             result["invalidRecords"] += 1
             continue
         result["records"] += 1
-        alive = pid_alive(pid)
+        alive, stale_reason = claude_process_state(record, int(record_file.stem))
+        if stale_reason:
+            result["staleRecords"] += 1
         if alive:
             result["aliveSessions"] += 1
         inbox = str(record.get("messagingSocketPath") or "")
@@ -2244,6 +2298,12 @@ def diagnose_claude() -> dict:
             count=permission_failures,
         ))
         return {"status": "permission_denied", **result}
+    if result["staleRecords"]:
+        result["checks"].append(_diagnostic(
+            "warning", "stale_session_records",
+            "Claude session records do not match live process identities",
+            count=result["staleRecords"],
+        ))
     if result["availableInboxes"]:
         result["checks"].append(_diagnostic(
             "ok", "inbox_present",
