@@ -32,7 +32,8 @@ class Receiver:
     def lifecycle_event(self, event, **values):
         if self.diagnostic_events:
             logging.getLogger(__name__).warning('relay_lifecycle %s',
-                json.dumps({'event': event, **values}, sort_keys=True))
+                json.dumps({'event': event, 'eventTimeUtcMs': int(time.time()*1000),
+                            **values}, sort_keys=True))
 
     async def watch_peer(self, channel):
         while True:
@@ -142,11 +143,13 @@ class Receiver:
                 if isinstance(raw, Ws):
                     self.lifecycle_event('peer_tls', outcome='failed',
                         elapsedMs=round((time.monotonic()-started)*1000),
-                        reason=failure('peer_tls', exc).diagnostic()['reason'])
+                        reason=failure('peer_tls', exc).diagnostic()['reason'],
+                        attemptId=getattr(raw, 'attempt_id', None))
                 raise
             if isinstance(raw, Ws):
                 self.lifecycle_event('peer_tls', outcome='ok',
-                    elapsedMs=round((time.monotonic()-started)*1000))
+                    elapsedMs=round((time.monotonic()-started)*1000),
+                    attemptId=getattr(raw, 'attempt_id', None))
             if channel.peer:
                 watch = asyncio.create_task(self.watch_peer(channel))
             # Bound unauthenticated pairing attempts per TLS connection.
@@ -189,7 +192,7 @@ class Receiver:
         delay = .5
         gap_started = None
         websocket_opened = None
-        def observed(event, *, elapsed_ms):
+        def observed(event, *, elapsed_ms, attempt_id=None):
             nonlocal gap_started, websocket_opened
             now = time.monotonic()
             if event == 'websocket_open':
@@ -197,7 +200,7 @@ class Receiver:
                 if gap_started is not None:
                     self.lifecycle_event('reconnect_gap', elapsedMs=round((now-gap_started)*1000))
                     gap_started = None
-            self.lifecycle_event(event, elapsedMs=elapsed_ms)
+            self.lifecycle_event(event, elapsedMs=elapsed_ms, attemptId=attempt_id)
         while True:
             try:
                 raw = await relay_stream(url, credential, attach_timeout=65, on_event=observed)
@@ -248,12 +251,13 @@ def request(store, peer, op, body=None, ident=None):
             'expires': time.time()+60, 'op': op, 'body': body}
 
 
-async def open_channel(store, certificate, routes, route, credential=None, bootstrap=False):
+async def open_channel(store, certificate, routes, route, credential=None, bootstrap=False,
+                       attempt_id=None):
     if route == 'direct':
         host, port = direct_address(routes['direct'])
         raw = Tcp(*await asyncio.wait_for(asyncio.open_connection(host, port), 5))
     else:
-        raw = await relay_stream(routes['relay'], credential)
+        raw = await relay_stream(routes['relay'], credential, attempt_id=attempt_id)
     channel = Secure(raw, context(store.identity_root, False, [certificate], present=not bootstrap),
                      expected=fingerprint(certificate))
     try:
@@ -323,8 +327,9 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
         raise Rejected('unpaired_device')
     routes = record['routes']
 
-    async def ready_once(kind):
-        channel = await open_channel(store, record['certificate'], routes, kind, credential)
+    async def ready_once(kind, attempt_id):
+        channel = await open_channel(store, record['certificate'], routes, kind, credential,
+                                     attempt_id=attempt_id)
         try:
             await channel.send(request(store, peer, 'probe'))
             response = await channel.recv()
@@ -332,7 +337,7 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
                 raise Rejected('peer_not_ready')
             if op.startswith('rotation.') and 'identity-rotation-v1' not in response.get('features', []):
                 raise Rejected('rotation_unsupported')
-            return kind, channel
+            return kind, channel, attempt_id
         except TimeoutError:
             with contextlib.suppress(Exception):
                 await channel.close()
@@ -350,17 +355,21 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
         # admission proof/ticket and channel are acquired; never replay a send.
         for attempt in (1, 2):
             started = time.monotonic()
+            started_utc_ms = int(time.time()*1000)
+            attempt_id = str(uuid.uuid4()) if kind == 'relay' else None
             try:
-                result = await ready_once(kind)
+                result = await ready_once(kind, attempt_id)
                 setup_attempts[kind] = attempt
                 return result
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 detail = failure('peer_connect', exc)
-                diagnostics[kind] = {'route': kind, **detail.diagnostic(), 'attempts': attempt}
+                diagnostics[kind] = {'route': kind, **detail.diagnostic(), 'attempts': attempt,
+                                     'attemptId': attempt_id}
                 history.setdefault(kind, []).append({'attempt': attempt, **detail.diagnostic(),
-                    'elapsedMs': max(0, round((time.monotonic()-started)*1000))})
+                    'elapsedMs': max(0, round((time.monotonic()-started)*1000)),
+                    'attemptId': attempt_id, 'startedAtUtcMs': started_utc_ms})
                 # A timeout after attach may have consumed the receiver's only
                 # waiting room. Retrying then hides the first failure and cannot
                 # safely be treated as a fresh-room recovery.
@@ -395,7 +404,7 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
             if (not task.cancelled() and task.exception() is None
                     and (winner is None or task.result()[1] is not winner[1])):
                 await task.result()[1].close()
-    kind, channel = winner
+    kind, channel, selected_attempt_id = winner
     setup = ({'setupAttempts': setup_attempts[kind], 'setupDegraded': True,
               'setupFailureHistory': history[kind]} if setup_attempts[kind] > 1 else {})
     value = request(store, peer, op, body, ident)
@@ -404,9 +413,11 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
         await channel.send(value)
         result = await channel.recv()
         return {**result, 'route': kind, 'receiverAccepted': result.get('ok', False),
-                'relayAttached': kind == 'relay', 'requestId': value['id'], **setup}
+                'relayAttached': kind == 'relay', 'requestId': value['id'],
+                'attemptId': selected_attempt_id, **setup}
     except Exception:
         return {'ok': False, 'status': 'unknown', 'requestId': value['id'],
-                'route': kind, 'retryAllowed': False, 'consumptionConfirmed': False, **setup}
+                'route': kind, 'attemptId': selected_attempt_id,
+                'retryAllowed': False, 'consumptionConfirmed': False, **setup}
     finally:
         await channel.close()

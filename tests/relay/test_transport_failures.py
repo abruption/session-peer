@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import ssl
+import uuid
 import unittest
 import urllib.error
 from types import SimpleNamespace
@@ -222,7 +223,7 @@ class RouteSetup(unittest.IsolatedAsyncioTestCase):
     async def test_auto_direct_winner_cancels_slow_relay_without_send(self):
         direct=self.channel([{'ok':True,'device':self.peer},{'ok':True}])
         cancelled=asyncio.Event()
-        async def connect(store,cert,routes,kind,credential):
+        async def connect(store,cert,routes,kind,credential,*,attempt_id=None):
             if kind=='direct':return direct
             try:await asyncio.sleep(60)
             except asyncio.CancelledError:cancelled.set();raise
@@ -248,6 +249,34 @@ class RouteSetup(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(TransportFailure) as caught:
                 await wire.relay_stream('ws://127.0.0.1:2/v1/connect', SECRET)
         self.assertEqual(caught.exception.diagnostic()['closeCode'], 1000)
+
+    async def test_attempt_header_and_legacy_attach_are_compatible(self):
+        attempt_id = str(uuid.uuid4())
+        url = 'ws://127.0.0.1:2/v1/connect'
+        ws = SimpleNamespace(recv=AsyncMock(return_value='{"relayAttached":true}'), close=AsyncMock())
+        connect = AsyncMock(return_value=ws)
+        with patch.object(wire, 'admission', return_value='session_peer='+SECRET), \
+             patch.object(wire, 'PinnedConnect', new=connect):
+            raw = await wire.relay_stream(url, SECRET, attempt_id=attempt_id)
+        self.assertIsNone(raw.attempt_id)  # An older Relay did not echo a correlation ID.
+        headers = connect.await_args.kwargs['additional_headers']
+        self.assertEqual(headers['X-Session-Peer-Attempt'], attempt_id)
+        self.assertEqual(headers['X-Session-Peer-Diagnostic-Capable'], 'v1')
+        self.assertEqual(headers['Cookie'], 'session_peer='+SECRET)
+        ws.recv.return_value = json.dumps({'relayAttached': True, 'attemptId': attempt_id})
+        with patch.object(wire, 'admission', return_value='session_peer='+SECRET), \
+             patch.object(wire, 'PinnedConnect', new=AsyncMock(return_value=ws)):
+            raw = await wire.relay_stream(url, SECRET, attempt_id=attempt_id)
+        self.assertEqual(raw.attempt_id, attempt_id)
+        ws.recv.return_value = json.dumps({'relayAttached': True, 'attemptId': str(uuid.uuid4())})
+        with patch.object(wire, 'admission', return_value='session_peer='+SECRET), \
+             patch.object(wire, 'PinnedConnect', new=AsyncMock(return_value=ws)):
+            with self.assertRaises(TransportFailure) as caught:
+                await wire.relay_stream(url, SECRET, attempt_id=attempt_id)
+        self.assertEqual(caught.exception.stage, 'relay_attach')
+        self.assertEqual(str(caught.exception), 'invalid_attach_response')
+        with self.assertRaisesRegex(ValueError, 'invalid_attempt_id'):
+            await wire.relay_stream(url, SECRET, attempt_id='not-a-uuid')
 
     async def test_receiver_diagnostics_are_rate_limited_and_secret_free(self):
         receiver=app.Receiver(self.store,{'targets':{'worker':{'agent':'claude','target':'worker'}},'peers':{}})
