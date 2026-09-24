@@ -45,7 +45,8 @@ session-peer device init --state /private/device-state
     "review": {
       "agent": "codex",
       "target": "codex:FULL-THREAD-UUID",
-      "codexHome": "/home/alice/.codex"
+      "codexHome": "/home/alice/.codex",
+      "codexBin": "/home/alice/.local/bin/codex"
     }
   },
   "peers": {
@@ -61,7 +62,7 @@ Claude バインディングは `agent: claude` と、ホームを指定しな�
 
 ペアリングはデバイス鍵の所持を証明します。**ネイティブエージェントへのアクセスを許可するものではありません**: 受信ポリシーでフィンガープリント、操作、およびターゲットエイリアスを個別に許可する必要があります。ピアは実行可能ファイル、ホーム、wake フラグ、SSH 送信先、または任意のネイティブコマンド引数を指定することはできません。ポリシーの変更はレシーバーの再起動後に有効になります。制限事項: 設定可能なターゲットは 8 個、ポリシーデバイスは 128 台です。
 
-launchd や systemd などのサービスマネージャーで起動した受信側は、ログインシェルではなくそのマネージャーの最小限の `PATH` を引き継ぎます。macOS と Linux では、対象 TUI が使うのと同じ `codex` 実行ファイルのディレクトリが受信側の `PATH` に含まれている必要があります。launchd の既定値 `/usr/bin:/bin:/usr/sbin:/sbin` には `~/.local/bin` も `/opt/homebrew/bin` も含まれません。`codexBin` は下記の WSL バインディングでのみ受け付けられます。受信側に頼る前に、同じ環境で紐付けた対象へ `send --dry-run` を実行して確認してください。そうしないと Codex への配信が失敗し、現状では `native_outcome_unknown` として報告されます (#176)。
+launchd や systemd で起動した受信側は、ログインシェルではなくサービスマネージャーの最小限の `PATH` を引き継ぎます。macOS/Linux の Codex 対象では、対象 TUI が使う `codex` のディレクトリを受信サービスの `PATH` に追加するか（例: launchd の `EnvironmentVariables.PATH`、systemd の `Environment=PATH=...`）、管理者が所有するバインディングの `codexBin` に `/opt/homebrew/bin/codex` のような `codex` で終わる絶対パスを指定します。受信側は起動時に実行可能な通常ファイルを検証し、シンボリックリンクを実際の対象に解決します。Unix Codex では `codexPython` を使用しません。既存の稼働中 writer と home の検証は維持されます。実際の送信前に同じ受信環境で `send --dry-run` を確認してください。実行ファイルが見つからなければ、送信前に `codex_executable_not_found` で拒否します。結果が unknown の送信を自動再試行しないでください。
 
 ## ネイティブ Windows Codex 用の WSL レシーバー
 
@@ -91,7 +92,7 @@ launchd や systemd などのサービスマネージャーで起動した受信
 
 固定引数の `/usr/bin/wslpath` で変換し、standalone コアをネイティブ Python にストリーミングします。シェルは使用しません。Windows SQLite/WAL と writer ロックをネイティブ側で検査し、一意の所有者・同一ユーザー SID・プロセス作成時刻・Codex 実行ファイルを確認します。Linux SQLite で Windows DB を開いたり writer 検査を省略したりしません。非アクティブ・曖昧・検査不能な writer は拒否します。既存の WSL ポリシーにも `codexPython` が必要で、未指定・不正な場合は `native_windows_python_required` または `invalid_codex_python` で拒否します。
 
-Linux/macOS ターゲットは両実行ファイルフィールドを省略します。Windows クライアントは通常のローカル CLI を使用します。送信成功も `consumptionConfirmed: false` であり、消費確認には独立した応答が必要です。ポリシーやレシーバーの更新後も unknown 送信を自動再試行しないでください。
+Linux/macOS ターゲットでは `codexPython` を省略し、上記のように `codexBin` を任意で設定できます。Windows クライアントは通常のローカル CLI を使用します。送信成功も `consumptionConfirmed: false` であり、消費確認には独立した応答が必要です。ポリシーやレシーバーの更新後も unknown 送信を自動再試行しないでください。
 
 ネイティブローカル CLI 対応は、すべての Windows SSH シェルへの対応を意味しません。ソースをストリーミングする SSH には動作する python3 と POSIX 互換リモートシェルが必要です。Windows Store 実行エイリアスでは不十分です。ローカルのネイティブ CLI または Python をインストールした WSL SSH エンドポイントを使用してください。
 

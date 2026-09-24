@@ -111,12 +111,19 @@ class Receiver:
             raise Rejected('invalid_message')
         binding = self.policy.targets[alias]
         if op == 'resolve':
-            return await self.native.invoke(binding, 'resolve', text)
+            result = await self.native.invoke(binding, 'resolve', text)
+            if result.get('reason') == 'codex_executable_not_found':
+                self.lifecycle_event('native_preflight_refused', operation='resolve',
+                                     reason='codex_executable_not_found')
+            return result
         canonical = json.dumps({'binding': binding, 'message': text}, sort_keys=True, separators=(',', ':'))
         existing = self.store.begin(peer, value['id'], canonical)
         if existing is not None:
             return existing
         result = await self.native.invoke(binding, 'send', text)
+        if result.get('reason') == 'codex_executable_not_found':
+            self.lifecycle_event('native_preflight_refused', operation='send',
+                                 reason='codex_executable_not_found')
         return self.store.finish(peer, value['id'], result)
 
     async def handle(self, raw):

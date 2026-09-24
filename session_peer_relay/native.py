@@ -78,6 +78,29 @@ def validate_wsl_codex(binding):
     return native_home
 
 
+def validate_codex_binary(binding):
+    """Validate a policy-owned Unix Codex path or the WSL native bridge."""
+    executable = binding.get('codexBin')
+    if (executable is None or 'codexPython' in binding
+            or isinstance(executable, str) and Path(executable).name.casefold() == 'codex.exe'):
+        return validate_wsl_codex(binding), executable
+    if binding.get('agent') != 'codex':
+        raise Rejected('unexpected_executable')
+    if (sys.platform not in ('darwin', 'linux') or not isinstance(executable, str)
+            or '\0' in executable or len(executable) > 4096):
+        raise Rejected('invalid_codex_executable')
+    path = Path(executable)
+    if not path.is_absolute() or path.name != 'codex':
+        raise Rejected('invalid_codex_executable')
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise Rejected('invalid_codex_executable') from None
+    if resolved.name != 'codex' or not resolved.is_file() or not os.access(resolved, os.X_OK):
+        raise Rejected('invalid_codex_executable')
+    return None, str(resolved)
+
+
 class Policy:
     def __init__(self, value):
         if not isinstance(value, dict) or set(value) != {'targets', 'peers'}:
@@ -127,8 +150,7 @@ class Policy:
 def options(binding):
     args = core.build_parser().parse_args(['send', '--to', binding['target'], '--no-from', '--no-reply-to'])
     args.codex_home = binding.get('codexHome')
-    args.codex_bin = binding.get('codexBin')
-    args.codex_native_home = validate_wsl_codex(binding)
+    args.codex_native_home, args.codex_bin = validate_codex_binary(binding)
     # Native Windows bindings execute discovery and send in native Python;
     # SQLite WAL and writer locks must never be inspected across the WSL mount.
     args.allow_inactive_codex_home = False

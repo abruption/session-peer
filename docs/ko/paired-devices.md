@@ -45,7 +45,8 @@ session-peer device init --state /private/device-state
     "review": {
       "agent": "codex",
       "target": "codex:FULL-THREAD-UUID",
-      "codexHome": "/home/alice/.codex"
+      "codexHome": "/home/alice/.codex",
+      "codexBin": "/home/alice/.local/bin/codex"
     }
   },
   "peers": {
@@ -61,7 +62,7 @@ Claude 바인딩은 `agent: claude`와 홈 없는 정확한 세션 이름/PID를
 
 페어링은 기기 키 소유를 증명합니다. **이는 네이티브 에이전트 접근 권한을 부여하지 않습니다**: 수신 정책이 지문, 작업 및 대상 별칭을 별도로 허용해야 합니다. 피어는 실행 파일, 홈, wake 플래그, SSH 목적지 또는 임의의 네이티브 명령 인자를 제공할 수 없습니다. 정책 변경은 수신자를 재시작한 후에 적용됩니다. 제한: 구성된 대상 8개 및 정책 기기 128개.
 
-launchd나 systemd 같은 서비스 관리자로 시작한 수신자는 로그인 셸이 아니라 그 관리자의 최소 `PATH`를 물려받습니다. macOS와 Linux에서는 대상 TUI가 쓰는 것과 같은 `codex` 실행 파일의 디렉터리가 수신자의 `PATH`에 있어야 합니다. launchd 기본값 `/usr/bin:/bin:/usr/sbin:/sbin`에는 `~/.local/bin`이나 `/opt/homebrew/bin`이 없습니다. `codexBin`은 아래 WSL 바인딩에서만 허용됩니다. 수신자를 쓰기 전에 같은 환경에서 연결된 대상에 `send --dry-run`을 실행해 확인하십시오. 그렇지 않으면 Codex 전달이 실패하며 현재는 `native_outcome_unknown`으로 보고됩니다(#176).
+launchd나 systemd로 시작한 수신자는 로그인 셸이 아닌 서비스 관리자의 최소 `PATH`를 물려받습니다. macOS/Linux Codex 대상은 대상 TUI가 쓰는 `codex` 디렉터리를 수신기 서비스의 `PATH`에 넣거나(예: launchd `EnvironmentVariables.PATH`, systemd `Environment=PATH=...`), 운영자 소유 바인딩의 `codexBin`을 `/opt/homebrew/bin/codex`처럼 `codex`로 끝나는 절대 경로로 지정할 수 있습니다. 수신자는 기동 시 실행 가능한 일반 파일을 검증하고 심볼릭 링크를 실제 대상으로 해석합니다. Unix Codex에는 `codexPython`을 사용하지 않습니다. 기존의 활성 writer 및 홈 검사는 그대로 적용됩니다. 실제 전송 전에 같은 수신기 환경에서 `send --dry-run`으로 확인하십시오. 실행 파일이 없으면 제출 전에 `codex_executable_not_found`로 거부합니다. 결과가 unknown인 전송은 자동 재시도하지 마십시오.
 
 ## 네이티브 Windows Codex용 WSL 수신자
 
@@ -91,7 +92,7 @@ launchd나 systemd 같은 서비스 관리자로 시작한 수신자는 로그�
 
 고정 인자의 `/usr/bin/wslpath`로 경로를 변환하고 자체 standalone 코드를 네이티브 Python으로 스트리밍합니다. 셸 명령은 만들지 않습니다. Windows SQLite/WAL과 writer 잠금은 네이티브 Python이 확인하며 유일한 소유자·동일 사용자 SID·프로세스 생성 시각·Codex 실행 파일 신원을 검증합니다. Linux SQLite로 Windows DB를 열거나 writer 검사를 우회하지 않습니다. 비활성·모호·검사 불가능한 writer는 거부합니다. 기존 WSL 정책에도 `codexPython`을 추가해야 하며 누락·잘못된 인터프리터는 `native_windows_python_required` 또는 `invalid_codex_python`으로 거부합니다.
 
-Linux/macOS 대상은 두 실행 파일 필드를 모두 생략합니다. Windows 클라이언트는 일반 로컬 CLI를 계속 사용합니다. 성공한 제출도 `consumptionConfirmed: false`이며 소비는 별도의 실제 응답으로 확인해야 합니다. 정책이나 수신자를 갱신해도 기존 unknown 전송을 자동 재시도하지 마십시오.
+Linux/macOS 대상은 `codexPython`을 생략하고 위와 같이 `codexBin`을 선택적으로 설정할 수 있습니다. Windows 클라이언트는 일반 로컬 CLI를 계속 사용합니다. 성공한 제출도 `consumptionConfirmed: false`이며 소비는 별도의 실제 응답으로 확인해야 합니다. 정책이나 수신자를 갱신해도 기존 unknown 전송을 자동 재시도하지 마십시오.
 
 네이티브 로컬 CLI 지원이 모든 Windows SSH 셸 지원을 뜻하지는 않습니다. 소스 스트리밍 SSH에는 동작하는 python3와 POSIX 호환 원격 셸이 필요하며 Windows Store 실행 별칭만으로는 부족합니다. 네이티브 CLI를 로컬에서 사용하거나 Python이 설치된 WSL SSH 엔드포인트를 사용하십시오.
 

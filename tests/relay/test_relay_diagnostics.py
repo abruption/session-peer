@@ -3,6 +3,7 @@ import asyncio
 import json
 import time
 import unittest
+import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -191,6 +192,30 @@ class RelayLifecycle(unittest.IsolatedAsyncioTestCase):
 
 
 class ReceiverLifecycle(unittest.IsolatedAsyncioTestCase):
+    async def test_native_preflight_refusal_has_only_allowlisted_diagnostics(self):
+        store = Mock(device='b'*64)
+        store.principal.return_value = 'a'*64
+        store.key_status.return_value = 'active'
+        store.db.execute.return_value.fetchone.return_value = None
+        receiver = app.Receiver(store, {
+            'targets': {'review': {'agent': 'codex', 'target': 'codex:'+str(uuid.uuid4()),
+                                   'codexHome': '/fixture'}},
+            'peers': {'a'*64: {'capabilities': ['send'], 'targets': ['review']}},
+        }, diagnostic_events=True)
+        receiver.native.invoke = AsyncMock(return_value={
+            'ok': False, 'status': 'refused', 'reason': 'codex_executable_not_found',
+            'retryAllowed': False, 'consumptionConfirmed': False})
+        request = {'v': 1, 'sender': 'a'*64, 'receiver': store.device,
+                   'id': str(uuid.uuid4()), 'expires': time.time()+30, 'op': 'resolve',
+                   'body': {'target': 'review', 'message': 'SECRET-MESSAGE'}}
+        with patch.object(app.logging, 'getLogger') as logger:
+            result = await receiver.dispatch('certificate', request)
+        self.assertEqual(result['status'], 'refused')
+        row = logger.return_value.warning.call_args.args[1]
+        self.assertIn('codex_executable_not_found', row)
+        self.assertNotIn('SECRET-MESSAGE', row)
+        self.assertNotIn('/fixture', row)
+
     def test_diagnostic_events_are_explicit_opt_in(self):
         device = parser('device')
         relay = parser('relay')
