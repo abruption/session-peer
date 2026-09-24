@@ -121,6 +121,8 @@ and target alias. Peers cannot supply an executable, home, wake flag, SSH destin
 or arbitrary native command arguments. Policy changes take effect after restarting
 the receiver. Limits: eight configured targets and 128 policy devices.
 
+A receiver started by a service manager such as launchd or systemd inherits that manager's minimal `PATH`, not your login shell's. On macOS and Linux, the directory of the same `codex` executable that the target TUI uses must be on the receiver's `PATH`; launchd's default `/usr/bin:/bin:/usr/sbin:/sbin` does not include `~/.local/bin` or `/opt/homebrew/bin`. `codexBin` is accepted only for the WSL binding below. Before relying on the receiver, run `send --dry-run` to the bound target under the same environment. Otherwise Codex deliveries fail and are currently reported as `native_outcome_unknown` (#176).
+
 ## WSL receiver for native Windows Codex
 
 Run the receiver in WSL2 when the Codex session and CLI run natively on the same
