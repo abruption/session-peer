@@ -80,6 +80,7 @@ EXIT_ERROR = 1
 EXIT_NO_TARGET = 2
 
 _CLIENT_UPDATE_NOTICE: dict | None = None
+_SKILL_UPDATE_NOTICES: list[dict] = []
 _IDENTITY_UNSET = object()
 
 
@@ -2171,15 +2172,18 @@ def one_or_many(results: list[dict]) -> dict | list[dict]:
 
 def with_client_update(payload: dict | list[dict]) -> dict | list[dict]:
     """Attach the invoking client's cached update fact to each result object."""
-    if _CLIENT_UPDATE_NOTICE is None:
+    if _CLIENT_UPDATE_NOTICE is None and not _SKILL_UPDATE_NOTICES:
         return payload
+    notices = ({"clientUpdate": dict(_CLIENT_UPDATE_NOTICE)} if _CLIENT_UPDATE_NOTICE else {})
+    if _SKILL_UPDATE_NOTICES:
+        notices["skillUpdates"] = [dict(item) for item in _SKILL_UPDATE_NOTICES]
     if isinstance(payload, list):
         return [
-            {**item, "clientUpdate": dict(_CLIENT_UPDATE_NOTICE)}
+            {**item, **notices}
             if isinstance(item, dict) else item
             for item in payload
         ]
-    return {**payload, "clientUpdate": dict(_CLIENT_UPDATE_NOTICE)}
+    return {**payload, **notices}
 
 
 def emit(as_json: bool, payload: dict, human: str, *, command: str,
@@ -2193,14 +2197,17 @@ def emit_json_results(results: list[dict]) -> None:
 
 
 def emit_human_update_notice() -> None:
-    if _CLIENT_UPDATE_NOTICE is None:
-        return
-    print(
-        f"Update available: {_CLIENT_UPDATE_NOTICE['current']} → "
-        f"{_CLIENT_UPDATE_NOTICE['latest']}. "
-        f"Run: {_CLIENT_UPDATE_NOTICE['command']}",
-        file=sys.stderr,
-    )
+    if _CLIENT_UPDATE_NOTICE is not None:
+        print(
+            f"Update available: {_CLIENT_UPDATE_NOTICE['current']} → "
+            f"{_CLIENT_UPDATE_NOTICE['latest']}. "
+            f"Run: {_CLIENT_UPDATE_NOTICE['command']}",
+            file=sys.stderr,
+        )
+    for notice in _SKILL_UPDATE_NOTICES:
+        command = notice.get("command") or "check the skill's installation manager"
+        print(f"Skill update available ({notice['location']}): "
+              f"{notice['current']} → {notice['latest']}. Run: {command}", file=sys.stderr)
 
 
 def host_metadata(ssh_host: str, canonical_host: str) -> dict:
@@ -2547,6 +2554,29 @@ def doctor_payload(args: argparse.Namespace) -> dict:
             },
         },
     }
+    skill_checks = []
+    skills = installed_skills()
+    for skill in skills:
+        version, minimum = skill["version"], skill["runtimeMinVersion"]
+        if version is None or minimum is None:
+            skill_checks.append(_diagnostic(
+                "unknown", "skill_version_unknown",
+                "Installed session-peer skill has no readable version or runtime minimum",
+                location=skill["location"],
+            ))
+        elif release_version(__version__) < release_version(minimum):
+            skill_checks.append(_diagnostic(
+                "warning", "skill_runtime_incompatible",
+                "Installed session-peer skill requires a newer runtime",
+                location=skill["location"], skillVersion=version,
+                runtimeMinVersion=minimum,
+            ))
+    payload["skill"] = {"status": "incompatible" if any(
+        check["code"] == "skill_runtime_incompatible" for check in skill_checks) else
+        "unknown" if skill_checks else "compatible" if skills else "not_installed",
+        "checks": skill_checks}
+    if payload["skill"]["status"] == "incompatible" and payload["status"] == "healthy":
+        payload["status"] = "partial"
     return_host = getattr(args, "_return_host", None)
     if return_host:
         payload["returnRoute"] = probe_return_route(return_host)
@@ -2563,6 +2593,8 @@ def render_doctor(payload: dict, where: str) -> str:
         for check in payload.get(component, {}).get("checks", []):
             if check.get("status") != "ok":
                 lines.append(f"    - {check['code']}: {check['message']}")
+    for check in payload.get("skill", {}).get("checks", []):
+        lines.append(f"    - {check['code']}: {check['message']}")
     route = payload.get("returnRoute")
     if route:
         lines.append(
@@ -3595,6 +3627,64 @@ def update_cache_path() -> Path:
     return base / "session-peer" / "update.json"
 
 
+def skill_update_cache_path() -> Path:
+    return update_cache_path().with_name("skill-update.json")
+
+
+def installed_skill_metadata(path: Path) -> dict:
+    """Read only the small, published frontmatter fields; never execute a skill."""
+    try:
+        if path.stat().st_size > 16384:
+            return {"version": None, "runtimeMinVersion": None}
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return {"version": None, "runtimeMinVersion": None}
+    match = re.match(r"\A---\r?\n(.*?)\r?\n---(?:\r?\n|\Z)", content, re.DOTALL)
+    if match is None:
+        return {"version": None, "runtimeMinVersion": None}
+    block = re.search(r"(?m)^metadata:\s*\n((?:[ \t]+[^\n]*\n?)*)", match.group(1))
+    if block is None:
+        return {"version": None, "runtimeMinVersion": None}
+    fields = dict(re.findall(r"(?m)^  ([a-z-]+):\s*[\"']?([0-9]+\.[0-9]+\.[0-9]+)[\"']?\s*$", block.group(1)))
+    version = fields.get("version")
+    minimum = fields.get("runtime-min-version")
+    return {"version": version if stable_version(version) else None,
+            "runtimeMinVersion": minimum if stable_version(minimum) else None}
+
+
+def installed_skills() -> list[dict]:
+    """Detect Claude and Codex skill paths without changing either manager."""
+    agents_root = Path.home() / ".agents"
+    claude_root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or
+                       os.environ.get("ANTHROPIC_CONFIG_DIR") or Path.home() / ".claude")
+    agents_skill = agents_root / "skills/session-peer/SKILL.md"
+    candidates = [(agents_skill, "agents"),
+                  (claude_root / "skills/session-peer/SKILL.md", "claude")]
+    locked = False
+    try:
+        lock = agents_root / ".skill-lock.json"
+        if lock.stat().st_size <= 65536:
+            value = json.loads(lock.read_text(encoding="utf-8"))
+            locked = value.get("skills", {}).get("session-peer", {}).get("source") == "abruption/session-peer-skill"
+    except (OSError, UnicodeError, ValueError, AttributeError):
+        pass
+    seen = set()
+    result = []
+    for path, location in candidates:
+        try:
+            resolved = path.resolve(strict=True)
+            if not resolved.is_file() or resolved in seen:
+                continue
+        except (OSError, RuntimeError):
+            continue
+        seen.add(resolved)
+        manager = "skills_cli" if resolved == agents_skill.resolve() and locked else (
+            "runtime_installer" if location == "claude" else "manual")
+        result.append({"location": location, "manager": manager,
+                       **installed_skill_metadata(path)})
+    return result
+
+
 def update_notices_disabled(args: argparse.Namespace | None = None) -> bool:
     if args is not None and getattr(args, "no_update_notice", False):
         return True
@@ -3751,10 +3841,15 @@ def schedule_update_refresh(path: Path | None = None, now: float | None = None,
 def refresh_update_cache_background() -> int:
     lock = update_refresh_lock_path()
     try:
-        tag, _ = latest_release()
-        write_update_cache(tag)
-    except (CcPeerError, OSError, ValueError):
-        pass
+        try:
+            tag, _ = latest_release()
+            write_update_cache(tag)
+        except (CcPeerError, OSError, ValueError):
+            pass
+        try:
+            write_update_cache(latest_skill_release(), skill_update_cache_path())
+        except (CcPeerError, OSError, ValueError):
+            pass
     finally:
         try:
             lock.unlink(missing_ok=True)
@@ -3802,6 +3897,51 @@ def prepare_client_update(args: argparse.Namespace, now: float | None = None,
         "source": "github_release_cache",
         "command": update_command(),
     }
+
+
+def prepare_skill_updates(args: argparse.Namespace, now: float | None = None,
+                          launcher=None) -> list[dict]:
+    """Use only the local skill cache; notice without modifying installations."""
+    if update_notices_disabled(args) or (
+            getattr(args, "command", None) == "update" and not getattr(args, "host", [])):
+        return []
+    installs = installed_skills()
+    if not installs:
+        return []
+    state = read_update_cache(skill_update_cache_path(), now=now)
+    if state["status"] != "fresh":
+        try:
+            (schedule_update_refresh if launcher is None else launcher)()
+        except Exception:
+            pass
+        return []
+    latest = stable_version(state["latest"])
+    checked_at = datetime.fromtimestamp(state["checkedAt"], timezone.utc)
+    commands = {"skills_cli": "npx skills update session-peer",
+                "runtime_installer": "./install.sh"}
+    return [{"schemaVersion": 1, "status": "available", "current": item["version"],
+             "latest": state["latest"], "location": item["location"],
+             "manager": item["manager"], "command": commands.get(item["manager"]),
+             "checkedAt": checked_at.isoformat(timespec="seconds").replace("+00:00", "Z"),
+             "source": "github_release_cache"}
+            for item in installs if item["version"] is not None
+            and stable_version(item["version"]) < latest]
+
+
+def latest_skill_release() -> str:
+    request = urllib.request.Request(
+        "https://api.github.com/repos/abruption/session-peer-skill/releases/latest",
+        headers={"Accept": "application/vnd.github+json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=DETECT_TIMEOUT * 4) as response:
+            value = json.load(response)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise CcPeerError("could not check the session-peer skill release") from exc
+    tag = value.get("tag_name") if isinstance(value, dict) else None
+    if stable_version(tag) is None:
+        raise CcPeerError("invalid session-peer skill release tag")
+    return tag
 
 
 def latest_release() -> tuple[str, str]:
@@ -4269,7 +4409,7 @@ def json_error_result(args: argparse.Namespace, payload: dict) -> dict | list[di
 
 
 def main(argv: list[str] | None = None) -> int:
-    global _CLIENT_UPDATE_NOTICE
+    global _CLIENT_UPDATE_NOTICE, _SKILL_UPDATE_NOTICES
     cli_invocation = argv is None
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     if raw_argv == [UPDATE_REFRESH_ARG]:
@@ -4292,6 +4432,10 @@ def main(argv: list[str] | None = None) -> int:
         # Update discovery is advisory. Even an unexpected cache or launcher
         # failure must not change the requested command's result or exit code.
         _CLIENT_UPDATE_NOTICE = None
+    try:
+        _SKILL_UPDATE_NOTICES = prepare_skill_updates(args) if cli_invocation else []
+    except Exception:
+        _SKILL_UPDATE_NOTICES = []
     show_human_notice = True
     try:
         exit_code = args.func(args)
