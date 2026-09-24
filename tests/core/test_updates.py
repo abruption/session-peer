@@ -32,6 +32,10 @@ class ClientUpdateNotice(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.cache = Path(self.directory.name) / "cache/session-peer/update.json"
         self.addCleanup(setattr, session_peer, "_CLIENT_UPDATE_NOTICE", None)
+        self.addCleanup(setattr, session_peer, "_SKILL_UPDATE_NOTICES", [])
+        skill_patch = mock.patch.object(session_peer, "installed_skills", return_value=[])
+        skill_patch.start()
+        self.addCleanup(skill_patch.stop)
 
     @staticmethod
     def args(**overrides):
@@ -179,7 +183,8 @@ class ClientUpdateNotice(unittest.TestCase):
         with mock.patch.object(session_peer, "update_cache_path", return_value=self.cache), \
              mock.patch.object(
                  session_peer, "latest_release", side_effect=session_peer.CcPeerError("timeout")
-             ):
+             ), mock.patch.object(session_peer, "latest_skill_release",
+                                  side_effect=session_peer.CcPeerError("timeout")):
             self.assertEqual(session_peer.refresh_update_cache_background(), 0)
         self.assertFalse(lock.exists())
         self.assertFalse(self.cache.exists())
@@ -273,6 +278,82 @@ class ClientUpdateNotice(unittest.TestCase):
                 session_peer.build_parser()._subparsers._group_actions[0]
                 .choices[command].format_help(),
             )
+
+
+class SkillUpdateNotice(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.cache = self.root / "cache/session-peer/skill-update.json"
+        self.addCleanup(setattr, session_peer, "_SKILL_UPDATE_NOTICES", [])
+
+    def test_installed_skill_metadata_and_symlink_are_read_only(self):
+        agent = self.root / ".agents/skills/session-peer"
+        agent.mkdir(parents=True)
+        (agent / "SKILL.md").write_text(
+            '---\nname: session-peer\nmetadata:\n  version: "0.3.0"\n'
+            '  runtime-min-version: "0.9.1"\n---\n# Skill\n')
+        claude = self.root / ".claude/skills"
+        claude.mkdir(parents=True)
+        (claude / "session-peer").symlink_to(agent, target_is_directory=True)
+        lock = self.root / ".agents/.skill-lock.json"
+        lock.write_text(json.dumps({"skills": {"session-peer": {
+            "source": "abruption/session-peer-skill"}}}))
+        with mock.patch.object(session_peer.Path, "home", return_value=self.root), \
+             mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CLAUDE_CONFIG_DIR", None)
+            os.environ.pop("ANTHROPIC_CONFIG_DIR", None)
+            found = session_peer.installed_skills()
+        self.assertEqual(found, [{"location": "agents", "manager": "skills_cli",
+                                  "version": "0.3.0", "runtimeMinVersion": "0.9.1"}])
+        self.assertEqual(session_peer.installed_skill_metadata(self.root / "missing"),
+                         {"version": None, "runtimeMinVersion": None})
+
+    def test_outdated_notice_uses_manager_command_and_opt_out(self):
+        session_peer.write_update_cache("0.4.0", self.cache, checked_at=1_000)
+        installs = [{"location": "agents", "manager": "skills_cli", "version": "0.3.0",
+                     "runtimeMinVersion": "0.9.1"},
+                    {"location": "claude", "manager": "runtime_installer", "version": "0.3.0",
+                     "runtimeMinVersion": "0.9.1"}]
+        args = argparse.Namespace(command="list", host=[], no_update_notice=False)
+        with mock.patch.object(session_peer, "installed_skills", return_value=installs), \
+             mock.patch.object(session_peer, "skill_update_cache_path", return_value=self.cache):
+            notices = session_peer.prepare_skill_updates(args, now=1_001)
+            self.assertEqual([item["command"] for item in notices],
+                             ["npx skills update session-peer", "./install.sh"])
+            self.assertEqual(session_peer.prepare_skill_updates(
+                argparse.Namespace(command="list", host=[], no_update_notice=True), now=1_001), [])
+            session_peer.write_update_cache("0.3.0", self.cache, checked_at=1_000)
+            self.assertEqual(session_peer.prepare_skill_updates(args, now=1_001), [])
+        with mock.patch.object(session_peer, "_SKILL_UPDATE_NOTICES", notices):
+            self.assertEqual(session_peer.with_client_update({"ok": True})["skillUpdates"], notices)
+
+    def test_doctor_reports_incompatible_or_unknown_without_network(self):
+        args = argparse.Namespace()
+        with mock.patch.object(session_peer.AGENTS, "names", return_value=[]), \
+             mock.patch.object(session_peer, "__version__", "0.9.0"), \
+             mock.patch.object(session_peer, "installed_skills", return_value=[{
+                 "location": "agents", "manager": "skills_cli", "version": "0.3.0",
+                 "runtimeMinVersion": "1.0.0"}]):
+            payload = session_peer.doctor_payload(args)
+        self.assertEqual(payload["status"], "partial")
+        self.assertEqual(payload["skill"]["checks"][0]["code"], "skill_runtime_incompatible")
+        with mock.patch.object(session_peer.AGENTS, "names", return_value=[]), \
+             mock.patch.object(session_peer, "installed_skills", return_value=[{
+                 "location": "claude", "manager": "runtime_installer", "version": None,
+                 "runtimeMinVersion": None}]):
+            payload = session_peer.doctor_payload(args)
+        self.assertEqual(payload["skill"]["checks"][0]["code"], "skill_version_unknown")
+
+    def test_background_refresh_populates_both_caches(self):
+        runtime_cache = self.root / "cache/session-peer/update.json"
+        with mock.patch.object(session_peer, "update_cache_path", return_value=runtime_cache), \
+             mock.patch.object(session_peer, "latest_release", return_value=("1.0.1", "unused")), \
+             mock.patch.object(session_peer, "latest_skill_release", return_value="0.4.0"):
+            self.assertEqual(session_peer.refresh_update_cache_background(), 0)
+        self.assertEqual(session_peer.read_update_cache(runtime_cache)["latest"], "1.0.1")
+        self.assertEqual(session_peer.read_update_cache(self.cache)["latest"], "0.4.0")
 
 
 class PackageManagement(unittest.TestCase):

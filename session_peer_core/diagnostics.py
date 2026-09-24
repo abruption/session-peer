@@ -310,6 +310,29 @@ def doctor_payload(args: argparse.Namespace) -> dict:
             },
         },
     }
+    skill_checks = []
+    skills = installed_skills()
+    for skill in skills:
+        version, minimum = skill["version"], skill["runtimeMinVersion"]
+        if version is None or minimum is None:
+            skill_checks.append(_diagnostic(
+                "unknown", "skill_version_unknown",
+                "Installed session-peer skill has no readable version or runtime minimum",
+                location=skill["location"],
+            ))
+        elif release_version(__version__) < release_version(minimum):
+            skill_checks.append(_diagnostic(
+                "warning", "skill_runtime_incompatible",
+                "Installed session-peer skill requires a newer runtime",
+                location=skill["location"], skillVersion=version,
+                runtimeMinVersion=minimum,
+            ))
+    payload["skill"] = {"status": "incompatible" if any(
+        check["code"] == "skill_runtime_incompatible" for check in skill_checks) else
+        "unknown" if skill_checks else "compatible" if skills else "not_installed",
+        "checks": skill_checks}
+    if payload["skill"]["status"] == "incompatible" and payload["status"] == "healthy":
+        payload["status"] = "partial"
     return_host = getattr(args, "_return_host", None)
     if return_host:
         payload["returnRoute"] = probe_return_route(return_host)
@@ -326,6 +349,8 @@ def render_doctor(payload: dict, where: str) -> str:
         for check in payload.get(component, {}).get("checks", []):
             if check.get("status") != "ok":
                 lines.append(f"    - {check['code']}: {check['message']}")
+    for check in payload.get("skill", {}).get("checks", []):
+        lines.append(f"    - {check['code']}: {check['message']}")
     route = payload.get("returnRoute")
     if route:
         lines.append(

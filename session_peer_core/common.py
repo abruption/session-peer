@@ -80,6 +80,7 @@ EXIT_ERROR = 1
 EXIT_NO_TARGET = 2
 
 _CLIENT_UPDATE_NOTICE: dict | None = None
+_SKILL_UPDATE_NOTICES: list[dict] = []
 _IDENTITY_UNSET = object()
 
 
