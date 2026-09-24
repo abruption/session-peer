@@ -548,6 +548,21 @@ def resolve_codex_home(args: argparse.Namespace, selected: Path,
             ) from exc
     matches = [candidate for candidate in candidates if candidate["savedThread"]]
     if not matches:
+        # An unsaved first turn may already hold the native writer lock. This
+        # is diagnostic evidence only: queueing still requires a saved thread.
+        for home, candidate in zip(homes, candidates):
+            candidate.update(inspect_codex_writer(home, thread_id))
+        unsaved_live = [candidate for candidate in candidates
+                        if candidate.get("activity") == "live_writer"]
+        if len(unsaved_live) == 1 and (not explicit or unsaved_live[0]["codexHome"] == str(selected)):
+            resolution = _home_resolution(
+                "unknown", None, "thread_not_yet_persisted", candidates
+            )
+            raise NoTargetError(
+                f"Codex thread {thread_id} has a live writer but is not saved yet. "
+                "Wait for its first turn to finish; nothing queued.",
+                {"codexHomeResolution": resolution},
+            )
         resolution = _home_resolution(
             "unknown", None, "thread_not_saved_in_known_homes", candidates
         )
@@ -665,6 +680,26 @@ def revalidate_codex_home(root: Path, thread_id: str, resolution: dict) -> None:
         "Retry discovery or select --codex-home explicitly.",
         {"codexHomeResolution": failed},
     )
+
+
+def count_unsaved_codex_writers(home: Path, *, limit: int = 256) -> tuple[int, bool]:
+    """Bounded, read-only check for live writer locks absent from the state DB."""
+    directory = home / "thread-writer-locks"
+    try:
+        entries = sorted(path for path in directory.iterdir() if path.suffix == ".lock")
+    except FileNotFoundError:
+        return 0, False
+    count = 0
+    for path in entries[:limit]:
+        thread_id = path.stem
+        try:
+            if str(uuid.UUID(thread_id)) != thread_id or _codex_thread_is_saved(home, thread_id):
+                continue
+        except ValueError:
+            continue
+        if inspect_codex_writer(home, thread_id).get("activity") == "live_writer":
+            count += 1
+    return count, len(entries) > limit
 
 
 def codex_executable(args: argparse.Namespace) -> str:
