@@ -192,6 +192,38 @@ class RelayLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any('"reason": "attach_notify_failed"' in row for row in logs.output))
         self.assertNotIn('SECRET-ROOM', '\n'.join(logs.output))
 
+    async def test_paired_stream_records_only_per_leg_frame_metadata(self):
+        relay = Relay([], diagnostic_events=True)
+        receiver_payload = b'receiver-ciphertext-secret'
+        client_payload = b'client-ciphertext-secret'
+        receiver = FakeWebSocket('receiver', frames=[receiver_payload])
+        client = FakeWebSocket('client', frames=[client_payload])
+        tasks = []
+        with self.assertLogs('session_peer_relay.relay', level='WARNING') as logs:
+            try:
+                tasks.append(asyncio.create_task(relay.handler(receiver)))
+                await self.wait_for(lambda: relay.metrics()['current']['waitingRooms'] == 1)
+                tasks.append(asyncio.create_task(relay.handler(client)))
+                await self.wait_for(lambda: client_payload in receiver.sent
+                                    and receiver_payload in client.sent)
+            finally:
+                await receiver.close()
+                await client.close()
+                await asyncio.wait_for(asyncio.gather(*tasks), 1)
+        events = [json.loads(row.split('relay_room ', 1)[1]) for row in logs.output
+                  if 'relay_room ' in row]
+        streams = {row['role']: row for row in events if row['event'] == 'stream_close'}
+        self.assertEqual(set(streams), {'client', 'receiver'})
+        for role, payload in (('client', client_payload), ('receiver', receiver_payload)):
+            row = streams[role]
+            self.assertEqual(row['ingressFrames'], 1)
+            self.assertEqual(row['ingressBytes'], len(payload))
+            self.assertEqual(row['egressCompletedFrames'], 1)
+            self.assertEqual(row['egressCompletedBytes'], len(payload))
+            self.assertLessEqual(row['firstIngressUtcMs'], row['lastEgressCompletedUtcMs'])
+        self.assertNotIn('SECRET-ROOM', '\n'.join(logs.output))
+        self.assertNotIn('ciphertext-secret', '\n'.join(logs.output))
+
     async def test_stream_lifetime_and_forward_timeout_are_distinct(self):
         for expected in ('stream_lifetime_expiry', 'forward_send_timeout'):
             with self.subTest(reason=expected):
@@ -215,6 +247,13 @@ class RelayLifecycle(unittest.IsolatedAsyncioTestCase):
                         await asyncio.gather(*tasks, return_exceptions=True)
                 self.assertTrue(any('"reason": "'+expected+'"' in row for row in logs.output))
                 self.assertTrue(any('"closeCode": 1000' in row for row in logs.output))
+                if expected == 'forward_send_timeout':
+                    streams = [json.loads(row.split('relay_room ', 1)[1]) for row in logs.output
+                               if '"event": "stream_close"' in row and '"role": "client"' in row]
+                    self.assertEqual(len(streams), 1)
+                    self.assertEqual(streams[0]['ingressFrames'], 1)
+                    self.assertEqual(streams[0]['egressCompletedFrames'], 0)
+                    self.assertIsNone(streams[0]['firstEgressCompletedUtcMs'])
                 self.assertNotIn('SECRET-ROOM', '\n'.join(logs.output))
 
 

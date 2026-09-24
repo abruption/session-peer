@@ -64,6 +64,17 @@ receiver leg, then compare their UTC times with clock skew in mind. If any leg
 is missing, duplicated, or running an older version, record the attempt as
 `unattributed` instead of inferring a match from timing or aggregate counters.
 
+For a recurring public-path stall, an opt-in Relay `stream_close` event also
+reports each leg's `ingressFrames`/`ingressBytes` and
+`egressCompletedFrames`/`egressCompletedBytes`, with first and last UTC frame
+times. These count opaque encrypted WebSocket frames, not messages. An egress
+completion means the Relay's socket send returned; it does **not** prove
+Cloudflare, the receiver, TLS, or the application consumed those bytes. Compare
+both roles under the same room and `attemptId`, then the receiver events. Missing
+events or ambiguous matches remain `unattributed`; counters alone cannot assign
+fault to Cloudflare, OCI, or an intermediate hop. Keep opt-in logs private and
+bounded because even metadata timestamps and frame sizes reveal activity.
+
 A receiver whose waiting room stayed open for at least one second and was then
 closed normally by the Relay reconnects after 0.5 seconds instead of escalating
 its backoff. Other failures, and rooms closed within one second, still back off

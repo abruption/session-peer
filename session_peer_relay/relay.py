@@ -208,6 +208,9 @@ class Relay:
         paired = False
         attach_sent = False
         close_reason = 'socket_closed'
+        ingress_frames = ingress_bytes = egress_completed_frames = egress_completed_bytes = 0
+        first_ingress_utc_ms = last_ingress_utc_ms = None
+        first_egress_completed_utc_ms = last_egress_completed_utc_ms = None
         if self.control:
             async def watch_authorization():
                 while True:
@@ -275,16 +278,21 @@ class Relay:
                                   attemptId=slot['attemptId'])
             attach_sent = True
             close_reason = 'attached_closed'
-            forwarded_bytes = 0
             async with asyncio.timeout(max(0, ws.lab_expiry-time.monotonic())):
                 async for data in ws:
                     if not isinstance(data, bytes):
                         await ws.close(1008, 'binary_only')
                         break
+                    ingress_frames += 1
+                    ingress_bytes += len(data)
+                    if self.diagnostic_events:
+                        now_utc_ms = int(time.time()*1000)
+                        if first_ingress_utc_ms is None:
+                            first_ingress_utc_ms = now_utc_ms
+                        last_ingress_utc_ms = now_utc_ms
                     self.bytes += len(data)
-                    forwarded_bytes += len(data)
                     self.forwarded_frames += 1
-                    if forwarded_bytes > self.limits.connection_byte_budget:
+                    if ingress_bytes > self.limits.connection_byte_budget:
                         self.counters['byteBudgetClosed'] += 1
                         await ws.close(1013, 'byte_budget')
                         break
@@ -295,6 +303,13 @@ class Relay:
                     except TimeoutError:
                         close_reason = 'forward_send_timeout'
                         raise
+                    egress_completed_frames += 1
+                    egress_completed_bytes += len(data)
+                    if self.diagnostic_events:
+                        now_utc_ms = int(time.time()*1000)
+                        if first_egress_completed_utc_ms is None:
+                            first_egress_completed_utc_ms = now_utc_ms
+                        last_egress_completed_utc_ms = now_utc_ms
             if close_reason == 'attached_closed':
                 if account['role'] in slot['closedByRelay']:
                     close_reason = 'peer_closed'
@@ -332,7 +347,14 @@ class Relay:
                     self.diagnostic_event('stream_close', roomId=slot['id'], role=account['role'],
                         reason=close_reason, attachSent=attach_sent,
                         closeCode=code if type(code) is int and 1000 <= code <= 4999 else None,
-                        attemptId=slot['attemptId'])
+                        attemptId=slot['attemptId'],
+                        ingressFrames=ingress_frames, ingressBytes=ingress_bytes,
+                        egressCompletedFrames=egress_completed_frames,
+                        egressCompletedBytes=egress_completed_bytes,
+                        firstIngressUtcMs=first_ingress_utc_ms,
+                        lastIngressUtcMs=last_ingress_utc_ms,
+                        firstEgressCompletedUtcMs=first_egress_completed_utc_ms,
+                        lastEgressCompletedUtcMs=last_egress_completed_utc_ms)
 
     async def start(self, host, port):
         return await serve(self.handler, host, port, process_request=self.process_request,
