@@ -52,6 +52,18 @@ receiver's `attach_received` and peer-TLS events before inferring a stale leg.
 room; a rising receiver count can mean the Relay still holds an old leg while the
 receiver reconnects.
 
+Opt-in Relay and receiver lifecycle events include `eventTimeUtcMs` (UTC Unix
+milliseconds). Each client Relay setup attempt uses a fresh random UUIDv4
+`attemptId`, returned in success or per-attempt failure metadata. An upgraded
+Relay records that ID on paired-room events and echoes it in the attach notice
+to an upgraded receiver; its `attach_received` and peer-TLS events record the
+same ID. The ID is unrelated to identity, room name, request ID, or message
+contents; it does not change authorization or make a send retry-safe. To
+attribute a failure, match an exact `attemptId` to **one** Relay room and **one**
+receiver leg, then compare their UTC times with clock skew in mind. If any leg
+is missing, duplicated, or running an older version, record the attempt as
+`unattributed` instead of inferring a match from timing or aggregate counters.
+
 A receiver whose waiting room stayed open for at least one second and was then
 closed normally by the Relay reconnects after 0.5 seconds instead of escalating
 its backoff. Other failures, and rooms closed within one second, still back off

@@ -5,6 +5,7 @@ import json
 import ssl
 import struct
 import time
+import uuid
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -39,8 +40,9 @@ class Tcp:
 
 
 class Ws:
-    def __init__(self, ws):
+    def __init__(self, ws, attempt_id=None):
         self.ws = ws
+        self.attempt_id = attempt_id
 
     async def recv(self):
         data = await self.ws.recv()
@@ -104,11 +106,27 @@ def admission(url, credential):
         raise failure('relay_admission', exc) from None
 
 
-async def relay_stream(url, credential, attach_timeout=12, on_event=None):
-    def observe(event, started):
+def valid_attempt_id(value):
+    if not isinstance(value, str) or len(value) != 36:
+        return False
+    try:
+        parsed = uuid.UUID(value)
+    except ValueError:
+        return False
+    return parsed.version == 4 and str(parsed) == value
+
+
+async def relay_stream(url, credential, attach_timeout=12, on_event=None, attempt_id=None):
+    if attempt_id is not None and not valid_attempt_id(attempt_id):
+        raise ValueError('invalid_attempt_id')
+
+    def observe(event, started, received_attempt_id=None):
         if on_event is not None:
             try:
-                on_event(event, elapsed_ms=max(0, round((time.monotonic()-started)*1000)))
+                detail = {'elapsed_ms': max(0, round((time.monotonic()-started)*1000))}
+                if received_attempt_id is not None:
+                    detail['attempt_id'] = received_attempt_id
+                on_event(event, **detail)
             except Exception:
                 # Diagnostic sinks must never alter admission or forwarding.
                 pass
@@ -121,7 +139,10 @@ async def relay_stream(url, credential, attach_timeout=12, on_event=None):
     observe('admission_complete', started)
     started = time.monotonic()
     try:
-        ws = await PinnedConnect(url, additional_headers={'Cookie': cookie}, compression=None,
+        headers = {'Cookie': cookie, 'X-Session-Peer-Diagnostic-Capable': 'v1'}
+        if attempt_id is not None:
+            headers['X-Session-Peer-Attempt'] = attempt_id
+        ws = await PinnedConnect(url, additional_headers=headers, compression=None,
                            user_agent_header='session-peer/0.9-relay',
                            max_size=MAX_FRAME, max_queue=4, write_limit=32768,
                            open_timeout=TIMEOUT, close_timeout=2,
@@ -136,10 +157,15 @@ async def relay_stream(url, credential, attach_timeout=12, on_event=None):
     started = time.monotonic()
     try:
         ready = json.loads(await asyncio.wait_for(ws.recv(), attach_timeout))
-        if ready != {'relayAttached': True}:
+        if (not isinstance(ready, dict) or ready.get('relayAttached') is not True
+                or set(ready) - {'relayAttached', 'attemptId'}):
             raise TransportFailure('relay_attach', 'invalid_attach_response')
-        observe('attach_received', started)
-        return Ws(ws)
+        received_attempt_id = ready.get('attemptId')
+        if (received_attempt_id is not None and not valid_attempt_id(received_attempt_id)) or (
+                attempt_id is not None and received_attempt_id not in (None, attempt_id)):
+            raise TransportFailure('relay_attach', 'invalid_attach_response')
+        observe('attach_received', started, received_attempt_id)
+        return Ws(ws, received_attempt_id)
     except BaseException as exc:
         await ws.close()
         if isinstance(exc, Exception):

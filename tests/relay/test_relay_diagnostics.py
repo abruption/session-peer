@@ -87,6 +87,33 @@ class RelayLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(row['event'] == 'stream_close' and row['role'] == 'client'
                             and row['reason'] == 'peer_closed' for row in events))
 
+    async def test_attempt_id_is_echoed_only_to_capable_legs(self):
+        relay = Relay([], diagnostic_events=True)
+        receiver = FakeWebSocket('receiver')  # Older receiver expects the bare frame.
+        client = FakeWebSocket('client')
+        client.lab_attempt_id = str(uuid.uuid4())
+        client.lab_diagnostic_capable = True
+        tasks = []
+        with self.assertLogs('session_peer_relay.relay', level='WARNING') as logs:
+            try:
+                tasks.append(asyncio.create_task(relay.handler(receiver)))
+                await self.wait_for(lambda: relay.metrics()['current']['waitingRooms'] == 1)
+                tasks.append(asyncio.create_task(relay.handler(client)))
+                await self.wait_for(lambda: relay.metrics()['counters']['attachSentReceiver'] == 1
+                                    and relay.metrics()['counters']['attachSentClient'] == 1)
+                self.assertEqual(json.loads(receiver.sent[0]), {'relayAttached': True})
+                self.assertEqual(json.loads(client.sent[0]),
+                                 {'relayAttached': True, 'attemptId': client.lab_attempt_id})
+            finally:
+                await receiver.close()
+                await client.close()
+                await asyncio.wait_for(asyncio.gather(*tasks), 1)
+        paired = [json.loads(row.split('relay_room ', 1)[1]) for row in logs.output
+                  if 'room_paired' in row]
+        self.assertEqual(len(paired), 1)
+        self.assertEqual(paired[0]['attemptId'], client.lab_attempt_id)
+        self.assertNotIn('SECRET-ROOM', '\n'.join(logs.output))
+
     async def test_remote_1001_is_not_mislabelled_as_peer_closed(self):
         events = await self.paired_close_events('client', 1001)
         self.assertTrue(any(row['event'] == 'stream_close' and row['role'] == 'client'
@@ -241,7 +268,7 @@ class ReceiverLifecycle(unittest.IsolatedAsyncioTestCase):
                                    close_source='received')
 
         with patch.object(app, 'relay_stream', side_effect=connect), \
-             patch.object(app, 'time', SimpleNamespace(monotonic=lambda: clock[0])), \
+             patch.object(app, 'time', SimpleNamespace(monotonic=lambda: clock[0], time=time.time)), \
              patch.object(app.asyncio, 'sleep', new=AsyncMock()), \
              patch.object(app.logging, 'getLogger') as logger:
             with self.assertRaises(asyncio.CancelledError):
@@ -268,7 +295,7 @@ class ReceiverLifecycle(unittest.IsolatedAsyncioTestCase):
                                    close_source='sent')
 
         with patch.object(app, 'relay_stream', side_effect=connect), \
-             patch.object(app, 'time', SimpleNamespace(monotonic=lambda: clock[0])), \
+             patch.object(app, 'time', SimpleNamespace(monotonic=lambda: clock[0], time=time.time)), \
              patch.object(app.asyncio, 'sleep', new=AsyncMock()), \
              patch.object(app.logging, 'getLogger') as logger:
             with self.assertRaises(asyncio.CancelledError):
@@ -300,7 +327,7 @@ class ReceiverLifecycle(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(receiver, 'spawn') as spawn, \
              patch.object(app, 'relay_stream', side_effect=connect), \
-             patch.object(app, 'time', SimpleNamespace(monotonic=lambda: clock[0])), \
+             patch.object(app, 'time', SimpleNamespace(monotonic=lambda: clock[0], time=time.time)), \
              patch.object(app.asyncio, 'sleep', new=AsyncMock()), \
              patch.object(app.logging, 'getLogger') as logger:
             with self.assertRaises(asyncio.CancelledError):
