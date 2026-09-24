@@ -208,10 +208,27 @@ def diagnose_codex(args: argparse.Namespace) -> dict:
         status = "missing_tool"
     if inventory_error and status == "available":
         status = "unknown"
+    unsaved_count = 0
+    unsaved_scan_truncated = False
+    if selected_item["status"] == "available":
+        try:
+            unsaved_count, unsaved_scan_truncated = count_unsaved_codex_writers(selected)
+        except (OSError, sqlite3.Error):
+            checks.append(_diagnostic(
+                "unknown", "unsaved_writer_check_unavailable",
+                "Could not inspect unsaved Codex writer locks",
+            ))
+        if unsaved_count:
+            checks.append(_diagnostic(
+                "warning", "unsaved_live_writer",
+                "A live Codex writer has not saved its thread yet; wait for its first turn to finish",
+                count=unsaved_count,
+            ))
     return {
         "status": status, "selectedHome": str(selected),
         "homeSource": _codex_home_source(args), "executable": executable,
         "homes": candidates, "checks": checks,
+        "unsavedLiveWriters": unsaved_count, "unsavedWriterScanTruncated": unsaved_scan_truncated,
     }
 
 
