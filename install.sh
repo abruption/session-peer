@@ -214,7 +214,7 @@ remote_run() {
         echo 'CC_PEER_SKILL'
         echo 'for D in "$R/skills/session-peer" "$HOME/.agents/skills/session-peer"; do'
         echo '  if [ -L "$D" ] || { [ -e "$D" ] && [ ! -f "$D/.session-peer-installer" ]; } || [ -L "$D/SKILL.md" ]; then echo "skill preserved (managed elsewhere): $D"; continue; fi'
-        echo '  mkdir -p "$D"; cp "$T/SKILL.md" "$D/SKILL.md"; printf "%s\n" "session-peer install.sh v1" > "$D/.session-peer-installer"; echo "skill installed: $D/SKILL.md"'
+        printf '%s\n' '  mkdir -p "$D"; cp "$T/SKILL.md" "$D/SKILL.md"; printf "%s\n" "session-peer install.sh v1" > "$D/.session-peer-installer"; echo "skill installed: $D/SKILL.md"'
         echo 'done'
         echo 'rm "$T/SKILL.md"; rmdir "$T"'
         echo 'chmod +x "$HOME/.local/share/session-peer/session_peer.py"'
