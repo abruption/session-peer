@@ -12,7 +12,7 @@ def diagnose_claude() -> dict:
     directory = sessions_dir()
     result = {
         "sessionsDir": str(directory), "records": 0, "invalidRecords": 0,
-        "aliveSessions": 0, "availableInboxes": 0, "checks": [],
+        "aliveSessions": 0, "availableInboxes": 0, "staleRecords": 0, "checks": [],
     }
     try:
         mode = directory.stat().st_mode
@@ -73,7 +73,9 @@ def diagnose_claude() -> dict:
             result["invalidRecords"] += 1
             continue
         result["records"] += 1
-        alive = pid_alive(pid)
+        alive, stale_reason = claude_process_state(record, int(record_file.stem))
+        if stale_reason:
+            result["staleRecords"] += 1
         if alive:
             result["aliveSessions"] += 1
         inbox = str(record.get("messagingSocketPath") or "")
@@ -94,6 +96,12 @@ def diagnose_claude() -> dict:
             count=permission_failures,
         ))
         return {"status": "permission_denied", **result}
+    if result["staleRecords"]:
+        result["checks"].append(_diagnostic(
+            "warning", "stale_session_records",
+            "Claude session records do not match live process identities",
+            count=result["staleRecords"],
+        ))
     if result["availableInboxes"]:
         result["checks"].append(_diagnostic(
             "ok", "inbox_present",

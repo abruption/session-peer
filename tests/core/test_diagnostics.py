@@ -161,7 +161,7 @@ class ClaudeDoctor(unittest.TestCase):
             "pid": 12, "name": "worker", "messagingSocketPath": str(self.root / "missing.sock"),
         }))
         with mock.patch.object(peer, "sessions_dir", return_value=self.root), \
-             mock.patch.object(peer, "pid_alive", return_value=True):
+             mock.patch.object(peer, "claude_process_state", return_value=(True, None)):
             result = peer.diagnose_claude()
         self.assertEqual(result["status"], "inbox_unavailable")
         self.assertEqual(result["checks"][0]["code"], "inbox_unavailable")
@@ -176,7 +176,7 @@ class ClaudeDoctor(unittest.TestCase):
             "pid": 12, "name": "worker", "messagingSocketPath": str(path),
         }))
         with mock.patch.object(peer, "sessions_dir", return_value=self.root), \
-             mock.patch.object(peer, "pid_alive", return_value=True):
+             mock.patch.object(peer, "claude_process_state", return_value=(True, None)):
             result = peer.diagnose_claude()
         self.assertEqual(result["status"], "available")
         self.assertEqual(result["checks"][0]["verification"], "filesystem_only")
@@ -314,6 +314,53 @@ class ReturnRouteDoctor(unittest.TestCase):
         self.assertEqual(result["command"], "doctor")
         self.assertEqual(result["schemaVersion"], 1)
         self.assertEqual(result["capabilities"]["replyObservation"]["status"], "unsupported")
+
+
+class WindowsClaudeStaleRecords(unittest.TestCase):
+    def test_exited_and_reused_pids_do_not_create_name_ambiguity(self):
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            for pid in (101, 102, 103):
+                (directory / f"{pid}.json").write_text(json.dumps({
+                    "pid": pid, "name": "claude-cmd", "startedAt": 1_700_000_001_000,
+                    "messagingSocketPath": rf"\\.\pipe\claude-{pid}",
+                }))
+            starts = {101: None, 102: 1_700_000_010_000, 103: 1_700_000_000_000}
+            with mock.patch.object(peer, "IS_WINDOWS", True), \
+                 mock.patch.object(peer, "sessions_dir", return_value=directory), \
+                 mock.patch.object(peer, "windows_process_start_ms", side_effect=starts.get):
+                live = peer.discover()
+                all_rows = peer.discover(include_unreachable=True)
+                doctor = peer.diagnose_claude()
+                selected = peer.resolve_target(all_rows, "claude-cmd")
+            self.assertEqual([row["pid"] for row in live], [103])
+            self.assertEqual(selected["pid"], 103)
+            self.assertEqual([row.get("staleReason") for row in all_rows],
+                             ["process_not_live", "pid_reused", None])
+            self.assertEqual(doctor["staleRecords"], 2)
+            self.assertTrue(any(check["code"] == "stale_session_records"
+                                for check in doctor["checks"]))
+            self.assertEqual(len(list(directory.glob("*.json"))), 3)  # Never delete Claude files.
+
+    def test_live_duplicate_name_remains_ambiguous(self):
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            for pid in (201, 202):
+                (directory / f"{pid}.json").write_text(json.dumps({
+                    "pid": pid, "name": "claude-cmd", "startedAt": 1_700_000_001_000,
+                    "messagingSocketPath": rf"\\.\pipe\claude-{pid}",
+                }))
+            with mock.patch.object(peer, "IS_WINDOWS", True), \
+                 mock.patch.object(peer, "sessions_dir", return_value=directory), \
+                 mock.patch.object(peer, "windows_process_start_ms", return_value=1_700_000_000_000):
+                with self.assertRaisesRegex(peer.CcPeerError, "2 sessions answer"):
+                    peer.resolve_target(peer.discover(), "claude-cmd")
+
+    @unittest.skipUnless(os.name == "nt", "requires Windows process APIs")
+    def test_windows_process_start_probe_recognizes_self(self):
+        start = peer.windows_process_start_ms(os.getpid())
+        self.assertIsInstance(start, int)
+        self.assertLessEqual(start, __import__("time").time() * 1000)
 
 
 if __name__ == "__main__":
