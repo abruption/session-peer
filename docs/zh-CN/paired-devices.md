@@ -79,6 +79,8 @@ Antigravity 绑定使用 `agent: antigravity`、`target: antigravity:UUID`
 wake 标志、SSH 目的地或任意原生命令参数。策略变更在重启接收端后生效。
 限制：最多八个已配置目标和 128 个策略设备。
 
+由 launchd 或 systemd 等服务管理器启动的接收端继承的是该管理器的最小 `PATH`，而不是登录 shell 的环境。在 macOS 和 Linux 上，目标 TUI 所用的同一个 `codex` 可执行文件所在目录必须位于接收端的 `PATH` 中；launchd 默认的 `/usr/bin:/bin:/usr/sbin:/sbin` 不包含 `~/.local/bin` 或 `/opt/homebrew/bin`。`codexBin` 仅适用于下文的 WSL 绑定。在依赖接收端之前，请在相同环境下对已绑定的目标运行 `send --dry-run` 进行确认。否则 Codex 投递会失败，目前会报告为 `native_outcome_unknown` (#176)。
+
 ## 面向原生 Windows Codex 的 WSL 接收端
 
 当 Codex 会话和 CLI 在同一台 Windows 工作站上原生运行时，请在 WSL2 中运行接收端。由操作员策略而不是已配对的对端固定挂载的状态主目录和可执行文件：
