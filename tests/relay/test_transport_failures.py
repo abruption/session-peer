@@ -67,6 +67,27 @@ class TransportDiagnostics(unittest.TestCase):
         self.assertEqual(caught.exception.http_status, 403)
         response.__exit__.assert_called_once()
 
+    def test_429_retry_after_is_numeric_and_private(self):
+        for header, expected in [('17', 17), ('invalid '+SECRET, None)]:
+            response = urllib.error.HTTPError('https://relay.example.test/api/auth/device/token',
+                429, SECRET, {'Retry-After': header}, io.BytesIO(b'{"error":"rate_limited"}'))
+            opener = Mock(); opener.open.side_effect = response
+            with self.subTest(header=header), patch.object(control.urllib.request, 'build_opener', return_value=opener):
+                with self.assertRaises(TransportFailure) as caught:
+                    control.call('https://relay.example.test', '/api/auth/device/token', {'device_code':SECRET})
+            self.assertEqual(caught.exception.http_status, 429)
+            self.assertEqual(caught.exception.retry_after, expected)
+            self.assertNotIn(SECRET, json.dumps(caught.exception.diagnostic()))
+
+    def test_retry_after_http_date_and_limit(self):
+        from datetime import datetime, timedelta, timezone
+        from email.utils import format_datetime
+        future = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=20), usegmt=True)
+        self.assertGreaterEqual(control.retry_after_seconds(future), 18)
+        self.assertLessEqual(control.retry_after_seconds(future), 21)
+        self.assertEqual(control.retry_after_seconds('999999999999999'), 86400)
+        self.assertIsNone(control.retry_after_seconds('SECRET '+SECRET))
+
     def test_control_open_timeout_and_http_rejection_are_distinct(self):
         opener=Mock(); opener.open.side_effect=urllib.error.URLError(TimeoutError(SECRET))
         with patch.object(control.urllib.request, 'build_opener', return_value=opener):

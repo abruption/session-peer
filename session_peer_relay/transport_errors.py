@@ -9,11 +9,13 @@ from .store import Rejected
 
 class TransportFailure(Rejected):
     def __init__(self, stage, reason, *, transient=False, http_status=None,
-                 close_code=None, close_source=None):
+                 close_code=None, close_source=None, retry_after=None):
         super().__init__(reason)
         self.stage = stage
         self.transient = transient
         self.http_status = http_status
+        # Polling metadata only. Do not include untrusted response headers in diagnostics.
+        self.retry_after = retry_after if type(retry_after) in (int, float) and retry_after >= 0 else None
         self.close_code = (int(close_code) if isinstance(close_code, int)
                            and not isinstance(close_code, bool) and 1000 <= close_code <= 4999 else None)
         self.close_source = close_source if self.close_code is not None and close_source in {'received', 'sent'} else None
