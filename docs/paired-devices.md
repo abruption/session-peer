@@ -97,7 +97,8 @@ agent target and home with independently discovered values. For example:
     "review": {
       "agent": "codex",
       "target": "codex:FULL-THREAD-UUID",
-      "codexHome": "/home/alice/.codex"
+      "codexHome": "/home/alice/.codex",
+      "codexBin": "/home/alice/.local/bin/codex"
     }
   },
   "peers": {
@@ -121,7 +122,7 @@ and target alias. Peers cannot supply an executable, home, wake flag, SSH destin
 or arbitrary native command arguments. Policy changes take effect after restarting
 the receiver. Limits: eight configured targets and 128 policy devices.
 
-A receiver started by a service manager such as launchd or systemd inherits that manager's minimal `PATH`, not your login shell's. On macOS and Linux, the directory of the same `codex` executable that the target TUI uses must be on the receiver's `PATH`; launchd's default `/usr/bin:/bin:/usr/sbin:/sbin` does not include `~/.local/bin` or `/opt/homebrew/bin`. `codexBin` is accepted only for the WSL binding below. Before relying on the receiver, run `send --dry-run` to the bound target under the same environment. Otherwise Codex deliveries fail and are currently reported as `native_outcome_unknown` (#176).
+A receiver started by launchd or systemd inherits the service manager's minimal `PATH`, not your login shell's. For a macOS/Linux Codex target, either add the target TUI's `codex` directory to the receiver service's `PATH` (for example, launchd `EnvironmentVariables.PATH` or systemd `Environment=PATH=...`) or set the operator-owned binding's `codexBin` to an absolute path ending in `codex`, such as `/opt/homebrew/bin/codex`. The receiver validates a regular executable and resolves symlinks to their actual target at startup; `codexPython` is not used for Unix Codex. The target must still pass the normal live-writer and home checks. Under the same receiver environment, run `send --dry-run` before a real send: a missing binary is refused as `codex_executable_not_found` before submission. Never automatically retry an unknown outcome.
 
 ## WSL receiver for native Windows Codex
 
@@ -164,7 +165,7 @@ Inactive, ambiguous or uninspectable writers fail closed. Existing WSL bindings
 must add `codexPython`; missing or invalid interpreters are rejected with
 `native_windows_python_required` or `invalid_codex_python`.
 
-Linux/macOS targets omit both executable fields. Native Windows clients continue
+Linux/macOS targets omit `codexPython` and may set `codexBin` as described above. Native Windows clients continue
 to use the ordinary local CLI; this adapter is for a WSL receiver targeting
 Windows Codex. Successful submission reports `consumptionConfirmed: false`;
 only an independently observed reply proves consumption. Never retry an unknown

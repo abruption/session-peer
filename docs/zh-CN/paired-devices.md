@@ -56,7 +56,8 @@ session-peer device init --state /private/device-state
     "review": {
       "agent": "codex",
       "target": "codex:FULL-THREAD-UUID",
-      "codexHome": "/home/alice/.codex"
+      "codexHome": "/home/alice/.codex",
+      "codexBin": "/home/alice/.local/bin/codex"
     }
   },
   "peers": {
@@ -79,7 +80,7 @@ Antigravity 绑定使用 `agent: antigravity`、`target: antigravity:UUID`
 wake 标志、SSH 目的地或任意原生命令参数。策略变更在重启接收端后生效。
 限制：最多八个已配置目标和 128 个策略设备。
 
-由 launchd 或 systemd 等服务管理器启动的接收端继承的是该管理器的最小 `PATH`，而不是登录 shell 的环境。在 macOS 和 Linux 上，目标 TUI 所用的同一个 `codex` 可执行文件所在目录必须位于接收端的 `PATH` 中；launchd 默认的 `/usr/bin:/bin:/usr/sbin:/sbin` 不包含 `~/.local/bin` 或 `/opt/homebrew/bin`。`codexBin` 仅适用于下文的 WSL 绑定。在依赖接收端之前，请在相同环境下对已绑定的目标运行 `send --dry-run` 进行确认。否则 Codex 投递会失败，目前会报告为 `native_outcome_unknown` (#176)。
+由 launchd 或 systemd 启动的接收端继承服务管理器的最小 `PATH`，而不是登录 shell 的环境。对于 macOS/Linux Codex 目标，可将目标 TUI 使用的 `codex` 目录加入接收服务的 `PATH`（例如 launchd 的 `EnvironmentVariables.PATH` 或 systemd 的 `Environment=PATH=...`），也可在操作员管理的绑定中把 `codexBin` 设为以 `codex` 结尾的绝对路径，例如 `/opt/homebrew/bin/codex`。接收端启动时验证它是可执行的普通文件，并将符号链接解析到实际目标。Unix Codex 不使用 `codexPython`。原有的活跃 writer 和 home 检查保持不变。在实际发送前，请在相同的接收端环境下运行 `send --dry-run`。如果找不到可执行文件，提交前将以 `codex_executable_not_found` 拒绝。不要自动重试结果为 unknown 的发送。
 
 ## 面向原生 Windows Codex 的 WSL 接收端
 
@@ -109,7 +110,7 @@ wake 标志、SSH 目的地或任意原生命令参数。策略变更在重启�
 
 接收端以固定参数调用 `/usr/bin/wslpath`，将 standalone 核心流式传入原生 Python，不构造 shell 命令。原生 Python 读取 Windows SQLite/WAL 并检查 writer 锁、唯一所有者、同用户 SID、进程创建时间和 Codex 可执行文件身份。不会使用 Linux SQLite 打开 Windows DB，也不会绕过 writer 检查。非活动、歧义或无法检查的 writer 均被拒绝。现有 WSL 策略也必须添加 `codexPython`；缺失或无效时分别返回 `native_windows_python_required` 或 `invalid_codex_python`。
 
-Linux/macOS 目标省略两个可执行文件字段。Windows 客户端继续使用普通本地 CLI。成功提交仍为 `consumptionConfirmed: false`，消费须由独立观察到的回复确认。即使更新策略或接收端，也不要自动重试 unknown 发送。
+Linux/macOS 目标省略 `codexPython`，可按上述说明选择设置 `codexBin`。Windows 客户端继续使用普通本地 CLI。成功提交仍为 `consumptionConfirmed: false`，消费须由独立观察到的回复确认。即使更新策略或接收端，也不要自动重试 unknown 发送。
 
 支持原生本地 CLI 不代表支持所有 Windows SSH shell。源码流式 SSH 需要可用的 python3 和兼容 POSIX 的远程 shell；Windows Store 执行别名并不足够。请在本地运行原生 CLI，或使用已安装 Python 的 WSL SSH 端点。
 

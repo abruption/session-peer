@@ -1,4 +1,5 @@
 """Internal bounded native worker. No network-provided executable or arguments."""
+import argparse
 import json
 import sys
 
@@ -16,14 +17,28 @@ def main():
             raise ValueError('invalid_operation')
         adapter = core.AGENTS.get(binding['agent'])
         args = options(binding)
-        if binding.get('codexBin') is not None:
+        if binding.get('codexPython') is not None:
             result = invoke_windows_codex(binding, op, text)
         elif op in ('send', 'resolve'):
             args.dry_run = op == 'resolve'
             if not isinstance(text, str) or not text.strip() or len(text.encode()) > 32768 or '\0' in text:
                 raise ValueError('invalid_message')
             adapter.validate_send(args, text)
-            attempted = True
+            if binding['agent'] == 'codex':
+                try:
+                    core.codex_executable(args)
+                except core.CcPeerError as exc:
+                    raise core.CcPeerError('Codex executable unavailable',
+                                           {'reason': 'codex_executable_not_found'}) from exc
+            if op == 'send':
+                preview = argparse.Namespace(**vars(args))
+                preview.dry_run = True
+                preview_result = core.LocalTransport().execute('send', adapter, preview, text)
+                if preview_result.get('ok') is not True:
+                    raise core.CcPeerError('Native preflight refused', {'reason': 'native_refused'})
+            # Everything above is read-only. After this point, a delivery may
+            # have started; any ambiguous outcome must remain unknown.
+            attempted = op == 'send'
             result = core.LocalTransport().execute('send', adapter, args, text)
             result['consumptionConfirmed'] = False
             result.setdefault('submitted', result.get('ok') is True and not args.dry_run)
@@ -38,10 +53,14 @@ def main():
                       'discovery': {binding['agent']: found['discovery']}}
     except core.CcPeerError as exc:
         # Native error text can contain local paths or user content. Codes only.
-        result = {'ok': False, 'reason': 'native_outcome_unknown' if attempted else exc.details.get('reason', 'native_refused'),
+        allowed = {'codex_executable_not_found', 'native_refused'}
+        preflight_reason = exc.details.get('reason', 'native_refused')
+        result = {'ok': False, 'reason': 'native_outcome_unknown' if attempted else (
+                      preflight_reason if preflight_reason in allowed else 'native_refused'),
                   'status': 'unknown' if attempted else 'refused', 'consumptionConfirmed': False, 'retryAllowed': False}
     except Exception:
-        result = {'ok': False, 'reason': 'native_outcome_unknown', 'status': 'unknown',
+        result = {'ok': False, 'reason': 'native_outcome_unknown' if attempted else 'native_refused',
+                  'status': 'unknown' if attempted else 'refused',
                   'consumptionConfirmed': False, 'retryAllowed': False}
     encoded = json.dumps(result, ensure_ascii=False)
     if len(encoded.encode()) > 60*1024:
