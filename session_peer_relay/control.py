@@ -1,7 +1,10 @@
 """Explicit first-party browser login and control-service device enrollment."""
 import asyncio
 import base64
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import json
+import math
 from pathlib import Path
 import time
 import urllib.error
@@ -18,6 +21,21 @@ from .store import Rejected
 from .transport_errors import failure, TransportFailure
 
 CLIENT_ID = 'session-peer-cli'
+
+
+def retry_after_seconds(value):
+    """Return a safe Retry-After delay, never an untrusted header string."""
+    if not isinstance(value, str) or len(value) > 128:
+        return None
+    if value.isascii() and value.isdecimal():
+        return min(int(value[:10]), 86400) if len(value) <= 10 else 86400
+    try:
+        date = parsedate_to_datetime(value)
+        if date.tzinfo is None:
+            return None
+        return min(max(0, math.ceil((date - datetime.now(timezone.utc)).total_seconds())), 86400)
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def origin(value):
@@ -47,13 +65,15 @@ def call(server, path, body=None, token=None):
     except Exception as exc:
         raise failure('control_request', exc) from None
     status = response.code
+    retry_after = retry_after_seconds(response.headers.get('Retry-After')) if status >= 400 else None
     try:
         with response:
             raw = response.read(65537)
     except Exception as exc:
         # A received refusal remains non-retryable even if its body times out.
         if status >= 400:
-            raise TransportFailure('control_response', 'control_request_refused', http_status=status) from None
+            raise TransportFailure('control_response', 'control_request_refused',
+                                   http_status=status, retry_after=retry_after) from None
         raise failure('control_response', exc) from None
     try:
         if len(raw) > 65536:
@@ -62,14 +82,16 @@ def call(server, path, body=None, token=None):
         if not isinstance(value, dict):
             raise ValueError()
     except Exception:
-        raise TransportFailure('control_response', 'invalid_control_response', http_status=status) from None
+        raise TransportFailure('control_response', 'invalid_control_response',
+                               http_status=status, retry_after=retry_after) from None
     if status >= 400:
         error = value.get('error', value.get('code', 'control_request_refused'))
         # Only known protocol errors may reach logs/output; server strings may contain secrets.
         known = {'authorization_pending', 'slow_down', 'access_denied', 'expired_token',
                  'invalid_grant', 'invalid_client', 'operation_already_committed',
                  'operation_conflict', 'operation_not_found'}
-        raise TransportFailure('control_response', error if isinstance(error, str) and error in known else 'control_request_refused', http_status=status)
+        raise TransportFailure('control_response', error if isinstance(error, str) and error in known else 'control_request_refused',
+                               http_status=status, retry_after=retry_after)
     return value
 
 
@@ -95,7 +117,7 @@ async def login(store, server, no_browser=False):
         webbrowser.open(uri)
     deadline = time.monotonic()+ttl
     while time.monotonic() < deadline:
-        await asyncio.sleep(interval)
+        await asyncio.sleep(min(interval, max(0, deadline-time.monotonic())))
         if time.monotonic() >= deadline:
             break
         try:
@@ -103,10 +125,20 @@ async def login(store, server, no_browser=False):
                 {'client_id': CLIENT_ID, 'device_code': result['device_code'],
                  'grant_type': 'urn:ietf:params:oauth:grant-type:device_code'})
         except Rejected as exc:
-            if str(exc) == 'authorization_pending':
+            reason = str(exc)
+            if reason in {'access_denied', 'expired_token', 'invalid_grant', 'invalid_client'}:
+                raise
+            if isinstance(exc, TransportFailure) and exc.http_status == 429:
+                interval = max(interval + 5, exc.retry_after or 0)
                 continue
-            if str(exc) == 'slow_down':
-                interval += 5
+            if reason == 'authorization_pending':
+                continue
+            if reason == 'slow_down':
+                interval = max(interval + 5, exc.retry_after or 0) if isinstance(exc, TransportFailure) else interval + 5
+                continue
+            if (isinstance(exc, TransportFailure) and exc.transient
+                    and reason == 'timeout' and exc.stage in {'control_request', 'control_response'}):
+                interval = min(interval * 2, 60)
                 continue
             raise
         token = tokens.get('access_token')

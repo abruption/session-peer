@@ -12,6 +12,7 @@ from tests.relay import test_native_relay as platform_guard
 from session_peer_relay.control import login, origin, DeviceCredential, enroll
 from session_peer_relay.identity import private_write
 from session_peer_relay.store import Store, Rejected
+from session_peer_relay.transport_errors import TransportFailure
 
 
 class ControlClient(unittest.IsolatedAsyncioTestCase):
@@ -48,6 +49,42 @@ class ControlClient(unittest.IsolatedAsyncioTestCase):
              patch('session_peer_relay.control.asyncio.sleep', new_callable=AsyncMock), contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaisesRegex(Rejected, 'access_denied'):
                 await login(self.store, self.server, True)
+        self.assertFalse((self.store.root/'login.json').exists())
+
+    async def test_login_backs_off_on_429_slow_down_and_poll_timeout(self):
+        code = {'verification_uri': self.server+'/device', 'user_code': 'ABCD',
+                'device_code': 'SECRET-DEVICE-CODE-UNIQUE', 'expires_in': 600, 'interval': 5}
+        token = 'SECRET-SESSION-TOKEN-UNIQUE'
+        output = io.StringIO()
+        responses = [code,
+                     TransportFailure('control_response', 'control_request_refused', http_status=429),
+                     TransportFailure('control_response', 'control_request_refused', http_status=429, retry_after=25),
+                     TransportFailure('control_response', 'slow_down', http_status=400, retry_after=35),
+                     TransportFailure('control_request', 'timeout', transient=True),
+                     {'access_token': token, 'token_type': 'Bearer', 'expires_in': 600}]
+        with patch('session_peer_relay.control.call', side_effect=responses) as call, \
+             patch('session_peer_relay.control.asyncio.sleep', new_callable=AsyncMock) as sleep, \
+             contextlib.redirect_stdout(output):
+            self.assertTrue((await login(self.store, self.server, True))['loggedIn'])
+        self.assertEqual([x.args[0] for x in sleep.call_args_list], [5, 10, 25, 35, 60])
+        self.assertEqual(call.call_count, 6)  # One code request, five idempotent polls.
+        self.assertNotIn(token, output.getvalue())
+        self.assertNotIn(code['device_code'], output.getvalue())
+        self.assertEqual(json.loads((self.store.root/'login.json').read_text())['token'], token)
+
+    async def test_terminal_login_error_does_not_retry_even_with_429(self):
+        code = {'verification_uri': self.server+'/device', 'user_code': 'ABCD',
+                'device_code': '1234567890123456', 'expires_in': 600, 'interval': 5}
+        for reason in ('access_denied', 'expired_token', 'invalid_client', 'invalid_grant'):
+            with self.subTest(reason=reason), \
+                 patch('session_peer_relay.control.call', side_effect=[code, TransportFailure(
+                     'control_response', reason, http_status=429, retry_after=30)]) as call, \
+                 patch('session_peer_relay.control.asyncio.sleep', new_callable=AsyncMock) as sleep, \
+                 contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(Rejected, reason):
+                    await login(self.store, self.server, True)
+                self.assertEqual(call.call_count, 2)
+                sleep.assert_awaited_once_with(5)
         self.assertFalse((self.store.root/'login.json').exists())
 
     async def test_verification_link_cannot_redirect_to_another_origin(self):
