@@ -146,10 +146,11 @@ git clone https://github.com/abruption/session-peer && cd session-peer
 ./install.sh --host web-01 --host db  # several at once
 ```
 
-That places `session_peer.py` in `~/.local/share/session-peer/`, installs the
-a compatibility copy of the [session-peer skill](https://github.com/abruption/session-peer-skill/blob/main/session-peer/SKILL.md) in `~/.claude/skills/session-peer/`,
-and links `~/.local/bin/session-peer`. Existing cc-peer files are preserved.
-Remove it with `./install.sh --uninstall [--host ...]`.
+That places `session_peer.py` in `~/.local/share/session-peer/`, installs a
+compatibility copy of the [session-peer skill](https://github.com/abruption/session-peer-skill/blob/main/session-peer/SKILL.md) in both `~/.claude/skills/session-peer/` and `~/.agents/skills/session-peer/`,
+and links `~/.local/bin/session-peer`. Skills already installed by another manager,
+including symlinks, and existing cc-peer files are preserved. Remove installer-owned
+files with `./install.sh --uninstall [--host ...]`; unmarked legacy skills remain.
 
 `session-peer update` refreshes a standalone program from the latest GitHub release.
 `./install.sh --host <host>` pushes this checkout's program and skill over SSH.
@@ -173,8 +174,10 @@ chmod +x session_peer.py
 
 The published skill is maintained in the [session-peer-skill repository](https://github.com/abruption/session-peer-skill).
 The standalone installer retains a compatibility copy for air-gapped and SSH
-installations and places it in `~/.claude/skills/session-peer/SKILL.md`; placement
+installations and places it in `~/.claude/skills/session-peer/SKILL.md` for Claude
+Code and `~/.agents/skills/session-peer/SKILL.md` for Codex. Claude placement
 respects `CLAUDE_CONFIG_DIR`, then `ANTHROPIC_CONFIG_DIR`, before the default.
+It does not overwrite separately managed skills or remove them on uninstall.
 For normal global installation across Claude Code, Codex, and Antigravity, use the
 Skills CLI command above. The skill guides target and message selection while the
 Python program performs discovery and transport. Installing it does not change an
