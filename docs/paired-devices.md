@@ -1,4 +1,4 @@
-# Paired devices and private relay (v0.9 beta)
+# Paired devices and private relay (v1.0)
 
 This optional Unix/Python 3.11+ transport carries requests to operator-defined
 Claude, Codex or registered Antigravity endpoints. The usual local/SSH commands
@@ -69,8 +69,8 @@ python3 -m venv ~/.local/share/session-peer-relay/venv
 ~/.local/share/session-peer-relay/venv/bin/pip install 'session-peer[relay]'
 ```
 
-The relay extra is available on PyPI starting with v0.9.0 and remains beta;
-publication does not establish long-term operational stability. Use the installed
+The relay extra is available on PyPI starting with v0.9.0. Package publication
+does not guarantee availability of any hosted relay. Use the installed
 `session-peer` executable below. Management commands (`device`/`relay`) emit JSON.
 Do not mix Python environments with different package versions.
 
@@ -289,8 +289,9 @@ session-peer device status --state /private/client-state --peer RECEIVER-FINGERP
 `unknown` (including receiver/worker crash) never permits automatic reexecution.
 This is at-most-once execution attempts, not exactly-once consumption. The journal
 caps at 10,000 requests and refuses further new submissions when full. Do not delete
-pending entries or clear the journal to retry unknowns. Retention/rotation and
-long-running fleet management remain RC hardening work.
+pending entries or clear the journal to retry unknowns. The v1.0 CLI does not
+automatically rotate this journal or manage long-running fleets; operators must
+plan capacity and retention without discarding unresolved outcomes.
 
 ## Revoke, restart and recover
 

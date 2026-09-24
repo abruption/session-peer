@@ -1,93 +1,57 @@
 # 发布 session-peer
 
-发布 GitHub Release 会触发 `.github/workflows/publish.yml`，该工作流构建选定的标签并通过 Trusted Publishing 将其上传到 PyPI。草稿不会发布。请将准备、批准、发布和验证步骤分开，以确保公开构件始终指向经过审查的代码。
+公开 GitHub Release 会触发 `.github/workflows/publish.yml`，构建指定标签的 wheel 和 sdist，并通过 Trusted Publishing 上传 PyPI。草稿不会发布。请分开准备、最终批准、公开和验证。受保护的 `main` 需要最新 PR 以及覆盖各平台 Python、文档、Shell、软件包、MCP、Relay、control、集成测试和依赖审计的 `release gate`。实际 OAuth、代理 ACK 和生产 Relay 状态是独立的运维证据。
 
-RC4 发布与正式版升级属于不同条件。必须在全部五个主机以独立 ACK 证据和不间断的四小时观察验证精确的已发布 RC4 之后，才可关闭 #161、#163、#164 及 RC4 里程碑。遵循 [RC4 验证计划](docs/zh-CN/releases/v1.0.0-rc.4.md)，RC2 证据或离线复现不能替代。
+## 稳定版 v1.0.0 条件
 
-## 当前候选版本：v1.0.0-rc.4
+经过审查的 RC4 运行时在五主机 `rc4-rerun-02` 中获得 14,436.65 秒的 `complete`、公开 health 241/241、probe 147/147、提交 21/21、Relay 重启后 3.182 秒恢复。独立 ACK 为 20/21。原始 T120 Windows native Claude ACK 因 TUI 关闭未能确认；同一路径后续单独的一次检查得到准确 ACK。用户已在 #164 明确接受这一运维例外。不得把原始结果改写成 21/21。#161 的外部停滞位置仍未确定，缓解措施不等于修复根因。稳定版不得改变 RC4 的运行时行为，且必须再次通过准确 `main` 的 CI。
 
-第四个 1.0 候选发布版保留包含 #158 Windows 修复的 RC2 契约，并针对 #161 跟踪的公共中继路由失败，加入限制提交前设置重试的路由诊断 (#162)，以及缩短接收端重连空档与 role_busy 指标 (#168)。RC2 的 Claude 与 SSH 修复也已在稳定版 v0.9.2 发布。其规范的 Python/PyPI 版本为 `1.0.0rc4`；面向用户的 Git 标签和 GitHub Release 为 `v1.0.0-rc.4`。`packaging.version.Version` 将这些值视为等同。不要使用裸 `v1.0.0-rc`，它会标准化为 RC 零。
+Python/PyPI 版本是 `1.0.0`，Git 标签和 GitHub Release 是 `v1.0.0`。不标记为预发布，并设置为 Latest。普通升级和独立版更新提示可能选择 v1.0.0 而非 v0.9.2。插件版本独立。核心在 Python 3.9+ 上无依赖；MCP 要求 3.10+，Relay 接收端/服务器要求 Unix 或 WSL 上的 3.11+。软件包发布不保证托管 Relay/OAuth 可用。由服务管理器启动的 macOS、Linux 接收端，其 PATH 必须包含目标 TUI 的 `codex` 可执行文件目录（`codexBin` 仅适用于 WSL）。Relay 登录会过期，可能需要重新授权。
 
-RC3 在 PyPI 上仅部分发布：wheel 已被接受，但 sdist 上传在多次 HTTP 502 响应后失败。RC3 不得用于正式版升级。RC4 仅更改候选版本和发布文档，运行时行为仍是经过审查的 #162 与 #168 实现。不要重试 RC3 的双文件上传，也不要复用其不可变的版本号。
+根目录 `cc_peer.py` 为旧版 URL 保留，但必须排除在 wheel 和 sdist 外。应包含四种语言的 README、安全策略、稳定版说明、Relay 文档和可选运行时。不得包含凭据、设备密钥、认证数据库、replay 状态、浏览器配置、局部证据或对话。
 
-本次发布是明确的预发布版本：
+## Trusted Publisher
 
-- 将 GitHub Release 标记为 **Pre-release**，切勿标记为 Latest；
-- 正常的稳定包升级必须继续选择 v0.9.2；
-- 测试人员使用 `pipx install 'session-peer[relay]==1.0.0rc4'` 或等效的 `uv` 命令安装精确版本；
-- 在 GitHub、PyPI 以及全新安装验证完成之前，保持 v1.0.0-rc.4 里程碑处于开启状态；
-- 插件清单保留其独立版本（0.1.0）。
-
-该候选版本包括本地/SSH 运行、可选的 MCP 和 Antigravity 适配器、配对的直接/中继传输、托管准入、公开 OAuth 注册、主动吊销与 recovery、运维人员指标以及经过审查的 KR 部署构件。relay 额外依赖项需要 Unix 和 Python 3.11+。默认核心在 Python 3.9+ 上保持无外部依赖。托管的中继属于运维服务，不构成软件包可用性承诺。
-
-仓库必须在根目录下保留冻结的 `cc_peer.py` 以用于旧版自更新 URL，同时将其从 wheel 和 sdist 中排除。包含所有四个 README、安全策略、候选发布说明、中继生命周期/认证文档以及可选的运行时源码。切勿包含 OAuth 凭据、设备密钥、认证数据库、重放状态、浏览器配置文件、本地证据或会话记录。
-
-## Trusted Publisher 配置
-
-GitHub 环境为 `pypi`，活动工作流为 `publish.yml`。PyPI 项目所有者应保留以下 Trusted Publisher 映射：
-
-| 字段 | 值 |
-| --- | --- |
-| PyPI project | `session-peer` |
-| GitHub owner | `abruption` |
-| GitHub repository | `session-peer` |
-| Workflow filename | `publish.yml` |
-| GitHub environment | `pypi` |
-
-此前成功的发布是参考证据，并非所有者端映射未发生更改的保证。
+PyPI 项目 `session-peer` 对应 GitHub `abruption/session-peer` 的 `publish.yml` 和环境 `pypi`。仓库不保存长期 PyPI 凭据。过去成功不证明配置未变，发布前需要确认。
 
 ## 准备与验证
 
-1. 确认发布分支包含已合并的 #158、#162 和 #168，并以 `main` 为目标。不要将稳定版维护分支合并到 main。
-2. 确认 `session_peer.__version__ == "1.0.0rc4"`，候选发布说明已包含在 sdist 中，且四个 README 中的安装命令保持一致。
-3. 运行完整的 CI 矩阵。在本地重复运行核心套件、控制 Node 22/24 套件、Node/Python 集成，以及与最终 diff 相对应的构建和归档检查。实时模型提交不属于发布准备的一部分。
-4. 从确切的候选版本构建一次：
+1. 处理 v1.0.0 里程碑和 #152 文档关卡，记录 #164 运维例外。#161 保留为根因未明的 v1.0.1 监控。与 RC4 相比，只允许版本、生成文件、文档和测试差异。不要把 `release/0.9.x` 合并到 `main`。
+2. 确认 `session_peer.__version__ == "1.0.0"`、生成的 `session_peer.py` 一致、四种语言 README 安装命令一致、sdist 包含四种语言的稳定版说明。运行本地全部测试、PR 的 `release gate` 和合并后准确 `main` 的 CI。
+3. 从准确候选以 `python3 -m build` 构建 wheel 与 sdist 并检查内容。分别在全新环境安装，检查 `session-peer --version`、空主目录 JSON `list`、`pip check`、Relay/MCP 扩展与 help。不把实际模型消息纳入此关卡。
+4. 检查通过后才合并，重新确认 `main` 的准确提交、版本与说明。确认 PyPI 尚无 `1.0.0` 文件。
 
-   ```bash
-   python3 -m build
-   ```
+## 草稿与公开
 
-5. 检查两个归档文件。wheel 包含 `session_peer.py`、`session_peer_mcp.py`、`session_peer_relay/` 及元数据。sdist 还包含经过批准的文档和部署模板。两个归档文件均不得包含 `cc_peer.py`、凭据、数据库、重放状态、私钥、浏览器数据或本地证据。
-6. 在全新环境中分别独立安装 wheel 和 sdist。确认 `session-peer --version` 报告 `1.0.0rc4`，`session-peer list --output-format
-   json` works in an empty home, and relay/MCP extras pass `pip check` 和 help 冒烟测试。
-7. 仅在所需检查通过后进行合并。获取 `main`，记录其确切 commit，并在该 commit 上验证版本及预期更改。
-
-## 准备草稿
-
-仅在发布准备 PR 合并后创建草稿。压缩提交（squash）或合并提交（merge）会改变发布 commit。
+准备 PR 合并后才建立草稿；squash/merge 会改变发布提交。不要移动已发布的标签。
 
 ```bash
 git fetch origin main --tags
 release_commit=$(git rev-parse origin/main)
-gh release create v1.0.0-rc.4 \
+gh release create v1.0.0 \
   --repo abruption/session-peer \
   --target "$release_commit" \
-  --title "session-peer v1.0.0-rc.4" \
-  --notes-file docs/releases/v1.0.0-rc.4.md \
-  --draft --prerelease --latest=false
+  --title "session-peer v1.0.0" \
+  --notes-file docs/releases/v1.0.0.md \
+  --draft --latest
 ```
 
-验证标签、目标、标题、说明、草稿状态及预发布状态。切勿移动现有已发布的标签。创建草稿并不代表授权发布。
+检查标签、目标、标题、说明、草稿、稳定版和 Latest 意图。草稿不构成发布授权。
 
-## 发布
+## 公开
 
-在发布前立即获取最终用户批准。发布操作将使 GitHub Release 公开并触发 PyPI 上传：
+**公开前必须获得用户最终批准。** 发布命令：
 
 ```bash
-gh release edit v1.0.0-rc.4 \
+gh release edit v1.0.0 \
   --repo abruption/session-peer \
-  --draft=false --prerelease --latest=false
+  --draft=false --prerelease=false --latest
 ```
 
-若工作流失败，切勿创建第二个发布或使用修改后的构件重试。保留失败的运行记录并进行排查。PyPI 版本是不可变的。
+工作流必须检查标签/版本/受保护 main、可复现的 wheel 与 sdist、归档/安装/审计、SHA256SUMS 和 provenance，然后才通过 OIDC 上传。已有 PyPI 文件属于硬错误。失败后不能用修改过的产物重传。如果 `1.0.0` 部分发布或哈希不符，停止升级、保存证据，通过审查后的新版本（通常是 `1.0.1`）修复。撤回版本也不能重复使用。
 
-## 验证发布
+## 发布后验证
 
-1. 确认 `publish.yml` 针对预期的标签和 commit 执行成功。
-2. 确认 PyPI 准确提供了 `session-peer==1.0.0rc4`。下载 wheel 和 sdist，将其哈希值与工作流构件进行比较，并再次检查内容。
-3. 在全新环境中安装确切的 PyPI 预发布版本，并重复版本、空主目录 list、relay 额外依赖项和 MCP 冒烟检查。
-4. 确认 GitHub 将该发布标记为预发布且未标记为 latest。稳定的 `releases/latest` 端点和常规更新通知必须继续指向 v0.9.2。
-5. 单独验证托管的中继；软件包发布并不能证明服务健康状况、OAuth 策略或代理确认情况。
-6. 仅在记录 GitHub、PyPI 及全新安装证据后关闭 v1.0.0-rc.4 里程碑。
-
-通过包管理器安装的环境使用其自身的管理器进行升级。独立的稳定安装继续使用 `session-peer update`；候选发布版测试人员使用精确的软件包版本。提交绝不是已被采用或确认的证明。
+1. 确认准确标签与提交的 `publish.yml` 成功。下载 PyPI wheel 和 sdist，与工作流候选及 provenance 比对哈希，并分别在新环境安装。
+2. 检查版本、空主目录 JSON `list`、Relay/MCP、`pip check`、GitHub 稳定版/Latest、普通升级选择。托管 Relay 另行验证；queued 不是 ACK。
+3. 记录证据之后才关闭 v1.0.0 里程碑。整个设备群部署或生产服务重启是单独的运维决定。

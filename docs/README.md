@@ -26,5 +26,5 @@ installation paths.
 
 - [v1 compatibility contract](compatibility-v1.md) classifies stable, versioned, migrated, internal and experimental surfaces.
 - [Agent transport architecture](architecture/agent-transports.md) and the [relay development plan](relay-development-plan.md) explain implementation boundaries.
-- [Release notes](releases/v1.0.0-rc.4.md) describe the current candidate; [validation records](validation/69-rc.md) preserve scoped evidence and limitations.
+- [Release notes](releases/v1.0.0.md) describe the stable release; [validation records](validation/69-rc.md) preserve scoped evidence and limitations.
 - The completed relay69 prototype source was removed after its unique regressions moved to the product relay suite. Git history remains the source for obsolete prototype code.

@@ -111,11 +111,11 @@ npx -y skills@latest add abruption/session-peer-skill \
 再利用できる依頼文、承認と秘密情報の境界、検証手順、完了報告の形式を提供します。
 アカウント変更、公開、支払い、再起動、マージ、リリース、公開作業はユーザーが引き続き管理します。
 
-## オプションの1.0リリース候補機能
+## オプションの v1.0 機能
 
-明示的に選択する`1.0.0rc4`リリース候補は認証付き公開リレーを安定したv1契約へ前進させ、実験段階の[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/ja/antigravity.md)ブリッジも維持されます。フィルターなしの`list`には稼働中の登録済みブリッジも表示されます。
+安定版 `1.0.0` は認証付き公開リレーを含み、[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/ja/antigravity.md) ブリッジは実験段階のままです。フィルターなしの `list` には稼働中の登録済みブリッジも表示されます。
 [デバイスのペアリング・暗号化リレー](https://github.com/abruption/session-peer/blob/main/docs/ja/paired-devices.md)にはUnix、Python 3.11以上、`[relay]`が必要です。デバイスの識別情報を固定し、受信側の端末で接続対象を明示的に許可します。ブラインドWSSリレーはメッセージを復号できず、ホスト型サービスの可用性はパッケージとは別に運用されます。
-リリース候補は`pipx install 'session-peer[relay]==1.0.0rc4'`で明示的にインストールしてください。通常のアップグレードではプレリリースは選択されません。[session-peerプロジェクトページ](https://abruption.dev/projects/session-peer/)と上記のデバイスペアリング文書から始めてください。RC公開はホスト型サービスの可用性を保証せず、通常のローカル・SSHコマンドは外部依存なしで使えます。
+安定版は `pipx install 'session-peer[relay]==1.0.0'` でインストールしてください。通常のパッケージ更新でも v1.0.0 が選択され得ます。[session-peerプロジェクトページ](https://abruption.dev/projects/session-peer/)と上記のデバイスペアリング文書から始めてください。パッケージ公開はホスト型サービスの可用性を保証せず、通常のローカル・SSHコマンドは外部依存なしで使えます。
 
 ## 送信前の確認
 
