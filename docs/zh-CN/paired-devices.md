@@ -1,4 +1,4 @@
-# 配对设备与私有中继 (v0.9 beta)
+# 配对设备与私有中继 (v1.0)
 
 这一可选的 Unix/Python 3.11+ 传输方式将请求传递到操作员定义的
 Claude、Codex 或已注册的 Antigravity 端点。通常的本地/SSH 命令
@@ -28,8 +28,8 @@ python3 -m venv ~/.local/share/session-peer-relay/venv
 ~/.local/share/session-peer-relay/venv/bin/pip install 'session-peer[relay]'
 ```
 
-中继扩展组件（relay extra）自 v0.9.0 起在 PyPI 上提供，并保持 Beta 状态；
-发布并不代表确立了长期的运维稳定性。请使用下文安装的
+中继扩展组件（relay extra）自 v0.9.0 起在 PyPI 上提供。
+软件包发布不保证托管 Relay 的可用性。请使用下文安装的
 `session-peer` 可执行文件。管理命令（`device`/`relay`）输出 JSON。
 请勿混用具有不同软件包版本的 Python 环境。
 
@@ -220,7 +220,7 @@ session-peer device status --state /private/client-state --peer RECEIVER-FINGERP
 `unknown`（包括接收端/工作进程崩溃）绝不允许自动重新执行。这是最多一次
 （at-most-once）执行尝试，而不是精确一次（exactly-once）消费。
 日志上限为 10,000 个请求，存满后会拒绝进一步的新提交。请勿删除待处理条目
-或清空日志以重试未知项。保留/轮换以及长期运行的集群管理仍属于发布候选版（RC）强化工作。
+或清空日志以重试未知项。v1.0 CLI 不会自动轮换日志或管理长期运行的设备群；运维人员必须在不丢弃未决结果的前提下规划容量和保留策略。
 
 ## 吊销、重启与恢复
 

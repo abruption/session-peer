@@ -111,11 +111,11 @@ npx -y skills@latest add abruption/session-peer-skill \
 재사용 가능한 요청문, 승인·비밀정보 경계, 검증 단계와 완료 보고 형식을 제공해요.
 계정 변경, 공개 노출, 결제, 재부팅, 병합, 릴리스와 게시는 사용자가 계속 통제해요.
 
-## 선택형 1.0 릴리스 후보 기능
+## 선택형 v1.0 기능
 
-명시적으로 선택하는 `1.0.0rc4` 릴리스 후보는 인증된 공개 릴레이를 안정적인 v1 계약에 가깝게 진전시키며, 실험 상태 [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/ko/antigravity.md) 브리지도 유지돼요. 필터 없는 `list`에는 실행 중인 등록 브리지도 표시돼요.
+안정판 `1.0.0`에는 인증된 공개 릴레이 지원이 포함되며, [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/ko/antigravity.md) 브리지는 실험 상태로 유지돼요. 필터 없는 `list`에는 실행 중인 등록 브리지도 표시돼요.
 [기기 페어링·암호화 릴레이](https://github.com/abruption/session-peer/blob/main/docs/ko/paired-devices.md)는 Unix·Python 3.11 이상·`[relay]` 확장이 필요해요. 기기 신원을 고정하며 수신 기기에서 대상을 명시적으로 허용해야 해요. 블라인드 WSS 릴레이는 메시지를 복호화할 수 없으며 호스팅 서비스의 가용성은 패키지와 별도로 운영돼요.
-릴리스 후보는 `pipx install 'session-peer[relay]==1.0.0rc4'`로 명시적으로 설치하세요. 일반 업그레이드는 시험판을 선택하지 않아요. [session-peer 프로젝트 페이지](https://abruption.dev/projects/session-peer/)와 위의 기기 페어링 문서부터 확인하세요. RC 공개가 호스팅 서비스 가용성을 보장하지는 않으며 일반 로컬·SSH 명령은 외부 의존성 없이 유지돼요.
+안정판은 `pipx install 'session-peer[relay]==1.0.0'`으로 설치하세요. 패키지 관리자의 일반 업그레이드도 v1.0.0을 선택할 수 있어요. [session-peer 프로젝트 페이지](https://abruption.dev/projects/session-peer/)와 위의 기기 페어링 문서부터 확인하세요. 패키지 발행은 호스팅 서비스 가용성을 보장하지 않으며 일반 로컬·SSH 명령은 외부 의존성 없이 유지돼요.
 
 ## 전송 전 확인
 

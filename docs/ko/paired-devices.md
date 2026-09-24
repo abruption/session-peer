@@ -1,4 +1,4 @@
-# 페어링된 기기 및 비공개 릴레이 (v0.9 베타)
+# 페어링된 기기 및 비공개 릴레이 (v1.0)
 
 이 선택형 Unix/Python 3.11+ 트랜스포트는 운영자가 정의한 Claude, Codex 또는 등록된 Antigravity 엔드포인트로 요청을 전달합니다. 일반적인 로컬/SSH 명령은 의존성 없는 상태로 유지됩니다. 이는 명시적인 CLI 워크플로이며, 모바일 애플리케이션, NAT 통과, WireGuard 터널 또는 자동 공용 서비스는 설치되지 않습니다.
 
@@ -25,7 +25,7 @@ python3 -m venv ~/.local/share/session-peer-relay/venv
 ~/.local/share/session-peer-relay/venv/bin/pip install 'session-peer[relay]'
 ```
 
-릴레이 extra는 v0.9.0부터 PyPI에서 제공되며 베타 상태로 유지됩니다. 배포 자체가 장기적인 운영 안정성을 보장하지는 않습니다. 아래에 표시된 설치된 `session-peer` 실행 파일을 사용하십시오. 관리 명령(`device`/`relay`)은 JSON을 출력합니다. 패키지 버전이 서로 다른 Python 환경을 혼용하지 마십시오.
+릴레이 extra는 v0.9.0부터 PyPI에서 제공됩니다. 패키지 발행은 호스팅 Relay의 가용성을 보장하지 않습니다. 아래에 표시된 설치된 `session-peer` 실행 파일을 사용하십시오. 관리 명령(`device`/`relay`)은 JSON을 출력합니다. 패키지 버전이 서로 다른 Python 환경을 혼용하지 마십시오.
 
 ## 신원, 정책 및 페어링
 
@@ -165,7 +165,7 @@ session-peer device status --state /private/client-state --peer RECEIVER-FINGERP
   --request-id ORIGINAL-UUID --admission-file /private/client.token
 ```
 
-`unknown`(수신자/워커 충돌 포함)은 결코 자동 재실행을 허용하지 않습니다. 이는 최대 한 번 실행 시도이며, 정확히 한 번 소비가 아닙니다. 저널은 10,000개의 요청으로 제한되며 가득 차면 더 이상의 새로운 제출을 거부합니다. 알 수 없는 항목을 재시도하기 위해 보류 중인 항목을 삭제하거나 저널을 비우지 마십시오. 보존/순환 및 장기 실행 플릿 관리는 RC 강화 작업으로 남아 있습니다.
+`unknown`(수신자/워커 충돌 포함)은 결코 자동 재실행을 허용하지 않습니다. 이는 최대 한 번 실행 시도이며, 정확히 한 번 소비가 아닙니다. 저널은 10,000개의 요청으로 제한되며 가득 차면 더 이상의 새로운 제출을 거부합니다. 알 수 없는 항목을 재시도하기 위해 보류 중인 항목을 삭제하거나 저널을 비우지 마십시오. v1.0 CLI는 저널을 자동 순환하거나 장기 운영 플릿을 관리하지 않습니다. 운영자는 미확정 결과를 폐기하지 않는 범위에서 용량과 보존을 계획해야 합니다.
 
 ## 철회, 재시작 및 복구
 
