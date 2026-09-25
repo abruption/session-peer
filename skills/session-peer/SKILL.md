@@ -3,9 +3,9 @@ name: session-peer
 description: Send user-requested messages to Claude Code, Codex, or a live registered Antigravity TUI on this machine, an SSH host, or a paired device using session-peer. Use for cross-session handoffs and notifications when the available native tools do not cover the requested target.
 allowed-tools: Bash, Read
 metadata:
-  version: "0.3.0"
+  version: "0.3.1"
   runtime-min-version: "0.9.1"
-  runtime-full-version: "1.0.0"
+  runtime-full-version: "1.0.1"
 ---
 
 # Session messaging
@@ -29,6 +29,11 @@ is on the user's PATH. Do not silently replace an existing pipx, uv, pip, or sta
 installation with another manager. If the installed version is older, use that
 manager's upgrade command; only standalone installations use `session-peer update`.
 Run `session-peer --version` again before continuing.
+In 1.0.1 and newer, cached `skillUpdates` notices and `session-peer doctor` can
+report an outdated or incompatible separately installed skill. Update it with
+its own manager (Skills CLI: `npx -y skills@latest update session-peer --global --yes`).
+Runtime package upgrades and `session-peer update` do not update an
+independently managed skill; `install.sh` preserves its paths.
 
 Discover targets before sending. `session-peer list` lists Claude, Codex, and
 live registered Antigravity bridges together; use `--agent claude`, `--agent codex`,
@@ -36,6 +41,8 @@ or `--agent antigravity` to filter. Add `--host user@host` for SSH. Claude targe
 are names or PIDs; Codex targets are `codex:<full-uuid>`; Antigravity targets are
 `antigravity:<full-conversation-uuid>`. Resolve ambiguous targets with the user.
 A saved Codex record does not prove that the session is running.
+On Windows, rediscover Claude targets before using a PID; 1.0.1 and newer exclude
+exited or reused PIDs from discovery.
 
 Codex listing combines known default, CODEX_HOME, Orca and configured homes.
 Use each row's `codexHome` with `send --codex-home` to preserve its exact destination;
@@ -52,6 +59,9 @@ rejected unless `--codex-home` and `--allow-inactive-codex-home` explicitly queu
 it for a future resume, or `--wake` explicitly activates it. Add that flag only when the user wants a message left for
 a later resume; it is not a workaround for a rejected send, and it does not start
 the session.
+If a Codex send reports `thread_not_yet_persisted`, a live writer has not saved
+its thread yet, so nothing was queued. Wait for its first turn to finish, then
+rediscover and dry-run before sending.
 
 Antigravity delivery requires a bridge explicitly started from the receiving TUI
 with `session-peer antigravity-bridge serve`. Discovery covers live registered
@@ -121,6 +131,24 @@ newer, `--relay-login`. Admission files, device state, and private keys are
 credentials; do not print, copy, or attach them. Paired requests reject `--wake`,
 explicit SSH reply routes, and native home, binary, or SSH options. They also
 advertise no automatic `Reply-To`.
+
+For macOS/Linux paired Codex targets, receiver policy `codexBin` requires
+session-peer 1.0.1 or newer; the receiver service's `PATH` can also expose the
+target Codex executable. Only the receiver operator chooses these settings.
+Verify the running receiver with a paired `send --dry-run` before a real send.
+A missing executable is `refused` as `codex_executable_not_found` before native
+submission. Keep an `unknown` post-submission result distinct and do not resend
+it automatically. In 1.0.1 and newer, `device login` backs off on HTTP 429 and
+`slow_down`; let the pending authorization poll continue instead of starting a
+second login.
+
+For recurring Relay stalls, ask the operator for opt-in `--diagnostic-events`
+from the receiver and Relay. In 1.0.1 and newer, compare `eventTimeUtcMs` and
+the exact `attemptId` across one client attempt, one Relay room, and one receiver
+leg. Per-leg frame counters show encrypted transport progress, not delivery or
+the cause of a stall. Treat missing or duplicated legs as unattributed, and keep
+metadata logs private and bounded. See the runtime's
+[paired-device diagnostics](https://github.com/abruption/session-peer/blob/v1.0.1/docs/paired-devices.md#connection-failures-and-safe-setup-retry).
 
 `--request-id UUID` preserves an attempt identifier for paired-device journaling
 and generation-pinned Antigravity deduplication. It is not a general retry key for
