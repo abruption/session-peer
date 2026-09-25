@@ -113,9 +113,9 @@ npx -y skills@latest add abruption/session-peer-skill \
 
 ## オプションの v1.0 機能
 
-安定版 `1.0.0` は認証付き公開リレーを含み、[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/ja/antigravity.md) ブリッジは実験段階のままです。フィルターなしの `list` には稼働中の登録済みブリッジも表示されます。
+安定版 `1.0.1` は認証付き公開リレーを含み、[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/ja/antigravity.md) ブリッジは実験段階のままです。フィルターなしの `list` には稼働中の登録済みブリッジも表示されます。
 [デバイスのペアリング・暗号化リレー](https://github.com/abruption/session-peer/blob/main/docs/ja/paired-devices.md)にはUnix、Python 3.11以上、`[relay]`が必要です。デバイスの識別情報を固定し、受信側の端末で接続対象を明示的に許可します。ブラインドWSSリレーはメッセージを復号できず、ホスト型サービスの可用性はパッケージとは別に運用されます。
-安定版は `pipx install 'session-peer[relay]==1.0.0'` でインストールしてください。通常のパッケージ更新でも v1.0.0 が選択され得ます。[session-peerプロジェクトページ](https://abruption.dev/projects/session-peer/)と上記のデバイスペアリング文書から始めてください。パッケージ公開はホスト型サービスの可用性を保証せず、通常のローカル・SSHコマンドは外部依存なしで使えます。
+安定版は `pipx install 'session-peer[relay]==1.0.1'` でインストールしてください。通常のパッケージ更新でも v1.0.1 が選択され得ます。[session-peerプロジェクトページ](https://abruption.dev/projects/session-peer/)と上記のデバイスペアリング文書から始めてください。パッケージ公開はホスト型サービスの可用性を保証せず、通常のローカル・SSHコマンドは外部依存なしで使えます。
 
 ## 送信前の確認
 

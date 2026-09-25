@@ -25,5 +25,5 @@
 
 - [v1 호환성 계약](compatibility-v1.md)은 안정적, 버전형, 마이그레이션형, 내부형, 실험적 표면을 분류합니다.
 - [에이전트 전송 아키텍처](architecture/agent-transports.md)와 [릴레이 개발 계획](relay-development-plan.md)은 구현 경계를 설명합니다.
-- [릴리스 노트](releases/v1.0.0.md)는 안정판을 설명하고, [검증 기록](validation/69-rc.md)은 범위가 명시된 증거와 한계를 보존합니다.
+- [릴리스 노트](releases/v1.0.1.md)는 현재 안정판을 설명하고, [검증 기록](validation/69-rc.md)은 범위가 명시된 증거와 한계를 보존합니다.
 - 완료된 relay69 프로토타입 소스는 고유 회귀 검사를 제품 릴레이 테스트로 옮긴 뒤 제거했습니다. 폐기된 프로토타입 코드는 Git 이력에 남아 있습니다.
