@@ -110,9 +110,9 @@ npx -y skills@latest add abruption/session-peer-skill \
 
 ## 可选的 v1.0 功能
 
-稳定版 `1.0.0` 包含认证公共中继功能；[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/antigravity.md) 桥接仍处于实验阶段。未筛选的 `list` 也会显示正在运行的已注册桥接。
+稳定版 `1.0.1` 包含认证公共中继功能；[Antigravity](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/antigravity.md) 桥接仍处于实验阶段。未筛选的 `list` 也会显示正在运行的已注册桥接。
 [设备配对与加密中继](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/paired-devices.md)需要Unix、Python 3.11以上及`[relay]`扩展。设备身份固定，目标需在接收端显式授权。盲转发WSS中继无法解密应用消息；托管服务的可用性与软件包分开运营。
-请使用 `pipx install 'session-peer[relay]==1.0.0'` 安装稳定版；普通软件包升级也可能选择 v1.0.0。请先查看[session-peer项目页面](https://abruption.dev/projects/session-peer/)及上方的设备配对文档。软件包发布不保证托管服务可用性，普通本地与SSH命令仍不需要第三方依赖。
+请使用 `pipx install 'session-peer[relay]==1.0.1'` 安装稳定版；普通软件包升级也可能选择 v1.0.1。请先查看[session-peer项目页面](https://abruption.dev/projects/session-peer/)及上方的设备配对文档。软件包发布不保证托管服务可用性，普通本地与SSH命令仍不需要第三方依赖。
 
 ## 发送前须知
 
