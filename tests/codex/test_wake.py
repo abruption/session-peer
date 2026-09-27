@@ -116,6 +116,8 @@ class Wake(unittest.TestCase):
         real_popen = subprocess.Popen
         processes = []
         def spawn(argv, **kwargs):
+            if argv[:1] == ['ps']:
+                return real_popen(argv, **kwargs)
             self.assertEqual(argv, ['codex', 'app-server'])
             self.assertEqual(kwargs['cwd'], str(self.root))
             self.assertEqual(kwargs['env']['CODEX_HOME'], str(self.root))
