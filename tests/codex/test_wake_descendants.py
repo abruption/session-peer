@@ -19,7 +19,9 @@ class Descendants(unittest.TestCase):
 child = os.fork()
 if child == 0:
  signal.signal(signal.SIGTERM, signal.SIG_IGN)
- open(sys.argv[1], 'w').write(str(os.getpid()))
+ with open(sys.argv[1] + '.tmp', 'w') as stream:
+  stream.write(str(os.getpid()))
+ os.replace(sys.argv[1] + '.tmp', sys.argv[1])
  time.sleep(30)
 else:
  time.sleep(30)
