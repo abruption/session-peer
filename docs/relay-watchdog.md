@@ -56,3 +56,5 @@ delivery or the SIGSTOP recovery gate; that requires the KR runtime experiment.
 
 References: [systemd v255 notification semantics](https://github.com/systemd/systemd/blob/v255/man/systemd-notify.xml)
 and [service watchdog options](https://github.com/systemd/systemd/blob/v255/man/systemd.service.xml).
+
+Device mutations reserve revisions durably before their transaction; revisions are never reused. If validation rejects a request before publication, Control republishes committed state at the reserved revision so rejection alone does not poison readiness. Publication inside a transaction is not success until COMMIT returns. Publication or COMMIT failure keeps readiness and admission closed until a successful periodic publication (60-second interval) or restart publishes committed DB state at a higher revision. SQLite and the public file are not one atomic resource: an uncommitted snapshot can be briefly visible, and the coordinated stack/watchdog remains required. Persistent storage failures stay unhealthy; do not delete the revision counter or receipts. This fix belongs to the separately deployed Control service, not only the Python package.
