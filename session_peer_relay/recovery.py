@@ -126,7 +126,11 @@ def begin(restored, fresh, operation_id):
             'SELECT id,cert,status,routes,capabilities FROM peers ORDER BY id'):
         if state != 'paired':
             continue
+        key = restored.db.execute(
+            'SELECT generation FROM peer_keys WHERE principal=? AND fingerprint=?',
+            (ident, fingerprint(cert))).fetchone()
         peers.append({'principal': ident, 'certificate': cert, 'routes': json.loads(routes),
+                      'generation': key[0] if key else None,
                       'capabilities': json.loads(capabilities),
                       'operationId': _derived(operation_id, 'peer:'+ident), 'status': 'pending'})
     native = []
@@ -266,10 +270,11 @@ def peer_approve(peer_store, request):
         raise Rejected('old_identity_not_paired')
     if peer_store.peer(request['newPrincipal']):
         raise Rejected('new_identity_already_known')
-    response_payload = {'schemaVersion': 1, 'recoveryId': request['recoveryId'],
+    response_payload = {'schemaVersion': 2, 'recoveryId': request['recoveryId'],
                         'operationId': request['operationId'], 'oldPrincipal': request['oldPrincipal'],
                         'newPrincipal': request['newPrincipal'], 'peerPrincipal': peer_store.device,
-                        'certificate': peer_store.cert, 'routes': request['peerRoutes'],
+                        'certificate': peer_store.cert, 'peerGeneration': peer_store.generation,
+                        'routes': request['peerRoutes'],
                         'capabilities': old['capabilities'], 'requestHash': digest}
     response = {**response_payload, 'proof': _sign(peer_store, response_payload)}
     encoded = _canonical(response)
@@ -292,7 +297,10 @@ def peer_approve(peer_store, request):
 def peer_commit(fresh, response):
     required = {'schemaVersion', 'recoveryId', 'operationId', 'oldPrincipal', 'newPrincipal',
                 'peerPrincipal', 'certificate', 'routes', 'capabilities', 'requestHash', 'proof'}
-    if not isinstance(response, dict) or set(response) != required or response.get('schemaVersion') != 1:
+    if isinstance(response, dict) and response.get('schemaVersion') == 2:
+        required.add('peerGeneration')
+    if (not isinstance(response, dict) or set(response) != required
+            or type(response.get('schemaVersion')) is not int or response['schemaVersion'] not in (1, 2)):
         raise Rejected('invalid_recovery_approval')
     plan = _load(fresh)
     if response['recoveryId'] != plan['id'] or response['oldPrincipal'] != plan['oldPrincipal'] \
@@ -304,7 +312,21 @@ def peer_commit(fresh, response):
         raise Rejected('recovery_peer_mismatch')
     payload = {k: response[k] for k in response if k != 'proof'}
     _verify(response['certificate'], payload, response['proof'])
+    # Version 1 approvals did not carry generation. Only a matching archived
+    # pin (or an original certificate-derived principal) can supply it safely.
+    archived_generation = item.get('generation')
+    generation = response.get('peerGeneration', archived_generation)
+    if generation is None and fingerprint(response['certificate']) == item['principal']:
+        generation = 0
+    if type(generation) is not int or not 0 <= generation <= 9007199254740991:
+        raise Rejected('recovery_generation_required')
+    if archived_generation is not None and generation != archived_generation:
+        raise Rejected('recovery_generation_conflict')
     if item['status'] == 'committed':
+        key = fresh.db.execute('SELECT generation FROM peer_keys WHERE principal=? AND fingerprint=?',
+                               (item['principal'], fingerprint(response['certificate']))).fetchone()
+        if not key or key[0] != generation:
+            raise Rejected('recovery_generation_conflict')
         return status(fresh)
     _routes(response['routes'])
     if (not isinstance(response['capabilities'], list)
@@ -312,7 +334,7 @@ def peer_commit(fresh, response):
         raise Rejected('invalid_recovery_capabilities')
     fresh.db.execute('BEGIN IMMEDIATE')
     try:
-        fresh.register_key(item['principal'], response['certificate'], 0)
+        fresh.register_key(item['principal'], response['certificate'], generation)
         fresh.db.execute('INSERT OR REPLACE INTO peers VALUES(?,?,?,?,?,?)',
             (item['principal'], response['certificate'], 'paired', 0,
              _canonical(response['routes']), _canonical(response['capabilities'])))
