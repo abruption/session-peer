@@ -76,7 +76,7 @@ it("returns useful operator details without raw credentials, certificates or pay
   }
 });
 
-it("accepts only the fixed non-identifying relay aggregate schema", async () => {
+it("accepts new relay counters while exposing only the fixed aggregate schema", async () => {
   const payload = {
     schemaVersion: 1,
     generatedAt: 1_789_000_000_000,
@@ -100,6 +100,30 @@ it("accepts only the fixed non-identifying relay aggregate schema", async () => 
   const { schemaVersion: _schemaVersion, ...aggregate } = payload;
   expect(result).toEqual({ available: true, ...aggregate });
   expect(JSON.stringify(result)).not.toMatch(/secret-user|secret-principal|secret-ticket|secret-proof|secret-token/i);
+  expect(await relayMetrics(config, async () =>
+    new Response(JSON.stringify({
+      ...payload,
+      counters: {
+        ...payload.counters,
+        roomsOpened: 3,
+        receiverRoomsOpened: 2,
+        clientFirstRooms: 1,
+        roomsPaired: 1,
+        attachSentReceiver: 1,
+        attachSentClient: 1,
+        receiverIdleExpired: 1,
+        clientWaitExpired: 0,
+        roomsClosedBeforeAttach: 0,
+        receiverRoleBusy: 0,
+        clientRoleBusy: 0,
+        principal: "secret-principal",
+      },
+    }), { status: 200 })))
+    .toEqual({ available: true, ...aggregate });
+  const { forwardedBytes: _forwardedBytes, ...missingCounter } = payload.counters;
+  expect(await relayMetrics(config, async () =>
+    new Response(JSON.stringify({ ...payload, counters: missingCounter }), { status: 200 })))
+    .toEqual({ available: false });
   expect(await relayMetrics(config, async () =>
     new Response(JSON.stringify({ ...payload, current: { userId: "secret" } }), { status: 200 })))
     .toEqual({ available: false });

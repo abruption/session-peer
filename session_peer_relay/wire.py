@@ -4,11 +4,16 @@ import hashlib
 import json
 import ssl
 import struct
+import time
+import uuid
 import urllib.request
 import urllib.error
 import urllib.parse
 
 from websockets.asyncio.client import connect
+from websockets.exceptions import InvalidStatus
+
+from .transport_errors import failure, TransportFailure
 
 MAX_FRAME = 256 * 1024
 MAX_MESSAGE = 64 * 1024
@@ -35,8 +40,9 @@ class Tcp:
 
 
 class Ws:
-    def __init__(self, ws):
+    def __init__(self, ws, attempt_id=None):
         self.ws = ws
+        self.attempt_id = attempt_id
 
     async def recv(self):
         data = await self.ws.recv()
@@ -79,32 +85,91 @@ def admission(url, credential):
     validate_relay_url(url)
     target = url.replace('wss://', 'https://', 1).replace('ws://', 'http://', 1)
     target = target.removesuffix('/v1/connect') + '/v1/session'
-    headers = credential.headers(url) if hasattr(credential, 'headers') else {'Authorization': 'Bearer '+credential}
+    try:
+        headers = credential.headers(url) if hasattr(credential, 'headers') else {'Authorization': 'Bearer '+credential}
+    except Exception as exc:
+        raise failure('control_admission', exc) from None
     req = urllib.request.Request(target, headers={**headers, 'User-Agent': 'session-peer/0.9-relay'})
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *args, **kwargs):
             return None
     try:
         with urllib.request.build_opener(NoRedirect).open(req, timeout=TIMEOUT) as response:
-            return response.headers['Set-Cookie'].split(';', 1)[0]
+            cookie = response.headers.get('Set-Cookie')
+            if not cookie:
+                raise TransportFailure('relay_admission', 'invalid_admission_response')
+            return cookie.split(';', 1)[0]
     except urllib.error.HTTPError as exc:
         exc.close()
-        raise ValueError('Relay admission rejected') from None
+        raise TransportFailure('relay_admission', 'http_rejected', http_status=exc.code) from None
+    except Exception as exc:
+        raise failure('relay_admission', exc) from None
 
 
-async def relay_stream(url, credential, attach_timeout=12):
-    cookie = await asyncio.to_thread(admission, url, credential)
-    ws = await PinnedConnect(url, additional_headers={'Cookie': cookie}, compression=None,
-                       user_agent_header='session-peer/0.9-relay',
-                       max_size=MAX_FRAME, max_queue=4, write_limit=32768,
-                       open_timeout=TIMEOUT, close_timeout=2)
+def valid_attempt_id(value):
+    if not isinstance(value, str) or len(value) != 36:
+        return False
+    try:
+        parsed = uuid.UUID(value)
+    except ValueError:
+        return False
+    return parsed.version == 4 and str(parsed) == value
+
+
+async def relay_stream(url, credential, attach_timeout=12, on_event=None, attempt_id=None):
+    if attempt_id is not None and not valid_attempt_id(attempt_id):
+        raise ValueError('invalid_attempt_id')
+
+    def observe(event, started, received_attempt_id=None):
+        if on_event is not None:
+            try:
+                detail = {'elapsed_ms': max(0, round((time.monotonic()-started)*1000))}
+                if received_attempt_id is not None:
+                    detail['attempt_id'] = received_attempt_id
+                on_event(event, **detail)
+            except Exception:
+                # Diagnostic sinks must never alter admission or forwarding.
+                pass
+
+    started = time.monotonic()
+    try:
+        cookie = await asyncio.to_thread(admission, url, credential)
+    except Exception as exc:
+        raise failure('relay_admission', exc) from None
+    observe('admission_complete', started)
+    started = time.monotonic()
+    try:
+        headers = {'Cookie': cookie, 'X-Session-Peer-Diagnostic-Capable': 'v1'}
+        if attempt_id is not None:
+            headers['X-Session-Peer-Attempt'] = attempt_id
+        ws = await PinnedConnect(url, additional_headers=headers, compression=None,
+                           user_agent_header='session-peer/0.9-relay',
+                           max_size=MAX_FRAME, max_queue=4, write_limit=32768,
+                           open_timeout=TIMEOUT, close_timeout=2,
+                           # Match the Relay's 10/10 keepalive so a stalled leg is
+                           # detected within about 20 s instead of about 40 s.
+                           ping_interval=10, ping_timeout=10)
+    except InvalidStatus as exc:
+        raise TransportFailure('relay_websocket', 'http_rejected', http_status=exc.response.status_code) from None
+    except Exception as exc:
+        raise failure('relay_websocket', exc) from None
+    observe('websocket_open', started)
+    started = time.monotonic()
     try:
         ready = json.loads(await asyncio.wait_for(ws.recv(), attach_timeout))
-        if ready != {'relayAttached': True}:
-            raise ValueError('Relay attach rejected')
-        return Ws(ws)
-    except BaseException:
+        if (not isinstance(ready, dict) or ready.get('relayAttached') is not True
+                or set(ready) - {'relayAttached', 'attemptId'}):
+            raise TransportFailure('relay_attach', 'invalid_attach_response')
+        received_attempt_id = ready.get('attemptId')
+        if (received_attempt_id is not None and not valid_attempt_id(received_attempt_id)) or (
+                attempt_id is not None and received_attempt_id not in (None, attempt_id)):
+            raise TransportFailure('relay_attach', 'invalid_attach_response')
+        observe('attach_received', started, received_attempt_id)
+        return Ws(ws, received_attempt_id)
+    except BaseException as exc:
         await ws.close()
+        if isinstance(exc, Exception):
+            raise failure('relay_attach', exc) from None
         raise
 
 

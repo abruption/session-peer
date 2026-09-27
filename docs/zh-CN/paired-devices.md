@@ -1,9 +1,27 @@
-# 配对设备与私有中继 (v0.9 beta)
+# 配对设备与私有中继 (v1.0)
 
 这一可选的 Unix/Python 3.11+ 传输方式将请求传递到操作员定义的
 Claude、Codex 或已注册的 Antigravity 端点。通常的本地/SSH 命令
 保持无外部依赖。这是一个显式的 CLI 工作流；不会安装移动端应用程序、
 NAT 穿透、WireGuard 隧道或自动公开服务。
+
+## 连接失败诊断与安全的连接重试
+
+`no_authenticated_route` 保留 `retryAllowed:false` 和 `consumptionConfirmed:false`。`routeFailures` 给出每条失败路径最后一次的 `stage`、允许列表中的 `reason` 和 `attempts`。有界的 `attemptHistory` 保留每次尝试的阶段、原因和 `elapsedMs`；HTTP 拒绝还可能包含 `httpStatus`，WebSocket 关闭可能包含 `closeCode`。控制、准入、升级、attach、对端 TLS 和 probe 故障可以区分，但不会记录 URL、凭据、原始异常或消息正文。第二次尝试成功时会有 `setupDegraded:true`、`setupAttempts:2` 和 `setupFailureHistory`，不能算作干净的稳定性测试通过。
+
+仅在**WebSocket 升级前的控制或准入超时**时，等待 0.5 秒后再尝试连接一次。attach、对端 TLS 和 probe 超时不会重试。WebSocket 升级超时也不重试，因为 origin 可能已经配对并消耗了接收端房间。使用新的准入票据和通道，不重用已消耗的票据，也不重发代理消息。HTTP 拒绝、身份/证书错误和未知失败也不会重试。直接路径获选时仍可取消 Relay 尝试。提交后丢失响应仍为 `unknown`，不重发、不切换路径。此有限缓解措施不代表公开网络故障已经解决；部署后必须重新验证实际 ACK 和长时间运行。
+
+接收端每分钟最多向 stderr 输出一条经过清理的 `relay_connection_failed` 警告。疑似正常空闲到期的关闭与故障警告分开。显式使用 `device serve --diagnostic-events` 和 `relay serve --diagnostic-events` 时，只向 stderr 记录房间、attach、关闭阶段、耗时、允许列表内的原因及关闭代码。默认关闭；不会记录设备身份、房间名、URL、标头、凭据或正文。Relay 指标还会增加房间创建与配对、每条连接的 attach 发送以及到期计数。attach 发送不能证明客户端已收到。接收端的 `idle_expiry_like` 不能证明服务器端原因。
+
+WebSocket 关闭的 `closeSource` 区分代码来自接收还是发送。Relay 计数器区分接收端先到和客户端先到的房间。`receiverWsAgeMs` 只表示等待时长，不能证明连接健康；需要对照配对时间与接收端的 `attach_received`、对端 TLS 事件。
+
+`stream_close.closeCode` 是从远端收到的关闭代码。`1006` 表示未收到关闭帧，可能提示连接停滞。`peer_closed` 表示另一条连接结束后 Relay 关闭了本连接；`remote_going_away` 表示远端在 Relay 未发起关闭时自行发送了 1001 代码。`receiverRoleBusy`、`clientRoleBusy` 统计同一房间中被拒绝的重复连接；接收端计数上升可能意味着接收端重连时 Relay 仍持有旧连接。
+
+显式启用的 Relay 和接收端生命周期事件包含 `eventTimeUtcMs`（UTC Unix 毫秒）。客户端每次尝试建立 Relay 连接都会生成新的随机 UUIDv4 `attemptId`，并在成功结果或逐次失败元数据中记录。新版 Relay 在已配对房间事件中记录该 ID，并通过 attach 通知传给新版接收端；接收端的 `attach_received` 和 peer-TLS 事件也记录同一 ID。该 ID 不由身份、房间名、请求 ID 或消息内容派生，也不会改变授权或重试安全性。归因失败时，应确认完全相同的 `attemptId` 只对应一个 Relay 房间和一条接收端连接，并在比较 UTC 时间时考虑时钟偏差。若事件缺失、重复或某条连接使用旧版本，不要仅凭时间或汇总计数推断，应记为 `unattributed`。
+
+如果公开路径停滞再次出现，可在显式启用的 Relay `stream_close` 事件中比较每条连接的 `ingressFrames`/`ingressBytes`、`egressCompletedFrames`/`egressCompletedBytes` 以及首末帧 UTC 时间。这些是加密 WebSocket 帧计数，不是消息数。发送完成只表示 Relay 的套接字 send 已返回，不能证明 Cloudflare、接收端、TLS 或应用程序收到了这些字节。先比较同一房间和 `attemptId` 下的两个角色，再对照接收端事件。事件缺失或匹配模糊时仍应记为 `unattributed`。仅凭计数无法判定 Cloudflare、OCI 或中间链路的责任。元数据时间和帧大小也会透露活动信息，因此应将 opt-in 日志私密且限期保存。
+
+若等待房间已开启至少 1 秒后被 Relay 正常关闭，接收端会在 0.5 秒后重连，而不会增加退避时间。其他失败以及 1 秒内关闭的房间仍按指数退避，最长 5 秒。Relay 连接两端均使用 10 秒的 WebSocket ping 间隔与超时，因此停滞连接约 20 秒即可检测到，而不是约 40 秒。这些改动只缩短重连空档，并不能修复停滞的网络路径。
 
 ## 安装
 
@@ -14,8 +32,8 @@ python3 -m venv ~/.local/share/session-peer-relay/venv
 ~/.local/share/session-peer-relay/venv/bin/pip install 'session-peer[relay]'
 ```
 
-中继扩展组件（relay extra）自 v0.9.0 起在 PyPI 上提供，并保持 Beta 状态；
-发布并不代表确立了长期的运维稳定性。请使用下文安装的
+中继扩展组件（relay extra）自 v0.9.0 起在 PyPI 上提供。
+软件包发布不保证托管 Relay 的可用性。请使用下文安装的
 `session-peer` 可执行文件。管理命令（`device`/`relay`）输出 JSON。
 请勿混用具有不同软件包版本的 Python 环境。
 
@@ -42,7 +60,8 @@ session-peer device init --state /private/device-state
     "review": {
       "agent": "codex",
       "target": "codex:FULL-THREAD-UUID",
-      "codexHome": "/home/alice/.codex"
+      "codexHome": "/home/alice/.codex",
+      "codexBin": "/home/alice/.local/bin/codex"
     }
   },
   "peers": {
@@ -65,6 +84,8 @@ Antigravity 绑定使用 `agent: antigravity`、`target: antigravity:UUID`
 wake 标志、SSH 目的地或任意原生命令参数。策略变更在重启接收端后生效。
 限制：最多八个已配置目标和 128 个策略设备。
 
+由 launchd 或 systemd 启动的接收端继承服务管理器的最小 `PATH`，而不是登录 shell 的环境。对于 macOS/Linux Codex 目标，可将目标 TUI 使用的 `codex` 目录加入接收服务的 `PATH`（例如 launchd 的 `EnvironmentVariables.PATH` 或 systemd 的 `Environment=PATH=...`），也可在操作员管理的绑定中把 `codexBin` 设为以 `codex` 结尾的绝对路径，例如 `/opt/homebrew/bin/codex`。接收端启动时验证它是可执行的普通文件，并将符号链接解析到实际目标。Unix Codex 不使用 `codexPython`。原有的活跃 writer 和 home 检查保持不变。在实际发送前，请在相同的接收端环境下运行 `send --dry-run`。如果找不到可执行文件，提交前将以 `codex_executable_not_found` 拒绝。不要自动重试结果为 unknown 的发送。
+
 ## 面向原生 Windows Codex 的 WSL 接收端
 
 当 Codex 会话和 CLI 在同一台 Windows 工作站上原生运行时，请在 WSL2 中运行接收端。由操作员策略而不是已配对的对端固定挂载的状态主目录和可执行文件：
@@ -76,7 +97,8 @@ wake 标志、SSH 目的地或任意原生命令参数。策略变更在重启�
       "agent": "codex",
       "target": "codex:FULL-THREAD-UUID",
       "codexHome": "/mnt/c/Users/alice/.codex",
-      "codexBin": "/mnt/c/Users/alice/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe"
+      "codexBin": "/mnt/c/Users/alice/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe",
+      "codexPython": "/mnt/c/Python313/python.exe"
     }
   },
   "peers": {
@@ -88,7 +110,13 @@ wake 标志、SSH 目的地或任意原生命令参数。策略变更在重启�
 }
 ```
 
-`codexHome` 必须是挂载在本地 Windows 驱动器上的绝对 WSL 路径，`codexBin` 必须是名为 `codex.exe` 的绝对路径、可执行普通文件。接收端通过 POSIX 路径读取数据库，以固定参数调用 `/usr/bin/wslpath`，并且只把生成的带驱动器限定符的 Windows 路径作为原生子进程的 `CODEX_HOME`。它不会构造 shell 命令。非 WSL 主机、缺失的可执行文件或不安全的转换会在加载策略时分别以 `wsl_codex_requires_wsl`、`invalid_codex_executable` 或 `wsl_home_conversion_failed` 失败。Linux/macOS Codex 目标省略 `codexBin` 并保持现有行为。原生 Windows 客户端继续使用普通本地 CLI；此适配器仅用于以 Windows Codex 为目标的 WSL 接收端。Windows writer 锁不是 POSIX advisory lock，因此这一显式绑定允许在原生会话未激活时向固定主目录排队。成功提交后，在该会话实际消费之前仍会报告 `consumptionConfirmed: false`。
+`codexHome` 必须是本地 Windows 驱动器上的绝对 WSL 路径。`codexBin` 和必填的 `codexPython` 分别为名为 `codex.exe`、`python.exe` 的绝对路径，必须是操作员管理的可执行普通文件（不可为符号链接）。请指定已安装的原生 Windows Python 3.9+，而非 Microsoft Store 执行别名。
+
+接收端以固定参数调用 `/usr/bin/wslpath`，将 standalone 核心流式传入原生 Python，不构造 shell 命令。原生 Python 读取 Windows SQLite/WAL 并检查 writer 锁、唯一所有者、同用户 SID、进程创建时间和 Codex 可执行文件身份。不会使用 Linux SQLite 打开 Windows DB，也不会绕过 writer 检查。非活动、歧义或无法检查的 writer 均被拒绝。现有 WSL 策略也必须添加 `codexPython`；缺失或无效时分别返回 `native_windows_python_required` 或 `invalid_codex_python`。
+
+Linux/macOS 目标省略 `codexPython`，可按上述说明选择设置 `codexBin`。Windows 客户端继续使用普通本地 CLI。成功提交仍为 `consumptionConfirmed: false`，消费须由独立观察到的回复确认。即使更新策略或接收端，也不要自动重试 unknown 发送。
+
+支持原生本地 CLI 不代表支持所有 Windows SSH shell。源码流式 SSH 需要可用的 python3 和兼容 POSIX 的远程 shell；Windows Store 执行别名并不足够。请在本地运行原生 CLI，或使用已安装 Python 的 WSL SSH 端点。
 
 启动直接连接接收端（默认为环回；若针对其他机器，请选择可访问的私有接口）：
 
@@ -197,7 +225,7 @@ session-peer device status --state /private/client-state --peer RECEIVER-FINGERP
 `unknown`（包括接收端/工作进程崩溃）绝不允许自动重新执行。这是最多一次
 （at-most-once）执行尝试，而不是精确一次（exactly-once）消费。
 日志上限为 10,000 个请求，存满后会拒绝进一步的新提交。请勿删除待处理条目
-或清空日志以重试未知项。保留/轮换以及长期运行的集群管理仍属于发布候选版（RC）强化工作。
+或清空日志以重试未知项。v1.0 CLI 不会自动轮换日志或管理长期运行的设备群；运维人员必须在不丢弃未决结果的前提下规划容量和保留策略。
 
 ## 吊销、重启与恢复
 

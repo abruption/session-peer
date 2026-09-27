@@ -1,8 +1,8 @@
-# Private relay control and authentication (RC candidate)
+# Private relay control and authentication (v1.0)
 
-Status: implementation candidate for #69, not a deployed production service.
-The control-to-relay contract below incorporates the Python owner's final
-interface instruction; actual cross-service integration remains a separate gate. This project adds no listeners,
+Status: v1.0 operator reference for the implemented control-to-relay contract.
+The Abruption-hosted deployment is operated separately from package publication;
+this document does not promise its availability. This project adds no listeners,
 OAuth accounts, or Node dependency to a normal Python installation.
 
 ## Trust boundaries
@@ -54,7 +54,7 @@ https://relay.abruption.dev/api/auth/callback/github
 https://relay.abruption.dev/api/auth/callback/google
 ```
 
-## Final control API (unreleased candidate)
+## Control API (v1.0)
 
 JSON bodies only; 16 KiB maximum. Unknown protocol fields are rejected.
 Authenticated API requests are limited to 60/user/minute. Limits are 16 active

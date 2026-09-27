@@ -42,10 +42,10 @@ from typing import NamedTuple, TypedDict
 
 try:
     import fcntl
-except ImportError:  # Windows has no POSIX flock; activity stays unknown there.
+except ImportError:  # Native Windows uses its own read-only writer inspection.
     fcntl = None
 
-__version__ = "1.0.0b1"
+__version__ = "1.0.1"
 GITHUB_REPO = "abruption/session-peer"
 
 # Claude Code refuses a same-machine message once its serialized form passes
@@ -80,6 +80,7 @@ EXIT_ERROR = 1
 EXIT_NO_TARGET = 2
 
 _CLIENT_UPDATE_NOTICE: dict | None = None
+_SKILL_UPDATE_NOTICES: list[dict] = []
 _IDENTITY_UNSET = object()
 
 
@@ -275,6 +276,145 @@ def _codex_lock_snapshot(path: Path) -> tuple[int, int, int, int] | None:
     return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns
 
 
+def _windows_probe_lock(descriptor: int) -> tuple[str, str]:
+    """Probe the native byte-range lock without writing or truncating the file."""
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+
+    class Overlapped(ctypes.Structure):
+        _fields_ = [("internal", ctypes.c_size_t), ("internalHigh", ctypes.c_size_t),
+                    ("offset", wintypes.DWORD), ("offsetHigh", wintypes.DWORD),
+                    ("event", wintypes.HANDLE)]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.LockFileEx.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
+                                 wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(Overlapped)]
+    kernel.UnlockFileEx.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
+                                   wintypes.DWORD, ctypes.POINTER(Overlapped)]
+    handle, overlap = msvcrt.get_osfhandle(descriptor), Overlapped()
+    # FAIL_IMMEDIATELY | EXCLUSIVE; cover Codex's full-file lock range.
+    if not kernel.LockFileEx(handle, 3, 0, 0xffffffff, 0xffffffff, ctypes.byref(overlap)):
+        if ctypes.get_last_error() == 33:  # ERROR_LOCK_VIOLATION, not access denied
+            return "held", "kernel_lock_held"
+        return "unknown", "lock_probe_failed"
+    if not kernel.UnlockFileEx(handle, 0, 0xffffffff, 0xffffffff, ctypes.byref(overlap)):
+        return "unknown", "lock_probe_release_failed"
+    return "free", "kernel_lock_free"
+
+
+# A subprocess bounds Restart Manager inspection and works for streamed standalone
+# execution too. No process arguments, credentials, shutdown or restart operations.
+_WINDOWS_PROCESS_INSPECTOR = r'''
+import ctypes as c
+from ctypes import wintypes as w
+import json, ntpath, sys
+
+class Unique(c.Structure):
+    _fields_ = [('pid', w.DWORD), ('start', w.FILETIME)]
+class Process(c.Structure):
+    _fields_ = [('process', Unique), ('app', w.WCHAR * 256), ('service', w.WCHAR * 64),
+                ('kind', w.DWORD), ('status', w.ULONG), ('session', w.DWORD), ('restartable', w.BOOL)]
+class TokenUser(c.Structure):
+    _fields_ = [('sid', w.LPVOID), ('attributes', w.DWORD)]
+
+k = c.WinDLL('kernel32', use_last_error=True)
+a = c.WinDLL('advapi32', use_last_error=True)
+k.OpenProcess.argtypes = [w.DWORD, w.BOOL, w.DWORD]
+k.OpenProcess.restype = w.HANDLE
+k.CloseHandle.argtypes = [w.HANDLE]
+k.QueryFullProcessImageNameW.argtypes = [w.HANDLE, w.DWORD, w.LPWSTR, c.POINTER(w.DWORD)]
+k.GetProcessTimes.argtypes = [w.HANDLE] + [c.POINTER(w.FILETIME)] * 4
+k.LocalFree.argtypes = [w.HLOCAL]
+k.LocalFree.restype = w.HLOCAL
+a.OpenProcessToken.argtypes = [w.HANDLE, w.DWORD, c.POINTER(w.HANDLE)]
+a.GetTokenInformation.argtypes = [w.HANDLE, c.c_int, w.LPVOID, w.DWORD, c.POINTER(w.DWORD)]
+a.ConvertSidToStringSidW.argtypes = [w.LPVOID, c.POINTER(w.LPWSTR)]
+
+def checked(value):
+    if not value: raise OSError('native process inspection failed')
+
+def identity(pid, expected_start=None):
+    handle = k.OpenProcess(0x1000, False, pid)
+    checked(handle)
+    try:
+        creation, end, kernel, user = (w.FILETIME() for _ in range(4))
+        checked(k.GetProcessTimes(handle, c.byref(creation), c.byref(end), c.byref(kernel), c.byref(user)))
+        start = (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+        if expected_start is not None and expected_start != start: raise ValueError('pid reused')
+        image, size = c.create_unicode_buffer(32768), w.DWORD(32768)
+        checked(k.QueryFullProcessImageNameW(handle, 0, image, c.byref(size)))
+        token = w.HANDLE()
+        checked(a.OpenProcessToken(handle, 8, c.byref(token)))
+        try:
+            needed = w.DWORD()
+            a.GetTokenInformation(token, 1, None, 0, c.byref(needed))
+            if not 0 < needed.value <= 65536: raise ValueError('invalid token info size')
+            buffer = c.create_string_buffer(needed.value)
+            checked(a.GetTokenInformation(token, 1, buffer, needed.value, c.byref(needed)))
+            sid = c.cast(buffer, c.POINTER(TokenUser)).contents.sid
+            text = w.LPWSTR()
+            checked(a.ConvertSidToStringSidW(sid, c.byref(text)))
+            try: uid = text.value
+            finally: k.LocalFree(c.cast(text, w.HLOCAL))
+        finally: k.CloseHandle(token)
+        return {'pid': pid, 'uid': uid, 'command': ntpath.basename(image.value), 'startTime': str(start)}
+    finally: k.CloseHandle(handle)
+
+def openers(path):
+    rm = c.WinDLL('Rstrtmgr')
+    rm.RmStartSession.argtypes = [c.POINTER(w.DWORD), w.DWORD, w.LPWSTR]
+    rm.RmRegisterResources.argtypes = [w.DWORD, w.UINT, c.POINTER(w.LPCWSTR), w.UINT, c.POINTER(Unique), w.UINT, c.POINTER(w.LPCWSTR)]
+    rm.RmGetList.argtypes = [w.DWORD, c.POINTER(w.UINT), c.POINTER(w.UINT), c.POINTER(Process), c.POINTER(w.DWORD)]
+    rm.RmEndSession.argtypes = [w.DWORD]
+    session, key = w.DWORD(), c.create_unicode_buffer(33)
+    checked(rm.RmStartSession(c.byref(session), 0, key) == 0)
+    try:
+        files = (w.LPCWSTR * 1)(path)
+        checked(rm.RmRegisterResources(session, 1, files, 0, None, 0, None) == 0)
+        needed, count, reasons = w.UINT(), w.UINT(128), w.DWORD()
+        rows = (Process * 128)()
+        checked(rm.RmGetList(session, c.byref(needed), c.byref(count), rows, c.byref(reasons)) == 0)
+        if count.value > 128: raise ValueError('too many owners')
+        return [identity(row.process.pid, (row.process.start.dwHighDateTime << 32) | row.process.start.dwLowDateTime)
+                for row in rows[:count.value]]
+    finally: rm.RmEndSession(session)
+
+try:
+    result = [identity(int(sys.argv[2]))] if sys.argv[1] == 'identity' else openers(sys.argv[2])
+    print(json.dumps(result))
+except Exception:
+    sys.exit(1)
+'''
+
+
+def _windows_process_inspect(mode: str, value: str) -> list[dict] | None:
+    try:
+        done = subprocess.run(
+            [sys.executable, "-c", _WINDOWS_PROCESS_INSPECTOR, mode, value],
+            capture_output=True, encoding="utf-8", timeout=DETECT_TIMEOUT,
+        )
+        if done.returncode or len(done.stdout) > 64 * 1024:
+            return None
+        rows = json.loads(done.stdout)
+        if not isinstance(rows, list) or len(rows) > 128:
+            return None
+        if any(not isinstance(row, dict) or type(row.get("pid")) is not int
+               or row["pid"] <= 0 or any(not isinstance(row.get(key), str) or not row[key]
+                                        for key in ("uid", "command", "startTime")) for row in rows):
+            return None
+        return rows
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def _codex_current_user():
+    if sys.platform == "win32":
+        rows = _windows_process_inspect("identity", str(os.getpid()))
+        return rows[0]["uid"] if rows and len(rows) == 1 else None
+    return os.getuid() if hasattr(os, "getuid") else None
+
+
 def probe_codex_writer_lock(path: Path) -> tuple[str, str]:
     """Probe Codex's real advisory lock without changing the lock file."""
     try:
@@ -287,7 +427,7 @@ def probe_codex_writer_lock(path: Path) -> tuple[str, str]:
         return "unknown", "lock_symlink"
     if not stat.S_ISREG(before.st_mode):
         return "unknown", "lock_not_regular"
-    if fcntl is None:
+    if fcntl is None and sys.platform != "win32":
         return "unknown", "lock_probe_unsupported"
 
     descriptor = None
@@ -297,6 +437,8 @@ def probe_codex_writer_lock(path: Path) -> tuple[str, str]:
         opened = os.fstat(descriptor)
         if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
             return "unknown", "lock_changed_while_opening"
+        if sys.platform == "win32":
+            return _windows_probe_lock(descriptor)
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
@@ -368,6 +510,9 @@ def _process_start_time(pid: int) -> str | None:
 
 
 def _codex_lock_openers(path: Path) -> tuple[list[dict], str | None]:
+    if sys.platform == "win32":
+        rows = _windows_process_inspect("openers", str(path))
+        return (rows, None) if rows is not None else ([], "windows_owner_inspection_failed")
     executable = _lsof_executable()
     if executable is None:
         return [], "lsof_unavailable"
@@ -425,10 +570,12 @@ def inspect_codex_writer(home: Path, thread_id: str) -> dict:
         return {**result, "reason": "lock_owner_changed"}
     if first.get("startTime") is None:
         return {**result, "reason": "lock_owner_start_time_unknown"}
-    current_uid = os.getuid() if hasattr(os, "getuid") else None
+    current_uid = _codex_current_user()
     if current_uid is None or first.get("uid") != current_uid:
         return {**result, "reason": "lock_owner_wrong_user"}
     command = str(first.get("command") or "").lower()
+    if sys.platform == "win32" and command.endswith(".exe"):
+        command = command[:-4]
     if command != "codex" and not command.startswith("codex-"):
         return {**result, "reason": "lock_owner_not_codex"}
     return {
@@ -498,6 +645,21 @@ def resolve_codex_home(args: argparse.Namespace, selected: Path,
             ) from exc
     matches = [candidate for candidate in candidates if candidate["savedThread"]]
     if not matches:
+        # An unsaved first turn may already hold the native writer lock. This
+        # is diagnostic evidence only: queueing still requires a saved thread.
+        for home, candidate in zip(homes, candidates):
+            candidate.update(inspect_codex_writer(home, thread_id))
+        unsaved_live = [candidate for candidate in candidates
+                        if candidate.get("activity") == "live_writer"]
+        if len(unsaved_live) == 1 and (not explicit or unsaved_live[0]["codexHome"] == str(selected)):
+            resolution = _home_resolution(
+                "unknown", None, "thread_not_yet_persisted", candidates
+            )
+            raise NoTargetError(
+                f"Codex thread {thread_id} has a live writer but is not saved yet. "
+                "Wait for its first turn to finish; nothing queued.",
+                {"codexHomeResolution": resolution},
+            )
         resolution = _home_resolution(
             "unknown", None, "thread_not_saved_in_known_homes", candidates
         )
@@ -615,6 +777,26 @@ def revalidate_codex_home(root: Path, thread_id: str, resolution: dict) -> None:
         "Retry discovery or select --codex-home explicitly.",
         {"codexHomeResolution": failed},
     )
+
+
+def count_unsaved_codex_writers(home: Path, *, limit: int = 256) -> tuple[int, bool]:
+    """Bounded, read-only check for live writer locks absent from the state DB."""
+    directory = home / "thread-writer-locks"
+    try:
+        entries = sorted(path for path in directory.iterdir() if path.suffix == ".lock")
+    except FileNotFoundError:
+        return 0, False
+    count = 0
+    for path in entries[:limit]:
+        thread_id = path.stem
+        try:
+            if str(uuid.UUID(thread_id)) != thread_id or _codex_thread_is_saved(home, thread_id):
+                continue
+        except ValueError:
+            continue
+        if inspect_codex_writer(home, thread_id).get("activity") == "live_writer":
+            count += 1
+    return count, len(entries) > limit
 
 
 def codex_executable(args: argparse.Namespace) -> str:
@@ -960,18 +1142,50 @@ def sessions_dir() -> Path:
 IS_WINDOWS = sys.platform == "win32"
 
 
+def windows_process_start_ms(pid: int) -> int | None:
+    """Read a live Windows process creation time without trusting a stale PID."""
+    if pid <= 1:
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class FILETIME(ctypes.Structure):
+        _fields_ = [("low", wintypes.DWORD), ("high", wintypes.DWORD)]
+
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.GetProcessTimes.argtypes = (wintypes.HANDLE, ctypes.POINTER(FILETIME),
+                                         ctypes.POINTER(FILETIME), ctypes.POINTER(FILETIME),
+                                         ctypes.POINTER(FILETIME))
+    kernel32.GetProcessTimes.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(0x1000 | 0x100000, False, pid)
+    if not handle:
+        return None
+    try:
+        if kernel32.WaitForSingleObject(handle, 0) != 0x102:  # WAIT_TIMEOUT: still running
+            return None
+        created, exited, kernel, user = FILETIME(), FILETIME(), FILETIME(), FILETIME()
+        if not kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited),
+                                        ctypes.byref(kernel), ctypes.byref(user)):
+            return None
+        if kernel32.WaitForSingleObject(handle, 0) != 0x102:
+            return None
+        ticks = (created.high << 32) | created.low
+        return (ticks - 116444736000000000) // 10000
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def pid_alive(pid: int) -> bool:
     if pid <= 1:
         return False
     if IS_WINDOWS:
-        import ctypes
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if not handle:
-            return False
-        kernel32.CloseHandle(handle)
-        return True
+        return windows_process_start_ms(pid) is not None
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -979,6 +1193,24 @@ def pid_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def claude_process_state(record: dict, record_pid: int) -> tuple[bool, str | None]:
+    """Fail closed when a Windows session record outlives its process identity."""
+    pid = record.get("pid")
+    if type(pid) is not int or pid != record_pid:
+        return False, "record_pid_mismatch"
+    if not IS_WINDOWS:
+        return pid_alive(pid), None
+    current_start = windows_process_start_ms(pid)
+    if current_start is None:
+        return False, "process_not_live"
+    recorded_start = record.get("startedAt")
+    if type(recorded_start) is not int or recorded_start <= 0:
+        return False, "missing_start_time"
+    if current_start > recorded_start + 2000:
+        return False, "pid_reused"
+    return True, None
 
 
 def discover(include_unreachable: bool = False) -> list[dict]:
@@ -1009,7 +1241,7 @@ def discover(include_unreachable: bool = False) -> list[dict]:
             continue
 
         sock = record.get("messagingSocketPath") or ""
-        alive = pid_alive(pid)
+        alive, stale_reason = claude_process_state(record, int(record_file.stem))
         if IS_WINDOWS:
             has_inbox = bool(sock) and sock.startswith("\\\\.\\pipe\\")
         else:
@@ -1028,6 +1260,8 @@ def discover(include_unreachable: bool = False) -> list[dict]:
             "alive": alive,
             "reachable": alive and has_inbox,
         }
+        if stale_reason:
+            entry["staleReason"] = stale_reason
         if entry["reachable"] or include_unreachable:
             found.append(entry)
 
@@ -1089,9 +1323,15 @@ def _read_win_auth(pid: int) -> str | None:
             data = json.loads(key_file.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        auth = {"type": "auth"}
-        auth.update(data)
-        return json.dumps(auth, ensure_ascii=False)
+        if not isinstance(data, dict):
+            continue
+        token = data.get("peerToken")
+        if not isinstance(token, str) or not token.strip():
+            continue
+        # The registry schema is not the wire protocol. Windows requires a
+        # first-line {"type": "auth", "token": ...}; forwarding peerToken and
+        # process metadata verbatim causes the receiver to drop the connection.
+        return json.dumps({"type": "auth", "token": token}, ensure_ascii=False)
     return None
 
 
@@ -1763,6 +2003,20 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     )
     if failure:
         raise ssh_failure_error(host, ssh_info, failure, detail)
+    runtime_output = (completed.stdout + "\n" + completed.stderr).strip().lower()
+    if (runtime_output == "python"
+            or "python was not found" in runtime_output
+            or ("python3" in runtime_output and any(marker in runtime_output for marker in (
+                "command not found", "not recognized as", "no such file", "python3: not found",
+            )))):
+        raise CcPeerError(
+            f"{host}: remote python3 did not start a usable interpreter. "
+            "Source-streamed SSH requires a working python3 and a POSIX-compatible "
+            "remote shell. A Windows Store execution alias is not sufficient. "
+            "For native Windows, run the installed CLI locally, or use a WSL SSH "
+            "endpoint with Python installed. No fallback or resend was attempted.",
+            {**ssh_info, "remoteRuntimeFailure": "python3_unavailable_or_unsupported_shell"},
+        )
     if not stdout:
         raise CcPeerError(f"{host}: {detail}", ssh_info)
     try:
@@ -1918,15 +2172,18 @@ def one_or_many(results: list[dict]) -> dict | list[dict]:
 
 def with_client_update(payload: dict | list[dict]) -> dict | list[dict]:
     """Attach the invoking client's cached update fact to each result object."""
-    if _CLIENT_UPDATE_NOTICE is None:
+    if _CLIENT_UPDATE_NOTICE is None and not _SKILL_UPDATE_NOTICES:
         return payload
+    notices = ({"clientUpdate": dict(_CLIENT_UPDATE_NOTICE)} if _CLIENT_UPDATE_NOTICE else {})
+    if _SKILL_UPDATE_NOTICES:
+        notices["skillUpdates"] = [dict(item) for item in _SKILL_UPDATE_NOTICES]
     if isinstance(payload, list):
         return [
-            {**item, "clientUpdate": dict(_CLIENT_UPDATE_NOTICE)}
+            {**item, **notices}
             if isinstance(item, dict) else item
             for item in payload
         ]
-    return {**payload, "clientUpdate": dict(_CLIENT_UPDATE_NOTICE)}
+    return {**payload, **notices}
 
 
 def emit(as_json: bool, payload: dict, human: str, *, command: str,
@@ -1940,14 +2197,17 @@ def emit_json_results(results: list[dict]) -> None:
 
 
 def emit_human_update_notice() -> None:
-    if _CLIENT_UPDATE_NOTICE is None:
-        return
-    print(
-        f"Update available: {_CLIENT_UPDATE_NOTICE['current']} → "
-        f"{_CLIENT_UPDATE_NOTICE['latest']}. "
-        f"Run: {_CLIENT_UPDATE_NOTICE['command']}",
-        file=sys.stderr,
-    )
+    if _CLIENT_UPDATE_NOTICE is not None:
+        print(
+            f"Update available: {_CLIENT_UPDATE_NOTICE['current']} → "
+            f"{_CLIENT_UPDATE_NOTICE['latest']}. "
+            f"Run: {_CLIENT_UPDATE_NOTICE['command']}",
+            file=sys.stderr,
+        )
+    for notice in _SKILL_UPDATE_NOTICES:
+        command = notice.get("command") or "check the skill's installation manager"
+        print(f"Skill update available ({notice['location']}): "
+              f"{notice['current']} → {notice['latest']}. Run: {command}", file=sys.stderr)
 
 
 def host_metadata(ssh_host: str, canonical_host: str) -> dict:
@@ -1996,7 +2256,7 @@ def diagnose_claude() -> dict:
     directory = sessions_dir()
     result = {
         "sessionsDir": str(directory), "records": 0, "invalidRecords": 0,
-        "aliveSessions": 0, "availableInboxes": 0, "checks": [],
+        "aliveSessions": 0, "availableInboxes": 0, "staleRecords": 0, "checks": [],
     }
     try:
         mode = directory.stat().st_mode
@@ -2057,7 +2317,9 @@ def diagnose_claude() -> dict:
             result["invalidRecords"] += 1
             continue
         result["records"] += 1
-        alive = pid_alive(pid)
+        alive, stale_reason = claude_process_state(record, int(record_file.stem))
+        if stale_reason:
+            result["staleRecords"] += 1
         if alive:
             result["aliveSessions"] += 1
         inbox = str(record.get("messagingSocketPath") or "")
@@ -2078,6 +2340,12 @@ def diagnose_claude() -> dict:
             count=permission_failures,
         ))
         return {"status": "permission_denied", **result}
+    if result["staleRecords"]:
+        result["checks"].append(_diagnostic(
+            "warning", "stale_session_records",
+            "Claude session records do not match live process identities",
+            count=result["staleRecords"],
+        ))
     if result["availableInboxes"]:
         result["checks"].append(_diagnostic(
             "ok", "inbox_present",
@@ -2184,10 +2452,27 @@ def diagnose_codex(args: argparse.Namespace) -> dict:
         status = "missing_tool"
     if inventory_error and status == "available":
         status = "unknown"
+    unsaved_count = 0
+    unsaved_scan_truncated = False
+    if selected_item["status"] == "available":
+        try:
+            unsaved_count, unsaved_scan_truncated = count_unsaved_codex_writers(selected)
+        except (OSError, sqlite3.Error):
+            checks.append(_diagnostic(
+                "unknown", "unsaved_writer_check_unavailable",
+                "Could not inspect unsaved Codex writer locks",
+            ))
+        if unsaved_count:
+            checks.append(_diagnostic(
+                "warning", "unsaved_live_writer",
+                "A live Codex writer has not saved its thread yet; wait for its first turn to finish",
+                count=unsaved_count,
+            ))
     return {
         "status": status, "selectedHome": str(selected),
         "homeSource": _codex_home_source(args), "executable": executable,
         "homes": candidates, "checks": checks,
+        "unsavedLiveWriters": unsaved_count, "unsavedWriterScanTruncated": unsaved_scan_truncated,
     }
 
 
@@ -2269,6 +2554,29 @@ def doctor_payload(args: argparse.Namespace) -> dict:
             },
         },
     }
+    skill_checks = []
+    skills = installed_skills()
+    for skill in skills:
+        version, minimum = skill["version"], skill["runtimeMinVersion"]
+        if version is None or minimum is None:
+            skill_checks.append(_diagnostic(
+                "unknown", "skill_version_unknown",
+                "Installed session-peer skill has no readable version or runtime minimum",
+                location=skill["location"],
+            ))
+        elif release_version(__version__) < release_version(minimum):
+            skill_checks.append(_diagnostic(
+                "warning", "skill_runtime_incompatible",
+                "Installed session-peer skill requires a newer runtime",
+                location=skill["location"], skillVersion=version,
+                runtimeMinVersion=minimum,
+            ))
+    payload["skill"] = {"status": "incompatible" if any(
+        check["code"] == "skill_runtime_incompatible" for check in skill_checks) else
+        "unknown" if skill_checks else "compatible" if skills else "not_installed",
+        "checks": skill_checks}
+    if payload["skill"]["status"] == "incompatible" and payload["status"] == "healthy":
+        payload["status"] = "partial"
     return_host = getattr(args, "_return_host", None)
     if return_host:
         payload["returnRoute"] = probe_return_route(return_host)
@@ -2285,6 +2593,8 @@ def render_doctor(payload: dict, where: str) -> str:
         for check in payload.get(component, {}).get("checks", []):
             if check.get("status") != "ok":
                 lines.append(f"    - {check['code']}: {check['message']}")
+    for check in payload.get("skill", {}).get("checks", []):
+        lines.append(f"    - {check['code']}: {check['message']}")
     route = payload.get("returnRoute")
     if route:
         lines.append(
@@ -3317,6 +3627,64 @@ def update_cache_path() -> Path:
     return base / "session-peer" / "update.json"
 
 
+def skill_update_cache_path() -> Path:
+    return update_cache_path().with_name("skill-update.json")
+
+
+def installed_skill_metadata(path: Path) -> dict:
+    """Read only the small, published frontmatter fields; never execute a skill."""
+    try:
+        if path.stat().st_size > 16384:
+            return {"version": None, "runtimeMinVersion": None}
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return {"version": None, "runtimeMinVersion": None}
+    match = re.match(r"\A---\r?\n(.*?)\r?\n---(?:\r?\n|\Z)", content, re.DOTALL)
+    if match is None:
+        return {"version": None, "runtimeMinVersion": None}
+    block = re.search(r"(?m)^metadata:\s*\n((?:[ \t]+[^\n]*\n?)*)", match.group(1))
+    if block is None:
+        return {"version": None, "runtimeMinVersion": None}
+    fields = dict(re.findall(r"(?m)^  ([a-z-]+):\s*[\"']?([0-9]+\.[0-9]+\.[0-9]+)[\"']?\s*$", block.group(1)))
+    version = fields.get("version")
+    minimum = fields.get("runtime-min-version")
+    return {"version": version if stable_version(version) else None,
+            "runtimeMinVersion": minimum if stable_version(minimum) else None}
+
+
+def installed_skills() -> list[dict]:
+    """Detect Claude and Codex skill paths without changing either manager."""
+    agents_root = Path.home() / ".agents"
+    claude_root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or
+                       os.environ.get("ANTHROPIC_CONFIG_DIR") or Path.home() / ".claude")
+    agents_skill = agents_root / "skills/session-peer/SKILL.md"
+    candidates = [(agents_skill, "agents"),
+                  (claude_root / "skills/session-peer/SKILL.md", "claude")]
+    locked = False
+    try:
+        lock = agents_root / ".skill-lock.json"
+        if lock.stat().st_size <= 65536:
+            value = json.loads(lock.read_text(encoding="utf-8"))
+            locked = value.get("skills", {}).get("session-peer", {}).get("source") == "abruption/session-peer-skill"
+    except (OSError, UnicodeError, ValueError, AttributeError):
+        pass
+    seen = set()
+    result = []
+    for path, location in candidates:
+        try:
+            resolved = path.resolve(strict=True)
+            if not resolved.is_file() or resolved in seen:
+                continue
+        except (OSError, RuntimeError):
+            continue
+        seen.add(resolved)
+        manager = "skills_cli" if resolved == agents_skill.resolve() and locked else (
+            "runtime_installer" if location == "claude" else "manual")
+        result.append({"location": location, "manager": manager,
+                       **installed_skill_metadata(path)})
+    return result
+
+
 def update_notices_disabled(args: argparse.Namespace | None = None) -> bool:
     if args is not None and getattr(args, "no_update_notice", False):
         return True
@@ -3473,10 +3841,15 @@ def schedule_update_refresh(path: Path | None = None, now: float | None = None,
 def refresh_update_cache_background() -> int:
     lock = update_refresh_lock_path()
     try:
-        tag, _ = latest_release()
-        write_update_cache(tag)
-    except (CcPeerError, OSError, ValueError):
-        pass
+        try:
+            tag, _ = latest_release()
+            write_update_cache(tag)
+        except (CcPeerError, OSError, ValueError):
+            pass
+        try:
+            write_update_cache(latest_skill_release(), skill_update_cache_path())
+        except (CcPeerError, OSError, ValueError):
+            pass
     finally:
         try:
             lock.unlink(missing_ok=True)
@@ -3524,6 +3897,51 @@ def prepare_client_update(args: argparse.Namespace, now: float | None = None,
         "source": "github_release_cache",
         "command": update_command(),
     }
+
+
+def prepare_skill_updates(args: argparse.Namespace, now: float | None = None,
+                          launcher=None) -> list[dict]:
+    """Use only the local skill cache; notice without modifying installations."""
+    if update_notices_disabled(args) or (
+            getattr(args, "command", None) == "update" and not getattr(args, "host", [])):
+        return []
+    installs = installed_skills()
+    if not installs:
+        return []
+    state = read_update_cache(skill_update_cache_path(), now=now)
+    if state["status"] != "fresh":
+        try:
+            (schedule_update_refresh if launcher is None else launcher)()
+        except Exception:
+            pass
+        return []
+    latest = stable_version(state["latest"])
+    checked_at = datetime.fromtimestamp(state["checkedAt"], timezone.utc)
+    commands = {"skills_cli": "npx skills update session-peer",
+                "runtime_installer": "./install.sh"}
+    return [{"schemaVersion": 1, "status": "available", "current": item["version"],
+             "latest": state["latest"], "location": item["location"],
+             "manager": item["manager"], "command": commands.get(item["manager"]),
+             "checkedAt": checked_at.isoformat(timespec="seconds").replace("+00:00", "Z"),
+             "source": "github_release_cache"}
+            for item in installs if item["version"] is not None
+            and stable_version(item["version"]) < latest]
+
+
+def latest_skill_release() -> str:
+    request = urllib.request.Request(
+        "https://api.github.com/repos/abruption/session-peer-skill/releases/latest",
+        headers={"Accept": "application/vnd.github+json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=DETECT_TIMEOUT * 4) as response:
+            value = json.load(response)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise CcPeerError("could not check the session-peer skill release") from exc
+    tag = value.get("tag_name") if isinstance(value, dict) else None
+    if stable_version(tag) is None:
+        raise CcPeerError("invalid session-peer skill release tag")
+    return tag
 
 
 def latest_release() -> tuple[str, str]:
@@ -3991,7 +4409,7 @@ def json_error_result(args: argparse.Namespace, payload: dict) -> dict | list[di
 
 
 def main(argv: list[str] | None = None) -> int:
-    global _CLIENT_UPDATE_NOTICE
+    global _CLIENT_UPDATE_NOTICE, _SKILL_UPDATE_NOTICES
     cli_invocation = argv is None
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     if raw_argv == [UPDATE_REFRESH_ARG]:
@@ -4014,6 +4432,10 @@ def main(argv: list[str] | None = None) -> int:
         # Update discovery is advisory. Even an unexpected cache or launcher
         # failure must not change the requested command's result or exit code.
         _CLIENT_UPDATE_NOTICE = None
+    try:
+        _SKILL_UPDATE_NOTICES = prepare_skill_updates(args) if cli_invocation else []
+    except Exception:
+        _SKILL_UPDATE_NOTICES = []
     show_human_notice = True
     try:
         exit_code = args.func(args)

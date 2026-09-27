@@ -115,6 +115,40 @@ class RelayLab(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(b'PRIVATE KEY', b''.join(self.capture))
         self.assertTrue(self.capture)
 
+    async def test_attempt_id_joins_client_relay_and_receiver_metadata(self):
+        await self.pair()
+        self.relay.diagnostic_events = True
+        self.receiver.diagnostic_events = True
+        before = int(time.time()*1000)
+        with self.assertLogs('session_peer_relay', level='WARNING') as logs:
+            result = await exchange(self.client, self.host.device, 'probe',
+                                    route='relay', credential=self.client_token)
+        after = int(time.time()*1000)
+        self.assertTrue(result['ok'])
+        attempt_id = result['attemptId']
+        self.assertEqual(str(uuid.UUID(attempt_id, version=4)), attempt_id)
+        events = [json.loads(line.split('relay_room ', 1)[1]) for line in logs.output
+                  if 'relay_room ' in line]
+        lifecycle = [json.loads(line.split('relay_lifecycle ', 1)[1]) for line in logs.output
+                     if 'relay_lifecycle ' in line]
+        self.assertEqual(len([row for row in events if row['event'] == 'room_paired'
+                              and row['attemptId'] == attempt_id]), 1)
+        self.assertTrue(any(row['event'] == 'attach_received' and row['attemptId'] == attempt_id
+                            for row in lifecycle))
+        self.assertTrue(any(row['event'] == 'peer_tls' and row['attemptId'] == attempt_id
+                            for row in lifecycle))
+        for row in events + lifecycle:
+            self.assertIsInstance(row['eventTimeUtcMs'], int)
+            self.assertGreaterEqual(row['eventTimeUtcMs'], before)
+            self.assertLessEqual(row['eventTimeUtcMs'], after)
+        combined = '\n'.join(logs.output)
+        self.assertNotIn(self.host_token, combined)
+        self.assertNotIn(self.client_token, combined)
+        self.assertNotIn(self.host.device, combined)
+        self.assertNotIn(self.client.device, combined)
+        self.assertNotIn(self.invite['secret'], combined)
+        self.assertNotIn(self.url, combined)
+
     async def test_auto_uses_relay_when_direct_is_closed(self):
         await self.pair()
         self.listener.close()
@@ -122,6 +156,32 @@ class RelayLab(unittest.IsolatedAsyncioTestCase):
         result = await exchange(self.client, self.host.device, 'list', credential=self.client_token)
         self.assertTrue(result['ok'], result)
         self.assertEqual(result['route'], 'relay')
+
+    async def test_relay_setup_timeout_recovers_with_one_native_effect(self):
+        from session_peer_relay import wire
+        await self.pair()
+        original = wire.admission
+        attempts = []
+
+        def interrupted_admission(url, credential):
+            if credential == self.client_token:
+                attempts.append(credential)
+                if len(attempts) == 1:
+                    raise TimeoutError('fixture response timeout; never log credentials')
+            return original(url, credential)
+
+        ident = str(uuid.uuid4())
+        with mock.patch.object(wire, 'admission', side_effect=interrupted_admission):
+            result = await exchange(self.client, self.host.device, 'send',
+                                    {'target': 'review', 'message': 'one effect after setup timeout'},
+                                    ident, 'relay', self.client_token)
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['requestId'], ident)
+        self.assertFalse(result['consumptionConfirmed'])
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(len(self.effects), 1)
+        self.assertNotEqual(result['setupFailureHistory'][0]['attemptId'], result['attemptId'])
+        self.assertEqual(result['setupFailureHistory'][0]['stage'], 'relay_admission')
 
     async def test_relay_outage_does_not_break_direct(self):
         await self.pair()
