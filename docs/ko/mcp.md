@@ -47,3 +47,5 @@ MCP extra가 있는 상태와 없는 상태에서 각각 `python -m unittest dis
 ### 비대화형 클라이언트 승인
 
 서버 정책이 허용하더라도 Codex `exec`는 전송 도구를 “requires approval, but approval policy is never”로 거부할 수 있습니다. `approval_mode="auto"`는 무조건적인 승인이 아닙니다. 비대화형 연동을 명시적으로 승인하는 운영자는 제한된 목적지 정책과 함께 해당 특정 MCP 서버/도구에 대해 `mcp_servers.session_peer.tools.send_message.approval_mode="approve"`를 구성할 수 있습니다. 플러그인은 이 설정을 활성화하지 않습니다. 대화형 클라이언트는 대신 일반적인 승인 프롬프트를 사용할 수 있습니다. 테스트 클라이언트는 이 승인을 관련 없는 서버나 도구에 복사해서는 안 됩니다.
+
+macOS/Linux에서 MCP CLI 호출은 새 프로세스 그룹을 소유합니다. 완료·시간 초과·취소 시 리더를 회수하기 전에 TERM→KILL로 해당 그룹을 정리하며 TERM을 무시하는 자식도 포함합니다. 취소는 그대로 전파됩니다. 별도 세션으로 이탈한 자식과 원격 SSH 프로세스는 범위 밖입니다. Windows는 직접 자식 종료만 유지하며 프로세스 트리 보장을 주장하지 않습니다. 로컬 정리는 원격 제출을 취소하지 않습니다. timeout은 `outcome_unknown`이며 자동 재전송하면 안 됩니다.
