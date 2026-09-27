@@ -134,6 +134,8 @@ jobs:
         run: |
           test -f "$HOME/.local/share/session-peer/session_peer.py"
           test -L "$HOME/.local/bin/session-peer"
+          test -f "$HOME/.claude/skills/session-peer/SKILL.md"
+          test -f "$HOME/.agents/skills/session-peer/SKILL.md"
           "$HOME/.local/bin/session-peer" --version
       - name: Re-run upgrades existing install
         run: |
@@ -146,6 +148,7 @@ jobs:
         run: |
           ./install.sh --uninstall
           test ! -d "$HOME/.claude/skills/session-peer"
+          test ! -d "$HOME/.agents/skills/session-peer"
           test ! -L "$HOME/.local/bin/session-peer"
 
   mcp:

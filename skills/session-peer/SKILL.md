@@ -1,7 +1,11 @@
 ---
 name: session-peer
-description: Send user-requested messages to Claude Code, Codex, or a live registered Antigravity TUI on this machine or an SSH host using session-peer. Use for cross-session handoffs and notifications when the available native tools do not cover the requested target.
+description: Send user-requested messages to Claude Code, Codex, or a live registered Antigravity TUI on this machine, an SSH host, or a paired device using session-peer. Use for cross-session handoffs and notifications when the available native tools do not cover the requested target.
 allowed-tools: Bash, Read
+metadata:
+  version: "0.3.1"
+  runtime-min-version: "0.9.1"
+  runtime-full-version: "1.0.1"
 ---
 
 # Session messaging
@@ -12,7 +16,9 @@ Otherwise use `session-peer`, or the standalone script at
 with pipx, uv tool, or pip. Do not assume it lives in a Claude configuration directory.
 
 Before discovery or delivery, run `session-peer --version`. This skill expects
-session-peer 0.9.1 or newer. If the command is missing, explain that installing the
+session-peer 0.9.1 or newer. `--allow-inactive-codex-home` and `--relay-login`
+exist only in 1.0.0 and newer; confirm them with `session-peer send --help`
+before use. If the command is missing, explain that installing the
 skill did not install the runtime and recommend one of the supported installation
 paths in the [repository README](https://github.com/abruption/session-peer#installation-options).
 Prefer `pipx install session-peer` for an isolated
@@ -23,6 +29,11 @@ is on the user's PATH. Do not silently replace an existing pipx, uv, pip, or sta
 installation with another manager. If the installed version is older, use that
 manager's upgrade command; only standalone installations use `session-peer update`.
 Run `session-peer --version` again before continuing.
+In 1.0.1 and newer, cached `skillUpdates` notices and `session-peer doctor` can
+report an outdated or incompatible separately installed skill. Update it with
+its own manager (Skills CLI: `npx -y skills@latest update session-peer --global --yes`).
+Runtime package upgrades and `session-peer update` do not update an
+independently managed skill; `install.sh` preserves its paths.
 
 Discover targets before sending. `session-peer list` lists Claude, Codex, and
 live registered Antigravity bridges together; use `--agent claude`, `--agent codex`,
@@ -30,6 +41,8 @@ or `--agent antigravity` to filter. Add `--host user@host` for SSH. Claude targe
 are names or PIDs; Codex targets are `codex:<full-uuid>`; Antigravity targets are
 `antigravity:<full-conversation-uuid>`. Resolve ambiguous targets with the user.
 A saved Codex record does not prove that the session is running.
+On Windows, rediscover Claude targets before using a PID; 1.0.1 and newer exclude
+exited or reused PIDs from discovery.
 
 Codex listing combines known default, CODEX_HOME, Orca and configured homes.
 Use each row's `codexHome` with `send --codex-home` to preserve its exact destination;
@@ -37,6 +50,18 @@ the same UUID in different homes identifies different saved copies. Explicit
 `list --codex-home PATH` lists only that home. Inspect `discovery.codex.homes` and
 `errors` for partial failures; `not_installed` is a normal empty automatic result.
 MCP destinations remain restricted to their explicitly configured home.
+`list --all` adds stale or inbox-less Claude records and archived Codex threads.
+
+Codex send and dry-run check every known home that saves the thread UUID. They
+select a unique, stable live writer and fail closed on ambiguous, changing, or
+uninspectable evidence. In 1.0.0 and newer, a thread with no live writer is
+rejected unless `--codex-home` and `--allow-inactive-codex-home` explicitly queue
+it for a future resume, or `--wake` explicitly activates it. Add that flag only when the user wants a message left for
+a later resume; it is not a workaround for a rejected send, and it does not start
+the session.
+If a Codex send reports `thread_not_yet_persisted`, a live writer has not saved
+its thread yet, so nothing was queued. Wait for its first turn to finish, then
+rediscover and dry-run before sending.
 
 Antigravity delivery requires a bridge explicitly started from the receiving TUI
 with `session-peer antigravity-bridge serve`. Discovery covers live registered
@@ -79,6 +104,58 @@ session-peer send --host worker --to antigravity:<conversation-uuid> \
 Omit `--host` for local delivery. `--dry-run` resolves without sending.
 Use `--codex-home` and `--codex-bin` when the destination's default environment
 does not identify its installation; remote paths are interpreted on that host.
+Pass extra SSH arguments as `--ssh-opt=-p --ssh-opt=2222` (note the `=`); treat
+`--host` and `--ssh-opt` as SSH access, and never pass `ProxyCommand`-style
+options. `--no-from` omits the `From:` header, and `--no-update-notice` suppresses
+cached update notices.
+
+`--wake` explicitly resumes an inactive Codex thread after queueing. Use it only
+when the user asks to activate that thread: it can consume model usage and modify
+session history and project files. It requires Codex CLI 0.154.0 on macOS or
+Linux, and other versions fail closed. `--wake-timeout` accepts 1 to 60 seconds
+(default 30). Report the `wake.status` value: `already_active`, `completed`,
+`refused`, `failed`, `timed_out`, or `unknown`. A send can succeed while wake fails;
+the exit is then nonzero and `submitted` stays `true`, so do not resend.
+`completed` does not prove that this message was consumed.
+
+Paired devices are an optional beta transport for sessions that SSH cannot reach.
+They require the `session-peer[relay]` extra (Unix, Python 3.11+). Use them only
+when the user has already paired the devices; do not initialize identities, pair,
+write receiver policy, or deploy a relay unless the user asks. `device` and `relay`
+management commands emit JSON. Send with `--device RECEIVER-FINGERPRINT
+--device-state DIR`, which excludes `--host`. `--to` is a target alias allowed by
+the receiver policy, not a native UUID. `--device-route auto|direct|relay` selects
+the path; auto chooses one connection and never fails over after an uncertain
+submission. Supply relay admission with `--relay-admission-file` or, in 1.0.0 and
+newer, `--relay-login`. Admission files, device state, and private keys are
+credentials; do not print, copy, or attach them. Paired requests reject `--wake`,
+explicit SSH reply routes, and native home, binary, or SSH options. They also
+advertise no automatic `Reply-To`.
+
+For macOS/Linux paired Codex targets, receiver policy `codexBin` requires
+session-peer 1.0.1 or newer; the receiver service's `PATH` can also expose the
+target Codex executable. Only the receiver operator chooses these settings.
+Verify the running receiver with a paired `send --dry-run` before a real send.
+A missing executable is `refused` as `codex_executable_not_found` before native
+submission. Keep an `unknown` post-submission result distinct and do not resend
+it automatically. In 1.0.1 and newer, `device login` backs off on HTTP 429 and
+`slow_down`; let the pending authorization poll continue instead of starting a
+second login.
+
+For recurring Relay stalls, ask the operator for opt-in `--diagnostic-events`
+from the receiver and Relay. In 1.0.1 and newer, compare `eventTimeUtcMs` and
+the exact `attemptId` across one client attempt, one Relay room, and one receiver
+leg. Per-leg frame counters show encrypted transport progress, not delivery or
+the cause of a stall. Treat missing or duplicated legs as unattributed, and keep
+metadata logs private and bounded. See the runtime's
+[paired-device diagnostics](https://github.com/abruption/session-peer/blob/v1.0.1/docs/paired-devices.md#connection-failures-and-safe-setup-retry).
+
+`--request-id UUID` preserves an attempt identifier for paired-device journaling
+and generation-pinned Antigravity deduplication. It is not a general retry key for
+Claude or Codex sends. After a lost paired response, reconcile the original ID
+with `session-peer device status ... --request-id ORIGINAL-UUID` instead of
+sending again with a new ID. An `unknown` outcome never permits automatic
+re-execution.
 
 Use `--message TEXT` / `-m TEXT` for the body (`-` reads stdin). Legacy positional
 messages still work, but cannot be combined with `--message`.
@@ -119,6 +196,29 @@ When completion matters across transports, including Antigravity where `--wake`
 is unsupported, include a correlation token and ask the target to send an
 explicit reply to the structured address; otherwise report that observation is
 unsupported.
+
+Codex delivery is a queue, not an interrupt. A Codex session reads queued
+messages only after its current turn ends, so a busy target can reply long after
+`queued`. A missing reply is not a failure. While an earlier request is `queued`
+or has an unknown outcome, do not resend it, send a reminder, or ask again for a
+reply; duplicates wait in the same queue and are processed together later. Send
+again only when the user explicitly asks, and reuse the original correlation token.
+
+When the next step depends on the reply, pause instead of polling:
+
+1. Stop at a safe point. Tell the user the target, what was sent, the correlation
+   token, and the step to resume from.
+2. End the current turn. A Codex sender also receives the reply through its own
+   queue, which it reads only after that turn ends; continuing to work delays the
+   reply it is waiting for.
+3. When a reply carrying the same token arrives, verify its sender and resume from
+   the recorded step. A message without that token is not the awaited reply.
+
+Work that does not depend on the reply may continue, but tell the user that a
+reply cannot be read until that work ends. When receiving several queued requests
+with the same correlation token, perform the request once and reply once,
+including the token. Do not use `--wake` as a reminder: with an active writer it
+only queues (`already_active`) and never interrupts the running turn.
 
 Package-managed upgrades use their installer. Independent script upgrades use
 `session-peer update`; `update --host` pushes the standalone file over SSH.

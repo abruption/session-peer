@@ -1,6 +1,24 @@
-# ペアリングされたデバイスとプライベートリレー (v0.9 ベータ)
+# ペアリングされたデバイスとプライベートリレー (v1.0)
 
 このオプションの Unix/Python 3.11+ トランスポートは、オペレーターが定義した Claude、Codex、または登録済みの Antigravity エンドポイントへリクエストを転送します。通常のローカル/SSH コマンドは依存関係のない状態を維持します。これは明示的な CLI ワークフローであり、モバイルアプリケーション、NAT トラバーサル、WireGuard トンネル、自動公開サービスなどはインストールされません。
+
+## 接続失敗の診断と安全な接続再試行
+
+`no_authenticated_route` は `retryAllowed:false` と `consumptionConfirmed:false` を維持します。`routeFailures` は経路ごとの最後の `stage`、許可リスト内の `reason`、`attempts` を示します。限定された `attemptHistory` は各試行の段階・理由・`elapsedMs` を保持し、HTTP 拒否には `httpStatus`、WebSocket の切断には `closeCode` が含まれる場合があります。制御、入場、アップグレード、attach、ピア TLS、probe の失敗を区別し、URL・認証情報・生の例外・メッセージ本文は記録しません。2 回目で成功した場合は `setupDegraded:true`、`setupAttempts:2`、`setupFailureHistory` が付き、正常な安定性試験の合格とは見なしません。
+
+**WebSocket アップグレード前の制御・入場タイムアウト**のみ、0.5 秒後にもう一度 Relay に接続します。attach、ピア TLS、probe のタイムアウトは再試行しません。WebSocket アップグレードのタイムアウトも、origin で既に受信側ルームがペアリングされた可能性があるため再試行しません。新しい入場チケットとチャネルを使い、消費済みチケットやエージェントへのメッセージを再送しません。HTTP 拒否、認証/証明書エラー、不明な失敗も再試行しません。直接経路が選択されると Relay 試行は取り消せます。送信後の応答喪失は引き続き `unknown` で、再送や経路切り替えは行いません。この限定的な緩和策は公開経路の障害解消を証明しません。デプロイ後に実際の ACK と長時間検証を再実施してください。
+
+受信側は安全化した `relay_connection_failed` 警告を stderr に毎分最大一回出力します。通常のアイドル期限切れに見える切断は失敗警告と分けます。`device serve --diagnostic-events` と `relay serve --diagnostic-events` を明示すると、ルーム・attach・切断の段階、所要時間、許可リスト内の理由と切断コードだけを stderr に記録します。既定では無効で、デバイス ID、ルーム名、URL、ヘッダー、認証情報、本文は記録しません。Relay メトリクスにはルーム作成・ペアリング、各レグへの attach 送信、期限切れのカウンターも追加されます。attach 送信はクライアント受信の証明ではありません。受信側の `idle_expiry_like` はサーバー原因の確証ではありません。
+
+WebSocket 切断の `closeSource` はコードの受信・送信方向を区別します。Relay のカウンターは受信側先着とクライアント先着のルームを区別します。`receiverWsAgeMs` は待機時間であり、接続の健全性を証明しません。ペアリングと受信側の `attach_received`・ピア TLS イベントの時刻を照合してください。
+
+`stream_close.closeCode` はリモートから受信した切断コードです。`1006` は切断フレームを受信しなかったことを意味し、レグの停止を示す可能性があります。`peer_closed` は相手レグの終了後に Relay がこのレグを閉じた場合、`remote_going_away` は Relay の切断要求なしにリモート側が 1001 を送った場合です。`receiverRoleBusy`・`clientRoleBusy` は同じルームで拒否された重複レグの数です。受信側の値が増える場合、受信側の再接続中に Relay が古いレグを保持している可能性があります。
+
+明示的に有効にした Relay と受信側のライフサイクルイベントには `eventTimeUtcMs`（UTC Unix ミリ秒）が含まれます。クライアントは Relay 接続の試行ごとにランダムな UUIDv4 `attemptId` を生成し、成功結果または試行ごとの失敗メタデータに記録します。新しい Relay はこの ID をペアリング済みルームイベントに記録し、attach 通知で新しい受信側へ渡します。受信側の `attach_received` と peer-TLS イベントにも同じ ID が記録されます。この ID は ID 情報、ルーム名、リクエスト ID、メッセージ内容から導出されず、認可や再送の安全性も変えません。失敗を帰属させるには、完全一致する `attemptId` が Relay のルーム一つと受信側レグ一つだけに対応することを確認し、時計のずれを考慮して UTC 時刻を比較してください。イベントが欠ける、重複する、または旧バージョンのレグの場合は、時刻や集計カウンターから推測せず `unattributed` と記録してください。
+
+公開経路の停止が再発した場合、明示的に有効にした Relay の `stream_close` イベントで、各レグの `ingressFrames`/`ingressBytes`、`egressCompletedFrames`/`egressCompletedBytes`、最初と最後の UTC フレーム時刻を比較できます。これは暗号化された WebSocket フレームの数であり、メッセージ数ではありません。送信完了は Relay のソケット send が戻ったことだけを示し、Cloudflare、受信側、TLS、アプリケーションがバイトを消費した証明ではありません。同じルームと `attemptId` の両方のロールを比較してから受信側イベントと照合してください。イベントが欠けるか一致が曖昧なら `unattributed` のままにします。カウンターだけで Cloudflare、OCI、中間ホップの責任は特定できません。メタデータの時刻とフレームサイズからも活動が分かるため、opt-in ログは非公開で期間を限定して保持してください。
+
+1 秒以上開いていた待機ルームが Relay により正常に閉じられた場合、受信側はバックオフを増やさず 0.5 秒後に再接続します。その他の失敗と 1 秒以内に閉じたルームは、引き続き最大 5 秒まで指数バックオフします。Relay レグは両端で 10 秒の WebSocket ping 間隔・タイムアウトを使うため、停止したレグを約 40 秒ではなく約 20 秒で検出します。これは再接続の空白を減らすだけで、停止したネットワーク経路を修復するものではありません。
 
 ## インストール
 
@@ -11,7 +29,7 @@ python3 -m venv ~/.local/share/session-peer-relay/venv
 ~/.local/share/session-peer-relay/venv/bin/pip install 'session-peer[relay]'
 ```
 
-relay エクストラは v0.9.0 から PyPI で利用可能になり、ベータ版のままです。公開されたからといって長期的な運用安定性が確立されたわけではありません。以下ではインストールされた `session-peer` 実行可能ファイルを使用してください。管理コマンド（`device`/`relay`）は JSON を出力します。パッケージバージョンが異なる Python 環境を混在させないでください。
+relay エクストラは v0.9.0 から PyPI で利用できます。パッケージ公開はホスト型 Relay の可用性を保証しません。以下ではインストールされた `session-peer` 実行可能ファイルを使用してください。管理コマンド（`device`/`relay`）は JSON を出力します。パッケージバージョンが異なる Python 環境を混在させないでください。
 
 ## アイデンティティ、ポリシー、ペアリング
 
@@ -31,7 +49,8 @@ session-peer device init --state /private/device-state
     "review": {
       "agent": "codex",
       "target": "codex:FULL-THREAD-UUID",
-      "codexHome": "/home/alice/.codex"
+      "codexHome": "/home/alice/.codex",
+      "codexBin": "/home/alice/.local/bin/codex"
     }
   },
   "peers": {
@@ -47,6 +66,8 @@ Claude バインディングは `agent: claude` と、ホームを指定しな�
 
 ペアリングはデバイス鍵の所持を証明します。**ネイティブエージェントへのアクセスを許可するものではありません**: 受信ポリシーでフィンガープリント、操作、およびターゲットエイリアスを個別に許可する必要があります。ピアは実行可能ファイル、ホーム、wake フラグ、SSH 送信先、または任意のネイティブコマンド引数を指定することはできません。ポリシーの変更はレシーバーの再起動後に有効になります。制限事項: 設定可能なターゲットは 8 個、ポリシーデバイスは 128 台です。
 
+launchd や systemd で起動した受信側は、ログインシェルではなくサービスマネージャーの最小限の `PATH` を引き継ぎます。macOS/Linux の Codex 対象では、対象 TUI が使う `codex` のディレクトリを受信サービスの `PATH` に追加するか（例: launchd の `EnvironmentVariables.PATH`、systemd の `Environment=PATH=...`）、管理者が所有するバインディングの `codexBin` に `/opt/homebrew/bin/codex` のような `codex` で終わる絶対パスを指定します。受信側は起動時に実行可能な通常ファイルを検証し、シンボリックリンクを実際の対象に解決します。Unix Codex では `codexPython` を使用しません。既存の稼働中 writer と home の検証は維持されます。実際の送信前に同じ受信環境で `send --dry-run` を確認してください。実行ファイルが見つからなければ、送信前に `codex_executable_not_found` で拒否します。結果が unknown の送信を自動再試行しないでください。
+
 ## ネイティブ Windows Codex 用の WSL レシーバー
 
 同じ Windows ワークステーションで Codex セッションと CLI がネイティブ実行される場合、レシーバーは WSL2 で実行します。ペアリング済みピアではなく、オペレーターポリシーがマウント済み状態ホームと実行可能ファイルの両方を固定します:
@@ -58,7 +79,8 @@ Claude バインディングは `agent: claude` と、ホームを指定しな�
       "agent": "codex",
       "target": "codex:FULL-THREAD-UUID",
       "codexHome": "/mnt/c/Users/alice/.codex",
-      "codexBin": "/mnt/c/Users/alice/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe"
+      "codexBin": "/mnt/c/Users/alice/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe",
+      "codexPython": "/mnt/c/Python313/python.exe"
     }
   },
   "peers": {
@@ -70,7 +92,13 @@ Claude バインディングは `agent: claude` と、ホームを指定しな�
 }
 ```
 
-`codexHome` はローカル Windows ドライブにマウントされた絶対 WSL パスでなければならず、`codexBin` は `codex.exe` という名前の絶対パスにある実行可能な通常ファイルでなければなりません。レシーバーは POSIX パス経由でデータベースを読み、固定引数で `/usr/bin/wslpath` を呼び出し、ドライブ修飾された Windows パスをネイティブ子プロセスの `CODEX_HOME` としてのみ渡します。シェルコマンドは作りません。WSL 以外のホスト、欠落した実行可能ファイル、安全でない変換は、ポリシー読み込み中に `wsl_codex_requires_wsl`、`invalid_codex_executable`、または `wsl_home_conversion_failed` で失敗します。Linux/macOS の Codex ターゲットでは `codexBin` を省略し、既存の動作を維持します。ネイティブ Windows クライアントは通常のローカル CLI を引き続き使用します。このアダプターは Windows Codex を対象とする WSL レシーバー専用です。Windows の writer ロックは POSIX advisory lock ではないため、この明示的なバインディングではネイティブセッションが非アクティブでも固定ホームにキューを入れられます。成功した送信も、そのセッションが消費するまでは `consumptionConfirmed: false` を報告します。
+`codexHome` はローカル Windows ドライブ上の絶対 WSL パスです。`codexBin` と必須の `codexPython` はそれぞれ `codex.exe` と `python.exe` という名前の絶対パスで、管理者が管理する実行可能な通常ファイルでなければなりません（シンボリックリンク不可）。Microsoft Store の実行エイリアスではなく、インストール済みのネイティブ Windows Python 3.9+ を指定します。
+
+固定引数の `/usr/bin/wslpath` で変換し、standalone コアをネイティブ Python にストリーミングします。シェルは使用しません。Windows SQLite/WAL と writer ロックをネイティブ側で検査し、一意の所有者・同一ユーザー SID・プロセス作成時刻・Codex 実行ファイルを確認します。Linux SQLite で Windows DB を開いたり writer 検査を省略したりしません。非アクティブ・曖昧・検査不能な writer は拒否します。既存の WSL ポリシーにも `codexPython` が必要で、未指定・不正な場合は `native_windows_python_required` または `invalid_codex_python` で拒否します。
+
+Linux/macOS ターゲットでは `codexPython` を省略し、上記のように `codexBin` を任意で設定できます。Windows クライアントは通常のローカル CLI を使用します。送信成功も `consumptionConfirmed: false` であり、消費確認には独立した応答が必要です。ポリシーやレシーバーの更新後も unknown 送信を自動再試行しないでください。
+
+ネイティブローカル CLI 対応は、すべての Windows SSH シェルへの対応を意味しません。ソースをストリーミングする SSH には動作する python3 と POSIX 互換リモートシェルが必要です。Windows Store 実行エイリアスでは不十分です。ローカルのネイティブ CLI または Python をインストールした WSL SSH エンドポイントを使用してください。
 
 直接接続のレシーバーを起動します（デフォルトはループバック。他のマシンの場合は到達可能なプライベートインターフェースを選択してください）:
 
@@ -142,7 +170,7 @@ session-peer device status --state /private/client-state --peer RECEIVER-FINGERP
   --request-id ORIGINAL-UUID --admission-file /private/client.token
 ```
 
-`unknown`（レシーバー/ワーカーのクラッシュを含む）の場合、自動的な再実行は決して許可されません。これは最大 1 回の実行試行であり、厳密に 1 回の消費ではありません。ジャーナルは最大 10,000 件のリクエストで制限され、満杯になると以降の新規送信を拒否します。保留中のエントリを削除したり、unknown を再試行するためにジャーナルをクリアしたりしないでください。保持/ローテーションおよび長期実行フリート管理は、RC の強化作業として残されています。
+`unknown`（レシーバー/ワーカーのクラッシュを含む）の場合、自動的な再実行は決して許可されません。これは最大 1 回の実行試行であり、厳密に 1 回の消費ではありません。ジャーナルは最大 10,000 件のリクエストで制限され、満杯になると以降の新規送信を拒否します。保留中のエントリを削除したり、unknown を再試行するためにジャーナルをクリアしたりしないでください。v1.0 CLI はジャーナルを自動ローテーションせず、長期運用のフリートも管理しません。未解決の結果を破棄しない範囲で容量と保持を計画してください。
 
 ## 失効、再起動、および回復
 

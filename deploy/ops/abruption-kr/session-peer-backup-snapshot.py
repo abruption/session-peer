@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -179,7 +180,20 @@ def stop_stack() -> None:
     raise RuntimeError("stack_stop_timeout")
 
 
-def main() -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="session-peer-backup-snapshot.py",
+        description="Create a cold, internally consistent session-peer recovery snapshot."
+    )
+    parser.add_argument("--run", action="store_true", help="stop the stack and create a snapshot")
+    args = parser.parse_args(argv)
+    if not args.run:
+        parser.error("a snapshot requires explicit --run")
+    return args
+
+
+def main(argv: list[str] | None = None) -> int:
+    parse_args(argv)
     if os.geteuid() != 0:
         raise SystemExit("root_required")
     os.umask(0o077)

@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -106,6 +107,24 @@ class ControlBackupSnapshotTests(unittest.TestCase):
         }))
         with self.assertRaisesRegex(RuntimeError, "snapshot_revision_fence"):
             self.module.snapshot_contract(snapshot, 1)
+
+    def test_help_and_invalid_arguments_do_not_touch_services(self):
+        with mock.patch.object(self.module, "run") as run, mock.patch.object(
+            self.module.os, "geteuid", side_effect=AssertionError("root check reached")
+        ):
+            for args, code in ((["--help"], 0), (["--unexpected"], 2), ([], 2)):
+                with self.subTest(args=args), self.assertRaises(SystemExit) as exit_info:
+                    self.module.main(args)
+                self.assertEqual(exit_info.exception.code, code)
+            run.assert_not_called()
+
+    def test_snapshot_requires_explicit_run_flag(self):
+        self.module.BASE = self.root / "snapshots"
+        with mock.patch.object(self.module.os, "geteuid", return_value=0), mock.patch.object(
+            self.module.os, "umask", return_value=0o077
+        ), mock.patch.object(self.module, "run", side_effect=RuntimeError("snapshot_started")):
+            with self.assertRaisesRegex(RuntimeError, "snapshot_started"):
+                self.module.main(["--run"])
 
 
 if __name__ == "__main__":

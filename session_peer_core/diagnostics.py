@@ -12,7 +12,7 @@ def diagnose_claude() -> dict:
     directory = sessions_dir()
     result = {
         "sessionsDir": str(directory), "records": 0, "invalidRecords": 0,
-        "aliveSessions": 0, "availableInboxes": 0, "checks": [],
+        "aliveSessions": 0, "availableInboxes": 0, "staleRecords": 0, "checks": [],
     }
     try:
         mode = directory.stat().st_mode
@@ -73,7 +73,9 @@ def diagnose_claude() -> dict:
             result["invalidRecords"] += 1
             continue
         result["records"] += 1
-        alive = pid_alive(pid)
+        alive, stale_reason = claude_process_state(record, int(record_file.stem))
+        if stale_reason:
+            result["staleRecords"] += 1
         if alive:
             result["aliveSessions"] += 1
         inbox = str(record.get("messagingSocketPath") or "")
@@ -94,6 +96,12 @@ def diagnose_claude() -> dict:
             count=permission_failures,
         ))
         return {"status": "permission_denied", **result}
+    if result["staleRecords"]:
+        result["checks"].append(_diagnostic(
+            "warning", "stale_session_records",
+            "Claude session records do not match live process identities",
+            count=result["staleRecords"],
+        ))
     if result["availableInboxes"]:
         result["checks"].append(_diagnostic(
             "ok", "inbox_present",
@@ -200,10 +208,27 @@ def diagnose_codex(args: argparse.Namespace) -> dict:
         status = "missing_tool"
     if inventory_error and status == "available":
         status = "unknown"
+    unsaved_count = 0
+    unsaved_scan_truncated = False
+    if selected_item["status"] == "available":
+        try:
+            unsaved_count, unsaved_scan_truncated = count_unsaved_codex_writers(selected)
+        except (OSError, sqlite3.Error):
+            checks.append(_diagnostic(
+                "unknown", "unsaved_writer_check_unavailable",
+                "Could not inspect unsaved Codex writer locks",
+            ))
+        if unsaved_count:
+            checks.append(_diagnostic(
+                "warning", "unsaved_live_writer",
+                "A live Codex writer has not saved its thread yet; wait for its first turn to finish",
+                count=unsaved_count,
+            ))
     return {
         "status": status, "selectedHome": str(selected),
         "homeSource": _codex_home_source(args), "executable": executable,
         "homes": candidates, "checks": checks,
+        "unsavedLiveWriters": unsaved_count, "unsavedWriterScanTruncated": unsaved_scan_truncated,
     }
 
 
@@ -285,6 +310,29 @@ def doctor_payload(args: argparse.Namespace) -> dict:
             },
         },
     }
+    skill_checks = []
+    skills = installed_skills()
+    for skill in skills:
+        version, minimum = skill["version"], skill["runtimeMinVersion"]
+        if version is None or minimum is None:
+            skill_checks.append(_diagnostic(
+                "unknown", "skill_version_unknown",
+                "Installed session-peer skill has no readable version or runtime minimum",
+                location=skill["location"],
+            ))
+        elif release_version(__version__) < release_version(minimum):
+            skill_checks.append(_diagnostic(
+                "warning", "skill_runtime_incompatible",
+                "Installed session-peer skill requires a newer runtime",
+                location=skill["location"], skillVersion=version,
+                runtimeMinVersion=minimum,
+            ))
+    payload["skill"] = {"status": "incompatible" if any(
+        check["code"] == "skill_runtime_incompatible" for check in skill_checks) else
+        "unknown" if skill_checks else "compatible" if skills else "not_installed",
+        "checks": skill_checks}
+    if payload["skill"]["status"] == "incompatible" and payload["status"] == "healthy":
+        payload["status"] = "partial"
     return_host = getattr(args, "_return_host", None)
     if return_host:
         payload["returnRoute"] = probe_return_route(return_host)
@@ -301,6 +349,8 @@ def render_doctor(payload: dict, where: str) -> str:
         for check in payload.get(component, {}).get("checks", []):
             if check.get("status") != "ok":
                 lines.append(f"    - {check['code']}: {check['message']}")
+    for check in payload.get("skill", {}).get("checks", []):
+        lines.append(f"    - {check['code']}: {check['message']}")
     route = payload.get("returnRoute")
     if route:
         lines.append(
