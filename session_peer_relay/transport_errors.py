@@ -12,6 +12,7 @@ class TransportFailure(Rejected):
                  close_code=None, close_source=None, retry_after=None):
         super().__init__(reason)
         self.stage = stage
+        self.hint = None
         self.transient = transient
         self.http_status = http_status
         # Polling metadata only. Do not include untrusted response headers in diagnostics.
@@ -22,6 +23,8 @@ class TransportFailure(Rejected):
 
     def diagnostic(self):
         value = {'stage': self.stage, 'reason': str(self)}
+        if self.hint in {'login_missing', 'device_not_found'}:
+            value['hint'] = self.hint
         if self.http_status is not None:
             value['httpStatus'] = self.http_status
         if self.close_code is not None:
@@ -48,7 +51,10 @@ def failure(stage, exc):
         source = 'received' if cause.rcvd is not None else 'sent' if cause.sent is not None else None
         return TransportFailure(stage, 'connection_closed', close_code=code, close_source=source)
     if isinstance(cause, (ConnectionError, OSError)):
-        return TransportFailure(stage, 'connection_failed')
+        value = TransportFailure(stage, 'connection_failed')
+        if getattr(cause, 'relay_hint', None) == 'login_missing':
+            value.hint = 'login_missing'
+        return value
     if isinstance(exc, Rejected):
         known = {'login_expired', 'access_denied', 'expired_token', 'invalid_grant',
                  'control_relay_origin_mismatch', 'control_unreachable',
