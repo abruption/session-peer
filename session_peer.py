@@ -948,6 +948,40 @@ def codex_wake_guard(root: Path, thread_id: str):
         os.close(fd)
 
 
+def stop_codex_wake(process, grace: float = 0.2) -> None:
+    # This Popen was started in a new session and has not been polled/reaped.
+    # Keep its PID reserved through escalation, even when the leader exits
+    # promptly on TERM. Never reuse a saved group ID after wait() has run.
+    if process.returncode is not None:
+        return
+    def signal_group(number):
+        try:
+            os.killpg(process.pid, number)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            # Darwin reports EPERM for a group containing only zombies.
+            # Do not hide a denial while any member is still running.
+            if sys.platform != 'darwin':
+                raise
+            members = subprocess.run(['ps', '-o', 'stat=', '-g', str(process.pid)],
+                                     capture_output=True, text=True, timeout=1)
+            if members.returncode not in (0, 1) or any(
+                    not line.strip().startswith('Z') for line in members.stdout.splitlines() if line.strip()):
+                raise
+    try:
+        try:
+            signal_group(signal.SIGTERM)
+            time.sleep(grace)
+        except ProcessLookupError:
+            pass
+    finally:
+        try:
+            signal_group(signal.SIGKILL)
+        finally:
+            process.wait(timeout=3)
+
+
 def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeout: float) -> dict:
     """Resume one thread, await one turn, and own/clean up the native process."""
     process = None
@@ -1024,23 +1058,17 @@ def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeou
         outcome = {"status": "failed", "reason": "native_transport_failed",
                    "error": type(exc).__name__}
     finally:
-        for number, handler in previous_signals.items():
-            signal.signal(number, handler)
-        if process is not None:
-            # Keep the child unreaped until its group is stopped: a zombie
-            # leader still reserves the PID even if descendants outlive it.
-            if process.returncode is None:
+        try:
+            if process is not None:
                 try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                    process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait(timeout=3)
-                except ProcessLookupError:
-                    process.wait(timeout=3)
-            for stream in (process.stdin, process.stdout):
-                if stream is not None:
-                    stream.close()
+                    stop_codex_wake(process)
+                finally:
+                    for stream in (process.stdin, process.stdout):
+                        if stream is not None:
+                            stream.close()
+        finally:
+            for number, handler in previous_signals.items():
+                signal.signal(number, handler)
     return outcome
 
 
@@ -1864,6 +1892,11 @@ def reply_line(explicit_host: str | None) -> str | None:
 # not a command, and is the right way to reach a box behind a bastion.
 LOCAL_EXEC_SSH_OPTIONS = ("proxycommand", "localcommand", "permitlocalcommand")
 
+# Linux with 4 KiB pages permits at most 128 KiB per exec argument,
+# including NUL. Bound the entire quoted remote shell command, not characters
+# or the unwrapped body alone. Source continues to travel over stdin.
+MAX_SSH_COMMAND_BYTES = 128 * 1024 - 1
+
 
 def check_ssh_argument(value: str, flag: str) -> None:
     """Refuse a value that would make ssh do something other than connect.
@@ -1971,6 +2004,15 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     for opt in ssh_opts:
         check_ssh_argument(opt, "--ssh-opt")
 
+    remote = " ".join(shlex.quote(a) for a in ["python3", "-", *argv, "--json"])
+    if len(remote.encode("utf-8")) > MAX_SSH_COMMAND_BYTES:
+        raise CcPeerError(
+            "SSH encoded command exceeds the 131071-byte limit; shorten the message "
+            "or options (UTF-8, base64 and reply-envelope overhead count). Nothing was sent.",
+            {"reason": "ssh_command_too_large", "submitted": False,
+             "maxCommandBytes": MAX_SSH_COMMAND_BYTES},
+        )
+
     try:
         source = Path(__file__).resolve().read_text(encoding="utf-8")
     except OSError as exc:  # pragma: no cover - only when run from a pipe
@@ -1982,7 +2024,6 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     # result to the remote *shell*, so an argv list is not the protection it
     # looks like: a metacharacter in any element executes over there. Build
     # the remote command as one already-quoted string instead.
-    remote = " ".join(shlex.quote(a) for a in ["python3", "-", *argv, "--json"])
     command = ["ssh", *ssh_opts, host, remote]
     try:
         completed = subprocess.run(
