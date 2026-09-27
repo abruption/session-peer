@@ -478,3 +478,5 @@ MIT
 ### 内部扩展架构
 
 代理适配器和本地/SSH 执行共享内部带版本的契约，同时保留单文件 CLI。参见[适配器开发](agent-adapters.md)以及[架构决策](architecture/agent-transports.md)。不支持外部插件加载。`doctor.capabilities.agents` 描述了已实现的 list/send/wake/wait/ack 支持；它并不授予权限或证明就绪状态。
+
+SSH在启动子进程前检查最终shell引用命令的UTF-8字节数。保守上限131071字节包含base64展开、envelope、选项及引用。超限在本地返回 `ssh_command_too_large` 和 `submitted: false`；Unicode不能仅按字符数判断。本地传输限制不变，也不保证所有远端OS的参数与环境总空间。

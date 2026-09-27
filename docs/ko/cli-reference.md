@@ -826,3 +826,5 @@ Python 3.10+ 환경에서 `session-peer[mcp]`를 설치하고 [MCP 설정](mcp.m
 참조하세요. 외부 플러그인 로딩은 제공되지 않습니다. `doctor.capabilities.agents`는
 구현된 list/send/wake/wait/ack 지원을 설명하지만 권한을 부여하거나 준비 상태를 증명하지는
 않습니다.
+
+SSH는 하위 프로세스 시작 전에 최종 셸 인용 명령의 UTF-8 바이트 수를 검사합니다. 보수적 상한 131071바이트에는 base64 메시지·봉투·옵션·인용이 포함됩니다. 초과 시 로컬에서 `ssh_command_too_large`, `submitted: false`로 거부합니다. Unicode에는 글자 수만으로 충분하지 않습니다. 로컬 전송 제한은 그대로이며 이 검사만으로 모든 OS의 전체 인자·환경 공간을 보장하지는 않습니다.

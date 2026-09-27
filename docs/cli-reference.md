@@ -848,3 +848,5 @@ retaining the single-file CLI. See [adapter development](agent-adapters.md)
 and the [architecture decision](architecture/agent-transports.md). External
 plugin loading is not available. `doctor.capabilities.agents` describes implemented
 list/send/wake/wait/ack support; it does not grant permission or prove readiness.
+
+SSH validates the final shell-quoted remote command as UTF-8 bytes before starting any SSH subprocess. The conservative limit is 131071 bytes, including base64 message expansion, envelope, options and quoting. Oversized commands fail locally with `ssh_command_too_large` and `submitted: false`; character-count validation alone is insufficient for Unicode. Local delivery limits are unchanged. This per-command guard cannot guarantee that every remote operating system has enough total environment/argument space.

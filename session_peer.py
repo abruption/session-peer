@@ -1864,6 +1864,11 @@ def reply_line(explicit_host: str | None) -> str | None:
 # not a command, and is the right way to reach a box behind a bastion.
 LOCAL_EXEC_SSH_OPTIONS = ("proxycommand", "localcommand", "permitlocalcommand")
 
+# Linux with 4 KiB pages permits at most 128 KiB per exec argument,
+# including NUL. Bound the entire quoted remote shell command, not characters
+# or the unwrapped body alone. Source continues to travel over stdin.
+MAX_SSH_COMMAND_BYTES = 128 * 1024 - 1
+
 
 def check_ssh_argument(value: str, flag: str) -> None:
     """Refuse a value that would make ssh do something other than connect.
@@ -1971,6 +1976,15 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     for opt in ssh_opts:
         check_ssh_argument(opt, "--ssh-opt")
 
+    remote = " ".join(shlex.quote(a) for a in ["python3", "-", *argv, "--json"])
+    if len(remote.encode("utf-8")) > MAX_SSH_COMMAND_BYTES:
+        raise CcPeerError(
+            "SSH encoded command exceeds the 131071-byte limit; shorten the message "
+            "or options (UTF-8, base64 and reply-envelope overhead count). Nothing was sent.",
+            {"reason": "ssh_command_too_large", "submitted": False,
+             "maxCommandBytes": MAX_SSH_COMMAND_BYTES},
+        )
+
     try:
         source = Path(__file__).resolve().read_text(encoding="utf-8")
     except OSError as exc:  # pragma: no cover - only when run from a pipe
@@ -1982,7 +1996,6 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     # result to the remote *shell*, so an argv list is not the protection it
     # looks like: a metacharacter in any element executes over there. Build
     # the remote command as one already-quoted string instead.
-    remote = " ".join(shlex.quote(a) for a in ["python3", "-", *argv, "--json"])
     command = ["ssh", *ssh_opts, host, remote]
     try:
         completed = subprocess.run(

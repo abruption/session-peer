@@ -830,3 +830,5 @@ Python 3.10+ で `session-peer[mcp]` をインストールし、[MCP のセッ�
 および[アーキテクチャ決定](architecture/agent-transports.md)を参照してください。外部
 プラグインの読み込みは利用できません。`doctor.capabilities.agents` は、実装されている
 list/send/wake/wait/ack サポートを記述します。権限を付与したり準備完了を証明したりするものではありません。
+
+SSHは起動前に最終的なshell引用済みコマンドのUTF-8バイト数を検証します。上限131071バイトにはbase64展開、envelope、option、引用が含まれます。超過はローカルで `ssh_command_too_large` と `submitted: false` を返します。Unicodeには文字数だけでは不十分です。ローカル送信制限は不変で、全OSの引数・環境合計容量を保証するものではありません。
