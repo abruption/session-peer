@@ -54,15 +54,18 @@ def one_or_many(results: list[dict]) -> dict | list[dict]:
 
 def with_client_update(payload: dict | list[dict]) -> dict | list[dict]:
     """Attach the invoking client's cached update fact to each result object."""
-    if _CLIENT_UPDATE_NOTICE is None:
+    if _CLIENT_UPDATE_NOTICE is None and not _SKILL_UPDATE_NOTICES:
         return payload
+    notices = ({"clientUpdate": dict(_CLIENT_UPDATE_NOTICE)} if _CLIENT_UPDATE_NOTICE else {})
+    if _SKILL_UPDATE_NOTICES:
+        notices["skillUpdates"] = [dict(item) for item in _SKILL_UPDATE_NOTICES]
     if isinstance(payload, list):
         return [
-            {**item, "clientUpdate": dict(_CLIENT_UPDATE_NOTICE)}
+            {**item, **notices}
             if isinstance(item, dict) else item
             for item in payload
         ]
-    return {**payload, "clientUpdate": dict(_CLIENT_UPDATE_NOTICE)}
+    return {**payload, **notices}
 
 
 def emit(as_json: bool, payload: dict, human: str, *, command: str,
@@ -76,14 +79,17 @@ def emit_json_results(results: list[dict]) -> None:
 
 
 def emit_human_update_notice() -> None:
-    if _CLIENT_UPDATE_NOTICE is None:
-        return
-    print(
-        f"Update available: {_CLIENT_UPDATE_NOTICE['current']} → "
-        f"{_CLIENT_UPDATE_NOTICE['latest']}. "
-        f"Run: {_CLIENT_UPDATE_NOTICE['command']}",
-        file=sys.stderr,
-    )
+    if _CLIENT_UPDATE_NOTICE is not None:
+        print(
+            f"Update available: {_CLIENT_UPDATE_NOTICE['current']} → "
+            f"{_CLIENT_UPDATE_NOTICE['latest']}. "
+            f"Run: {_CLIENT_UPDATE_NOTICE['command']}",
+            file=sys.stderr,
+        )
+    for notice in _SKILL_UPDATE_NOTICES:
+        command = notice.get("command") or "check the skill's installation manager"
+        print(f"Skill update available ({notice['location']}): "
+              f"{notice['current']} → {notice['latest']}. Run: {command}", file=sys.stderr)
 
 
 def host_metadata(ssh_host: str, canonical_host: str) -> dict:

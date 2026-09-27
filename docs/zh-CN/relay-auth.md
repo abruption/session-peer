@@ -1,9 +1,8 @@
-# 私有中继控制与认证 (RC 候选)
+# 私有中继控制与认证 (v1.0)
 
-状态：#69 的实现候选方案，并非已部署的生产服务。
-以下 control 到 relay 的协约结合了 Python 所有者的最终
-接口指令；实际的跨服务集成仍是一个独立的关卡。本项目不会在普通 Python 安装中添加任何侦听器、
-OAuth 账户或 Node 依赖。
+状态：已实现的 control-to-relay 协约的 v1.0 运维参考文档。
+Abruption 托管部署与软件包发布分别运营；本文不保证服务可用性。
+普通 Python 安装不会增加侦听器、OAuth 账户或 Node 依赖。
 
 ## 信任边界
 
@@ -54,7 +53,7 @@ https://relay.abruption.dev/api/auth/callback/github
 https://relay.abruption.dev/api/auth/callback/google
 ```
 
-## 最终 control API (未发布候选)
+## control API (v1.0)
 
 仅限 JSON 正文；最大 16 KiB。未知的协议字段将被拒绝。
 经身份验证的 API 请求限制为 60 次/用户/分钟。限制为每个所有者 16 个活动

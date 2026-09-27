@@ -40,9 +40,9 @@ sequenceDiagram
     P-->>C: Deliver to Codex native inbox
 ```
 
-[![Live Codex-to-Claude Code messaging demo](docs/assets/session-peer-live-codex-claude-poster.png)](docs/assets/session-peer-live-codex-claude.mp4)
+![Live Codex-to-Claude Code messaging demo](docs/assets/session-peer-live-codex-claude.gif)
 
-[Watch the 26-second demo video](docs/assets/session-peer-live-codex-claude.mp4).
+26-second looping demo: Codex sends a request to Claude Code and receives an explicit reply.
 A successful post confirms only the inbox write. The explicit reply at the end
 confirms that the receiving session consumed the request and responded.
 
@@ -115,11 +115,11 @@ validation steps, and a completion-report format. You remain in control of
 account changes, public exposure, payments, reboots, merges, releases, and
 publication.
 
-## Optional 1.0 beta features
+## Optional v1.0 features
 
-The opt-in `1.0.0b1` prerelease advances the authenticated public relay and keeps the v0.9 experimental [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md) bridge. Unfiltered `list` also includes live registered bridges.
+The stable `1.0.1` package includes authenticated public relay support and keeps the [Antigravity](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md) bridge experimental. Unfiltered `list` also includes live registered bridges.
 [Paired devices / encrypted relay](https://github.com/abruption/session-peer/blob/main/docs/paired-devices.md) require Unix, Python 3.11+ and the `[relay]` extra. Device identities are pinned and targets need explicit authorization on the receiving endpoint. The blind WSS relay cannot decrypt application messages; hosted-service availability remains separate from the package.
-Install the beta explicitly with `pipx install 'session-peer[relay]==1.0.0b1'`; normal upgrades do not select prereleases. Start with the [session-peer project page](https://abruption.dev/projects/session-peer/) and the paired-device guide above. Beta publication does not imply long-term stability. Ordinary local/SSH commands remain dependency-free.
+Install the stable release with `pipx install 'session-peer[relay]==1.0.1'`; package-managed upgrades may now select v1.0.1. Start with the [session-peer project page](https://abruption.dev/projects/session-peer/) and the paired-device guide above. Package publication does not guarantee hosted-service availability. Ordinary local/SSH commands remain dependency-free.
 
 ## Before you send
 

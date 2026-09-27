@@ -26,6 +26,7 @@ class CodexWriterEvidence(unittest.TestCase):
 
     def test_missing_lock_is_inactive_even_when_flock_is_unavailable(self):
         with tempfile.TemporaryDirectory() as directory, \
+             mock.patch.object(peer.sys, "platform", "unsupported"), \
              mock.patch.object(peer, "fcntl", None):
             lock = Path(directory) / "missing.lock"
             self.assertEqual(peer.probe_codex_writer_lock(lock),

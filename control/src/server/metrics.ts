@@ -80,6 +80,7 @@ export async function relayMetrics(
     const counterKeys = ["handshakes", "sessionsIssued", "connectionsAccepted",
       "rateRejected", "sessionCapacityRejected", "connectionCapacityRejected",
       "unauthorizedRejected", "byteBudgetClosed", "forwardedFrames", "forwardedBytes"];
+    // New relay counters are allowed on input; only these fields enter the response.
     if (
       value.schemaVersion !== 1 ||
       !metricInteger(value.generatedAt) ||
@@ -87,7 +88,6 @@ export async function relayMetrics(
       !capacity || !current || !counters ||
       Object.keys(capacity).sort().join() !== [...capacityKeys].sort().join() ||
       Object.keys(current).sort().join() !== [...currentKeys].sort().join() ||
-      Object.keys(counters).sort().join() !== [...counterKeys].sort().join() ||
       capacityKeys.some((key) => !metricInteger(capacity[key]) || capacity[key] === 0) ||
       currentKeys.some((key) => !metricInteger(current[key])) ||
       counterKeys.some((key) => !metricInteger(counters[key]))

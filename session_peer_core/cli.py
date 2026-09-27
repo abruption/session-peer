@@ -142,7 +142,7 @@ def json_error_result(args: argparse.Namespace, payload: dict) -> dict | list[di
 
 
 def main(argv: list[str] | None = None) -> int:
-    global _CLIENT_UPDATE_NOTICE
+    global _CLIENT_UPDATE_NOTICE, _SKILL_UPDATE_NOTICES
     cli_invocation = argv is None
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     if raw_argv == [UPDATE_REFRESH_ARG]:
@@ -165,6 +165,10 @@ def main(argv: list[str] | None = None) -> int:
         # Update discovery is advisory. Even an unexpected cache or launcher
         # failure must not change the requested command's result or exit code.
         _CLIENT_UPDATE_NOTICE = None
+    try:
+        _SKILL_UPDATE_NOTICES = prepare_skill_updates(args) if cli_invocation else []
+    except Exception:
+        _SKILL_UPDATE_NOTICES = []
     show_human_notice = True
     try:
         exit_code = args.func(args)
