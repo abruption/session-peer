@@ -24,7 +24,7 @@ except ImportError:
 
 from session_peer_relay.app import Receiver, exchange, pair, open_channel, request
 from session_peer_relay.wire import relay_stream, direct_address
-from session_peer_relay.native import Policy, options, windows_codex_home
+from session_peer_relay.native import Native, Policy, options, windows_codex_home
 from session_peer_relay.relay import Relay
 from session_peer_relay.store import Store, Rejected
 from session_peer_relay.identity import private_read, private_write
@@ -210,6 +210,25 @@ class NativeRelay(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['reason'],'invalid_message');self.assertEqual(self.effects,[])
 
 
+class NativeWorkerFailureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_worker_crash_and_timeout_remain_unknown(self):
+        binding = {'agent':'codex','target':'codex:'+str(uuid.uuid4()),'codexHome':'/fixture'}
+        for side_effect, returncode in ((None, 1), (TimeoutError(), None)):
+            process = mock.Mock(returncode=returncode)
+            process.communicate = mock.AsyncMock(
+                side_effect=side_effect,
+                return_value=(b'', b''))
+            process.wait = mock.AsyncMock(return_value=returncode)
+            with self.subTest(returncode=returncode), \
+                 mock.patch('session_peer_relay.native.asyncio.create_subprocess_exec',
+                            new=mock.AsyncMock(return_value=process)):
+                result = await Native().invoke(binding, 'send', 'SECRET-MESSAGE')
+            self.assertEqual(result['status'], 'unknown')
+            self.assertEqual(result['reason'], 'native_outcome_unknown')
+            self.assertFalse(result['retryAllowed'])
+            self.assertNotIn('SECRET-MESSAGE', json.dumps(result))
+
+
 class PolicyTests(unittest.TestCase):
     def test_disallow_peer_controlled_command_home_and_wake(self):
         for binding in ({'agent':'codex','target':'codex:'+str(uuid.uuid4())},
@@ -227,28 +246,58 @@ class PolicyTests(unittest.TestCase):
         payload = json.dumps({'binding':binding,'operation':'send','text':'hello'}).encode()
         out = io.StringIO()
         with mock.patch.object(sys, 'stdin', SimpleNamespace(buffer=io.BytesIO(payload))), \
-             mock.patch.object(worker.core.LocalTransport, 'execute', side_effect=worker.core.CcPeerError('queue timeout')), \
+             mock.patch.object(worker.core, 'codex_executable', return_value='/fixture/codex'), \
+             mock.patch.object(worker.core.LocalTransport, 'execute', side_effect=[
+                 {'ok': True, 'dryRun': True}, worker.core.CcPeerError('queue timeout')]) as execute, \
              contextlib.redirect_stdout(out):
             worker.main()
         result = json.loads(out.getvalue())
         self.assertEqual(result['status'], 'unknown')
+        self.assertEqual(result['reason'], 'native_outcome_unknown')
         self.assertFalse(result['retryAllowed'])
+        self.assertTrue(execute.call_args_list[0].args[2].dry_run)
+        self.assertFalse(execute.call_args_list[1].args[2].dry_run)
+
+    def test_missing_codex_executable_is_refused_before_submission(self):
+        import contextlib, io
+        from types import SimpleNamespace
+        from session_peer_relay import worker
+        binding = {'agent':'codex','target':'codex:'+str(uuid.uuid4()),'codexHome':'/fixture'}
+        for operation in ('send', 'resolve'):
+            payload = json.dumps({'binding':binding,'operation':operation,'text':'SECRET-MESSAGE'}).encode()
+            out = io.StringIO()
+            with self.subTest(operation=operation), \
+                 mock.patch.object(sys, 'stdin', SimpleNamespace(buffer=io.BytesIO(payload))), \
+                 mock.patch.object(worker.core, 'codex_executable',
+                                   side_effect=worker.core.CcPeerError('SECRET-PATH')), \
+                 mock.patch.object(worker.core.LocalTransport, 'execute') as execute, \
+                 contextlib.redirect_stdout(out):
+                worker.main()
+            result = json.loads(out.getvalue())
+            self.assertEqual(result['status'], 'refused')
+            self.assertEqual(result['reason'], 'codex_executable_not_found')
+            self.assertFalse(result['retryAllowed'])
+            self.assertNotIn('SECRET', out.getvalue())
+            execute.assert_not_called()
 
     def test_wsl_codex_policy_derives_windows_home_and_fixed_binary(self):
         with tempfile.TemporaryDirectory() as folder:
             executable = Path(folder)/'codex.exe'
             executable.write_bytes(b'MZ fixture')
             executable.chmod(0o700)
+            python = Path(folder)/'python.exe'
+            python.write_bytes(b'MZ fixture')
+            python.chmod(0o700)
             binding = {'agent':'codex','target':'codex:'+str(uuid.uuid4()),
                        'codexHome':'/mnt/c/Users/alice/.codex',
-                       'codexBin':str(executable)}
+                       'codexBin':str(executable), 'codexPython':str(python)}
             converted = mock.Mock(return_value=r'C:\Users\alice\.codex')
             with mock.patch('session_peer_relay.native.windows_codex_home', converted):
                 Policy({'targets':{'windows':binding},'peers':{}})
                 args = options(binding)
             self.assertEqual(args.codex_bin, str(executable))
             self.assertEqual(args.codex_native_home, r'C:\Users\alice\.codex')
-            self.assertTrue(args.allow_inactive_codex_home)
+            self.assertFalse(args.allow_inactive_codex_home)
             converted.assert_called_with('/mnt/c/Users/alice/.codex')
 
     def test_posix_codex_policy_keeps_live_writer_requirement(self):
@@ -258,6 +307,51 @@ class PolicyTests(unittest.TestCase):
         self.assertIsNone(args.codex_bin)
         self.assertIsNone(args.codex_native_home)
         self.assertFalse(args.allow_inactive_codex_home)
+
+    def test_posix_codex_policy_pins_validated_symlink_target(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            release = root/'releases'/'v1'
+            release.mkdir(parents=True)
+            executable = release/'codex'
+            executable.write_text('#!/bin/sh\nexit 0\n')
+            executable.chmod(0o700)
+            link = root/'codex'
+            link.symlink_to(executable)
+            binding = {'agent':'codex','target':'codex:'+str(uuid.uuid4()),
+                       'codexHome':'/fixture','codexBin':str(link)}
+            Policy({'targets':{'a':binding},'peers':{}})
+            args = options(binding)
+            self.assertEqual(args.codex_bin, str(executable.resolve()))
+            self.assertIsNone(args.codex_native_home)
+            for bad in ('relative/codex', str(root/'missing'/'codex'), str(root/'sh')):
+                with self.subTest(bad=bad), self.assertRaisesRegex(Rejected, 'invalid_codex_executable'):
+                    Policy({'targets':{'a':{**binding,'codexBin':bad}},'peers':{}})
+            (root/'sh').symlink_to('/bin/sh')
+            link.unlink(); link.symlink_to(root/'sh')
+            with self.assertRaisesRegex(Rejected, 'invalid_codex_executable'):
+                Policy({'targets':{'a':binding},'peers':{}})
+
+    def test_wsl_codex_requires_fixed_native_python(self):
+        with tempfile.TemporaryDirectory() as folder:
+            executable = Path(folder)/'codex.exe'
+            executable.write_bytes(b'fixture')
+            executable.chmod(0o700)
+            binding = {'agent':'codex','target':'codex:'+str(uuid.uuid4()),
+                       'codexHome':'/mnt/c/home','codexBin':str(executable)}
+            with mock.patch('session_peer_relay.native.windows_codex_home', return_value=r'C:\home'):
+                with self.assertRaisesRegex(Rejected, 'native_windows_python_required'):
+                    options(binding)
+                for python in ('relative/python.exe', str(executable), '/missing/python.exe', 'bad\0path'):
+                    with self.subTest(python=python), self.assertRaisesRegex(Rejected, 'invalid_codex_python'):
+                        options({**binding, 'codexPython':python})
+                link = Path(folder)/'python.exe'
+                link.symlink_to(executable)
+                with self.assertRaisesRegex(Rejected, 'invalid_codex_python'):
+                    options({**binding, 'codexPython':str(link)})
+            with self.assertRaisesRegex(Rejected, 'unexpected_codex_python'):
+                options({'agent':'codex','target':binding['target'],
+                         'codexHome':'/fixture','codexPython':str(executable)})
 
     def test_wsl_codex_policy_rejects_other_commands_and_platforms(self):
         target = 'codex:'+str(uuid.uuid4())

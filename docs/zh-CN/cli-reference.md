@@ -102,7 +102,7 @@ git clone https://github.com/abruption/session-peer && cd session-peer
 ./install.sh --host web-01 --host db  # several at once
 ```
 
-这会将 `session_peer.py` 放置在 `~/.local/share/session-peer/` 中，将 [session-peer 技能](https://github.com/abruption/session-peer-skill/blob/main/session-peer/SKILL.md)的兼容副本安装在 `~/.claude/skills/session-peer/` 中，并建立链接 `~/.local/bin/session-peer`。现有的 cc-peer 文件将被保留。使用 `./install.sh --uninstall [--host ...]` 可以将其卸载。
+这会将 `session_peer.py` 放置在 `~/.local/share/session-peer/` 中，将 [session-peer 技能](https://github.com/abruption/session-peer-skill/blob/main/session-peer/SKILL.md)的兼容副本安装在 `~/.claude/skills/session-peer/` 和 `~/.agents/skills/session-peer/` 中，并建立链接 `~/.local/bin/session-peer`。由其他管理器安装的技能、符号链接及现有 cc-peer 文件均会保留。`./install.sh --uninstall [--host ...]` 只移除安装器拥有的文件；没有所有权标记的旧技能会保留。
 
 `session-peer update` 会从最新的 GitHub Release 刷新独立程序。`./install.sh --host <host>` 通过 SSH 推送当前检出版本的程序和技能。当已安装版本不同或不存在时，`session-peer update --host <host>` 仅推送程序；添加 `--check` 仅报告而不作任何更改。有关包管理器安装和远程限制，请参阅[更新](#updating)。
 
@@ -118,7 +118,7 @@ chmod +x session_peer.py
 <a id="the-skill"></a>
 ### 技能
 
-公开技能的正式版本由 [session-peer-skill 仓库](https://github.com/abruption/session-peer-skill)维护。独立安装程序为隔离网络和 SSH 安装保留兼容副本，并将其放置在 `~/.claude/skills/session-peer/SKILL.md` 中。技能路径依次遵循 `CLAUDE_CONFIG_DIR`、`ANTHROPIC_CONFIG_DIR` 和默认位置。若要为 Claude Code、Codex 与 Antigravity 进行全局安装，请使用上面的 Skills CLI 命令。技能负责指导目标和消息选择，Python 程序负责发现与传输。安装不会改变任何代理的权限或入站设置。
+公开技能的正式版本由 [session-peer-skill 仓库](https://github.com/abruption/session-peer-skill)维护。独立安装程序为隔离网络和 SSH 安装保留兼容副本，并将其分别放置在 Claude Code 的 `~/.claude/skills/session-peer/SKILL.md` 和 Codex 的 `~/.agents/skills/session-peer/SKILL.md` 中。Claude 路径依次遵循 `CLAUDE_CONFIG_DIR`、`ANTHROPIC_CONFIG_DIR` 和默认位置。安装器不会覆盖或删除由其他管理器维护的技能。若要为 Claude Code、Codex 与 Antigravity 进行全局安装，请使用上面的 Skills CLI 命令。技能负责指导目标和消息选择，Python 程序负责发现与传输。安装不会改变任何代理的权限或入站设置。
 
 ## 用法
 

@@ -1,9 +1,87 @@
-# Paired devices and private relay (v0.9 beta)
+# Paired devices and private relay (v1.0)
 
 This optional Unix/Python 3.11+ transport carries requests to operator-defined
 Claude, Codex or registered Antigravity endpoints. The usual local/SSH commands
 stay dependency-free. This is an explicit CLI workflow; no mobile application,
 NAT traversal, WireGuard tunnel or automatic public service is installed.
+
+## Connection failures and safe setup retry
+
+`no_authenticated_route` retains `retryAllowed:false` and
+`consumptionConfirmed:false`. Its additive `routeFailures` array identifies each
+failed route's final `stage`, allowlisted `reason`, and `attempts`. The bounded
+`attemptHistory` preserves each attempt's stage, reason and `elapsedMs`; HTTP
+refusals may include `httpStatus`, and WebSocket closes may include `closeCode`
+and `closeSource` (received or sent).
+Control, admission, upgrade, attach, peer TLS and probe failures remain distinct
+without logging URLs, credentials, exception text or message bodies. A successful
+second setup attempt has `setupDegraded:true`, `setupAttempts:2` and
+`setupFailureHistory`; it is not a clean stability pass.
+
+Only a **control or admission timeout before WebSocket upgrade** gets one
+additional Relay connection attempt, after 0.5 seconds. Attach, peer TLS and
+probe timeouts are not retried. WebSocket upgrade timeouts are also not retried:
+the origin may have paired a receiver even if the 101 response was lost. A
+retry obtains a fresh admission ticket and
+channel; it does not reuse a spent ticket or repeat an agent message. HTTP
+refusals, authentication/certificate errors and unknown failures are not retried.
+Direct-path selection can still cancel the Relay attempt. After application
+submission, a lost response remains `unknown`, with no resend or route failover.
+This bounded mitigation is not proof that a public-edge outage is fixed: repeat
+real ACK and long-running validation after deployment before closing a gate.
+
+The receiver emits at most one sanitized `relay_connection_failed` warning per
+minute; a close consistent with ordinary idle expiry is treated as lifecycle,
+not a failure warning. `device serve --diagnostic-events` and
+`relay serve --diagnostic-events` opt in to metadata-only stderr lifecycle events
+(room/attach/close stages, durations, allowlisted reasons and close codes). They
+are off by default; events never contain device identity, room name, URL,
+headers, credentials or payload. Relay metrics include additive
+receiver-first/client-first room-open and pair,
+per-leg attach-send and expiry counters. Sending an attach notice is not proof
+that the client received it. A WebSocket close near 60 seconds is only
+`idle_expiry_like` from the receiver's perspective, not proof of server cause.
+`receiverWsAgeMs` measures how long the receiver waited before pairing; it
+cannot prove that its connection was healthy. Compare room-pair time with the
+receiver's `attach_received` and peer-TLS events before inferring a stale leg.
+`stream_close.closeCode` is the code received from the remote endpoint;
+`1006` means no close frame was received (a possible stalled leg).
+`peer_closed` means the Relay closed this leg after its counterpart ended;
+`remote_going_away` means the remote endpoint sent 1001 without a Relay-initiated close.
+`receiverRoleBusy` and `clientRoleBusy` count refused duplicate legs for the same
+room; a rising receiver count can mean the Relay still holds an old leg while the
+receiver reconnects.
+
+Opt-in Relay and receiver lifecycle events include `eventTimeUtcMs` (UTC Unix
+milliseconds). Each client Relay setup attempt uses a fresh random UUIDv4
+`attemptId`, returned in success or per-attempt failure metadata. An upgraded
+Relay records that ID on paired-room events and echoes it in the attach notice
+to an upgraded receiver; its `attach_received` and peer-TLS events record the
+same ID. The ID is unrelated to identity, room name, request ID, or message
+contents; it does not change authorization or make a send retry-safe. To
+attribute a failure, match an exact `attemptId` to **one** Relay room and **one**
+receiver leg, then compare their UTC times with clock skew in mind. If any leg
+is missing, duplicated, or running an older version, record the attempt as
+`unattributed` instead of inferring a match from timing or aggregate counters.
+
+For a recurring public-path stall, an opt-in Relay `stream_close` event also
+reports each leg's `ingressFrames`/`ingressBytes` and
+`egressCompletedFrames`/`egressCompletedBytes`, with first and last UTC frame
+times. These count opaque encrypted WebSocket frames, not messages. An egress
+completion means the Relay's socket send returned; it does **not** prove
+Cloudflare, the receiver, TLS, or the application consumed those bytes. Compare
+both roles under the same room and `attemptId`, then the receiver events. Missing
+events or ambiguous matches remain `unattributed`; counters alone cannot assign
+fault to Cloudflare, OCI, or an intermediate hop. Keep opt-in logs private and
+bounded because even metadata timestamps and frame sizes reveal activity.
+
+A receiver whose waiting room stayed open for at least one second and was then
+closed normally by the Relay reconnects after 0.5 seconds instead of escalating
+its backoff. Other failures, and rooms closed within one second, still back off
+exponentially up to 5 seconds. Relay legs use a 10-second WebSocket ping interval
+and timeout on both endpoints, so a stalled leg is detected in about 20 seconds
+rather than about 40. These reduce reconnect gaps; they do not repair a stalled
+network path.
 
 ## Install
 
@@ -14,8 +92,8 @@ python3 -m venv ~/.local/share/session-peer-relay/venv
 ~/.local/share/session-peer-relay/venv/bin/pip install 'session-peer[relay]'
 ```
 
-The relay extra is available on PyPI starting with v0.9.0 and remains beta;
-publication does not establish long-term operational stability. Use the installed
+The relay extra is available on PyPI starting with v0.9.0. Package publication
+does not guarantee availability of any hosted relay. Use the installed
 `session-peer` executable below. Management commands (`device`/`relay`) emit JSON.
 Do not mix Python environments with different package versions.
 
@@ -42,7 +120,8 @@ agent target and home with independently discovered values. For example:
     "review": {
       "agent": "codex",
       "target": "codex:FULL-THREAD-UUID",
-      "codexHome": "/home/alice/.codex"
+      "codexHome": "/home/alice/.codex",
+      "codexBin": "/home/alice/.local/bin/codex"
     }
   },
   "peers": {
@@ -66,6 +145,8 @@ and target alias. Peers cannot supply an executable, home, wake flag, SSH destin
 or arbitrary native command arguments. Policy changes take effect after restarting
 the receiver. Limits: eight configured targets and 128 policy devices.
 
+A receiver started by launchd or systemd inherits the service manager's minimal `PATH`, not your login shell's. For a macOS/Linux Codex target, either add the target TUI's `codex` directory to the receiver service's `PATH` (for example, launchd `EnvironmentVariables.PATH` or systemd `Environment=PATH=...`) or set the operator-owned binding's `codexBin` to an absolute path ending in `codex`, such as `/opt/homebrew/bin/codex`. The receiver validates a regular executable and resolves symlinks to their actual target at startup; `codexPython` is not used for Unix Codex. The target must still pass the normal live-writer and home checks. Under the same receiver environment, run `send --dry-run` before a real send: a missing binary is refused as `codex_executable_not_found` before submission. Never automatically retry an unknown outcome.
+
 ## WSL receiver for native Windows Codex
 
 Run the receiver in WSL2 when the Codex session and CLI run natively on the same
@@ -79,7 +160,8 @@ the mounted state home and executable:
       "agent": "codex",
       "target": "codex:FULL-THREAD-UUID",
       "codexHome": "/mnt/c/Users/alice/.codex",
-      "codexBin": "/mnt/c/Users/alice/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe"
+      "codexBin": "/mnt/c/Users/alice/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe",
+      "codexPython": "/mnt/c/Python313/python.exe"
     }
   },
   "peers": {
@@ -92,18 +174,30 @@ the mounted state home and executable:
 ```
 
 `codexHome` must be an absolute WSL path on a mounted local Windows drive and
-`codexBin` must be an absolute, executable regular file named `codex.exe`. The
-receiver reads the database through the POSIX path, invokes `/usr/bin/wslpath`
-with fixed arguments and passes the resulting drive-qualified Windows path only
-as `CODEX_HOME` to the native child. It never constructs a shell command. A
-non-WSL host, missing executable or unsafe conversion fails during policy loading
-with `wsl_codex_requires_wsl`, `invalid_codex_executable` or
-`wsl_home_conversion_failed`. Linux/macOS Codex targets omit `codexBin` and keep
-their existing behavior. Native Windows clients continue to use the ordinary
-local CLI; this adapter is only for a WSL receiver that targets Windows Codex.
-Because Windows writer locks are not POSIX advisory locks, this explicit binding
-may queue for the fixed home while the native session is inactive. A successful
-submission still reports `consumptionConfirmed: false` until that session consumes it.
+`codexBin` must be an absolute, executable regular file named `codex.exe`.
+`codexPython` is also required: select an installed native Windows Python 3.9+
+interpreter named `python.exe`, not a Microsoft Store execution alias. Both
+executables must be non-symlink files controlled by the operator.
+
+The receiver uses fixed `/usr/bin/wslpath` arguments and streams its standalone
+core into that native interpreter, without constructing a shell command. Native
+Python reads the Windows SQLite/WAL state and verifies the native writer lock,
+unique owner, same-user SID, process creation time and Codex executable identity.
+It does not open that database through Linux SQLite or bypass writer checks.
+Inactive, ambiguous or uninspectable writers fail closed. Existing WSL bindings
+must add `codexPython`; missing or invalid interpreters are rejected with
+`native_windows_python_required` or `invalid_codex_python`.
+
+Linux/macOS targets omit `codexPython` and may set `codexBin` as described above. Native Windows clients continue
+to use the ordinary local CLI; this adapter is for a WSL receiver targeting
+Windows Codex. Successful submission reports `consumptionConfirmed: false`;
+only an independently observed reply proves consumption. Never retry an unknown
+send automatically, including after a policy or receiver upgrade.
+
+Native local CLI support does not imply support for every native Windows SSH
+shell. Source-streamed SSH requires working python3 and a POSIX-compatible
+remote shell; a Windows Store execution alias is insufficient. Use the native
+CLI locally or a WSL SSH endpoint with Python installed.
 
 Start a direct receiver (loopback by default; choose a reachable private interface
 for another machine):
@@ -219,8 +313,9 @@ session-peer device status --state /private/client-state --peer RECEIVER-FINGERP
 `unknown` (including receiver/worker crash) never permits automatic reexecution.
 This is at-most-once execution attempts, not exactly-once consumption. The journal
 caps at 10,000 requests and refuses further new submissions when full. Do not delete
-pending entries or clear the journal to retry unknowns. Retention/rotation and
-long-running fleet management remain RC hardening work.
+pending entries or clear the journal to retry unknowns. The v1.0 CLI does not
+automatically rotate this journal or manage long-running fleets; operators must
+plan capacity and retention without discarding unresolved outcomes.
 
 ## Revoke, restart and recover
 

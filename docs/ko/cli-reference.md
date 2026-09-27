@@ -147,9 +147,10 @@ git clone https://github.com/abruption/session-peer && cd session-peer
 ```
 
 이렇게 하면 `session_peer.py`가 `~/.local/share/session-peer/`에 배치되고,
-`~/.claude/skills/session-peer/`에 [session-peer 스킬](https://github.com/abruption/session-peer-skill/blob/main/session-peer/SKILL.md)의 호환 사본이
-설치되며, `~/.local/bin/session-peer`가 링크됩니다. 기존 cc-peer 파일은 유지됩니다.
-`./install.sh --uninstall [--host ...]`로 제거할 수 있습니다.
+`~/.claude/skills/session-peer/`와 `~/.agents/skills/session-peer/`에 [session-peer 스킬](https://github.com/abruption/session-peer-skill/blob/main/session-peer/SKILL.md)의 호환 사본이
+설치되며, `~/.local/bin/session-peer`가 링크됩니다. 다른 관리자로 설치한 스킬과 심볼릭 링크,
+기존 cc-peer 파일은 유지됩니다. `./install.sh --uninstall [--host ...]`은 설치기가 소유한
+파일만 제거하며, 소유권 표시가 없는 기존 스킬은 보존합니다.
 
 `session-peer update`는 최신 GitHub 릴리스에서 독립 실행형 프로그램을 갱신합니다.
 `./install.sh --host <host>`는 이 체크아웃의 프로그램과 스킬을 SSH를 통해 푸시합니다.
@@ -173,9 +174,10 @@ chmod +x session_peer.py
 ### 스킬
 
 공개 스킬 정본은 [session-peer-skill 저장소](https://github.com/abruption/session-peer-skill)에서 관리합니다.
-독립 실행형 설치 프로그램은 에어갭과 SSH 설치를 위해 호환 사본을 유지하며
-`~/.claude/skills/session-peer/SKILL.md`에 배치합니다. 배치 경로는 기본값 이전에
-`CLAUDE_CONFIG_DIR`, 그 다음 `ANTHROPIC_CONFIG_DIR`을 따릅니다. Claude Code, Codex,
+독립 실행형 설치 프로그램은 에어갭과 SSH 설치를 위해 호환 사본을 유지하며 Claude Code용
+`~/.claude/skills/session-peer/SKILL.md`와 Codex용 `~/.agents/skills/session-peer/SKILL.md`에
+배치합니다. Claude 경로는 기본값 이전에 `CLAUDE_CONFIG_DIR`, 그 다음 `ANTHROPIC_CONFIG_DIR`을
+따릅니다. 별도 관리 스킬을 덮어쓰거나 제거하지 않습니다. Claude Code, Codex,
 Antigravity 전체에 전역 설치하려면 위 Skills CLI 명령을 사용하세요. 스킬은 대상과 메시지
 선택을 안내하고 Python 프로그램은 검색과 전송을 수행합니다. 설치해도 에이전트의 권한이나
 인바운드 설정은 변경되지 않습니다.

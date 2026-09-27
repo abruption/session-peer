@@ -1,6 +1,24 @@
-# 페어링된 기기 및 비공개 릴레이 (v0.9 베타)
+# 페어링된 기기 및 비공개 릴레이 (v1.0)
 
 이 선택형 Unix/Python 3.11+ 트랜스포트는 운영자가 정의한 Claude, Codex 또는 등록된 Antigravity 엔드포인트로 요청을 전달합니다. 일반적인 로컬/SSH 명령은 의존성 없는 상태로 유지됩니다. 이는 명시적인 CLI 워크플로이며, 모바일 애플리케이션, NAT 통과, WireGuard 터널 또는 자동 공용 서비스는 설치되지 않습니다.
+
+## 연결 실패 진단과 안전한 연결 재시도
+
+`no_authenticated_route`는 `retryAllowed:false`, `consumptionConfirmed:false`를 유지합니다. `routeFailures`는 경로별 마지막 `stage`, 허용 목록의 `reason`, `attempts`를 표시합니다. 제한된 `attemptHistory`는 각 시도의 단계·사유·`elapsedMs`를 보존하며 HTTP 거부에는 `httpStatus`, WebSocket 종료에는 `closeCode`가 포함될 수 있습니다. 제어, 입장, 업그레이드, attach, 피어 TLS 및 probe 실패를 구분하되 URL·자격증명·원문 예외·메시지 본문은 기록하지 않습니다. 두 번째 연결이 성공하면 `setupDegraded:true`, `setupAttempts:2`, `setupFailureHistory`가 표시되며 깨끗한 안정성 통과로 계산하지 않습니다.
+
+**WebSocket 업그레이드 전 제어·입장 시간 초과**에만 0.5초 후 한 번 더 Relay에 연결합니다. attach, 피어 TLS 및 probe 시간 초과는 재시도하지 않습니다. WebSocket 업그레이드 시간 초과도 원본에서 이미 수신자 방을 페어링했을 수 있어 재시도하지 않습니다. 새 입장 티켓과 채널을 사용하며 소비된 티켓이나 에이전트 메시지를 재전송하지 않습니다. HTTP 거부, 인증/인증서 오류, 알 수 없는 실패도 재시도하지 않습니다. 직접 연결이 선택되면 Relay 시도는 취소될 수 있습니다. 제출 후 응답 손실은 여전히 `unknown`이며 재전송이나 경로 전환을 하지 않습니다. 이 제한된 완화 조치가 공개 경로 장애 해결을 입증하지는 않습니다. 배포 후 실제 ACK와 장시간 검증을 다시 통과해야 합니다.
+
+수신자는 정제된 `relay_connection_failed` 경고를 stderr에 분당 최대 한 번 출력합니다. 정상 유휴 만료로 보이는 종료는 실패 경고와 분리합니다. `device serve --diagnostic-events`와 `relay serve --diagnostic-events`를 명시적으로 사용하면 방·attach·종료 단계, 소요 시간, 허용 목록의 사유·종료 코드만 stderr에 기록합니다. 기본값은 꺼짐이며 기기 신원, 방 이름, URL, 헤더, 자격증명, 본문은 기록하지 않습니다. Relay 지표에는 방 열림·페어링, 각 레그의 attach 전송 및 만료 카운터가 추가됩니다. attach 전송은 클라이언트 수신의 증명이 아닙니다. 수신자 관점의 `idle_expiry_like`는 서버 원인의 확증이 아닙니다.
+
+WebSocket 종료의 `closeSource`는 코드가 수신됐는지 송신됐는지 구분합니다. Relay 지표는 수신자 선착·클라이언트 선착 방을 구분합니다. `receiverWsAgeMs`는 수신자 대기 시간이지 연결 생존의 증거가 아닙니다. 방 페어링과 수신자의 `attach_received`·피어 TLS 이벤트 시각을 대조해야 합니다.
+
+`stream_close.closeCode`는 원격에서 수신한 종료 코드입니다. `1006`은 종료 프레임을 받지 못했다는 뜻이며 레그 정체 가능성을 시사합니다. `peer_closed`는 상대 레그가 끝나 Relay가 이 레그를 닫은 경우, `remote_going_away`는 Relay의 닫기 요청 없이 원격 엔드포인트가 1001을 보낸 경우입니다. `receiverRoleBusy`·`clientRoleBusy`는 같은 방에서 거절된 중복 레그 수이며, 수신자 값이 늘면 수신자가 재연결하는 동안 Relay가 이전 레그를 아직 붙잡고 있을 수 있습니다.
+
+명시적으로 켠 Relay·수신자 수명주기 이벤트에는 `eventTimeUtcMs`(UTC Unix 밀리초)가 포함됩니다. 클라이언트는 Relay 연결 시도마다 임의 UUIDv4 `attemptId`를 새로 만들고 성공 결과 또는 시도별 실패 메타데이터에 기록합니다. 새 Relay는 이 ID를 페어링된 방 이벤트에 기록하고 새 수신자에게 attach 알림으로 전달합니다. 수신자의 `attach_received`·peer-TLS 이벤트에도 같은 ID가 남습니다. 이 ID는 신원·방 이름·요청 ID·메시지 내용에서 파생되지 않으며 인가나 재전송 안전성을 바꾸지 않습니다. 실패를 귀속하려면 정확한 `attemptId`가 Relay 방 하나와 수신자 레그 하나에만 대응하는지 확인하고 시계 오차를 고려해 UTC 시각을 대조하십시오. 이벤트가 없거나 중복되거나 구버전 레그라면 시각·집계값만으로 추정하지 말고 `unattributed`로 기록하십시오.
+
+공개 경로 정체가 재발하면 명시적으로 켠 Relay의 `stream_close` 이벤트에서 각 레그의 `ingressFrames`/`ingressBytes`, `egressCompletedFrames`/`egressCompletedBytes` 및 첫·마지막 UTC 프레임 시각을 비교할 수 있습니다. 이는 암호화된 WebSocket 프레임 수이지 메시지 수가 아닙니다. 송신 완료는 Relay의 소켓 send가 반환됐다는 뜻일 뿐 Cloudflare·수신자·TLS·애플리케이션이 바이트를 소비했다는 증거가 아닙니다. 같은 방·`attemptId` 아래 두 역할을 비교한 뒤 수신자 이벤트와 대조하십시오. 이벤트가 없거나 매칭이 모호하면 `unattributed`로 유지합니다. 카운터만으로 Cloudflare·OCI·중간 홉의 귀책을 정할 수 없습니다. 메타데이터 시각과 프레임 크기만으로도 활동이 드러날 수 있으므로 opt-in 로그를 비공개·한정 보존하십시오.
+
+1초 이상 열려 있던 대기 방이 Relay에 의해 정상 종료되면 수신자는 백오프를 늘리지 않고 0.5초 뒤 다시 연결합니다. 그 밖의 실패와 1초 안에 닫힌 방은 계속 최대 5초까지 지수 백오프합니다. Relay 레그는 양쪽 모두 10초 WebSocket ping 간격·제한을 사용하므로 정체된 레그를 약 40초가 아닌 약 20초 안에 감지합니다. 이는 재연결 공백을 줄일 뿐 정체된 네트워크 경로를 고치지는 않습니다.
 
 ## 설치
 
@@ -11,7 +29,7 @@ python3 -m venv ~/.local/share/session-peer-relay/venv
 ~/.local/share/session-peer-relay/venv/bin/pip install 'session-peer[relay]'
 ```
 
-릴레이 extra는 v0.9.0부터 PyPI에서 제공되며 베타 상태로 유지됩니다. 배포 자체가 장기적인 운영 안정성을 보장하지는 않습니다. 아래에 표시된 설치된 `session-peer` 실행 파일을 사용하십시오. 관리 명령(`device`/`relay`)은 JSON을 출력합니다. 패키지 버전이 서로 다른 Python 환경을 혼용하지 마십시오.
+릴레이 extra는 v0.9.0부터 PyPI에서 제공됩니다. 패키지 발행은 호스팅 Relay의 가용성을 보장하지 않습니다. 아래에 표시된 설치된 `session-peer` 실행 파일을 사용하십시오. 관리 명령(`device`/`relay`)은 JSON을 출력합니다. 패키지 버전이 서로 다른 Python 환경을 혼용하지 마십시오.
 
 ## 신원, 정책 및 페어링
 
@@ -31,7 +49,8 @@ session-peer device init --state /private/device-state
     "review": {
       "agent": "codex",
       "target": "codex:FULL-THREAD-UUID",
-      "codexHome": "/home/alice/.codex"
+      "codexHome": "/home/alice/.codex",
+      "codexBin": "/home/alice/.local/bin/codex"
     }
   },
   "peers": {
@@ -47,6 +66,8 @@ Claude 바인딩은 `agent: claude`와 홈 없는 정확한 세션 이름/PID를
 
 페어링은 기기 키 소유를 증명합니다. **이는 네이티브 에이전트 접근 권한을 부여하지 않습니다**: 수신 정책이 지문, 작업 및 대상 별칭을 별도로 허용해야 합니다. 피어는 실행 파일, 홈, wake 플래그, SSH 목적지 또는 임의의 네이티브 명령 인자를 제공할 수 없습니다. 정책 변경은 수신자를 재시작한 후에 적용됩니다. 제한: 구성된 대상 8개 및 정책 기기 128개.
 
+launchd나 systemd로 시작한 수신자는 로그인 셸이 아닌 서비스 관리자의 최소 `PATH`를 물려받습니다. macOS/Linux Codex 대상은 대상 TUI가 쓰는 `codex` 디렉터리를 수신기 서비스의 `PATH`에 넣거나(예: launchd `EnvironmentVariables.PATH`, systemd `Environment=PATH=...`), 운영자 소유 바인딩의 `codexBin`을 `/opt/homebrew/bin/codex`처럼 `codex`로 끝나는 절대 경로로 지정할 수 있습니다. 수신자는 기동 시 실행 가능한 일반 파일을 검증하고 심볼릭 링크를 실제 대상으로 해석합니다. Unix Codex에는 `codexPython`을 사용하지 않습니다. 기존의 활성 writer 및 홈 검사는 그대로 적용됩니다. 실제 전송 전에 같은 수신기 환경에서 `send --dry-run`으로 확인하십시오. 실행 파일이 없으면 제출 전에 `codex_executable_not_found`로 거부합니다. 결과가 unknown인 전송은 자동 재시도하지 마십시오.
+
 ## 네이티브 Windows Codex용 WSL 수신자
 
 같은 Windows 워크스테이션에서 Codex 세션과 CLI가 네이티브로 실행될 때 수신자는 WSL2에서 실행합니다. 페어링된 피어가 아니라 운영자 정책이 마운트된 상태 홈과 실행 파일을 모두 고정합니다:
@@ -58,7 +79,8 @@ Claude 바인딩은 `agent: claude`와 홈 없는 정확한 세션 이름/PID를
       "agent": "codex",
       "target": "codex:FULL-THREAD-UUID",
       "codexHome": "/mnt/c/Users/alice/.codex",
-      "codexBin": "/mnt/c/Users/alice/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe"
+      "codexBin": "/mnt/c/Users/alice/AppData/Local/Programs/OpenAI/Codex/bin/codex.exe",
+      "codexPython": "/mnt/c/Python313/python.exe"
     }
   },
   "peers": {
@@ -70,7 +92,13 @@ Claude 바인딩은 `agent: claude`와 홈 없는 정확한 세션 이름/PID를
 }
 ```
 
-`codexHome`은 로컬 Windows 드라이브에 마운트된 절대 WSL 경로여야 하고, `codexBin`은 이름이 `codex.exe`인 절대 경로의 실행 가능한 일반 파일이어야 합니다. 수신자는 POSIX 경로로 데이터베이스를 읽고, 고정 인자로 `/usr/bin/wslpath`를 호출한 뒤 드라이브가 명시된 Windows 경로를 네이티브 자식의 `CODEX_HOME`으로만 전달합니다. 셸 명령은 만들지 않습니다. WSL이 아닌 호스트, 누락된 실행 파일 또는 안전하지 않은 변환은 정책 로드 중 `wsl_codex_requires_wsl`, `invalid_codex_executable` 또는 `wsl_home_conversion_failed`로 실패합니다. Linux/macOS Codex 대상은 `codexBin`을 생략하며 기존 동작을 유지합니다. 네이티브 Windows 클라이언트는 계속 일반 로컬 CLI를 사용합니다. 이 어댑터는 Windows Codex를 대상으로 하는 WSL 수신자 전용입니다. Windows writer 잠금은 POSIX advisory lock이 아니므로 이 명시적 바인딩은 네이티브 세션이 비활성일 때도 고정 홈에 큐를 넣을 수 있습니다. 성공한 제출도 그 세션이 소비하기 전까지 `consumptionConfirmed: false`를 보고합니다.
+`codexHome`은 로컬 Windows 드라이브에 마운트된 절대 WSL 경로입니다. `codexBin`과 필수 항목 `codexPython`은 각각 `codex.exe`, `python.exe`라는 이름의 절대 경로이며 운영자가 관리하는 실행 가능한 일반 파일이어야 합니다(심볼릭 링크 금지). 인터프리터에는 Microsoft Store 실행 별칭이 아닌 설치된 네이티브 Windows Python 3.9+를 지정합니다.
+
+고정 인자의 `/usr/bin/wslpath`로 경로를 변환하고 자체 standalone 코드를 네이티브 Python으로 스트리밍합니다. 셸 명령은 만들지 않습니다. Windows SQLite/WAL과 writer 잠금은 네이티브 Python이 확인하며 유일한 소유자·동일 사용자 SID·프로세스 생성 시각·Codex 실행 파일 신원을 검증합니다. Linux SQLite로 Windows DB를 열거나 writer 검사를 우회하지 않습니다. 비활성·모호·검사 불가능한 writer는 거부합니다. 기존 WSL 정책에도 `codexPython`을 추가해야 하며 누락·잘못된 인터프리터는 `native_windows_python_required` 또는 `invalid_codex_python`으로 거부합니다.
+
+Linux/macOS 대상은 `codexPython`을 생략하고 위와 같이 `codexBin`을 선택적으로 설정할 수 있습니다. Windows 클라이언트는 일반 로컬 CLI를 계속 사용합니다. 성공한 제출도 `consumptionConfirmed: false`이며 소비는 별도의 실제 응답으로 확인해야 합니다. 정책이나 수신자를 갱신해도 기존 unknown 전송을 자동 재시도하지 마십시오.
+
+네이티브 로컬 CLI 지원이 모든 Windows SSH 셸 지원을 뜻하지는 않습니다. 소스 스트리밍 SSH에는 동작하는 python3와 POSIX 호환 원격 셸이 필요하며 Windows Store 실행 별칭만으로는 부족합니다. 네이티브 CLI를 로컬에서 사용하거나 Python이 설치된 WSL SSH 엔드포인트를 사용하십시오.
 
 직접 수신자를 시작합니다(기본값은 루프백이며, 다른 머신을 위해 연결 가능한 사설 인터페이스를 선택하십시오):
 
@@ -142,7 +170,7 @@ session-peer device status --state /private/client-state --peer RECEIVER-FINGERP
   --request-id ORIGINAL-UUID --admission-file /private/client.token
 ```
 
-`unknown`(수신자/워커 충돌 포함)은 결코 자동 재실행을 허용하지 않습니다. 이는 최대 한 번 실행 시도이며, 정확히 한 번 소비가 아닙니다. 저널은 10,000개의 요청으로 제한되며 가득 차면 더 이상의 새로운 제출을 거부합니다. 알 수 없는 항목을 재시도하기 위해 보류 중인 항목을 삭제하거나 저널을 비우지 마십시오. 보존/순환 및 장기 실행 플릿 관리는 RC 강화 작업으로 남아 있습니다.
+`unknown`(수신자/워커 충돌 포함)은 결코 자동 재실행을 허용하지 않습니다. 이는 최대 한 번 실행 시도이며, 정확히 한 번 소비가 아닙니다. 저널은 10,000개의 요청으로 제한되며 가득 차면 더 이상의 새로운 제출을 거부합니다. 알 수 없는 항목을 재시도하기 위해 보류 중인 항목을 삭제하거나 저널을 비우지 마십시오. v1.0 CLI는 저널을 자동 순환하거나 장기 운영 플릿을 관리하지 않습니다. 운영자는 미확정 결과를 폐기하지 않는 범위에서 용량과 보존을 계획해야 합니다.
 
 ## 철회, 재시작 및 복구
 

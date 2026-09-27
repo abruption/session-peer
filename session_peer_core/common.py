@@ -42,10 +42,10 @@ from typing import NamedTuple, TypedDict
 
 try:
     import fcntl
-except ImportError:  # Windows has no POSIX flock; activity stays unknown there.
+except ImportError:  # Native Windows uses its own read-only writer inspection.
     fcntl = None
 
-__version__ = "1.0.0b1"
+__version__ = "1.0.1"
 GITHUB_REPO = "abruption/session-peer"
 
 # Claude Code refuses a same-machine message once its serialized form passes
@@ -80,6 +80,7 @@ EXIT_ERROR = 1
 EXIT_NO_TARGET = 2
 
 _CLIENT_UPDATE_NOTICE: dict | None = None
+_SKILL_UPDATE_NOTICES: list[dict] = []
 _IDENTITY_UNSET = object()
 
 
