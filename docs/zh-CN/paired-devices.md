@@ -260,3 +260,15 @@ session-peer device routes --state ./client-state --peer RECEIVER_FINGERPRINT \
 
 路由变更不会授权新身份或恢复已被吊销的设备。有关有界实时 Antigravity
 测试和剩余发布关卡，请参阅[公开试点证据](relay-public-pilot-2026-09-17.md)。
+
+## 首次连接公共Relay
+
+需要Python 3.11+的macOS/Linux(Windows使用WSL)和另装的Relay extra，skill/plugin本身不会安装。新pipx环境使用 `pipx install --python python3.11 'session-peer[relay]'`，已有环境保留原管理器；standalone继续用于local/SSH，另选Relay环境。两端分别使用私有state执行以下命令，将 `FULL-UUID` 替换为新的操作UUID，响应不确定时保留此UUID。
+
+```sh
+session-peer device init --state /private/device-state
+session-peer device login --state /private/device-state --server https://relay.abruption.dev
+session-peer device enroll --state /private/device-state --name laptop --operation-id FULL-UUID
+```
+
+按上方schema创建receiver policy，启动 `session-peer` `device serve --state /private/device-state --policy /private/receiver-policy.json --relay wss://relay.abruption.dev/v1/connect --login --seconds 3600`。在另一终端运行 `session-peer` `device invite --state /private/device-state --relay wss://relay.abruption.dev/v1/connect --out /private/invite.json`，安全转交邀请。已登录并注册的client须在10分钟内运行 `session-peer` `device pair --state /private/client-state --invite /private/invite.json --route relay --login`，然后 `session-peer list --device RECEIVER-ID --device-state /private/client-state --device-route relay --relay-login --json`。保持receiver运行。注册、配对和native权限互不等同。发送前先dry-run；queued不是ACK。引导不会自动安装、登录或重试。一般403/404或 `no_authenticated_route` 不能证明receiver已停止。仅按证据区分登录缺失/过期和设备查询失败，不确定的发送须核对而非重发。

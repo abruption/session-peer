@@ -20,9 +20,12 @@ from .relay import Relay, RelayLimits
 from .store import Store, Rejected
 from .wire import validate_relay_url, direct_address
 from .transport_errors import NoAuthenticatedRoute, TransportFailure
+from .guidance import with_guidance
 
 
 def connection_diagnostics(exc):
+    if getattr(exc, 'relay_hint', None) == 'login_missing':
+        return {'connectionFailure': {'hint': 'login_missing'}}
     if isinstance(exc, NoAuthenticatedRoute):
         return {'routeFailures': exc.route_failures}
     if isinstance(exc, TransportFailure):
@@ -387,6 +390,7 @@ def main(kind, argv):
     except Exception as exc:
         result = {'ok': False, 'reason': str(exc) if isinstance(exc, Rejected) else type(exc).__name__,
                   'retryAllowed': False, **connection_diagnostics(exc)}
+    result = with_guidance(result)
     emit(result)
     return 0 if result.get('ok') else 1
 
@@ -427,8 +431,11 @@ def invoke_core(args):
     except Exception as exc:
         result = {'ok': False, 'reason': str(exc) if isinstance(exc, Rejected) else type(exc).__name__,
                   'retryAllowed': False, 'consumptionConfirmed': False, **connection_diagnostics(exc)}
+    result = with_guidance(result)
     result.update(device=args.device, host='device:'+args.device, transport='paired_device')
     human = 'Device result: '+str(result.get('status', 'ok' if result.get('ok') else result.get('reason')))
+    if result.get('guidance'):
+        human += '\n' + result['guidance']['nextAction']
     if args.command == 'list':
         human += '\nTARGET  AGENT  ID  STATUS\n' + '\n'.join(
             str(row.get('target', ''))+'  '+str(row.get('agent', ''))+'  '+str(row.get('id', row.get('pid', '')))+'  '+str(row.get('status', 'unknown'))

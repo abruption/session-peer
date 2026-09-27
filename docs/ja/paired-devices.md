@@ -195,3 +195,15 @@ session-peer device routes --state ./client-state --peer RECEIVER_FINGERPRINT \
 ```
 
 ルートの変更によって新しいアイデンティティが承認されたり、失効したデバイスが復活したりすることはありません。制限された実稼働 Antigravity テストおよび残りのリリースゲートについては、[パブリックパイロットの証拠](relay-public-pilot-2026-09-17.md) を参照してください。
+
+## 公開Relayへの初回接続
+
+Python 3.11+のmacOS/Linux(WindowsはWSL)と別途Relay extraが必要です。skill/pluginだけでは導入されません。新規pipx環境は `pipx install --python python3.11 'session-peer[relay]'` を使い、既存環境は元の管理者を維持してください。standaloneはlocal/SSH用のまま、Relay環境を別途選びます。両端で個別のprivate stateを使い、`FULL-UUID`を新しい操作UUIDに置き換えます。不確実な応答では同じUUIDを保持します。
+
+```sh
+session-peer device init --state /private/device-state
+session-peer device login --state /private/device-state --server https://relay.abruption.dev
+session-peer device enroll --state /private/device-state --name laptop --operation-id FULL-UUID
+```
+
+上記schemaのreceiver policyを作り、`session-peer` `device serve --state /private/device-state --policy /private/receiver-policy.json --relay wss://relay.abruption.dev/v1/connect --login --seconds 3600` を起動します。別terminalで `session-peer` `device invite --state /private/device-state --relay wss://relay.abruption.dev/v1/connect --out /private/invite.json` を実行し、招待を安全にclientへ渡します。login・enroll済みclientで10分以内に `session-peer` `device pair --state /private/client-state --invite /private/invite.json --route relay --login`、続いて `session-peer list --device RECEIVER-ID --device-state /private/client-state --device-route relay --relay-login --json` を実行します。receiverを動かし続けてください。enroll、pairing、native権限は別です。送信前はdry-run、queuedはACKではありません。自動install/login/retryはしません。一般403/404や `no_authenticated_route` からreceiver停止を断定しません。既知のlogin欠落・失効、device照会失敗のみ区別し、不確実な送信は再送せず照合します。

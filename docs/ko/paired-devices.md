@@ -195,3 +195,15 @@ session-peer device routes --state ./client-state --peer RECEIVER_FINGERPRINT \
 ```
 
 경로 변경이 새 신원을 승인하거나 철회된 기기를 되살리지는 않습니다. 제한된 실시간 Antigravity 테스트 및 남은 릴리스 게이트에 대해서는 [공개 파일럿 근거](relay-public-pilot-2026-09-17.md)를 참조하십시오.
+
+## 공개 Relay 첫 연결
+
+Python 3.11+ macOS/Linux(Windows는 WSL)와 별도 Relay extra가 필요하며 스킬·플러그인만으로 설치되지 않습니다. 신규 pipx 설치는 `pipx install --python python3.11 'session-peer[relay]'`를 사용합니다. 기존 설치는 원래 관리자를 유지하고 standalone은 로컬·SSH용으로 보존한 채 별도 Relay 환경을 선택합니다. 양쪽에서 각각의 비공개 state로 다음을 실행하고 `FULL-UUID`는 새 작업 UUID로 바꿉니다. 응답이 불확실하면 해당 UUID를 보존합니다.
+
+```sh
+session-peer device init --state /private/device-state
+session-peer device login --state /private/device-state --server https://relay.abruption.dev
+session-peer device enroll --state /private/device-state --name laptop --operation-id FULL-UUID
+```
+
+위 스키마로 수신 정책을 만든 뒤 `session-peer` `device serve --state /private/device-state --policy /private/receiver-policy.json --relay wss://relay.abruption.dev/v1/connect --login --seconds 3600`를 실행합니다. 다른 터미널에서 `session-peer` `device invite --state /private/device-state --relay wss://relay.abruption.dev/v1/connect --out /private/invite.json`로 초대장을 만들고 안전하게 클라이언트로 전달합니다. 로그인·등록된 클라이언트에서 10분 안에 `session-peer` `device pair --state /private/client-state --invite /private/invite.json --route relay --login`를 실행한 뒤 `session-peer list --device RECEIVER-ID --device-state /private/client-state --device-route relay --relay-login --json`로 확인합니다. 수신기는 계속 실행해야 합니다. 등록·페어링·native 권한은 별개이며 전송 전 dry-run을 사용합니다. queued는 ACK가 아닙니다. 안내는 자동 설치·로그인·재시도를 하지 않습니다. 일반 403/404나 `no_authenticated_route`만으로 수신기 종료를 단정하지 않습니다. 확인된 로그인 누락·만료와 기기 조회 실패만 구분하며 불확실한 전송은 재전송하지 않고 대조합니다.

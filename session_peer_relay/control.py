@@ -90,8 +90,11 @@ def call(server, path, body=None, token=None):
         known = {'authorization_pending', 'slow_down', 'access_denied', 'expired_token',
                  'invalid_grant', 'invalid_client', 'operation_already_committed',
                  'operation_conflict', 'operation_not_found'}
-        raise TransportFailure('control_response', error if isinstance(error, str) and error in known else 'control_request_refused',
-                               http_status=status, retry_after=retry_after)
+        refused = TransportFailure('control_response', error if isinstance(error, str) and error in known else 'control_request_refused',
+                                   http_status=status, retry_after=retry_after)
+        if error == 'device_not_found':
+            refused.hint = 'device_not_found'
+        raise refused
     return value
 
 
@@ -153,7 +156,12 @@ async def login(store, server, no_browser=False):
 
 
 def session(store):
-    value = json.loads(private_read(store.root/'login.json', 16384))
+    try:
+        value = json.loads(private_read(store.root/'login.json', 16384))
+    except FileNotFoundError as exc:
+        # Preserve the existing exception/reason; attach only a fixed safe hint.
+        exc.relay_hint = 'login_missing'
+        raise
     if value.get('expiresAt', 0) <= time.time():
         raise Rejected('login_expired')
     origin(value['server'])
