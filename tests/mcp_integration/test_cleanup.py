@@ -19,9 +19,11 @@ class Cleanup(unittest.IsolatedAsyncioTestCase):
                 script = '''import os,signal,sys,time
 if os.fork() == 0:
  signal.signal(signal.SIGTERM, signal.SIG_IGN)
- open(sys.argv[1], 'w').write(str(os.getpid()))
  with open(os.devnull, 'r+b', buffering=0) as stream:
   for fd in (0,1,2): os.dup2(stream.fileno(), fd)
+ with open(sys.argv[1] + '.tmp', 'w') as stream:
+  stream.write(str(os.getpid()))
+ os.replace(sys.argv[1] + '.tmp', sys.argv[1])
  time.sleep(30)
 else:
  time.sleep(30)
