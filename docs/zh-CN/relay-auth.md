@@ -402,3 +402,5 @@ OAuth、Mac 用户浏览器、Python JWT 集成、24 小时运行或真实 Claud
 `tests/control_integration/test_control_integration.py` 中的可执行 Node/Python 夹具涵盖了
 注册、准入、已吊销凭据、跨所有者拒绝以及带响应丢失的
 轮换。预置的测试夹具会话并不能作为实际 OAuth 的证据。
+
+Control在发布及提交变更前，按Python reader的1MiB UTF-8上限检查完整公开state，并预留revision与时间戳增长空间。超限变更以 `public_state_capacity_exceeded`(409)回滚，不会自动删除撤销tombstone。已有超大DB保持unhealthy，直至运维安全解决容量问题。限制按字节而非固定设备数；heartbeat和重启仍须读取最后有效snapshot。

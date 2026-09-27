@@ -406,3 +406,5 @@ OAuth, Mac 사용자 브라우저, Python JWT 통합, 24시간 운영 또는 실
 `tests/control_integration/test_control_integration.py`에 있는 실행 가능한 Node/Python 픽스처는
 등록, 진입, 폐기된 자격 증명, 소유자 간 거부 및 응답 유실이
 동반된 로테이션을 다룹니다. 시드된 픽스처 세션은 실제 OAuth의 증거가 아닙니다.
+
+Control은 변경의 게시·커밋 전에 직렬화된 전체 공개 상태를 Python 판독기의 UTF-8 1MiB 제한으로 검사하고 향후 revision·시각 숫자 증가 공간을 예약합니다. 초과 변경은 `public_state_capacity_exceeded`(409)로 롤백하며 폐기 기록을 자동 삭제하지 않습니다. 이미 과대한 DB는 운영자가 안전하게 용량 문제를 해결할 때까지 unhealthy로 유지됩니다. 고정 기기 수가 아닌 바이트 제한이며 heartbeat·재기동도 마지막 유효 스냅샷을 읽어야 합니다.

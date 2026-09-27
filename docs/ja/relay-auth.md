@@ -407,3 +407,5 @@ OAuth、Mac ユーザーブラウザ、Python JWT 統合、24 時間稼働、ま
 `tests/control_integration/test_control_integration.py` にある実行可能な Node/Python フィクスチャは、
 登録、入場、失効した認証情報、所有者間の拒否、および応答消失を
 伴うローテーションをカバーしています。シードされたフィクスチャセッションは、実際の OAuth の証拠ではありません。
+
+Controlは公開・commit前に全公開stateのUTF-8をPython readerの1MiB上限で検査し、将来のrevision・時刻の桁増加を予約します。超過変更は `public_state_capacity_exceeded`(409)でrollbackし、失効tombstoneを削除しません。既に過大なDBは運用者が安全に解決するまでunhealthyです。固定device数でなくbyte上限であり、heartbeatと再起動も最後の有効snapshotを読める必要があります。

@@ -418,3 +418,5 @@ Do not infer or silently convert the generation used by older candidates.
 The executable Node/Python fixture in `tests/control_integration/test_control_integration.py` covers
 registration, admission, revoked credentials, cross-owner rejection and rotation
 with response loss. Seeded fixture sessions are not evidence of actual OAuth.
+
+Control budgets the complete serialized public state against the Python reader's 1 MiB UTF-8 limit before publishing or committing a mutation. Space for future numeric revision/timestamp growth is reserved. An oversized mutation fails with `public_state_capacity_exceeded` (409) and rolls back; it never silently drops revoked-device tombstones. A pre-existing oversized committed database remains unhealthy until an operator resolves capacity safely. The limit is bytes, not a fixed user/device count; heartbeat and restart must still read the last valid snapshot.
