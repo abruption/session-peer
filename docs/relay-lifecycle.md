@@ -233,3 +233,5 @@ SQLite table counts, state/replay revisions, spent entries, signing key and
 runtime links. Never overlay a live service or automatically promote an old
 control database, signing key or replay high-water. Production replacement still
 requires a stopped stack and explicit rollback/revocation fencing.
+
+New recovery plans inspect the stored native result, not only the journal's done flag. Pending, unknown, missing, malformed, or contradictory outcomes require explicit reconciliation; retryAllowed=false is not evidence of delivery. A confirmed refused outcome is not_processed. Successful submitted/queued/posted outcomes are already_processed submission evidence, not proof of consumption or ACK. None of these classifications authorizes automatic resend. Existing recovery plans are preserved on resume: review plans created by older versions against the archived receipts and reconcile any incorrectly classified unknown items before activation.

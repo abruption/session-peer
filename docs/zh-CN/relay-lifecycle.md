@@ -126,3 +126,5 @@ session-peer relay init-replay --out /private/relay-state/spent-tickets.json
 已部署的 KR 服务在其加密的 Restic 作业之前使用 `deploy/ops/abruption-kr/session-peer-backup-snapshot.py`。该辅助程序会短暂停止协同栈，并创建一个仅 root 权限的恢复集，其中包含事务一致的控制数据库、准入签名密钥、提供商配置、公有认证状态以及中继重放/高水位线文件。它在使快照可见之前验证数据库完整性和签名密钥已发布的 JWK，然后恢复先前处于活跃状态的栈。部分快照将中止 DR 作业。
 
 Restic 范围还包含不可变的控制和中继运行时、就绪辅助程序以及已安装的服务单元。恢复必须首先还原到隔离的仅 root 权限目录中，并验证快照清单、文件哈希和模式、SQLite 表计数、状态/重放修订版本、已消耗条目、签名密钥以及运行时链接。切勿覆盖正在运行的活跃服务，也不要自动晋升旧的控制数据库、签名密钥或重放高水位线。生产环境替换仍需要停止的栈以及显式的回滚/吊销隔离。
+
+新的恢复计划检查已存储的原生结果，而不只是日志的 done 标记。pending、unknown、缺失、格式错误或矛盾的结果必须显式核对；retryAllowed=false 不是投递证据。确定的 refused 结果分类为 not_processed。成功的 submitted/queued/posted 仅是 already_processed 提交证据，并非消费或 ACK 证明。任何分类都不授权自动重发。恢复执行时保留已有计划：请将旧版本创建的计划与归档收据核对，在激活前显式修正被错误分类的 unknown 项。

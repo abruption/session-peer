@@ -82,6 +82,29 @@ def _verify(certificate, payload, proof):
         raise Rejected('invalid_recovery_proof') from None
 
 
+def _native_classification(state, raw):
+    # A finished journal row may still contain an unknown native outcome.
+    # retryAllowed=False prevents retransmission; it does not prove delivery.
+    if state != 'done':
+        return 'unknown'
+    try:
+        result = json.loads(raw)
+    except (ValueError, TypeError, RecursionError):
+        return 'unknown'
+    if not isinstance(result, dict):
+        return 'unknown'
+    if (result.get('status') == 'refused' and result.get('ok') is False
+            and result.get('submitted', False) is False
+            and result.get('consumptionConfirmed', False) is False):
+        return 'not_processed'
+    if (result.get('status') in ('submitted', 'queued', 'posted')
+            and result.get('ok') is True and result.get('submitted', True) is True):
+        # Submission evidence is not consumption/ACK evidence, nor permission
+        # to replay it under the fresh identity.
+        return 'already_processed'
+    return 'unknown'
+
+
 def begin(restored, fresh, operation_id):
     _uuid(operation_id)
     if not restored.recovery_required():
@@ -107,10 +130,10 @@ def begin(restored, fresh, operation_id):
                       'capabilities': json.loads(capabilities),
                       'operationId': _derived(operation_id, 'peer:'+ident), 'status': 'pending'})
     native = []
-    for peer, ident, state in restored.db.execute(
-            'SELECT peer,id,status FROM requests ORDER BY peer,id'):
+    for peer, ident, state, result in restored.db.execute(
+            'SELECT peer,id,status,result FROM requests ORDER BY peer,id'):
         native.append({'peer': peer, 'requestId': ident,
-                       'classification': 'already_processed' if state == 'done' else 'unknown'})
+                       'classification': _native_classification(state, result)})
     managed = restored.db.execute('SELECT value FROM metadata WHERE key="control_name"').fetchone()
     plan = {'schemaVersion': 1, 'id': operation_id, 'status': 'pending',
             'oldPrincipal': tombstone[0], 'oldGeneration': tombstone[1],
