@@ -12,15 +12,16 @@ const runNpm = args => execFileSync(process.execPath, [npm, ...args], { encoding
 try {
   const metadata = JSON.parse(readFileSync('package.json'));
   assert.equal(metadata.private, true);
-  assert.equal(metadata.dependencies, undefined);
+  assert.deepEqual(metadata.dependencies, { 'fs-ext-extra-prebuilt': '2.2.14' });
   for (const hook of ['preinstall', 'install', 'postinstall', 'prepare', 'prepack']) {
     assert.equal(metadata.scripts[hook], undefined);
   }
-  assert.deepEqual(readFileSync('LICENSE'), readFileSync('../../LICENSE'));
+  assert.match(readFileSync('LICENSE', 'utf8'), /MIT License/);
+  assert.equal(execFileSync(process.execPath, ['dist/cli.js', '--version'], { encoding: 'utf8' }).trim(), `${metadata.name} ${metadata.version}`);
   let hash;
   for (let index = 0; index < 2; index++) {
     const [packed] = JSON.parse(runNpm(['pack', '--ignore-scripts', '--json', '--pack-destination', task]));
-    assert.deepEqual(packed.files.map(file => file.path).sort(), ['LICENSE', 'README.md', 'dist/cli.js', 'package.json']);
+    assert.deepEqual(packed.files.map(file => file.path).sort(), ['LICENSE', 'README.md', 'dist/cli.js', 'dist/discovery.js', 'dist/process.js', 'dist/protocol.js', 'dist/send.js', 'dist/writer.js', 'package.json']);
     const next = createHash('sha256').update(readFileSync(join(task, packed.filename))).digest('hex');
     if (hash) assert.equal(next, hash, 'same build must produce identical tarball');
     hash = next;
@@ -28,8 +29,8 @@ try {
   const prefix = join(task, 'install');
   const home = join(task, 'empty-home');
   mkdirSync(home);
-  runNpm(['install', '--prefix', prefix, '--ignore-scripts', '--no-audit', '--no-fund', join(task, 'session-peer-ts-prototype-0.0.0.tgz')]);
-  const binary = join(prefix, 'node_modules/.bin/session-peer-ts-prototype');
+  runNpm(['install', '--prefix', prefix, '--ignore-scripts', '--no-audit', '--no-fund', join(task, `${metadata.name}-${metadata.version}.tgz`)]);
+  const binary = join(prefix, 'node_modules/.bin/session-peer-ts');
   assert.ok(statSync(binary).mode & 0o111);
   const result = JSON.parse(execFileSync(process.execPath, [binary, 'list', '--agent', 'claude', '--json'], {
     encoding: 'utf8', timeout: 10000,

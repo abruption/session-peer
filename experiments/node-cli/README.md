@@ -1,117 +1,119 @@
-# Node CLI experiment — issue #186
+# session-peer-ts
 
-**Unpublished, read-only prototype. Not a replacement for session-peer.**
-The stable Python CLI and hosted Relay remain unchanged. This directory is
-excluded from the Python source distribution (`/experiments` in `pyproject.toml`).
-No separate repository, npm name reservation or public release is made here.
+Python-free **client CLI preview** for local and SSH messaging to Claude Code and
+Codex. This is not a Relay server or a full replacement for the Python product.
+Public npm publication remains disabled (`private: true`).
 
-## Architecture decision
+## Scope and prerequisites
 
-| Option | Benefit | Cost / decision |
-| --- | --- | --- |
-| npm adapter calling Python | Reuses mature messaging and safety implementation | Still requires an explicitly installed Python CLI; not Python-free. Not selected for this experiment. |
-| Independent TypeScript CLI | A Node-only installation can serve npm users | Must independently preserve identity, queue, transport and uncertain-outcome contracts. Selected **only for a bounded discovery prototype**. |
-| No npm package | No second runtime to secure and maintain | Remains the default distribution decision until the gates below pass. |
+- macOS/Linux, Node 22.13+ within 22.x or Node 24.x. Windows and Node 26 are not
+  supported. A native flock dependency provides prebuilt binaries; x64/arm64
+  installation requires a matching binary. It never falls back to checking only
+  that a lock file exists.
+- Claude: a running native TUI with a local inbox. Codex: a saved thread with one
+  stable live writer, native `codex queue`, `lsof` and `ps`. Saved rows alone do
+  not authorize delivery. Explicit home selection is mandatory.
+- SSH: OpenSSH and this **same preview version installed explicitly on the
+  remote host**, with supported Node. No Python fallback, source streaming,
+  remote runtime download or automatic installation.
+- Unsupported: Relay client/server, Control, MCP, wake, inactive queue opt-in,
+  Antigravity, updates and implicit multi-agent discovery. Unsupported options
+  fail explicitly; existing Python installs and hosted services are unchanged.
 
-The long-term candidate is a **client CLI**, never a TypeScript replacement for
-the Relay server or Control service. Relay **client** support is also absent in
-this first slice; it is not silently routed through Python.
+The architecture evaluation in Python
+[#186](https://github.com/abruption/session-peer/issues/186) compared an explicit
+Python wrapper, an independent Node client, and no npm distribution. This selects
+an independent client: Python is only needed by development conformance tests.
+A public release still needs a maintenance and publication decision.
 
-This deliberately starts narrower than a messaging MVP. Codex submission needs
-kernel advisory-lock probing, process owner/start-time evidence, cross-home
-ambiguity checks and revalidation immediately before queueing. `lsof`, a PID,
-or a saved SQLite row alone is not equivalent. No such shortcut is implemented.
-Even `send --dry-run` fails explicitly until those checks exist.
-
-## Run locally
-
-Prerequisites: Node **22.13+ within 22.x, or 24.x**, macOS/Linux. The Node
-`node:sqlite` API may print an experimental warning on stderr; stdout remains
-one JSON result. Windows is explicitly rejected because Claude PID creation-time
-and named-pipe handling have not been ported. Linux is a CI target, not a claim
-of live-agent interoperability. No platform has a production support promise.
+## Build and use
 
 ```sh
-cd experiments/node-cli
 npm ci --ignore-scripts
 npm run build
 node dist/cli.js list --agent claude --json
 node dist/cli.js list --agent codex --codex-home "$HOME/.codex" --json
+node dist/cli.js send --to CLAUDE_PID --message 'hello' --dry-run --json
+node dist/cli.js send --to codex:UUID --codex-home "$HOME/.codex" --message 'hello' --dry-run --json
 ```
 
-- Only `list`, `--agent claude|codex`, `--json` (or `--output-format json`),
-  `--all`, and the applicable `--codex-home` are supported. `--help`, `--version`
-  and `--no-update-notice` are available. Updates are never checked or installed.
-- Agent selection is mandatory; Codex also requires an explicit home. Implicit
-  default/Orca/configured multi-home inventory is deferred, not partially emulated.
-- Claude reads the same config-directory precedence and actual socket path in
-  each record. `reachable` is only PID/socket metadata, **not** a connection,
-  target validation, message consumption or ACK.
-- Codex opens `state_5.sqlite` read-only/query-only and discovers saved threads.
-  It does not read rollout contents, touch writer locks, or claim execution state.
-  SQLite WAL readers can participate in SQLite shared-memory bookkeeping; this
-  is not a snapshot reader and does not copy or modify application DB contents.
-- `send`, reply, wake, SSH, paired devices, Relay, MCP, doctor, update, human text
-  output and Antigravity are unsupported. Unknown options are rejected before
-  discovery. No network or child process is used by the CLI.
-- A refusal always has `submitted:false`, `consumptionConfirmed:false`, exit 2
-  for usage/unsupported operations or exit 1 for discovery failures. There is no
-  retry path. Exception strings and unknown argument values are not echoed.
-- Successful discovery naturally includes local names, paths and thread IDs,
-  just like Python; do not publish raw inventory. Failure diagnostics use fixed
-  codes and never include raw database contents or message arguments.
-
-The prototype package version (`0.0.0`) is independent from its Python contract
-reference (`1.0.2`). JSON uses schema version 1; it does **not** advertise itself
-as the full Python 1.0.2 implementation. `private:true` prevents npm publication;
-the nonconflicting bin name is `session-peer-ts-prototype`. No lifecycle installer,
-postinstall hook, Python fallback, skills installation or service setup exists.
-
-## Contract tests and packaging
+Remove `--dry-run` only when delivery is intended. Omit `--message`, or use
+`--message -`, for UTF-8 stdin. Output is JSON only (`--json` or
+`--output-format json`). Claude targets may be PIDs, `claude:PID`, or unambiguous
+ASCII names (case-insensitive). Use a PID for Unicode names; full Unicode
+casefold parity is deferred. `--codex-bin` selects an executable, never shell
+text. `--all` is listing-only. The bin is `session-peer-ts`, not `session-peer`.
 
 ```sh
-npm test                         # Python 3.9+ needed only for the test oracle
-npm run test:package             # repeatable pack, clean install and uninstall
-npm pack --ignore-scripts        # build first; never publish this prototype
+node dist/cli.js send --host user@machine --remote-bin /absolute/path/session-peer-ts \
+  --to CLAUDE_PID --message 'hello' --dry-run --json
 ```
 
-Tests consume `tests/fixtures/compatibility-v1.json` and invoke the repository's
-generated Python CLI against the **same temporary fixtures**, with update checks
-disabled. They compare exit codes, the v1 envelope, session rows, ordering,
-Unicode truncation, archived filtering and successful Codex discovery metadata.
-Error wording and package version are deliberately not byte-identical. The
-prototype also rejects unsupported row types conservatively.
+The default remote command is `session-peer-ts` on remote PATH. An absolute
+`--remote-bin` may name an operator-owned wrapper selecting a supported Node.
+SSH uses existing configuration/keys with BatchMode and StrictHostKeyChecking;
+it never approves new host keys. No arbitrary `--ssh-opt` is accepted. IPv6
+literals and Tailscale canonical-name enrichment are deferred; use an SSH
+alias/hostname. Remote version is checked before one JSON request is sent over
+stdin. Message text never becomes remote shell command arguments.
 
-An actual Unix socket proves metadata discovery without making a connection;
-real SQLite fixtures prove the read path and preserve the DB bytes. Malformed
-DB/schema/rows, missing files and unsupported operations fail closed. No real
-user messages, credential reads, agent queue submissions or ACKs occur. **These
-are not real Claude inbox/Codex queue interoperability tests.** Python-free
-execution is tested with an empty PATH. CI covers Node 22/24 on macOS/Linux.
+## Delivery and reply safety
 
-The package contains compiled JS plus this README, MIT license and package metadata. Build
-dependencies are exact-version locked; there are no runtime npm dependencies.
-The package smoke test compares two tarball SHA-256 hashes, installs into a fresh
-temporary prefix, tests the installed bin with an empty PATH, then uninstalls it.
-A release decision still needs cross-builder reproducibility/provenance review
-and an approved final package name.
+- Claude re-resolves one reachable target before one native JSON-line write.
+  `posted` is write completion, not ACK. PID/socket metadata is not consumption.
+- Codex checks selected/default/Orca/configured homes, actual nonblocking OS
+  flock, file identity, same-user owner and process start time across two
+  samples. Unknown evidence, multiple live writers and inactive-only copies are
+  refused. Inventory and ownership are revalidated immediately before queueing.
+  No transcript is read, lock deleted or owner process signaled.
+- `queued` is queue acceptance only; `consumptionConfirmed` is always false.
+  Response loss, timeout or native nonzero exit after spawn is conservatively
+  `status:unknown, submitted:null, retryAllowed:false`. Never automatically resend.
+- Refusal before submission has `submitted:false`. Dry-run is `validated`.
+  Success/error/usage exit codes are 0/1/2 and JSON uses the v1 envelope. Failure
+  diagnostics are fixed codes; no raw exceptions, native stderr or messages.
+- Actual ACK must be checked separately in the receiving TUI, not inferred from
+  queued/submitted or by polling transcripts.
 
-## Next gates (keep #186 open)
+`--to 'session-peer://v1/reply?...'` accepts strict local/SSH Claude/Codex reply
+URIs as data. Unknown/duplicate fields, malformed encoding, unsafe hosts and
+conflicting explicit routes are refused. `--reply-address URI` adds an explicit
+structured return address; it does not establish reverse SSH access. No route
+is invented. `--no-reply-to` omits a new address. A valid CODEX_THREAD_ID or
+CODEX_SESSION_ID adds an informational From header unless `--no-from` is given.
+Unknown senders are not invented; peer headers are metadata, not authority.
+No executable Reply command is synthesized.
 
-1. Review this architecture/scope and decide if a second runtime is worth owning.
-2. Add full discovery inventory and cross-runtime error/capability contracts.
-3. Port target resolution and dry-run with native lock/owner identity evidence;
-   test ambiguous homes, PID reuse, races, permissions and unsupported platforms.
-4. Port local submission with envelope/reply URI validation, uncertain-outcome
-   handling and no automatic resend. Run explicitly authorized real native
-   inbox/queue tests; queued must never become consumption/ACK confirmation.
-5. Choose SSH prerequisites explicitly: Python currently streams the standalone
-   script to remote Python. A Node implementation must not silently require
-   remote Python or download remote Node. Relay client/MCP are separate gates.
-6. Only after contract/platform gates pass: decide repo split, npm ownership,
-   version mapping, supported Node matrix, publication/provenance and maintenance.
+## Tests
 
-References: [#186](https://github.com/abruption/session-peer/issues/186),
-[adapter architecture](../../docs/architecture/agent-transports.md),
-[v1 compatibility](../../docs/compatibility-v1.md),
-[Node SQLite](https://nodejs.org/docs/latest-v22.x/api/sqlite.html).
+Point `SESSION_PEER_PYTHON_ROOT` at a checkout of Python v1.0.2, commit
+`47c23713d0a2a3c11ebde6186afd8c43489b8b65`. CI pins this commit and compares the
+vendored compatibility fixture to it. Development tests require Python 3.9+,
+a C compiler and lsof. None is an implicit runtime installer.
+
+```sh
+SESSION_PEER_PYTHON_ROOT=/path/to/python-reference npm test
+npm run test:package
+npm audit
+```
+
+Fixtures cover Python discovery/schema/exit contracts, actual temporary SQLite
+DBs, Unix inbox sockets and native-process kernel locks. Native fixture evidence
+is separate from real TUI/SSH observations in VALIDATION.md. Tests check one-shot
+submission, ambiguous writers, wrong owners, dry-run, response loss and unsafe
+reply rejection without production state. Set TASK_TEMP for temporary files.
+
+Package tests allowlist tarball files, compare repeat-pack SHA-256, clean-install
+into a temporary prefix, run empty-PATH discovery and uninstall. The native
+dependency normally has an install script/fallback compilation; the verified
+prebuilt path uses `--ignore-scripts`. This is not a pure-JavaScript package.
+SQLite reads are read-only/query-only, but WAL readers can participate in shared
+memory bookkeeping; this is not a snapshot reader.
+
+## Release boundaries
+
+Preview versioning is independent of Python's 1.0.2 contract reference. This is
+not complete Python parity. Windows, wider architectures, full discovery,
+Unicode names, implicit reply identity and optional transports require separate
+work. Public npm naming, provenance, release automation and long-term ownership
+must be decided before publication. Python and Relay retain independent releases.

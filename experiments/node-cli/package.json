@@ -1,13 +1,22 @@
 {
-  "name": "session-peer-ts-prototype",
-  "version": "0.0.0",
+  "name": "session-peer-ts",
+  "version": "0.1.0-preview.0",
   "private": true,
-  "description": "Unpublished, read-only Node CLI compatibility experiment for issue 186",
+  "repository": { "type": "git", "url": "git+https://github.com/abruption/session-peer-ts.git" },
+  "os": ["darwin", "linux"],
+  "description": "Python-free local and SSH client for Claude Code and Codex sessions (preview)",
   "type": "module",
   "license": "MIT",
-  "engines": { "node": "^22.13.0 || ^24.0.0" },
-  "bin": { "session-peer-ts-prototype": "dist/cli.js" },
-  "files": ["dist", "README.md"],
+  "engines": {
+    "node": "^22.13.0 || ^24.0.0"
+  },
+  "bin": {
+    "session-peer-ts": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test test/*.test.mjs",
@@ -16,5 +25,8 @@
   "devDependencies": {
     "@types/node": "22.13.10",
     "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "fs-ext-extra-prebuilt": "2.2.14"
   }
 }

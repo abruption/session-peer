@@ -9,9 +9,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:net';
 
-const root = fileURLToPath(new URL('../../../', import.meta.url));
+const root = process.env.SESSION_PEER_PYTHON_ROOT ?? fileURLToPath(new URL('../../../', import.meta.url));
 const cli = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
-const fixture = JSON.parse(readFileSync(join(root, 'tests/fixtures/compatibility-v1.json')));
+const fixture = JSON.parse(readFileSync(new URL('./fixtures/compatibility-v1.json', import.meta.url)));
+assert.deepEqual(fixture, JSON.parse(readFileSync(join(root, 'tests/fixtures/compatibility-v1.json'))), 'vendored contract must match the pinned Python reference');
 const python = process.env.PYTHON ?? 'python3';
 
 function sandbox(t) {
@@ -133,7 +134,7 @@ test('unsupported commands/transports fail before inspecting state or sending an
   for (const args of [
     ['send', '--to', 'SECRET-SENTINEL', '--message', 'SECRET-SENTINEL'],
     ['send', '--dry-run'], ['device'], ['doctor'], ['update'], ['reply'],
-    ['list', '--agent', 'claude', '--host', 'SECRET-SENTINEL'],
+    ['list', '--agent', 'claude', '--host', '-SECRET-SENTINEL'],
     ['list', '--agent', 'claude', '--device', 'SECRET-SENTINEL'],
     ['list', '--agent', 'antigravity'], ['list'], ['list', '--agent', 'codex'],
     ['list', '--agent', 'claude', '--all=false'], ['list', '--agent', 'claude', '--wake'],
