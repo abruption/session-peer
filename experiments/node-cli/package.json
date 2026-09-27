@@ -1,0 +1,20 @@
+{
+  "name": "session-peer-ts-prototype",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Unpublished, read-only Node CLI compatibility experiment for issue 186",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": "^22.13.0 || ^24.0.0" },
+  "bin": { "session-peer-ts-prototype": "dist/cli.js" },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:package": "npm run build && node test/package-smoke.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "22.13.10",
+    "typescript": "5.9.3"
+  }
+}
