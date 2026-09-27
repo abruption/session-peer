@@ -7,6 +7,8 @@ export interface Config {
   adminOrigin?: string;
   /** Dedicated loopback-only Python relay metrics endpoint. */
   relayMetricsUrl?: string;
+  /** Optional credential shared only with the loopback reverse proxy. */
+  trustedProxyToken?: string;
   production: boolean;
   dataDir: string;
   publicDir: string;
@@ -37,6 +39,11 @@ function readSecret(path: string, env: NodeJS.ProcessEnv) {
   )
     throw new Error("unsafe_secret_file");
   return readFileSync(absolute, "utf8").trim();
+}
+function proxyToken(path: string, env: NodeJS.ProcessEnv): string {
+  const value = readSecret(path, env);
+  if (!/^[A-Za-z0-9_-]{32,128}$/.test(value)) throw new Error("invalid_proxy_token");
+  return value;
 }
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const production = env.NODE_ENV !== "development" && env.NODE_ENV !== "test";
@@ -133,6 +140,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   return {
     origin,
+    ...(env.SESSION_PEER_TRUSTED_PROXY_TOKEN_FILE ? {
+      trustedProxyToken: proxyToken(env.SESSION_PEER_TRUSTED_PROXY_TOKEN_FILE, env),
+    } : {}),
     ...(adminOrigin ? { adminOrigin } : {}),
     ...(relayMetricsUrl ? { relayMetricsUrl } : {}),
     production,
