@@ -478,3 +478,5 @@ MIT
 ### 内部扩展架构
 
 代理适配器和本地/SSH 执行共享内部带版本的契约，同时保留单文件 CLI。参见[适配器开发](agent-adapters.md)以及[架构决策](architecture/agent-transports.md)。不支持外部插件加载。`doctor.capabilities.agents` 描述了已实现的 list/send/wake/wait/ack 支持；它并不授予权限或证明就绪状态。
+
+`install.sh` 在目标文件系统暂存本地和SSH更新，先下载runtime和skill并验证暂存CLI版本，再原子替换runtime。下载或验证失败时保留现有runtime、launcher和skill。这不表示全部安装文件的事务、签名验证或后续skill-manager失败的回滚；原有安装管理器归属不变。

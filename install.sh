@@ -122,26 +122,29 @@ install_here() {
 
     mkdir -p "$PROGRAM_DIR" "$BIN_DIR"
 
-    # Always copy or fetch — re-running upgrades rather than skipping.
+    # Same-filesystem staging protects an existing installation from partial
+    # downloads and invalid artifacts. Only this invocation's files are removed.
+    tmp_dir=$(mktemp -d "$PROGRAM_DIR/.install.XXXXXX")
+    trap 'rm -f "$tmp_dir/session_peer.py" "$tmp_dir/SKILL.md"; rmdir "$tmp_dir"' EXIT
+    trap 'exit 1' HUP INT TERM
     if [ -n "$src_dir" ] && [ -f "$src_dir/session_peer.py" ]; then
-        cp "$src_dir/session_peer.py" "$PROGRAM_DIR/session_peer.py"
+        cp "$src_dir/session_peer.py" "$tmp_dir/session_peer.py"
         if [ -f "$src_dir/skills/session-peer/SKILL.md" ]; then
-            skill_source="$src_dir/skills/session-peer/SKILL.md"
+            cp "$src_dir/skills/session-peer/SKILL.md" "$tmp_dir/SKILL.md"
         elif [ -f "$src_dir/SKILL.md" ]; then
-            skill_source="$src_dir/SKILL.md"
+            cp "$src_dir/SKILL.md" "$tmp_dir/SKILL.md"
         else
-            tmp_dir=$(mktemp -d)
-            trap 'rm -f "$tmp_dir/SKILL.md"; rmdir "$tmp_dir"' EXIT
             fetch "$RAW/skills/session-peer/SKILL.md" "$tmp_dir/SKILL.md"
-            skill_source="$tmp_dir/SKILL.md"
         fi
     else
-        fetch "$RAW/session_peer.py" "$PROGRAM_DIR/session_peer.py"
-        tmp_dir=$(mktemp -d)
-        trap 'rm -f "$tmp_dir/SKILL.md"; rmdir "$tmp_dir"' EXIT
+        fetch "$RAW/session_peer.py" "$tmp_dir/session_peer.py"
         fetch "$RAW/skills/session-peer/SKILL.md" "$tmp_dir/SKILL.md"
-        skill_source="$tmp_dir/SKILL.md"
     fi
+    version=$(python3 "$tmp_dir/session_peer.py" --version) || die "invalid standalone artifact"
+    case "$version" in "session-peer "[0-9]*) ;; *) die "invalid standalone version" ;; esac
+    chmod +x "$tmp_dir/session_peer.py"
+    mv -f "$tmp_dir/session_peer.py" "$PROGRAM_DIR/session_peer.py"
+    skill_source="$tmp_dir/SKILL.md"
 
     install_skill_at "$CLAUDE_SKILL_DIR" "$skill_source"
     install_skill_at "$CODEX_SKILL_DIR" "$skill_source"
@@ -194,8 +197,8 @@ remote_run() {
     else
         tmp_dir=$(mktemp -d)
         trap 'rm -rf "$tmp_dir"' EXIT
-        fetch "$RAW/session_peer.py" "$tmp_dir/session_peer.py"
-        fetch "$RAW/skills/session-peer/SKILL.md" "$tmp_dir/SKILL.md"
+        fetch "$RAW/session_peer.py" "$tmp_dir/session_peer.py" || return 1
+        fetch "$RAW/skills/session-peer/SKILL.md" "$tmp_dir/SKILL.md" || return 1
         py="$tmp_dir/session_peer.py"
         skill="$tmp_dir/SKILL.md"
     fi
@@ -205,18 +208,21 @@ remote_run() {
         echo 'command -v python3 >/dev/null 2>&1 || { echo "python3 not found on $(hostname)" >&2; exit 1; }'
         echo 'R="${CLAUDE_CONFIG_DIR:-${ANTHROPIC_CONFIG_DIR:-$HOME/.claude}}"'
         echo 'mkdir -p "$HOME/.local/share/session-peer" "$HOME/.local/bin"'
-        echo 'base64 -d > "$HOME/.local/share/session-peer/session_peer.py" <<'"'"'CC_PEER_PY'"'"''
+        echo 'T=$(mktemp -d "$HOME/.local/share/session-peer/.install.XXXXXX")'
+        printf '%s\n' 'trap '\''rm -f "$T/session_peer.py" "$T/SKILL.md"; rmdir "$T"'\'' EXIT' 'trap '\''exit 1'\'' HUP INT TERM'
+        echo 'base64 -d > "$T/session_peer.py" <<'"'"'CC_PEER_PY'"'"''
         base64 < "$py"
         echo 'CC_PEER_PY'
-        echo 'T=$(mktemp -d)'
         echo 'base64 -d > "$T/SKILL.md" <<'"'"'CC_PEER_SKILL'"'"''
         base64 < "$skill"
         echo 'CC_PEER_SKILL'
+        echo 'V=$(python3 "$T/session_peer.py" --version)'
+        echo 'case "$V" in "session-peer "[0-9]*) ;; *) echo "invalid standalone artifact" >&2; exit 1 ;; esac'
+        echo 'chmod +x "$T/session_peer.py"; mv -f "$T/session_peer.py" "$HOME/.local/share/session-peer/session_peer.py"'
         echo 'for D in "$R/skills/session-peer" "$HOME/.agents/skills/session-peer"; do'
         echo '  if [ -L "$D" ] || { [ -e "$D" ] && [ ! -f "$D/.session-peer-installer" ]; } || [ -L "$D/SKILL.md" ]; then echo "skill preserved (managed elsewhere): $D"; continue; fi'
         printf '%s\n' '  mkdir -p "$D"; cp "$T/SKILL.md" "$D/SKILL.md"; printf "%s\n" "session-peer install.sh v1" > "$D/.session-peer-installer"; echo "skill installed: $D/SKILL.md"'
         echo 'done'
-        echo 'rm "$T/SKILL.md"; rmdir "$T"'
         echo 'chmod +x "$HOME/.local/share/session-peer/session_peer.py"'
         echo 'ln -sf "$HOME/.local/share/session-peer/session_peer.py" "$HOME/.local/bin/session-peer"'
         echo 'echo "installed $(python3 "$HOME/.local/share/session-peer/session_peer.py" --version) on $(hostname)"'

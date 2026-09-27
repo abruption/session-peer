@@ -830,3 +830,5 @@ Python 3.10+ で `session-peer[mcp]` をインストールし、[MCP のセッ�
 および[アーキテクチャ決定](architecture/agent-transports.md)を参照してください。外部
 プラグインの読み込みは利用できません。`doctor.capabilities.agents` は、実装されている
 list/send/wake/wait/ack サポートを記述します。権限を付与したり準備完了を証明したりするものではありません。
+
+`install.sh` はローカル・SSH更新を対象ファイルシステムに準備し、runtimeとskillを取得して一時CLIのバージョンを検証後、runtimeを原子的に置換します。取得・検証失敗時は既存runtime・launcher・skillを保持します。全ファイルのトランザクション、署名検証、後続skill-manager失敗のロールバックではありません。既存インストール管理者は変えません。

@@ -848,3 +848,5 @@ retaining the single-file CLI. See [adapter development](agent-adapters.md)
 and the [architecture decision](architecture/agent-transports.md). External
 plugin loading is not available. `doctor.capabilities.agents` describes implemented
 list/send/wake/wait/ack support; it does not grant permission or prove readiness.
+
+`install.sh` stages local and SSH runtime updates in the destination filesystem, downloads both runtime and skill first, and validates the staged CLI version before atomically replacing the runtime. Download or validation failure leaves the installed runtime, launcher and skill intact. This is not a transaction across all installation files, a signature check, or rollback after a later skill-manager failure. Existing skill-manager ownership is unchanged.
