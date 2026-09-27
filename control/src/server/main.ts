@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { sanitizeClientIP } from "./client-ip.js";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
 import { openDatabase } from "./storage.js";
@@ -63,10 +64,7 @@ const server = createServer(async (incoming, outgoing) => {
       if (Array.isArray(v)) v.forEach((value) => headers.append(k, value));
       else if (v) headers.set(k, v);
     }
-    headers.set(
-      "x-session-peer-ip",
-      incoming.socket.remoteAddress ?? "127.0.0.1",
-    );
+    sanitizeClientIP(headers, incoming.socket.remoteAddress, config.trustedProxyToken);
     const method = incoming.method ?? "GET";
     const body = ["GET", "HEAD"].includes(method)
       ? undefined

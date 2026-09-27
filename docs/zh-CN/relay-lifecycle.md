@@ -128,3 +128,5 @@ session-peer relay init-replay --out /private/relay-state/spent-tickets.json
 Restic 范围还包含不可变的控制和中继运行时、就绪辅助程序以及已安装的服务单元。恢复必须首先还原到隔离的仅 root 权限目录中，并验证快照清单、文件哈希和模式、SQLite 表计数、状态/重放修订版本、已消耗条目、签名密钥以及运行时链接。切勿覆盖正在运行的活跃服务，也不要自动晋升旧的控制数据库、签名密钥或重放高水位线。生产环境替换仍需要停止的栈以及显式的回滚/吊销隔离。
 
 新的恢复计划检查已存储的原生结果，而不只是日志的 done 标记。pending、unknown、缺失、格式错误或矛盾的结果必须显式核对；retryAllowed=false 不是投递证据。确定的 refused 结果分类为 not_processed。成功的 submitted/queued/posted 仅是 already_processed 提交证据，并非消费或 ACK 证明。任何分类都不授权自动重发。恢复执行时保留已有计划：请将旧版本创建的计划与归档收据核对，在激活前显式修正被错误分类的 unknown 项。
+
+恢复批准模式v2同时签署固定 peer 证书和 `peerGeneration`，保留实际轮换代数。生成v2批准前请先升级提交端；旧版仅接受v1。v1仅在存档固定密钥的代数已知或证书是初始第0代身份时兼容。轮换密钥代数未知时以 `recovery_generation_required` 拒绝。无效或冲突代数被拒绝，不会猜测为0或回退代数。
