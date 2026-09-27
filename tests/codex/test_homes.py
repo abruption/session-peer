@@ -404,6 +404,44 @@ class CodexHomes(unittest.TestCase):
         self.assertFalse(empty_user.exists())
         self.queue.assert_not_called()
 
+    def test_unsaved_live_writer_has_distinct_refusal_and_doctor_warning(self):
+        for home in (self.default, self.account):
+            with contextlib.closing(sqlite3.connect(home / "state_5.sqlite")) as conn:
+                conn.execute("DELETE FROM threads")
+                conn.commit()
+        locks = self.default / "thread-writer-locks"
+        locks.mkdir()
+        (locks / f"{THREAD}.lock").write_text("fixture")
+        active = {"activity": "live_writer", "writerLock": "held", "ownerPid": 42,
+                  "ownerStable": True, "ownerStartTime": "stable", "reason": "stable_live_writer"}
+        inactive = {"activity": "inactive", "writerLock": "absent", "reason": "lock_absent"}
+        with mock.patch.object(peer, "inspect_codex_writer", side_effect=lambda home, thread:
+                               active if home == self.default else inactive):
+            for flags in ((), ("--dry-run",)):
+                with self.subTest(flags=flags):
+                    code, result = self.send(*flags)
+                    self.assertEqual(code, 2)
+                    self.assertEqual(result["codexHomeResolution"]["reason"],
+                                     "thread_not_yet_persisted")
+                    self.assertIn("first turn", result["error"])
+            doctor = peer.diagnose_codex(argparse.Namespace(codex_home=str(self.default), codex_bin=None))
+        self.queue.assert_not_called()
+        self.assertEqual(doctor["unsavedLiveWriters"], 1)
+        self.assertTrue(any(row["code"] == "unsaved_live_writer" for row in doctor["checks"]))
+
+    def test_unsaved_stale_lock_keeps_missing_target_reason(self):
+        for home in (self.default, self.account):
+            with contextlib.closing(sqlite3.connect(home / "state_5.sqlite")) as conn:
+                conn.execute("DELETE FROM threads")
+                conn.commit()
+        with mock.patch.object(peer, "inspect_codex_writer", return_value={
+                "activity": "inactive", "writerLock": "free", "reason": "kernel_lock_free"}):
+            code, result = self.send("--dry-run")
+        self.assertEqual(code, 2)
+        self.assertEqual(result["codexHomeResolution"]["reason"],
+                         "thread_not_saved_in_known_homes")
+        self.queue.assert_not_called()
+
     def test_macos_default_without_orca_installation_remains_compatible(self):
         user = self.user / "single-home-user"
         self.make_home(user / ".codex")

@@ -147,9 +147,10 @@ git clone https://github.com/abruption/session-peer && cd session-peer
 ```
 
 これにより、`session_peer.py` が `~/.local/share/session-peer/` に配置され、
-[session-peer スキル](https://github.com/abruption/session-peer-skill/blob/main/session-peer/SKILL.md) の互換コピーが `~/.claude/skills/session-peer/` にインストールされ、
-`~/.local/bin/session-peer` がリンクされます。既存の cc-peer ファイルは保持されます。
-削除するには `./install.sh --uninstall [--host ...]` を使用します。
+[session-peer スキル](https://github.com/abruption/session-peer-skill/blob/main/session-peer/SKILL.md) の互換コピーが `~/.claude/skills/session-peer/` と `~/.agents/skills/session-peer/` にインストールされ、
+`~/.local/bin/session-peer` がリンクされます。別の管理ツールで導入したスキルやシンボリックリンク、
+既存の cc-peer ファイルは保持されます。`./install.sh --uninstall [--host ...]` ではインストーラーが
+所有するファイルのみを削除し、所有権マーカーのない既存スキルは残します。
 
 `session-peer update` は、最新の GitHub リリースからスタンドアロンプログラムを更新します。
 `./install.sh --host <host>` は、このチェックアウトのプログラムとスキルを SSH 経由でプッシュします。
@@ -174,8 +175,9 @@ chmod +x session_peer.py
 
 公開スキルの正本は [session-peer-skill リポジトリ](https://github.com/abruption/session-peer-skill)で管理します。
 スタンドアロンインストーラーはエアギャップと SSH インストール用の互換コピーを保持し、
-`~/.claude/skills/session-peer/SKILL.md` に配置します。配置場所はデフォルトの前に
-`CLAUDE_CONFIG_DIR`、次に `ANTHROPIC_CONFIG_DIR` を優先します。Claude Code、Codex、
+Claude Code 用の `~/.claude/skills/session-peer/SKILL.md` と Codex 用の
+`~/.agents/skills/session-peer/SKILL.md` に配置します。Claude の配置場所はデフォルトの前に
+`CLAUDE_CONFIG_DIR`、次に `ANTHROPIC_CONFIG_DIR` を優先します。別途管理されたスキルを上書き・削除しません。Claude Code、Codex、
 Antigravity 全体へグローバルインストールする場合は、上記の Skills CLI コマンドを使用してください。
 スキルがターゲットとメッセージの選択を案内し、Python プログラムが検出と転送を実行します。
 インストールしてもエージェントの権限やインバウンド設定は変更されません。
