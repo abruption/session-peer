@@ -40,3 +40,5 @@
 真实的 Codex 0.154.0 MCP 客户端随后完成了本地 list/send/wake 以及使用远程 Orca 自定义主目录进行的 mac-mini → macbook list/send/wake。远程默认主目录吊销了身份验证：其已排队的提交和失败的原生轮次被保留为部分失败，而未更改身份验证或重新发送。本地和 KR SSH Claude 协议测试收件箱也各自从真实 Codex MCP 客户端接收到了一条消息。这些是专用的协议测试固件，而不是生产环境 Claude 对话。
 
 最初的非交互式 Codex 测试在其现有审批策略下按预期拒绝了写入工具。成功的测试显式设置了测试客户端的 `mcp_servers.session_peer.tools.send_message.approval_mode="approve"`，并在服务器策略中仅授予了测试目标权限。随附的插件并未设置此审批覆盖。插件市场注册和安装在一次性 CODEX_HOME 中进行了验证；生产环境插件配置未受影响。实时唤醒在 macOS 上进行了测试；Linux 进程/锁行为由 CI 测试固件覆盖，而非带有凭据的模型运行。
+
+macOS/Linux 清理在回收组长前向所属进程组发送 TERM 后再发 KILL，包括忽略 TERM 的子进程。清理后不复用组 ID。脱离到其他会话的进程和远程进程不在范围内；清理不撤回已经提交的请求。
