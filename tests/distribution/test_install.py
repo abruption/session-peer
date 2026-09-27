@@ -2,12 +2,82 @@
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 import unittest
 
 
 @unittest.skipIf(os.name == "nt", "POSIX installer; Windows uses pip")
 class Install(unittest.TestCase):
+    def test_failed_network_install_preserves_program_launcher_and_skills(self):
+        repo = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / 'home'
+            home.mkdir()
+            env = {**os.environ, 'HOME': str(home)}
+            env.pop('CLAUDE_CONFIG_DIR', None)
+            env.pop('ANTHROPIC_CONFIG_DIR', None)
+            subprocess.run(['sh', str(repo / 'install.sh')], env=env, check=True, capture_output=True)
+            program = home / '.local/share/session-peer/session_peer.py'
+            launcher = home / '.local/bin/session-peer'
+            skills = [home / '.claude/skills/session-peer/SKILL.md', home / '.agents/skills/session-peer/SKILL.md']
+            previous = [p.read_bytes() for p in [program, *skills]]
+            source = root / 'source'
+            source.mkdir()
+            shutil.copyfile(repo / 'install.sh', source / 'install.sh')
+            fake = root / 'bin'
+            fake.mkdir()
+            curl = fake / 'curl'
+            curl.write_text('''#!/bin/sh
+case "$2" in
+  */SKILL.md) cp "$FIXTURE_SKILL" "$4"; exit ;;
+esac
+case "$FIXTURE_MODE" in
+  partial) printf 'partial' > "$4"; exit 18 ;;
+  http) exit 22 ;;
+  invalid) printf '<html>error</html>' > "$4" ;;
+  valid) cp "$FIXTURE_PROGRAM" "$4" ;;
+esac
+''')
+            curl.chmod(0o755)
+            env.update(PATH=str(fake)+os.pathsep+os.environ['PATH'],
+                       FIXTURE_PROGRAM=str(repo / 'session_peer.py'),
+                       FIXTURE_SKILL=str(repo / 'skills/session-peer/SKILL.md'))
+            for mode in ('partial', 'http', 'invalid', 'valid'):
+                with self.subTest(mode=mode):
+                    result = subprocess.run(['sh', str(source / 'install.sh')],
+                        env={**env, 'FIXTURE_MODE': mode}, capture_output=True)
+                    self.assertEqual(result.returncode == 0, mode == 'valid', result.stderr)
+                    self.assertEqual([p.read_bytes() for p in [program, *skills]], previous)
+                    self.assertEqual(launcher.resolve(), program)
+                    self.assertEqual(list(program.parent.glob('.install.*')), [])
+
+    def test_invalid_local_and_remote_artifacts_do_not_replace_existing_install(self):
+        repo = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {**os.environ, 'HOME': str(root)}
+            env.pop('CLAUDE_CONFIG_DIR', None)
+            env.pop('ANTHROPIC_CONFIG_DIR', None)
+            subprocess.run(['sh', str(repo / 'install.sh')], env=env, check=True, capture_output=True)
+            program = root / '.local/share/session-peer/session_peer.py'
+            before = program.read_bytes()
+            source = root / 'source'
+            source.mkdir()
+            shutil.copyfile(repo / 'install.sh', source / 'install.sh')
+            (source / 'session_peer.py').write_text('not valid python!')
+            (source / 'SKILL.md').write_text('must not replace')
+            ssh = source / 'ssh'
+            ssh.write_text('#!/bin/sh\nshift\nexec "$@"\n')
+            ssh.chmod(0o755)
+            env['PATH'] = str(source)+os.pathsep+os.environ['PATH']
+            for args in ([], ['--host', 'fixture']):
+                result = subprocess.run(['sh', str(source / 'install.sh'), *args], env=env, capture_output=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(program.read_bytes(), before)
+                self.assertEqual(list(program.parent.glob('.install.*')), [])
+
     def test_install_reinstall_and_remove_preserve_legacy(self):
         with tempfile.TemporaryDirectory(prefix="session-peer-test-") as directory:
             root = Path(directory)
