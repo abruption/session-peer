@@ -406,3 +406,9 @@ OAuth, Mac 사용자 브라우저, Python JWT 통합, 24시간 운영 또는 실
 `tests/control_integration/test_control_integration.py`에 있는 실행 가능한 Node/Python 픽스처는
 등록, 진입, 폐기된 자격 증명, 소유자 간 거부 및 응답 유실이
 동반된 로테이션을 다룹니다. 시드된 픽스처 세션은 실제 OAuth의 증거가 아닙니다.
+
+### 선택적 인증 프록시 식별
+
+기본적으로 Control은 소켓 주소로 요청을 제한하며 전달된 IP 헤더를 무시합니다. 사용하려면 `SESSION_PEER_TRUSTED_PROXY_TOKEN_FILE`에 로컬 역방향 프록시와만 공유하는 전용 32–128자 base64url 비밀의 0600 파일을 지정합니다(systemd credentials도 지원). 프록시는 모든 Control 요청의 `X-Session-Peer-Proxy-Token`과 `X-Session-Peer-Client-IP`를 전용 비밀과 검증된 단일 클라이언트 IP로 덮어써야 합니다. Control은 loopback 연결에서만 이를 받아 IPv4/IPv6를 정규화하고 라우팅 전에 두 헤더를 제거합니다. 누락·오류 시 소켓 주소를 사용합니다. 원본 `X-Forwarded-For`, `CF-Connecting-IP`, `X-Session-Peer-IP`는 신뢰하지 않습니다. CDN 사용 시 프록시의 신뢰 upstream/IP 해석을 별도로 검증하고 임의의 입력 헤더를 복사하지 마십시오. 비밀은 로그·응답에서 제외해야 합니다. 기존 제한은 유지되며 활성화는 별도 운영 변경입니다.
+
+Control은 변경의 게시·커밋 전에 직렬화된 전체 공개 상태를 Python 판독기의 UTF-8 1MiB 제한으로 검사하고 향후 revision·시각 숫자 증가 공간을 예약합니다. 초과 변경은 `public_state_capacity_exceeded`(409)로 롤백하며 폐기 기록을 자동 삭제하지 않습니다. 이미 과대한 DB는 운영자가 안전하게 용량 문제를 해결할 때까지 unhealthy로 유지됩니다. 고정 기기 수가 아닌 바이트 제한이며 heartbeat·재기동도 마지막 유효 스냅샷을 읽어야 합니다.

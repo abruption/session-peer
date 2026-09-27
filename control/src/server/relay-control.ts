@@ -60,6 +60,17 @@ interface ChallengeRow {
   message: string;
   expiresAt: number;
 }
+// Matches the Control startup and Python AuthState reader contract.
+export const PUBLIC_STATE_MAX_BYTES = 1024 * 1024;
+export function serializePublicState(snapshot: Record<string, unknown>): string {
+  // Reserve numeric growth so a full but valid device map remains refreshable
+  // across revision/time digit boundaries. Tombstones are never evicted.
+  const worstCase = { ...snapshot, revision: Number.MAX_SAFE_INTEGER,
+    issuedAt: Number.MAX_SAFE_INTEGER, expiresAt: Number.MAX_SAFE_INTEGER };
+  assert(Buffer.byteLength(JSON.stringify(worstCase), "utf8") <= PUBLIC_STATE_MAX_BYTES,
+    "public_state_capacity_exceeded", 409);
+  return JSON.stringify(snapshot);
+}
 export class RelayControl {
   private signingKey: KeyObject;
   private kid: string;
@@ -138,7 +149,7 @@ export class RelayControl {
     const previous = join(this.publicDir, "state.json");
     try {
       const st = lstatSync(previous);
-      assert(st.isFile() && !st.isSymbolicLink() && st.size <= 1024*1024, "unsafe_public_state");
+      assert(st.isFile() && !st.isSymbolicLink() && st.size <= PUBLIC_STATE_MAX_BYTES, "unsafe_public_state");
       const old = JSON.parse(readFileSync(previous, "utf8"));
       assert(old.schemaVersion === 1 && old.issuer === config.origin && old.audience === config.origin,
         "control_state_identity_changed");
@@ -188,10 +199,10 @@ export class RelayControl {
     }
   }
   publish(reservedRevision?: number) {
+    this.healthy = false;
     const revision = reservedRevision ?? this.reserveRevision();
     const current = this.db.prepare("SELECT revision FROM relay_public_revision WHERE id=1").get() as { revision: number };
     assert(revision === current.revision && revision > this.publicationFloor, "stale_publication_revision");
-    this.publicationFloor = revision;
     const devices: Record<string, unknown> = {};
     for (const d of this.db
       .prepare("SELECT * FROM relay_devices ORDER BY principal")
@@ -215,6 +226,10 @@ export class RelayControl {
       },
       devices,
     };
+    const encoded = serializePublicState(snapshot);
+    // Capacity refusal is before publication begins, allowing mutate() to
+    // roll back growth and republish committed state at the reserved revision.
+    this.publicationFloor = revision;
     const temp = join(this.publicDir, ".state-" + randomUUID());
     const path = join(this.publicDir, "state.json");
     try {
@@ -225,7 +240,7 @@ export class RelayControl {
       }
       const fd = openSync(temp, "wx", 0o644);
       try {
-        writeFileSync(fd, JSON.stringify(snapshot));
+        writeFileSync(fd, encoded);
         fchmodSync(fd, 0o644);
         fsyncSync(fd);
       } finally {
@@ -239,7 +254,7 @@ export class RelayControl {
         closeSync(dirfd);
       }
       this.healthy = !this.db.inTransaction;
-      this.publishedState = JSON.stringify(snapshot);
+      this.publishedState = encoded;
       this.publishedAt = now;
     } catch (e) {
       this.healthy = false;
