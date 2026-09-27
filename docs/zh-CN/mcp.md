@@ -47,3 +47,5 @@ MCP 工具注解将列出标记为只读，将发送标记为非幂等。根据�
 ### 非交互式客户端批准
 
 Codex `exec` 可能会以“requires approval, but approval policy is never”拒绝发送工具，即使服务器策略允许也是如此。`approval_mode="auto"` 并不是无条件批准。显式授权非交互式集成的操作员可以为该特定 MCP 服务器/工具配置 `mcp_servers.session_peer.tools.send_message.approval_mode="approve"`，同时配合受限的目的地策略。插件不会启用此设置。交互式客户端可以改用其常规的批准提示。测试客户端切勿将此授权复制到不相关的服务器或工具。
+
+macOS/Linux上的每次MCP CLI调用拥有独立进程组。完成、超时或取消时，在回收leader前以TERM→KILL清理该组，包括忽略TERM的子进程；取消仍向上传播。主动逃离到新session的子进程和SSH远端进程不在范围内。Windows仍仅终止直接子进程，不保证整个进程树。清理本地进程不撤销远端提交；超时仍为 `outcome_unknown`，不可自动重发。

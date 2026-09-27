@@ -47,3 +47,5 @@ MCP エクストラの有無の両方で `python -m unittest discover -s tests -
 ### 非対話型クライアントの承認
 
 Codex `exec` は、サーバーポリシーが許可している場合でも「requires approval, but approval policy is never」として send ツールを拒否することがあります。`approval_mode="auto"` は無条件の承認ではありません。非対話型統合を明示的に承認するオペレーターは、制限された宛先ポリシーと併せて、その特定の MCP サーバー/ツールに対して `mcp_servers.session_peer.tools.send_message.approval_mode="approve"` を設定できます。プラグインがこの設定を有効にすることはありません。対話型クライアントは、代わりに通常の承認プロンプトを使用できます。テストクライアントがこの承認設定を無関係なサーバーやツールにコピーしてはなりません。
+
+macOS/LinuxではMCP CLI呼び出しごとに新しいプロセスグループを所有します。完了・timeout・取消時はleaderの回収前にTERM→KILLでTERMを無視する子も整理し、取消は再伝播します。別sessionへ離脱した子やSSH先のプロセスは対象外です。Windowsは直接の子の終了のみで、ツリー終了は保証しません。ローカル終了で遠隔送信は取り消せません。timeoutは `outcome_unknown` のままで自動再送は禁止です。

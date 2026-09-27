@@ -91,6 +91,12 @@ class Policy(unittest.IsolatedAsyncioTestCase):
 
     async def test_timeout_is_not_retried(self):
         adapter = mcp_peer.Adapter({})
+        if os.name == 'posix':
+            with patch.object(mcp_peer, 'invoke_posix', side_effect=asyncio.TimeoutError) as invoke:
+                result = await adapter.invoke(['send'])
+            self.assertEqual(result['reason'], 'outcome_unknown')
+            invoke.assert_called_once()
+            return
         process = AsyncMock()
         process.returncode = None
         from unittest.mock import Mock

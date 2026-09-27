@@ -7,8 +7,54 @@ import json
 import os
 from pathlib import Path
 import sys
+import subprocess
 
 import session_peer as core
+
+CLI_TIMEOUT = 130
+
+
+async def invoke_posix(argv, message):
+    # Unlike asyncio's child watcher, Popen leaves the leader unreaped until
+    # explicit wait(). That reserves its PID through process-group cleanup.
+    process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, start_new_session=True)
+    def feed():
+        try:
+            if message is not None:
+                process.stdin.write(message.encode('utf-8'))
+                process.stdin.flush()
+        except BrokenPipeError:
+            pass
+        finally:
+            process.stdin.close()
+    io = asyncio.gather(asyncio.to_thread(process.stdout.read),
+                        asyncio.to_thread(process.stderr.read), asyncio.to_thread(feed))
+    interrupted = False
+    try:
+        stdout, _, _ = await asyncio.wait_for(asyncio.shield(io), CLI_TIMEOUT)
+    finally:
+        cleanup = asyncio.create_task(asyncio.to_thread(core.stop_codex_wake, process))
+        # Repeated cancellation cannot abandon cleanup or the owned pipe tasks.
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                interrupted = True
+        try:
+            cleanup.result()
+            while not io.done():
+                try:
+                    await asyncio.shield(io)
+                except asyncio.CancelledError:
+                    interrupted = True
+            io.result()
+        finally:
+            for stream in (process.stdin, process.stdout, process.stderr):
+                stream.close()
+        if interrupted:
+            raise asyncio.CancelledError
+    return stdout, process.returncode
 
 
 class PolicyError(ValueError):
@@ -66,6 +112,15 @@ class Adapter:
         return argv
 
     async def invoke(self, argv: list[str], message: str | None = None) -> dict:
+        if os.name == 'posix':
+            try:
+                stdout, returncode = await invoke_posix(
+                    [sys.executable, str(Path(core.__file__).resolve()), *argv,
+                     '--json', '--no-update-notice'], message)
+            except asyncio.TimeoutError:
+                return {'ok': False, 'reason': 'outcome_unknown',
+                        'error': 'CLI timed out; submission outcome unknown; do not automatically retry'}
+            return self.decode(stdout, returncode)
         # Use this distribution, not a possibly different executable on PATH.
         process = await asyncio.create_subprocess_exec(
             sys.executable, str(Path(core.__file__).resolve()), *argv,
@@ -88,6 +143,10 @@ class Adapter:
                 raise
             return {"ok": False, "error": "CLI timed out; submission outcome unknown; do not automatically retry",
                     "reason": "outcome_unknown"}
+        return self.decode(stdout, process.returncode)
+
+    @staticmethod
+    def decode(stdout, returncode):
         try:
             result = json.loads(stdout)
         except (ValueError, UnicodeError):
@@ -95,7 +154,7 @@ class Adapter:
                     "reason": "invalid_cli_response"}
         if not isinstance(result, dict):
             return {"ok": False, "error": "Unexpected CLI response", "reason": "invalid_cli_response"}
-        if process.returncode and result.get("ok") is not False:
+        if returncode and result.get("ok") is not False:
             return {**result, "ok": False, "reason": "cli_failed"}
         return result
 
