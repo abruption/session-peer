@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import sys
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 
 import session_peer as core
 
@@ -19,6 +20,10 @@ async def invoke_posix(argv, message):
     # explicit wait(). That reserves its PID through process-group cleanup.
     process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, start_new_session=True)
+    # Pipe reads can block until termination. Reserve a fourth per-invocation
+    # worker for cleanup; never queue it behind blocked reads in the shared pool.
+    executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix='session-peer-mcp')
+    loop = asyncio.get_running_loop()
     def feed():
         try:
             if message is not None:
@@ -28,13 +33,14 @@ async def invoke_posix(argv, message):
             pass
         finally:
             process.stdin.close()
-    io = asyncio.gather(asyncio.to_thread(process.stdout.read),
-                        asyncio.to_thread(process.stderr.read), asyncio.to_thread(feed))
+    io = asyncio.gather(loop.run_in_executor(executor, process.stdout.read),
+                        loop.run_in_executor(executor, process.stderr.read),
+                        loop.run_in_executor(executor, feed))
     interrupted = False
     try:
         stdout, _, _ = await asyncio.wait_for(asyncio.shield(io), CLI_TIMEOUT)
     finally:
-        cleanup = asyncio.create_task(asyncio.to_thread(core.stop_codex_wake, process))
+        cleanup = loop.run_in_executor(executor, core.stop_codex_wake, process)
         # Repeated cancellation cannot abandon cleanup or the owned pipe tasks.
         while not cleanup.done():
             try:
@@ -52,6 +58,7 @@ async def invoke_posix(argv, message):
         finally:
             for stream in (process.stdin, process.stdout, process.stderr):
                 stream.close()
+            executor.shutdown(wait=False)
         if interrupted:
             raise asyncio.CancelledError
     return stdout, process.returncode

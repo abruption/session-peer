@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 import session_peer_mcp as mcp
 
@@ -46,3 +47,11 @@ else:
     async def test_normal_completion_preserves_output_and_exit_code(self):
         output, code = await mcp.invoke_posix([sys.executable, '-c', 'print("fixture")'], None)
         self.assertEqual((output.strip(), code), (b'fixture', 0))
+
+    async def test_pipe_feeding_and_cleanup_do_not_depend_on_default_executor_capacity(self):
+        # A shared single-worker pool would deadlock stdout.read before feed.
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            asyncio.get_running_loop().set_default_executor(executor)
+            output, code = await asyncio.wait_for(mcp.invoke_posix(
+                [sys.executable, '-c', 'import sys; print(sys.stdin.read())'], 'fixture'), 5)
+            self.assertEqual((output.strip(), code), (b'fixture', 0))
