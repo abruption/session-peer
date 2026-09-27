@@ -22,3 +22,5 @@ HTTP `/healthz` 端点使用相同的状态检查。读取失败、状态缺失�
 本地单元测试涵盖通知门控、失败、有界并发、环境隔离和状态健康检查。它们并不建立实际的 systemd 通知投递或 SIGSTOP 恢复门控；这需要 KR 运行时实验。
 
 参考资料：[systemd v255 通知语义](https://github.com/systemd/systemd/blob/v255/man/systemd-notify.xml) 以及 [服务看门狗选项](https://github.com/systemd/systemd/blob/v255/man/systemd.service.xml)。
+
+设备变更在事务前持久预留修订号，且绝不复用。若发布前验证拒绝请求，Control 会以预留修订号重新发布已提交状态，避免仅因拒绝请求而损害 readiness。事务内发布在 COMMIT 返回前不算成功。发布或 COMMIT 失败会关闭 readiness 和 admission，直到周期发布（60秒间隔）或重启以更高修订号成功发布已提交 DB 状态。SQLite 与公开文件不是一个原子资源：未提交快照可能短暂可见，因此仍需协调的服务栈和 watchdog。持续存储故障会保持 unhealthy；不要删除修订号计数器或收据。本修复属于独立部署的 Control 服务，而不只是 Python 包。

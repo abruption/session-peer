@@ -22,3 +22,5 @@ HTTP `/healthz` 엔드포인트도 동일한 상태 검사를 사용합니다. �
 로컬 단위 테스트는 알림 게이팅, 실패, 유계 동시성(bounded concurrency), 환경 격리 및 상태 헬스 체크를 다룹니다. 이는 실제 systemd 알림 전달이나 SIGSTOP 복구 게이트를 확립하지 않으며, 이를 위해서는 KR 런타임 실험이 필요합니다.
 
 참고자료: [systemd v255 알림 시맨틱](https://github.com/systemd/systemd/blob/v255/man/systemd-notify.xml) 및 [서비스 워치독 옵션](https://github.com/systemd/systemd/blob/v255/man/systemd.service.xml).
+
+기기 변경은 트랜잭션 전에 revision을 영구 예약하며 재사용하지 않습니다. 게시 전 검증에서 요청이 거절되면 Control은 커밋된 상태를 예약된 revision으로 다시 게시해 거절만으로 readiness가 저하되지 않도록 합니다. 트랜잭션 안의 게시는 COMMIT 반환 전까지 성공이 아닙니다. 게시 또는 COMMIT 실패 시 readiness와 admission을 차단하며, 주기적 게시(60초 간격)나 재시작으로 커밋된 DB 상태를 더 높은 revision에 성공적으로 게시한 뒤 복구합니다. SQLite와 공개 파일은 하나의 원자적 자원이 아니므로 미커밋 스냅샷이 잠시 보일 수 있으며, 연동된 스택과 watchdog이 계속 필요합니다. 저장소 장애가 지속되면 unhealthy를 유지합니다. revision 카운터나 영수증을 삭제하지 마십시오. 이 수정은 Python 패키지뿐 아니라 별도 배포되는 Control 서비스에 해당합니다.
