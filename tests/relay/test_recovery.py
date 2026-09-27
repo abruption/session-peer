@@ -49,7 +49,7 @@ class Recovery(unittest.TestCase):
     def test_direct_recovery_is_deterministic_resumable_and_keeps_archive_quarantined(self):
         done, unknown = str(uuid.uuid4()), str(uuid.uuid4())
         self.old.db.execute('INSERT INTO requests VALUES(?,?,?,"done",?)',
-            (self.peer.device, done, 'a', json.dumps({'ok': True})))
+            (self.peer.device, done, 'a', json.dumps({'ok': True, 'status': 'submitted'})))
         self.old.db.execute('INSERT INTO requests VALUES(?,?,?,"pending",NULL)',
             (self.peer.device, unknown, 'b'))
         first = recovery.begin(self.old, self.fresh, self.plan_id)
@@ -91,6 +91,69 @@ class Recovery(unittest.TestCase):
         self.assertEqual(activated['recovery']['status'], 'active')
         self.assertFalse(self.fresh.recovery_required())
         self.assertTrue(self.old.recovery_required())
+
+    def test_finished_unknown_stays_gated_until_explicit_reconciliation(self):
+        ident = str(uuid.uuid4())
+        self.old.db.execute('INSERT INTO requests VALUES(?,?,?,"pending",NULL)',
+                            (self.peer.device, ident, 'fixture'))
+        original = self.old.finish(self.peer.device, ident, {
+            'ok': False, 'status': 'unknown', 'reason': 'native_outcome_unknown',
+            'retryAllowed': False})
+        report = recovery.begin(self.old, self.fresh, self.plan_id)
+        self.fresh.close()
+        self.fresh = Store(self.root/'fresh')
+        self.assertEqual(report, recovery.begin(self.old, self.fresh, self.plan_id))
+        self.assertEqual(report['recovery']['nativeEffects'][0]['classification'], 'unknown')
+        self.assertIn('native:'+self.peer.device+':'+ident, report['recovery']['remainingGates'])
+        request = recovery.peer_request(self.fresh, self.peer.device,
+                                        {'direct': '127.0.0.1:42002'})
+        recovery.peer_commit(self.fresh, recovery.peer_approve(self.peer, request))
+        with self.assertRaisesRegex(Rejected, 'recovery_gates_incomplete'):
+            recovery.activate(self.old, self.fresh)
+        operation = str(uuid.uuid4())
+        reconciled = recovery.reconcile(self.fresh, operation, 'native', self.peer.device,
+                                        ident, 'not_processed')
+        self.assertEqual(reconciled, recovery.begin(self.old, self.fresh, self.plan_id))
+        self.assertEqual(reconciled, recovery.reconcile(self.fresh, operation, 'native',
+                                                       self.peer.device, ident, 'not_processed'))
+        self.assertEqual(recovery.activate(self.old, self.fresh)['recovery']['status'], 'active')
+        self.assertEqual(self.old.status(self.peer.device, ident), original)
+        self.assertEqual(self.fresh.db.execute('SELECT COUNT(*) FROM requests').fetchone()[0], 0)
+
+    def test_native_classification_requires_an_explicit_consistent_outcome(self):
+        cases = [
+            ('pending', {'ok': True, 'status': 'posted'}, 'unknown'),
+            ('done', {'ok': False, 'status': 'unknown', 'retryAllowed': False}, 'unknown'),
+            ('done', {'ok': False, 'status': 'unknown', 'retryAllowed': True}, 'unknown'),
+            ('done', {'ok': False, 'status': 'refused', 'retryAllowed': False}, 'not_processed'),
+            ('done', {'ok': True, 'status': 'refused'}, 'unknown'),
+            ('done', {'ok': False, 'status': 'refused', 'submitted': True}, 'unknown'),
+            ('done', {'ok': True, 'status': 'submitted'}, 'already_processed'),
+            ('done', {'ok': True, 'status': 'queued', 'consumptionConfirmed': False}, 'already_processed'),
+            ('done', {'ok': True, 'status': 'posted', 'consumptionConfirmed': False}, 'already_processed'),
+            ('done', {'ok': False, 'status': 'posted'}, 'unknown'),
+            ('done', {'ok': True, 'status': 'posted', 'submitted': False}, 'unknown'),
+            ('done', {'ok': True}, 'unknown'),
+            ('done', {'ok': True, 'status': 'unexpected'}, 'unknown'),
+            ('done', {'ok': True, 'status': []}, 'unknown'),
+            ('done', [], 'unknown'), ('done', None, 'unknown'),
+        ]
+        expected = {}
+        for state, outcome, classification in cases:
+            ident = str(uuid.uuid4())
+            self.old.db.execute('INSERT INTO requests VALUES(?,?,?,?,?)',
+                (self.peer.device, ident, 'fixture', state, json.dumps(outcome)))
+            expected[ident] = classification
+        for raw in (None, '', '{invalid', '[' * 2000):
+            ident = str(uuid.uuid4())
+            self.old.db.execute('INSERT INTO requests VALUES(?,?,?,"done",?)',
+                                (self.peer.device, ident, 'fixture', raw))
+            expected[ident] = 'unknown'
+        report = recovery.begin(self.old, self.fresh, self.plan_id)['recovery']
+        self.assertEqual({x['requestId']: x['classification'] for x in report['nativeEffects']}, expected)
+        self.assertEqual({g for g in report['remainingGates'] if g.startswith('native:')},
+                         {'native:'+self.peer.device+':'+i for i, c in expected.items() if c == 'unknown'})
+        self.assertNotIn('consumptionConfirmed', json.dumps(report['nativeEffects']))
 
     def test_unknown_receipt_offline_peer_and_partial_commit_block_activation(self):
         second = Store(self.root/'second-peer')
