@@ -10,9 +10,21 @@ import unittest
 @unittest.skipIf(os.name == "nt", "POSIX installer; Windows uses pip")
 class Install(unittest.TestCase):
     def test_failed_network_install_preserves_program_launcher_and_skills(self):
+        self._check_failed_network_install(symlink_root=False)
+
+    def test_failed_network_install_through_symlink_preserves_install(self):
+        self._check_failed_network_install(symlink_root=True)
+
+    def _check_failed_network_install(self, *, symlink_root):
         repo = Path(__file__).resolve().parents[2]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            if symlink_root:
+                actual = root / 'actual'
+                actual.mkdir()
+                alias = root / 'alias'
+                alias.symlink_to(actual, target_is_directory=True)
+                root = alias
             home = root / 'home'
             home.mkdir()
             env = {**os.environ, 'HOME': str(home)}
@@ -50,7 +62,8 @@ esac
                         env={**env, 'FIXTURE_MODE': mode}, capture_output=True)
                     self.assertEqual(result.returncode == 0, mode == 'valid', result.stderr)
                     self.assertEqual([p.read_bytes() for p in [program, *skills]], previous)
-                    self.assertEqual(launcher.resolve(), program)
+                    self.assertTrue(launcher.is_symlink())
+                    self.assertEqual(launcher.resolve(), program.resolve())
                     self.assertEqual(list(program.parent.glob('.install.*')), [])
 
     def test_invalid_local_and_remote_artifacts_do_not_replace_existing_install(self):
