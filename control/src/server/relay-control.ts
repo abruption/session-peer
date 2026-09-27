@@ -161,6 +161,32 @@ export class RelayControl {
       throw new ControlError("state_publication_failed", 503);
     }
   }
+  private mutate<T>(change: () => T): T {
+    const revision = this.reserveRevision();
+    this.healthy = false;
+    try {
+      const result = this.db.transaction(() => {
+        const result = change();
+        this.publish(revision);
+        return result;
+      })();
+      // Publication alone cannot establish readiness: COMMIT may still fail.
+      this.healthy = true;
+      return result;
+    } catch (error) {
+      this.healthy = false;
+      if (!this.db.inTransaction && this.publicationFloor < revision) {
+        // Validation failed before publication. Consume the reserved revision
+        // by publishing the rolled-back, committed state, not the rejected
+        // mutation. Do not leave ordinary 4xx requests poisoning readiness.
+        try { this.publish(revision); } catch { /* remain fail-closed */ }
+      }
+      // If publication started, its revision may already be visible. Keep
+      // admission/readiness closed until periodic publication or restart
+      // repairs the snapshot from committed DB state at a higher revision.
+      throw error;
+    }
+  }
   publish(reservedRevision?: number) {
     const revision = reservedRevision ?? this.reserveRevision();
     const current = this.db.prepare("SELECT revision FROM relay_public_revision WHERE id=1").get() as { revision: number };
@@ -212,7 +238,7 @@ export class RelayControl {
       } finally {
         closeSync(dirfd);
       }
-      this.healthy = true;
+      this.healthy = !this.db.inTransaction;
       this.publishedState = JSON.stringify(snapshot);
       this.publishedAt = now;
     } catch (e) {
@@ -473,8 +499,7 @@ export class RelayControl {
     const existing = this.operationRecord(userId, p);
     assert(existing, "operation_not_found", 404);
     if (existing.result !== null) return JSON.parse(existing.result);
-    const revision = this.reserveRevision();
-    return this.db.transaction(() => {
+    return this.mutate(() => {
       const row = this.operationRecord(userId, p);
       assert(row, "operation_not_found", 404);
       // Historical receipt only: no new mutation, proof reexecution or revival.
@@ -545,9 +570,8 @@ export class RelayControl {
           "UPDATE relay_operations SET result=? WHERE operationId=? AND userId=?",
         )
         .run(JSON.stringify(result), p.operationId, userId);
-      this.publish(revision);
       return result;
-    })();
+    });
   }
   recover(userId: string, input: unknown) {
     assert(this.healthy, "state_unavailable", 503);
@@ -561,8 +585,7 @@ export class RelayControl {
     const existing = this.operationRecord(userId, p);
     assert(existing, "operation_not_found", 404);
     if (existing.result !== null) return JSON.parse(existing.result);
-    const revision = this.reserveRevision();
-    return this.db.transaction(() => {
+    return this.mutate(() => {
       const row = this.operationRecord(userId, p);
       assert(row, "operation_not_found", 404);
       if (row.result !== null) return JSON.parse(row.result);
@@ -582,9 +605,8 @@ export class RelayControl {
       this.db.prepare(
         "UPDATE relay_operations SET result=? WHERE operationId=? AND userId=?",
       ).run(JSON.stringify(result), p.operationId, userId);
-      this.publish(revision);
       return result;
-    })();
+    });
   }
   async admit(userId: string, input: unknown) {
     assert(this.healthy, "state_unavailable", 503);
@@ -634,8 +656,7 @@ export class RelayControl {
     principal(id);
     assert(this.healthy, "state_unavailable", 503);
     this.device(id, userId, false);
-    const revision = this.reserveRevision();
-    return this.db.transaction(() => {
+    return this.mutate(() => {
       this.device(id, userId, false);
       this.db
         .prepare(
@@ -645,8 +666,7 @@ export class RelayControl {
       this.db
         .prepare("DELETE FROM relay_challenges WHERE userId=?")
         .run(userId);
-      this.publish(revision);
       return { principal: id, revoked: true };
-    })();
+    });
   }
 }
