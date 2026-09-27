@@ -832,3 +832,5 @@ Python 3.10+ で `session-peer[mcp]` をインストールし、[MCP のセッ�
 list/send/wake/wait/ack サポートを記述します。権限を付与したり準備完了を証明したりするものではありません。
 
 `install.sh` はローカル・SSH更新を対象ファイルシステムに準備し、runtimeとskillを取得して一時CLIのバージョンを検証後、runtimeを原子的に置換します。取得・検証失敗時は既存runtime・launcher・skillを保持します。全ファイルのトランザクション、署名検証、後続skill-manager失敗のロールバックではありません。既存インストール管理者は変えません。
+
+SSHは起動前に最終的なshell引用済みコマンドのUTF-8バイト数を検証します。上限131071バイトにはbase64展開、envelope、option、引用が含まれます。超過はローカルで `ssh_command_too_large` と `submitted: false` を返します。Unicodeには文字数だけでは不十分です。ローカル送信制限は不変で、全OSの引数・環境合計容量を保証するものではありません。

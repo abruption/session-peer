@@ -850,3 +850,5 @@ plugin loading is not available. `doctor.capabilities.agents` describes implemen
 list/send/wake/wait/ack support; it does not grant permission or prove readiness.
 
 `install.sh` stages local and SSH runtime updates in the destination filesystem, downloads both runtime and skill first, and validates the staged CLI version before atomically replacing the runtime. Download or validation failure leaves the installed runtime, launcher and skill intact. This is not a transaction across all installation files, a signature check, or rollback after a later skill-manager failure. Existing skill-manager ownership is unchanged.
+
+SSH validates the final shell-quoted remote command as UTF-8 bytes before starting any SSH subprocess. The conservative limit is 131071 bytes, including base64 message expansion, envelope, options and quoting. Oversized commands fail locally with `ssh_command_too_large` and `submitted: false`; character-count validation alone is insufficient for Unicode. Local delivery limits are unchanged. This per-command guard cannot guarantee that every remote operating system has enough total environment/argument space.
