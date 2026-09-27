@@ -1,3 +1,5 @@
+from contextlib import closing
+import gc
 import hashlib
 import importlib.util
 import json
@@ -5,6 +7,7 @@ import os
 from pathlib import Path
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -25,11 +28,22 @@ def load_snapshot_module():
 @unittest.skipIf(os.name == "nt", "Linux control backup snapshot contract")
 class ControlBackupSnapshotTests(unittest.TestCase):
     def setUp(self):
+        unraisable = []
+        previous_hook = sys.unraisablehook
+        sys.unraisablehook = lambda event: unraisable.append(event.exc_type)
+        def check_finalizers():
+            try:
+                gc.collect()
+                self.assertEqual(unraisable, [])
+            finally:
+                sys.unraisablehook = previous_hook
+        self.addCleanup(check_finalizers)
         self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.module = load_snapshot_module()
         self.db = self.root / "source.sqlite"
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             connection.executescript("""
                 CREATE TABLE session_peer_migrations(
                     version INTEGER PRIMARY KEY, appliedAt INTEGER NOT NULL
@@ -89,7 +103,7 @@ class ControlBackupSnapshotTests(unittest.TestCase):
         self.assertTrue(contract["replayDigestPresent"])
 
     def test_snapshot_rejects_schema_and_revision_rollback(self):
-        with sqlite3.connect(self.db) as connection:
+        with closing(sqlite3.connect(self.db)) as connection, connection:
             connection.execute("UPDATE session_peer_migrations SET version=2")
         with self.assertRaisesRegex(RuntimeError, "control_schema_migration_required"):
             self.module.database_snapshot(self.root / "future")

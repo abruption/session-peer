@@ -403,4 +403,8 @@ OAuth、Mac 用户浏览器、Python JWT 集成、24 小时运行或真实 Claud
 注册、准入、已吊销凭据、跨所有者拒绝以及带响应丢失的
 轮换。预置的测试夹具会话并不能作为实际 OAuth 的证据。
 
+### 可选的认证代理标识
+
+Control 默认按 socket IP 限流，不信任转发 IP 头。启用时，通过 `SESSION_PEER_TRUSTED_PROXY_TOKEN_FILE` 指定仅与本机代理共享的专用32–128字符 base64url 密钥文件(0600，也支持 systemd credentials)。代理必须为每个 Control 请求覆盖 `X-Session-Peer-Proxy-Token` 和 `X-Session-Peer-Client-IP`，填入密钥与验证过的单一客户端 IP。Control 仅接受 loopback 连接中的这对头，规范化 IPv4/IPv6 并在路由前删除两者。缺失或无效时回退到 socket IP。原始 `X-Forwarded-For`、`CF-Connecting-IP`、`X-Session-Peer-IP` 均不可信。使用 CDN 时须单独验证代理的可信 upstream/IP 配置，不能直接复制任意输入头。密钥不得进入日志或响应。现有限流保持启用；启用此功能是独立运维操作。
+
 Control在发布及提交变更前，按Python reader的1MiB UTF-8上限检查完整公开state，并预留revision与时间戳增长空间。超限变更以 `public_state_capacity_exceeded`(409)回滚，不会自动删除撤销tombstone。已有超大DB保持unhealthy，直至运维安全解决容量问题。限制按字节而非固定设备数；heartbeat和重启仍须读取最后有效snapshot。
