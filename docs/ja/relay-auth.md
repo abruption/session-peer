@@ -407,3 +407,7 @@ OAuth、Mac ユーザーブラウザ、Python JWT 統合、24 時間稼働、ま
 `tests/control_integration/test_control_integration.py` にある実行可能な Node/Python フィクスチャは、
 登録、入場、失効した認証情報、所有者間の拒否、および応答消失を
 伴うローテーションをカバーしています。シードされたフィクスチャセッションは、実際の OAuth の証拠ではありません。
+
+### 任意の認証済みプロキシ識別
+
+既定では Control はソケット IP で制限し、転送 IP ヘッダーを信用しません。利用する場合は `SESSION_PEER_TRUSTED_PROXY_TOKEN_FILE` にローカルプロキシだけと共有する専用の32–128文字 base64url 秘密の0600ファイルを指定します(systemd credentialsも対応)。プロキシは各 Control 要求の `X-Session-Peer-Proxy-Token` と `X-Session-Peer-Client-IP` を秘密と検証済みの単一 IP で上書きします。Control は loopback 接続のみで受け入れ、IPv4/IPv6を正規化し両ヘッダーを除去します。不正・欠落時はソケット IP に戻ります。生の `X-Forwarded-For`、`CF-Connecting-IP`、`X-Session-Peer-IP` は信用しません。CDN使用時の信頼 upstream/IP 設定は別途検証し、入力ヘッダーを無条件に転記しないでください。秘密をログ・応答に含めないでください。既存制限は維持され、有効化には別途運用変更が必要です。
