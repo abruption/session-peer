@@ -32,7 +32,7 @@ Web 端 `/login`、`/device`、`/devices` 在生产中使用 HTTP-only 安全 Co
 
 CLI 登录使用 BetterAuth 的 `deviceAuthorization()` 和 `bearer()`：
 
-- `POST /api/auth/device/code`，`client_id=session-peer-cli`。
+- `POST /api/auth/device/code`，`client_id=session-peer-cli`。JSON 正文只能包含 `client_id`，其他字段返回 `invalid_device_request`。待处理代码数量有上限(503 `device_code_capacity`)，过期代码会在签发时清理。
 - 打开所提供的验证 URI；进行身份验证并检查/批准该代码。
 - 按公布的时间间隔（5 秒）轮询 `POST /api/auth/device/token`。
   授权类型为 `urn:ietf:params:oauth:grant-type:device_code`。

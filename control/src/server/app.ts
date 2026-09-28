@@ -106,6 +106,32 @@ export function createAdminMetricsApp(
     );
   };
 }
+// Device codes are issued without authentication, so issuance must stay bounded.
+export const MAX_PENDING_DEVICE_CODES = 500;
+// Keep recently expired rows briefly so late polls still receive expired_token.
+export const DEVICE_CODE_RETENTION_MS = 15 * 60 * 1000;
+async function deviceCodeBody(request: Request): Promise<unknown> {
+  try {
+    return await request.clone().json();
+  } catch {
+    throw new ControlError("invalid_device_request");
+  }
+}
+/** Accept only the first-party client request and prune expired codes before issuing another. */
+export function admitDeviceCodeRequest(db: Database.Database, body: unknown, now = Date.now()): void {
+  assert(
+    !!body && typeof body === "object" && !Array.isArray(body) &&
+      Object.keys(body).length === 1 &&
+      typeof (body as { client_id?: unknown }).client_id === "string" &&
+      (body as { client_id: string }).client_id.length <= 64,
+    "invalid_device_request",
+  );
+  db.prepare("DELETE FROM deviceCode WHERE expiresAt<=?")
+    .run(new Date(now - DEVICE_CODE_RETENTION_MS).toISOString());
+  const pending = db.prepare("SELECT COUNT(*) AS n FROM deviceCode WHERE expiresAt>?")
+    .get(new Date(now).toISOString()) as { n: number };
+  assert(pending.n < MAX_PENDING_DEVICE_CODES, "device_code_capacity", 503);
+}
 export function createApp(
   auth: Auth,
   db: Database.Database,
@@ -163,6 +189,8 @@ export function createApp(
         assert(sameOrigin(request, config.origin), "csrf_rejected", 403);
       if (publicDevice && request.headers.has("origin"))
         assert(sameOrigin(request, config.origin), "csrf_rejected", 403);
+      if (path === "/api/auth/device/code" && request.method === "POST")
+        admitDeviceCodeRequest(db, await deviceCodeBody(request));
       if (
         [
           "/api/auth/device",

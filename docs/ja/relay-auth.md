@@ -32,7 +32,7 @@ Web の `/login`、`/device`、`/devices` は、本番環境で HTTP-only セキ
 
 CLI ログインは BetterAuth `deviceAuthorization()` および `bearer()` を使用します:
 
-- `POST /api/auth/device/code`, `client_id=session-peer-cli`.
+- `POST /api/auth/device/code`, `client_id=session-peer-cli`. JSON 本文には `client_id` のみを含めることができ、その他のフィールドは `invalid_device_request` を返します。保留中のコード数には上限があり(503 `device_code_capacity`)、期限切れのコードは発行時に削除されます。
 - 提供された検証 URI を開き、認証を行ってコードを確認／承認します。
 - 提示された間隔（5秒）で `POST /api/auth/device/token` をポーリングします。
   グラントは `urn:ietf:params:oauth:grant-type:device_code` です。
