@@ -123,6 +123,7 @@ async def manage(kind, args):
         try:
             limits = RelayLimits(
                 handshake_rate=args.handshake_rate,
+                client_handshake_rate=args.client_handshake_rate,
                 pending_sessions=args.pending_sessions,
                 global_connections=args.global_connections,
                 user_connections=args.user_connections,
@@ -137,8 +138,20 @@ async def manage(kind, args):
             if control:
                 control.close()
             raise Rejected('invalid_relay_metrics_port')
+        proxy_secret = None
+        if args.trusted_proxy_secret_file:
+            try:
+                proxy_secret = private_read(args.trusted_proxy_secret_file, 4096,
+                                            systemd_credentials=True).strip()
+            except (OSError, ValueError, UnicodeDecodeError):
+                proxy_secret = None
+            if not proxy_secret or len(proxy_secret) < 32:
+                if control:
+                    control.close()
+                raise Rejected('invalid_trusted_proxy_secret')
         relay = Relay(accounts, control=control, limits=limits,
-                      diagnostic_events=getattr(args, 'diagnostic_events', False))
+                      diagnostic_events=getattr(args, 'diagnostic_events', False),
+                      proxy_secret=proxy_secret)
         try:
             server = await relay.start(args.bind, args.port)
         except BaseException:
@@ -328,6 +341,8 @@ def parser(kind):
         source.add_argument('--accounts'); source.add_argument('--auth-state')
         item.add_argument('--auth-issuer'); item.add_argument('--auth-replay-state'); server_options(item)
         item.add_argument('--handshake-rate', type=int, default=20)
+        item.add_argument('--client-handshake-rate', type=int, default=5)
+        item.add_argument('--trusted-proxy-secret-file', metavar='PATH')
         item.add_argument('--pending-sessions', type=int, default=100)
         item.add_argument('--global-connections', type=int, default=10)
         item.add_argument('--user-connections', type=int, default=8)

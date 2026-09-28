@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 import hashlib
 from http import HTTPStatus
 from http.cookies import SimpleCookie
+import ipaddress
 import json
 import logging
 import secrets
@@ -13,10 +14,48 @@ from websockets.asyncio.server import serve
 
 from .wire import MAX_FRAME, valid_attempt_id
 
+RELAY_PATHS = ('/v1/session', '/v1/connect')
+# Bounded per-source admission windows; beyond this, only the global window applies.
+MAX_CLIENT_WINDOWS = 4096
+
+
+def client_key(connection, request, proxy_secret):
+    """Return a rate-limit key only for an address this relay can trust.
+
+    A direct peer address is trusted as-is. Behind a loopback reverse proxy the
+    address comes solely from dedicated headers authorized by a shared secret;
+    X-Forwarded-For and similar client-supplied headers never identify a source.
+    """
+    remote = getattr(connection, 'remote_address', None)
+    try:
+        socket_ip = ipaddress.ip_address(remote[0]) if remote else None
+    except (TypeError, ValueError, IndexError):
+        socket_ip = None
+    if socket_ip is None:
+        return None
+    if socket_ip.is_loopback:
+        if not proxy_secret:
+            return None
+        token = request.headers.get('X-Session-Peer-Proxy-Token', '')
+        if not secrets.compare_digest(token.encode(), proxy_secret.encode()):
+            return None
+        try:
+            source = ipaddress.ip_address(request.headers.get('X-Session-Peer-Client-IP', ''))
+        except ValueError:
+            return None
+    else:
+        source = socket_ip
+    if getattr(source, 'ipv4_mapped', None):
+        source = source.ipv4_mapped
+    if source.version == 6:
+        return str(ipaddress.ip_network(f'{source}/64', strict=False))
+    return str(source)
+
 
 @dataclass(frozen=True)
 class RelayLimits:
     handshake_rate: int = 20
+    client_handshake_rate: int = 5
     pending_sessions: int = 100
     global_connections: int = 10
     user_connections: int = 8
@@ -26,6 +65,7 @@ class RelayLimits:
     def validate(self):
         bounds = {
             'handshake_rate': (1, 1000),
+            'client_handshake_rate': (1, 1000),
             'pending_sessions': (1, 10000),
             'global_connections': (2, 10000),
             'user_connections': (1, 1000),
@@ -43,11 +83,14 @@ class RelayLimits:
 
 
 class Relay:
-    def __init__(self, accounts, *, capture=None, control=None, limits=None, diagnostic_events=False):
+    def __init__(self, accounts, *, capture=None, control=None, limits=None, diagnostic_events=False,
+                 proxy_secret=None):
         # Provisioned admission hashes are independent of end-to-end TLS identities.
         self.accounts = accounts
         self.control = control
         self.limits = (limits or RelayLimits()).validate()
+        self.proxy_secret = proxy_secret or None
+        self.client_requests = {}
         self.sessions = {}
         self.waiting = {}
         self.connections = set()
@@ -67,6 +110,8 @@ class Relay:
             'sessionsIssued': 0,
             'connectionsAccepted': 0,
             'rateRejected': 0,
+            'clientRateRejected': 0,
+            'notFound': 0,
             'sessionCapacityRejected': 0,
             'connectionCapacityRejected': 0,
             'unauthorizedRejected': 0,
@@ -115,17 +160,41 @@ class Relay:
         response.headers['Cache-Control'] = 'no-store'
         return response
 
-    async def process_request(self, connection, request):
-        now = time.monotonic()
-        self.counters['handshakes'] += 1
+    def admission_rate_limited(self, connection, request, now):
+        """Charge only admission attempts; one source cannot drain the global window."""
+        key = client_key(connection, request, self.proxy_secret)
+        window = None
+        if key is not None:
+            if key not in self.client_requests and len(self.client_requests) >= MAX_CLIENT_WINDOWS:
+                self.client_requests = {k: v for k, v in self.client_requests.items() if v[-1] > now-1}
+            if key in self.client_requests or len(self.client_requests) < MAX_CLIENT_WINDOWS:
+                window = [stamp for stamp in self.client_requests.get(key, ()) if stamp > now-1]
+                self.client_requests[key] = window
+                if len(window) >= min(self.limits.client_handshake_rate, self.limits.handshake_rate):
+                    self.rejected += 1
+                    self.counters['clientRateRejected'] += 1
+                    return True
         self.requests = [stamp for stamp in self.requests if stamp > now-1]
         if len(self.requests) >= self.limits.handshake_rate:
             self.rejected += 1
             self.counters['rateRejected'] += 1
-            return self.response(connection, HTTPStatus.TOO_MANY_REQUESTS, 'rate_limited\n')
+            return True
         self.requests.append(now)
+        if window is not None:
+            window.append(now)
+        return False
+
+    async def process_request(self, connection, request):
+        now = time.monotonic()
+        self.counters['handshakes'] += 1
+        if request.path not in RELAY_PATHS:
+            # Unknown paths do no authentication work and must not spend admission budget.
+            self.counters['notFound'] += 1
+            return self.response(connection, HTTPStatus.NOT_FOUND, 'not_found\n')
         self.sessions = {key: value for key, value in self.sessions.items() if value[0] > now}
         if request.path == '/v1/session':
+            if self.admission_rate_limited(connection, request, now):
+                return self.response(connection, HTTPStatus.TOO_MANY_REQUESTS, 'rate_limited\n')
             # Capacity rejection must not consume a control admission JTI.
             if len(self.sessions) >= self.limits.pending_sessions:
                 self.rejected += 1
@@ -151,8 +220,7 @@ class Relay:
             response = self.response(connection, HTTPStatus.OK, '{"ok":true}\n')
             response.headers['Set-Cookie'] = 'session_peer='+token+'; Path=/v1/; Secure; HttpOnly; SameSite=Strict; Max-Age=120'
             return response
-        if request.path != '/v1/connect':
-            return self.response(connection, HTTPStatus.NOT_FOUND, 'not_found\n')
+        # /v1/connect only redeems a one-use session that was rate limited at issue.
         cookie = SimpleCookie()
         try:
             cookie.load(request.headers.get('Cookie', ''))
