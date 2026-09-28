@@ -73,7 +73,7 @@ pipx upgrade session-peer
 # 또는, 해당 가상 환경에서: python -m pip install --upgrade session-peer
 ```
 
-`session-peer update`는 독립 스크립트 설치본의 실행 파일만 교체하며,
+로컬 설치에서 `session-peer update`는 독립 스크립트 실행 파일을 교체하며,
 패키지 설치본에는 업그레이드 안내를 제공해요. 이 명령은 스킬을 갱신하지 않아요.
 스킬에는 원래 설치 도구(Skills CLI 또는 동봉 사본의 `install.sh`)를 사용하세요.
 [업데이트 상세와 원격 제약](https://github.com/abruption/session-peer/blob/main/docs/ko/cli-reference.md#updating)을 참고하세요.
@@ -93,7 +93,7 @@ Unix·Python 3.11 이상·`session-peer[relay]`와 고정된 기기 신원·명�
 패키지 발행이 호스팅 서비스 가용성을 보장하지는 않아요.
 블라인드 Relay는 애플리케이션 메시지 내용을 복호화할 수 없어요.
 [MCP·Codex 플러그인](https://github.com/abruption/session-peer/blob/main/docs/ko/mcp.md)은 Python 3.10 이상과
-`session-peer[mcp]`가 필요하며, MCP wake에는 `send`와 별개인 `wake` 권한이 필요해요.
+`session-peer[mcp]`가 필요하며, MCP wake에는 `send`와 `wake` 권한이 모두 필요해요.
 [Wake](https://github.com/abruption/session-peer/blob/main/docs/ko/wake.md)는 명시적으로 요청할 때만 실행되며,
 턴을 시작하고 사용량을 소비하거나 프로젝트 파일을 바꿀 수 있어요.
 [Antigravity 브리지](https://github.com/abruption/session-peer/blob/main/docs/ko/antigravity.md)는 실험 상태예요.

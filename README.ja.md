@@ -56,7 +56,7 @@ session-peer CLIのインストールは不要です。独自のCodexホーム�
 セッションを所有する接続先アカウントを使ってください（`--host USER@HOST`）。
 SSHと受信側の権限が適用されます。
 
-**`posted` / `queued` は送信処理の成功であり、消費・ACK・作業完了の確認ではありません。**
+**`posted` / `queued` は受信箱・キューへの提出の確認であり、消費・ACK・作業完了の確認ではありません。**
 必要なら明示的な返信を依頼してください。通常の送信は停止中のCodex接続先をデフォルトで拒否し、
 起動もしません。結果が不確かな送信を自動で再試行しないでください。
 
@@ -73,7 +73,7 @@ pipx upgrade session-peer
 # または、対象の仮想環境内で: python -m pip install --upgrade session-peer
 ```
 
-`session-peer update` がランタイムのファイルを置き換えるのは単独スクリプト版だけです。
+ローカルのインストールでは、`session-peer update` は単独スクリプトのランタイムファイルを置き換えます。
 パッケージ版には更新方法を案内します。このコマンドはスキルを更新しません。
 元のインストールツール（Skills CLI、または同梱コピーの `install.sh`）を使ってください。
 [更新の詳細とリモートでの制約](https://github.com/abruption/session-peer/blob/main/docs/ja/cli-reference.md#updating)を参照してください。
@@ -93,7 +93,7 @@ Unix、Python 3.11以上、`session-peer[relay]`、固定した識別情報と�
 パッケージの公開はホスト型サービスの可用性を保証しません。
 ブラインドRelayはアプリケーションのメッセージ内容を復号できません。
 [MCP・Codexプラグイン](https://github.com/abruption/session-peer/blob/main/docs/ja/mcp.md)にはPython 3.10以上と
-`session-peer[mcp]` が必要で、MCP wakeには `send` とは別の `wake` 権限が必要です。
+`session-peer[mcp]` が必要で、MCP wakeには `send` と `wake` の両方の権限が必要です。
 [Wake](https://github.com/abruption/session-peer/blob/main/docs/ja/wake.md)は明示的に依頼した場合だけ実行し、
 ターンの開始、利用枠の消費、プロジェクトファイルの変更を伴う場合があります。
 [Antigravityブリッジ](https://github.com/abruption/session-peer/blob/main/docs/ja/antigravity.md)は実験段階です。
@@ -114,5 +114,5 @@ Unix、Python 3.11以上、`session-peer[relay]`、固定した識別情報と�
 
 非公開のご質問や代替のセキュリティ窓口には、件名に `[session-peer]` を付けて
 [support@abruption.dev](mailto:support@abruption.dev)へご連絡ください。
-対応期限は保証していません。メールは手動で確認し、公開Issueへ自動投稿しません。
+できる限り対応しますが、対応期限は保証しません。メールは手動で確認し、公開Issueへ自動投稿しません。
 英語・韓国語での報告を受け付けています。

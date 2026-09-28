@@ -73,7 +73,7 @@ pipx upgrade session-peer
 # 或者，在其虚拟环境中: python -m pip install --upgrade session-peer
 ```
 
-`session-peer update` 仅为独立脚本安装版替换运行时文件；
+在本地安装中，`session-peer update` 会替换独立脚本的运行时文件；
 软件包安装版会收到升级指引。此命令不会更新代理技能；
 请使用原安装工具（Skills CLI，或同捆副本的 `install.sh`）。
 请参阅[更新详情与远程限制](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/cli-reference.md#updating)。
@@ -93,7 +93,7 @@ Unix、Python 3.11以上和 `session-peer[relay]`，并要求固定设备身份�
 软件包发布不保证托管服务可用性。
 盲转发Relay无法解密应用消息的内容。
 [MCP与Codex插件](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/mcp.md)需要Python 3.10以上及
-`session-peer[mcp]`；MCP wake需要与 `send` 分开的 `wake` 权限。
+`session-peer[mcp]`；MCP wake需要同时具备 `send` 和 `wake` 权限。
 [Wake](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/wake.md)仅在显式请求时运行，
 可能启动一轮任务、消耗使用额度或修改项目文件。
 [Antigravity桥接](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/antigravity.md)仍处于实验阶段。
@@ -114,5 +114,5 @@ Unix、Python 3.11以上和 `session-peer[relay]`，并要求固定设备身份�
 
 非公开咨询或替代安全联系方式，请发送邮件至
 [support@abruption.dev](mailto:support@abruption.dev)，标题注明 `[session-peer]`。
-支持服务不保证响应时限。邮件由维护者手动审核，不会自动转为公开Issue。
+我们会尽力提供支持，但不保证响应时限。邮件由维护者手动审核，不会自动转为公开Issue。
 欢迎英文与韩文报告。

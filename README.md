@@ -73,7 +73,7 @@ pipx upgrade session-peer
 # or, in its virtual environment: python -m pip install --upgrade session-peer
 ```
 
-`session-peer update` replaces runtime files only for standalone installations;
+For local installations, `session-peer update` replaces standalone runtime files;
 package-managed installs receive upgrade guidance instead. It never updates agent skills:
 use their original installer (Skills CLI, or `install.sh` for its bundled copy).
 See [update details and remote limitations](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#updating).
@@ -93,7 +93,7 @@ require Unix, Python 3.11+, and `session-peer[relay]`, with pinned identities an
 explicit receiver policy. Package publication does not guarantee hosted-service availability.
 The blind Relay cannot decrypt application message content.
 [MCP / Codex plugin](https://github.com/abruption/session-peer/blob/main/docs/mcp.md) requires Python 3.10+
-and `session-peer[mcp]`; MCP wake requires a `wake` capability separate from `send`.
+and `session-peer[mcp]`; MCP wake requires both `send` and `wake` capabilities.
 [Wake](https://github.com/abruption/session-peer/blob/main/docs/wake.md) runs only when explicitly requested
 and can start a turn, consume usage, and change project files.
 The [Antigravity bridge](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md) remains experimental.
@@ -114,5 +114,5 @@ Redact secrets, conversation text, session IDs, and personal paths from shared d
 
 For private questions or an alternative security contact, email
 [support@abruption.dev](mailto:support@abruption.dev) with `[session-peer]` in the subject.
-Support is best effort. Emails are reviewed manually, never automatically published as issues.
+Support is best effort, with no guaranteed response time. Emails are reviewed manually, never automatically published as issues.
 English and Korean reports are welcome.
