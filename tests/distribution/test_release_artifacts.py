@@ -5,6 +5,7 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 
 
@@ -33,6 +34,22 @@ class ReleaseArtifacts(unittest.TestCase):
         with tarfile.open(sdist, "w:gz") as archive:
             archive.add(payload, arcname="session_peer-1.2.3/PKG-INFO")
         return directory
+
+    def test_pypi_download_accepts_only_the_exact_files_host(self):
+        name = "session_peer-1.2.3-py3-none-any.whl"
+        for url in ("https://files.pythonhosted.org.example.com/x.whl",
+                    "https://evilpythonhosted.org/x.whl",
+                    "http://files.pythonhosted.org/x.whl"):
+            payload = {"info": {"version": self.version},
+                       "urls": [{"filename": name, "url": url, "digests": {"sha256": "a" * 64}}]}
+            with self.subTest(url=url), tempfile.TemporaryDirectory() as temporary, \
+                    mock.patch.object(release_artifacts, "read_manifest", return_value={name: "a" * 64}), \
+                    mock.patch.object(release_artifacts, "_pypi_json", return_value=payload), \
+                    mock.patch.object(release_artifacts, "urlopen") as urlopen:
+                with self.assertRaisesRegex(release_artifacts.VerificationError, "unexpected PyPI artifact URL"):
+                    release_artifacts.download_from_pypi(Path(temporary), Path(temporary) / "out",
+                                                         self.version, 1, 0)
+                urlopen.assert_not_called()
 
     def test_manifest_rejects_an_artifact_changed_after_hashing(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -255,7 +255,7 @@ def download_from_pypi(expected_dir: Path, output_dir: Path, version: str, attem
             raise VerificationError(f"PyPI metadata checksum mismatch for {name}")
         url = entry.get("url", "")
         parsed = urlparse(url)
-        if parsed.scheme != "https" or not parsed.hostname or not parsed.hostname.endswith("pythonhosted.org"):
+        if parsed.scheme != "https" or parsed.hostname != "files.pythonhosted.org":
             raise VerificationError(f"unexpected PyPI artifact URL for {name}: {url!r}")
         request = Request(url, headers={"User-Agent": "session-peer-release-verifier/1"})
         with urlopen(request, timeout=60) as response:
