@@ -48,19 +48,15 @@ USAGE
 
 validate_host() {
     case "$1" in
-        -*) die "--host must not start with '-' (ssh would read it as an option)" ;;
-    esac
-    _lower=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d ' =')
-    case "$_lower" in
-        *proxycommand*|*permitlocalcommand*|*localcommand*)
-            die "--host must not carry proxy/local command options" ;;
+        ''|-*|*[!a-zA-Z0-9_.@:\[\]%-]*)
+            die "--host must be one [USER@]HOST without whitespace or shell syntax" ;;
     esac
 }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --host) [ $# -ge 2 ] || die "--host needs a value"; HOSTS="$HOSTS $2"; shift 2 ;;
-        --host=*) HOSTS="$HOSTS ${1#--host=}"; shift ;;
+        --host) [ $# -ge 2 ] || die "--host needs a value"; validate_host "$2"; HOSTS="$HOSTS $2"; shift 2 ;;
+        --host=*) validate_host "${1#--host=}"; HOSTS="$HOSTS ${1#--host=}"; shift ;;
         --uninstall) UNINSTALL=1; shift ;;
         -h|--help) usage 0 ;;
         *) die "unknown argument: $1 (try --help)" ;;

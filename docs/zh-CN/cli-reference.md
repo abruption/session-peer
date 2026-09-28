@@ -393,7 +393,7 @@ session-peer 在拥有该收件箱的机器上发起连接。对于 SSH 发送�
 - **Tailscale 状态是本地路由提示。** 已知的在线对等节点通过其当前的 MagicDNS 名称进行寻址，已知的离线对等节点在发起 SSH 之前会被拒绝。未知的目的地仍然作为普通 SSH 处理；session-peer 并不声称每个 SSH 主机都属于 tailnet。
 - **无法跨跳板机（bastion）进行发现。** `--host` 是单次 SSH 跳跃；请通过 SSH 配置的 `ProxyJump` 自行进行链式跳转。
 - **目标端用户和执行权限至关重要。** Claude 收件箱和 Codex 状态/队列归目标账户所有。请使用正确的账户和主目录。`known_hosts` 条目不存储该账户。调用者的沙盒可能仍会拒绝访问；session-peer 不会绕过任何一个代理的权限或配额。
-- **`--host` 和 `--ssh-opt` 的受信任程度与您的 ssh 配置相同。** 它们会被传递给 `ssh`，因此谁控制了它们就控制了连接的目标。会导致 ssh 运行本地命令的值（`ProxyCommand` 及其类似项）会被拒绝，且以 `-` 开头的 `--host` 会直接被驳回 —— 但如果您将 `session-peer` 加入代理的白名单，应将其视为授予了 SSH 权限，而不仅仅是消息收发权限。消息正文和会话名称没有此类风险：它们在传递到任何 shell 之前均会被引用（quote）。
+- **`--host` 和 `--ssh-opt` 授予的是 SSH 访问权，而不仅是消息传送权。** 目标必须是没有空白或 shell 语法的单个主机别名或地址。在包括配置查询的任何 `ssh` 调用之前，都会检查选项允许列表。允许的标志为 `-4`、`-6`、`-p`、`-l`、`-i`、`-J`（值可分开或连接），以及 `-oKEY=value` 或 `-o` 后跟 `KEY=value`。允许的键为 Port、User、IdentityFile、HostName、HostKeyAlias、ConnectTimeout、BatchMode、ServerAliveInterval、ServerAliveCountMax、StrictHostKeyChecking、ProxyJump 和 IdentitiesOnly。其他选项，包括替代配置文件、控制套接字、provider 和命令 hook，均被拒绝。现有用户和系统 SSH 配置仍被视为可信，其本身可能执行命令；此过滤器并非这些配置的沙箱。消息正文和会话名称均经过 shell 引用处理。 显式 `StrictHostKeyChecking` 仅允许 `yes`、`ask` 或 `accept-new`，拒绝 `no` 和 `off`。也不允许更改 `UserKnownHostsFile` 输出路径。更严格的语法拒绝 SSH URI 跳转目标、含加号的用户名及空格分隔的选项赋值；请使用主机形式的跳转目标和等号赋值。
 - **Windows 支持。** 支持 Claude 的命名管道传输。`install.sh` 以及独立的远程安装程序/更新程序使用 POSIX shell；在原生 Windows 上请使用 Python 包管理器。实时的 Codex 验证仍仅限 macOS；Codex 目录、Reply-To、doctor 和 JSON 测试夹具在 Windows CI 中运行。
 
 ## 测试

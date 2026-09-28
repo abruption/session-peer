@@ -8,8 +8,7 @@ def remote_installed_version(host: str, ssh_opts: list[str],
     actually use, and it is what can fall behind.
     """
     check_ssh_argument(host, "--host")
-    for opt in ssh_opts:
-        check_ssh_argument(opt, "--ssh-opt")
+    check_ssh_options(ssh_opts)
     ssh_info = ssh_user_metadata(host, ssh_opts) if ssh_info is None else ssh_info
     probe = 'python3 "$HOME/.local/share/session-peer/session_peer.py" --version 2>/dev/null'
     try:

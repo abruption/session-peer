@@ -4,11 +4,14 @@
 # --------------------------------------------------------------------------
 
 
-# ssh options that make ssh run a command on *this* machine. A host or an
-# --ssh-opt value carrying one of these turns "message a session" into "run
-# whatever I say, locally". ProxyJump is deliberately absent: it takes a host,
-# not a command, and is the right way to reach a box behind a bastion.
-LOCAL_EXEC_SSH_OPTIONS = ("proxycommand", "localcommand", "permitlocalcommand")
+# Deliberately bounded: validate the complete argv before even `ssh -G`.
+# OpenSSH configuration files remain a user-owned trust boundary; in particular
+# `-F` must not let a supplied argument select an executable Match/Include file.
+SSH_OPTION_KEYS = frozenset({
+    "port", "user", "identityfile", "hostname", "hostkeyalias",
+    "connecttimeout", "batchmode", "serveraliveinterval", "serveralivecountmax",
+    "stricthostkeychecking", "proxyjump", "identitiesonly",
+})
 
 # Linux with 4 KiB pages permits at most 128 KiB per exec argument,
 # including NUL. Bound the entire quoted remote shell command, not characters
@@ -17,24 +20,56 @@ MAX_SSH_COMMAND_BYTES = 128 * 1024 - 1
 
 
 def check_ssh_argument(value: str, flag: str) -> None:
-    """Refuse a value that would make ssh do something other than connect.
+    """Validate one destination; options must be validated as an argv list."""
+    if flag != "--host":
+        check_ssh_options([value])
+        return
+    if (not isinstance(value, str) or not value or value.startswith("-")
+            or not re.fullmatch(r"[A-Za-z0-9_.@:\[\]%-]+", value)):
+        raise CcPeerError("--host must be one [USER@]HOST without whitespace or shell syntax")
 
-    ssh has no `--` separator, so a leading dash turns a destination into a
-    flag. Hosts never legitimately start with one, while --ssh-opt values
-    always do — so the leading-dash rule applies only to the host, and both
-    are checked for options that execute a local command.
-    """
-    if flag == "--host" and value.startswith("-"):
-        raise CcPeerError(
-            f"--host must not start with '-' (ssh would read {value!r} as an option)"
-        )
-    collapsed = value.lower().replace(" ", "").replace("=", "")
-    for banned in LOCAL_EXEC_SSH_OPTIONS:
-        if banned in collapsed:
-            raise CcPeerError(
-                f"{flag} must not carry {banned} — it would run a command on this "
-                f"machine. Put it in ~/.ssh/config if you really need it."
-            )
+
+def check_ssh_options(options: list[str]) -> None:
+    index = 0
+    while index < len(options):
+        token = options[index]
+        if not isinstance(token, str) or any(ord(c) < 32 or ord(c) == 127 for c in token):
+            raise CcPeerError("invalid --ssh-opt argument")
+        index += 1
+        if token in ("-4", "-6"):
+            continue
+        flag = token[:2]
+        if flag not in ("-o", "-p", "-l", "-i", "-J"):
+            raise CcPeerError("unsupported --ssh-opt; only connection options are allowed")
+        value = token[2:]
+        if not value:
+            if index == len(options):
+                raise CcPeerError("--ssh-opt option requires a value")
+            value = options[index]
+            index += 1
+        if (not isinstance(value, str) or not value or value.startswith("-")
+                or any(ord(c) < 32 or ord(c) == 127 for c in value)):
+            raise CcPeerError("invalid --ssh-opt value")
+        if flag == "-o":
+            key, separator, value = value.partition("=")
+            key = key.lower()
+            if not separator or key not in SSH_OPTION_KEYS or not value:
+                raise CcPeerError("unsupported --ssh-opt setting; use an allowed KEY=value")
+        else:
+            key = {"-p": "port", "-l": "user", "-i": "identityfile", "-J": "proxyjump"}[flag]
+        if key in ("hostname", "hostkeyalias", "user"):
+            check_ssh_argument(value, "--host")
+        if key == "proxyjump":
+            for jump in value.split(","):
+                check_ssh_argument(jump, "--host")
+        if key in ("port", "connecttimeout", "serveraliveinterval", "serveralivecountmax"):
+            if (not re.fullmatch(r"[0-9]+", value)
+                    or (key == "port" and (len(value) > 5 or not 1 <= int(value) <= 65535))):
+                raise CcPeerError("invalid numeric --ssh-opt value")
+        if key in ("batchmode", "identitiesonly") and value.lower() not in ("yes", "no"):
+            raise CcPeerError("invalid boolean --ssh-opt value")
+        if key == "stricthostkeychecking" and value.lower() not in ("yes", "ask", "accept-new"):
+            raise CcPeerError("invalid StrictHostKeyChecking value")
 
 
 SSH_METADATA_FIELDS = ("sshUser", "sshUserSource")
@@ -47,8 +82,7 @@ def ssh_metadata_from(payload: dict) -> dict:
 def ssh_user_metadata(host: str, ssh_opts: list[str]) -> dict:
     """Ask OpenSSH which login user it will use without making a connection."""
     check_ssh_argument(host, "--host")
-    for opt in ssh_opts:
-        check_ssh_argument(opt, "--ssh-opt")
+    check_ssh_options(ssh_opts)
 
     explicit_user, separator, _ = host.rpartition("@")
     if separator and explicit_user:
@@ -119,8 +153,7 @@ def ssh_failure_error(host: str, ssh_info: dict, failure: str,
 
 def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     check_ssh_argument(host, "--host")
-    for opt in ssh_opts:
-        check_ssh_argument(opt, "--ssh-opt")
+    check_ssh_options(ssh_opts)
 
     remote = " ".join(shlex.quote(a) for a in ["python3", "-", *argv, "--json"])
     if len(remote.encode("utf-8")) > MAX_SSH_COMMAND_BYTES:
@@ -229,8 +262,7 @@ def push_to_remote(host: str, ssh_opts: list[str], ssh_info: dict | None = None)
     no install.sh.
     """
     check_ssh_argument(host, "--host")
-    for opt in ssh_opts:
-        check_ssh_argument(opt, "--ssh-opt")
+    check_ssh_options(ssh_opts)
 
     try:
         source = Path(__file__).resolve().read_bytes()
