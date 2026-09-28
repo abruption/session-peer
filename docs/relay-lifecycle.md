@@ -167,7 +167,10 @@ distinguished only when `--trusted-proxy-secret-file` is configured and the prox
 overwrites both `X-Session-Peer-Proxy-Token` and `X-Session-Peer-Client-IP`;
 `X-Forwarded-For` is never trusted. Without that secret, proxied requests share the
 global window, so keep an edge rate rule for `/v1/session`. IPv6 sources are grouped
-by /64.
+by /64. Many distinct sources, or a source limit equal to the global limit, can still
+exhaust the global window; clients behind one shared NAT or non-loopback proxy share
+one source limit. Metrics report the source limit under `sourceCapacity`, leaving the
+schema version 1 `capacity` keys unchanged.
 
 The optional metrics listener binds only to `127.0.0.1` on a separate port. Do
 not reverse-proxy it. The control service reads its fixed, non-identifying schema

@@ -92,7 +92,7 @@ session-peer relay serve ... \
 
 每个值都有上下限。每设备容量不能超过每用户容量，每用户容量不能超过全局容量；无效组合会拒绝启动。速率超限返回 429。待处理会话或连接容量超限返回 503，且不会消费新的准入证明或丢弃已签发的一次性会话。默认值是安全边界，而不是受支持用户数量的保证，并且必须低于实测的 systemd 内存、任务和文件描述符限制。
 
-只有 `/v1/session` 准入尝试会消耗握手窗口。未知路径返回 404，没有有效一次性会话的 `/v1/connect` 返回 401，二者都不消耗该窗口。每个来源受 `--client-handshake-rate`(默认 5，且不超过 `--handshake-rate`)限制，因此单一来源无法耗尽全局窗口。直接连接的对端以其地址识别来源。在 loopback 反向代理之后，只有配置了 `--trusted-proxy-secret-file` 且代理同时覆盖 `X-Session-Peer-Proxy-Token` 和 `X-Session-Peer-Client-IP` 时才区分来源；`X-Forwarded-For` 永不受信任。没有该密钥时，经代理的请求共享全局窗口，因此请为 `/v1/session` 保留边缘速率规则。IPv6 来源按 /64 分组。
+只有 `/v1/session` 准入尝试会消耗握手窗口。未知路径返回 404，没有有效一次性会话的 `/v1/connect` 返回 401，二者都不消耗该窗口。每个来源受 `--client-handshake-rate`(默认 5，且不超过 `--handshake-rate`)限制，因此单一来源无法耗尽全局窗口。直接连接的对端以其地址识别来源。在 loopback 反向代理之后，只有配置了 `--trusted-proxy-secret-file` 且代理同时覆盖 `X-Session-Peer-Proxy-Token` 和 `X-Session-Peer-Client-IP` 时才区分来源；`X-Forwarded-For` 永不受信任。没有该密钥时，经代理的请求共享全局窗口，因此请为 `/v1/session` 保留边缘速率规则。IPv6 来源按 /64 分组。大量不同来源，或来源限制等于全局限制时，仍可能耗尽全局窗口；位于同一共享 NAT 或非 loopback 代理之后的客户端共享一个来源限制。指标在 `sourceCapacity` 中报告来源限制，架构版本 1 的 `capacity` 键保持不变。
 
 可选指标监听器仅绑定到独立端口上的 `127.0.0.1`。切勿对其进行反向代理。控制服务读取其固定的非识别架构，并仅通过现有的 Authelia 保护运营边界公开。它报告当前连接、等待 room、待处理会话、准入与容量拒绝、转发帧/字节、运行时间以及配置上限。它绝不报告用户、room、principal、ticket、proof、地址或内容。
 

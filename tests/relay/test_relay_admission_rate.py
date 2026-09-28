@@ -1,12 +1,19 @@
 import hashlib
+import os
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 from tests.relay import test_native_relay as platform_guard
 from websockets.datastructures import Headers
 
 from session_peer_relay import relay as relay_module
+from session_peer_relay.cli import manage, parser
+from session_peer_relay.identity import private_write
 from session_peer_relay.relay import Relay, RelayLimits
+from session_peer_relay.store import Rejected
 
 TOKEN = 'valid-admission-token'
 SECRET = 'p' * 40
@@ -123,6 +130,80 @@ class AdmissionRate(unittest.IsolatedAsyncioTestCase):
             self.assertLessEqual(len(relay.client_requests), 3)
         finally:
             relay_module.MAX_CLIENT_WINDOWS = original
+
+    async def test_global_saturation_across_many_sources_recovers_without_errors(self):
+        relay = make_relay()
+        clock = [100.0]
+        with mock.patch.object(relay_module.time, 'monotonic', lambda: clock[0]):
+            statuses = [await attempt(relay, Connection((f'10.{n >> 16 & 255}.{n >> 8 & 255}.{n & 255}', 1)))
+                        for n in range(relay_module.MAX_CLIENT_WINDOWS)]
+            self.assertEqual(statuses.count(401), 20)
+            self.assertEqual(statuses.count(429), relay_module.MAX_CLIENT_WINDOWS - 20)
+            self.assertEqual(len(relay.client_requests), 20)
+            self.assertTrue(all(relay.client_requests.values()))
+            self.assertEqual(await attempt(relay, Connection(('192.0.2.1', 1))), 429)
+            clock[0] = 102.0
+            self.assertEqual(await attempt(relay, Connection(('192.0.2.2', 1))), 401)
+            self.assertEqual(await admit(relay, Connection(('192.0.2.3', 1))), 200)
+
+    async def test_full_table_of_live_windows_falls_back_to_the_global_window(self):
+        relay = make_relay(handshake_rate=1000)
+        with mock.patch.object(relay_module, 'MAX_CLIENT_WINDOWS', 3):
+            for n in range(3):
+                await attempt(relay, Connection((f'203.0.113.{n}', 1)))
+            self.assertEqual(await attempt(relay, Connection(('198.51.100.1', 1))), 401)
+            self.assertNotIn('198.51.100.1', relay.client_requests)
+            self.assertEqual(len(relay.client_requests), 3)
+
+    async def test_source_window_expires(self):
+        relay = make_relay()
+        clock = [100.0]
+        source = Connection(('203.0.113.5', 1))
+        with mock.patch.object(relay_module.time, 'monotonic', lambda: clock[0]):
+            self.assertEqual([await attempt(relay, source) for _ in range(6)], [401] * 5 + [429])
+            clock[0] = 101.5
+            self.assertEqual(await attempt(relay, source), 401)
+
+    async def test_duplicated_proxy_headers_use_only_the_global_window(self):
+        relay = make_relay(proxy_secret=SECRET)
+        headers = Headers()
+        headers['X-Session-Peer-Proxy-Token'] = SECRET
+        headers['X-Session-Peer-Client-IP'] = '203.0.113.5'
+        headers['X-Session-Peer-Client-IP'] = '198.51.100.7'
+        response = await relay.process_request(Connection(('127.0.0.1', 1)), SimpleNamespace(
+            path='/v1/session', headers=headers))
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(relay.client_requests, {})
+
+    def test_metrics_keep_the_schema_v1_capacity_contract(self):
+        metrics = make_relay().metrics()
+        self.assertEqual(metrics['schemaVersion'], 1)
+        # control/src/server/metrics.ts accepts exactly these capacity keys.
+        self.assertEqual(sorted(metrics['capacity']), sorted([
+            'handshake_rate', 'pending_sessions', 'global_connections',
+            'user_connections', 'device_connections', 'connection_byte_budget']))
+        self.assertEqual(metrics['sourceCapacity'], {'client_handshake_rate': 5})
+        self.assertIn('clientRateRejected', metrics['counters'])
+        self.assertIn('notFound', metrics['counters'])
+
+    async def test_trusted_proxy_secret_file_must_be_long_enough(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            os.chmod(root, 0o700)
+            accounts = root / 'accounts.json'
+            private_write(accounts, '[{"role": "client", "room": "room", "hash": "%s"}]' % ('a' * 64))
+            short = root / 'proxy-secret'
+            private_write(short, 'too-short\n')
+            args = parser('relay').parse_args([
+                'serve', '--accounts', str(accounts), '--trusted-proxy-secret-file', str(short),
+                '--port', '0', '--seconds', '1'])
+            with self.assertRaisesRegex(Rejected, 'invalid_trusted_proxy_secret'):
+                await manage('relay', args)
+            missing = parser('relay').parse_args([
+                'serve', '--accounts', str(accounts), '--trusted-proxy-secret-file', str(root / 'absent'),
+                '--port', '0', '--seconds', '1'])
+            with self.assertRaisesRegex(Rejected, 'invalid_trusted_proxy_secret'):
+                await manage('relay', missing)
 
 
 if __name__ == '__main__':

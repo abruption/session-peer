@@ -36,11 +36,16 @@ def client_key(connection, request, proxy_secret):
     if socket_ip.is_loopback:
         if not proxy_secret:
             return None
-        token = request.headers.get('X-Session-Peer-Proxy-Token', '')
+        try:
+            # Duplicated headers raise MultipleValuesError: never guess which one the proxy set.
+            token = request.headers.get('X-Session-Peer-Proxy-Token', '')
+            supplied = request.headers.get('X-Session-Peer-Client-IP', '')
+        except LookupError:
+            return None
         if not secrets.compare_digest(token.encode(), proxy_secret.encode()):
             return None
         try:
-            source = ipaddress.ip_address(request.headers.get('X-Session-Peer-Client-IP', ''))
+            source = ipaddress.ip_address(supplied)
         except ValueError:
             return None
     else:
@@ -142,7 +147,10 @@ class Relay:
             'schemaVersion': 1,
             'generatedAt': int(time.time() * 1000),
             'uptimeSeconds': max(0, int(now - self.started_monotonic)),
-            'capacity': asdict(self.limits),
+            # schemaVersion 1 consumers require exactly these six capacity keys.
+            'capacity': {key: value for key, value in asdict(self.limits).items()
+                         if key != 'client_handshake_rate'},
+            'sourceCapacity': {'client_handshake_rate': self.limits.client_handshake_rate},
             'current': {
                 'activeConnections': len(self.connections),
                 'waitingRooms': len(self.waiting),
@@ -166,22 +174,29 @@ class Relay:
         window = None
         if key is not None:
             if key not in self.client_requests and len(self.client_requests) >= MAX_CLIENT_WINDOWS:
-                self.client_requests = {k: v for k, v in self.client_requests.items() if v[-1] > now-1}
+                self.client_requests = {k: v for k, v in self.client_requests.items()
+                                        if v and v[-1] > now-1}
             if key in self.client_requests or len(self.client_requests) < MAX_CLIENT_WINDOWS:
                 window = [stamp for stamp in self.client_requests.get(key, ()) if stamp > now-1]
-                self.client_requests[key] = window
                 if len(window) >= min(self.limits.client_handshake_rate, self.limits.handshake_rate):
+                    self.client_requests[key] = window
                     self.rejected += 1
                     self.counters['clientRateRejected'] += 1
                     return True
         self.requests = [stamp for stamp in self.requests if stamp > now-1]
         if len(self.requests) >= self.limits.handshake_rate:
+            # Store only charged attempts; a globally rejected source leaves no empty window.
+            if window:
+                self.client_requests[key] = window
+            elif key is not None:
+                self.client_requests.pop(key, None)
             self.rejected += 1
             self.counters['rateRejected'] += 1
             return True
         self.requests.append(now)
         if window is not None:
             window.append(now)
+            self.client_requests[key] = window
         return False
 
     async def process_request(self, connection, request):
