@@ -32,7 +32,7 @@ BetterAuth가 사용자를 생성하기 전에 신원을 예약합니다. 운영
 
 CLI 로그인은 BetterAuth `deviceAuthorization()` 및 `bearer()`를 사용합니다:
 
-- `POST /api/auth/device/code`, `client_id=session-peer-cli`. JSON 본문에는 `client_id`만 허용되며 다른 필드는 `invalid_device_request`를 반환합니다. 대기 중인 코드 수에는 상한이 있고(503 `device_code_capacity`), 만료된 코드는 발급 시 정리됩니다.
+- `POST /api/auth/device/code`, `client_id=session-peer-cli`. JSON 본문에는 `client_id`만 허용되며 다른 필드는 `invalid_device_request`를 반환합니다. 대기 중인 코드 수에는 상한이 있고(503 `device_code_capacity`), 만료 후 15분이 지난 코드는 발급 시 최대 1분에 한 번 정리됩니다.
 - 제공된 검증 URI를 열고, 인증한 후 코드를 확인/승인합니다.
 - 안내된 간격(5초)으로 `POST /api/auth/device/token`을 폴링합니다.
   그랜트는 `urn:ietf:params:oauth:grant-type:device_code`입니다.

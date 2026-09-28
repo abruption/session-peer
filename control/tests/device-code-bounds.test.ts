@@ -1,9 +1,10 @@
 import { it, expect, afterEach } from "vitest";
 import { fixture } from "./fixtures.js";
 import {
+  DEVICE_CODE_PRUNE_INTERVAL_MS,
   DEVICE_CODE_RETENTION_MS,
+  DeviceCodeGate,
   MAX_PENDING_DEVICE_CODES,
-  admitDeviceCodeRequest,
 } from "../src/server/app.js";
 let f: Awaited<ReturnType<typeof fixture>> | undefined;
 afterEach(() => {
@@ -64,8 +65,8 @@ it("prunes long-expired codes but keeps recently expired ones for late polls", a
   cloneRows(3, new Date(now - DEVICE_CODE_RETENTION_MS - 1000).toISOString());
   cloneRows(2, new Date(now - 1000).toISOString());
   expect(rows()).toBe(6);
-  expect((await issue()).status).toBe(200);
-  expect(rows()).toBe(4);
+  new DeviceCodeGate(f.db).admit({ client_id: "session-peer-cli" }, now)();
+  expect(rows()).toBe(3);
 });
 
 it("refuses new device codes once pending codes reach the global cap", async () => {
@@ -78,7 +79,61 @@ it("refuses new device codes once pending codes reach the global cap", async () 
   expect((await refused.json()).error).toBe("device_code_capacity");
   expect(rows()).toBe(MAX_PENDING_DEVICE_CODES);
   // Once those codes expire, issuance resumes without manual cleanup.
-  expect(() =>
-    admitDeviceCodeRequest(f!.db, { client_id: "session-peer-cli" }, now + 120_000),
-  ).not.toThrow();
+  const release = new DeviceCodeGate(f.db).admit({ client_id: "session-peer-cli" }, now + 120_000);
+  release();
+});
+
+it("holds the cap under concurrent issuance", async () => {
+  f = await fixture();
+  expect((await issue()).status).toBe(200);
+  cloneRows(MAX_PENDING_DEVICE_CODES - 2, new Date(Date.now() + 60_000).toISOString());
+  expect(rows()).toBe(MAX_PENDING_DEVICE_CODES - 1);
+  const statuses = await Promise.all(Array.from({ length: 20 }, () => issue().then((r) => r.status)));
+  expect(statuses.filter((status) => status === 200).length).toBeLessThanOrEqual(1);
+  expect(statuses.filter((status) => status !== 200).every((status) => status === 503)).toBe(true);
+  expect(rows()).toBeLessThanOrEqual(MAX_PENDING_DEVICE_CODES);
+  const refused = await issue();
+  expect(refused.status).toBe(503);
+  expect(rows()).toBeLessThanOrEqual(MAX_PENDING_DEVICE_CODES);
+});
+
+it("releases reservations after refused and failing handlers", async () => {
+  f = await fixture();
+  expect((await issue()).status).toBe(200);
+  cloneRows(MAX_PENDING_DEVICE_CODES - 2, new Date(Date.now() + 60_000).toISOString());
+  // One slot remains. Refusals and handler failures must not keep it reserved.
+  for (let i = 0; i < 3; i++) {
+    const refused = await f.request("/api/auth/device/code", { client_id: "unknown-client" }, {});
+    expect(refused.status).toBe(400);
+  }
+  const original = f.auth.handler;
+  f.auth.handler = async () => {
+    throw new Error("handler failure");
+  };
+  try {
+    for (let i = 0; i < 3; i++)
+      expect((await issue()).status).toBe(500);
+  } finally {
+    f.auth.handler = original;
+  }
+  expect((await issue()).status).toBe(200);
+  expect(rows()).toBe(MAX_PENDING_DEVICE_CODES);
+  expect((await issue()).status).toBe(503);
+});
+
+it("prunes expired codes at most once per interval, even with slow issuance", async () => {
+  f = await fixture();
+  expect((await issue()).status).toBe(200);
+  const now = Date.now();
+  const stale = (ms: number) => new Date(now - DEVICE_CODE_RETENTION_MS - ms).toISOString();
+  const gate = new DeviceCodeGate(f.db);
+  const body = { client_id: "session-peer-cli" };
+  cloneRows(2, stale(1000));
+  gate.admit(body, now)();
+  expect(rows()).toBe(1);
+  cloneRows(2, stale(2000));
+  gate.admit(body, now + 1000)();
+  expect(rows()).toBe(3);
+  gate.admit(body, now + DEVICE_CODE_PRUNE_INTERVAL_MS)();
+  expect(rows()).toBe(1);
 });
