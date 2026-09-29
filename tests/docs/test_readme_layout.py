@@ -15,6 +15,18 @@ LAYOUTS = {
 
 
 class ReadmeLayoutTest(unittest.TestCase):
+    def test_demo_uses_a_small_gif_and_an_absolute_public_url(self):
+        asset = "docs/assets/session-peer-live-codex-claude.gif"
+        data = (ROOT / asset).read_bytes()
+        self.assertIn(data[:6], (b"GIF87a", b"GIF89a"))
+        self.assertLess(len(data), 512_000)
+        url = "https://raw.githubusercontent.com/abruption/session-peer/main/" + asset
+        for suffix in LAYOUTS:
+            text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
+            with self.subTest(locale=suffix or "en"):
+                self.assertIn("](" + url + ")", text)
+                self.assertIn("`ACK DEMO-READY`", text)
+
     def test_requested_section_order_in_every_locale(self):
         for suffix, titles in LAYOUTS.items():
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")

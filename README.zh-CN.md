@@ -17,10 +17,11 @@ session-peer使用代理原生的收件箱和队列，由接收方决定如何�
 
 ## 演示
 
-![Codex向Claude Code发送真实消息的演示](docs/assets/session-peer-live-codex-claude.gif)
+![Codex向Claude Code发送请求并收到明确ACK的演示](https://raw.githubusercontent.com/abruption/session-peer/main/docs/assets/session-peer-live-codex-claude.gif)
 
-这段26秒的视频录制了真实本地会话：Codex查找Claude Code，发送请求并收到明确回复。
-没有使用模拟输出。
+使用session-peer 1.0.2进行了真实的本地请求与回复：Codex向Claude Code发送请求，
+并收到`ACK DEMO-READY`。这段约22秒的动画对CLI输出和消息摘录进行了匿名化与重新绘制，
+并非屏幕录像；发送成功本身并不代表收到ACK。
 
 ## 快速开始
 

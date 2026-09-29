@@ -17,10 +17,11 @@
 
 ## デモ
 
-![CodexからClaude Codeへ実際にメッセージを送るデモ](docs/assets/session-peer-live-codex-claude.gif)
+![CodexがClaude Codeに依頼を送り、明示的なACKを受け取るデモ](https://raw.githubusercontent.com/abruption/session-peer/main/docs/assets/session-peer-live-codex-claude.gif)
 
-実際のローカルセッションを収録した26秒の動画です。CodexがClaude Codeを検索して依頼を送り、
-明示的な返信を受け取ります。出力の模擬表示はありません。
+session-peer 1.0.2による実際のローカル通信です。CodexがClaude Codeに依頼を送り、
+`ACK DEMO-READY`を受け取ります。CLI出力とメッセージの抜粋を匿名化して再描画した
+約22秒のアニメーションで、画面録画ではありません。送信成功だけではACKを意味しません。
 
 ## クイックスタート
 
