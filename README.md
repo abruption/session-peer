@@ -17,10 +17,11 @@ session-peer uses native agent inboxes and queues; the receiving agent decides h
 
 ## Demo
 
-![Live Codex-to-Claude Code messaging demo](docs/assets/session-peer-live-codex-claude.gif)
+![Codex sends a request to Claude Code and receives an explicit ACK](https://raw.githubusercontent.com/abruption/session-peer/main/docs/assets/session-peer-live-codex-claude.gif)
 
-A 26-second recording of real local sessions: Codex discovers Claude Code,
-sends a request, and receives an explicit reply. No mocked output.
+A real local request and reply using session-peer 1.0.2: Codex contacts Claude Code
+and receives `ACK DEMO-READY`. CLI and message excerpts are anonymized and re-rendered
+in this ~22-second animation, not a screen recording; send success alone is not an ACK.
 
 ## Quick Start
 
