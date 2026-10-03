@@ -33,14 +33,14 @@ git fetch origin main --tags
 release_commit=$(git rev-parse origin/main)
 git tag "$release_tag" "$release_commit"
 git push origin "$release_tag"
-gh release create "$release_tag" --repo abruption/session-peer \\
-  --target "$release_commit" --title "session-peer $release_tag" \\
+gh release create "$release_tag" --repo abruption/session-peer \
+  --target "$release_commit" --title "session-peer $release_tag" \
   --notes-file "docs/releases/$release_tag.md" --draft --latest
-gh workflow run prepare-release.yml --repo abruption/session-peer \\
+gh workflow run prepare-release.yml --repo abruption/session-peer \
   --ref main -f tag="$release_tag"
 # Review successful preparation, the seven draft assets, and their attestations.
 # Obtain final approval before the separate publication command:
-gh release edit "$release_tag" --repo abruption/session-peer \\
+gh release edit "$release_tag" --repo abruption/session-peer \
   --draft=false --prerelease=false --latest
 ```
 
@@ -55,18 +55,18 @@ the installer before executing it (requires a lightweight version tag):
 ```bash
 set -eu
 repo=abruption/session-peer
-tag=$(gh api "repos/$repo/releases/latest" --jq \\
+tag=$(gh api "repos/$repo/releases/latest" --jq \
   'if .immutable == true and .draft == false and .prerelease == false then .tag_name else error("no immutable stable release") end')
 commit=$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object | select(.type == "commit") | .sha')
 case "$commit" in ????????* ) ;; * ) echo "expected a lightweight release tag" >&2; exit 1 ;; esac
 staging=$(mktemp -d)
 trap 'rm -f "$staging/install.sh"; rmdir "$staging"' EXIT
-curl --fail --location --proto '=https' --proto-redir '=https' \\
-  --max-filesize 262144 --max-time 30 \\
+curl --fail --location --proto '=https' --proto-redir '=https' \
+  --max-filesize 262144 --max-time 30 \
   "https://github.com/$repo/releases/download/$tag/install.sh" -o "$staging/install.sh"
-gh attestation verify "$staging/install.sh" --repo "$repo" \\
-  --signer-workflow "$repo/.github/workflows/prepare-release.yml" \\
-  --source-ref refs/heads/main --source-digest "$commit" \\
+gh attestation verify "$staging/install.sh" --repo "$repo" \
+  --signer-workflow "$repo/.github/workflows/prepare-release.yml" \
+  --source-ref refs/heads/main --source-digest "$commit" \
   --cert-oidc-issuer https://token.actions.githubusercontent.com \
   --deny-self-hosted-runners --format json
 sh "$staging/install.sh"

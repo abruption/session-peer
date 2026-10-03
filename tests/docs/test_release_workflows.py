@@ -18,6 +18,21 @@ JOB = re.compile(r"^  ([a-z][a-z0-9-]*):\s*$", re.MULTILINE)
 
 
 class ReleaseWorkflows(unittest.TestCase):
+    def test_every_release_checkout_uses_the_immutable_event_commit(self):
+        for name, count in (("prepare-release.yml", 4), ("publish.yml", 6)):
+            text = (ROOT / ".github/workflows" / name).read_text()
+            checkouts = re.findall(
+                r"^      - uses: actions/checkout@[^\n]+\n"
+                r"        with:\n((?:^          [^\n]+\n)+)", text, re.MULTILINE)
+            self.assertEqual(len(checkouts), count, name)
+            for checkout in checkouts:
+                self.assertIn("          ref: ${{ github.sha }}\n", checkout, name)
+            # Trusted code must still bind the named tag and main ancestry to that SHA.
+            build = text.split("\n  test-wheel:", 1)[0]
+            self.assertIn("RELEASE_SHA: ${{ github.sha }}", build)
+            self.assertIn('--expected-sha "$RELEASE_SHA"', build)
+            self.assertIn("release_artifacts.py verify-source", build)
+
     def test_every_third_party_action_is_commit_pinned(self):
         for relative in (".github/workflows/ci.yml", ".github/workflows/publish.yml", ".github/workflows/prepare-release.yml"):
             text = (ROOT / relative).read_text(encoding="utf-8")
