@@ -7,6 +7,7 @@ import ssl
 import uuid
 import unittest
 import urllib.error
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -21,6 +22,34 @@ SECRET = 'SECRET-TOKEN-COOKIE-PROOF-MESSAGE'
 
 
 class TransportDiagnostics(unittest.TestCase):
+    def test_expired_revoked_login_requires_relogin_without_mislabeling_permissions(self):
+        from session_peer_relay.guidance import with_guidance
+        cases = [(401, '/api/relay/devices', SECRET, 'login_expired'),
+                 (403, '/api/relay/devices', SECRET, 'control_request_refused'),
+                 (401, '/api/auth/device/token', None, 'control_request_refused'),
+                 (401, '/api/relay/devices', None, 'control_request_refused')]
+        for status, path, token, reason in cases:
+            response = urllib.error.HTTPError('https://relay.example.test'+path,
+                status, SECRET, {}, io.BytesIO(b'{"error":"authentication_required"}'))
+            opener = Mock(); opener.open.side_effect = response
+            with self.subTest(status=status, path=path, token=bool(token)), \
+                    patch.object(control.urllib.request, 'build_opener', return_value=opener):
+                with self.assertRaises(TransportFailure) as caught:
+                    control.call('https://relay.example.test', path, token=token)
+            self.assertEqual(caught.exception.diagnostic()['reason'], reason)
+            self.assertFalse(caught.exception.transient)
+            self.assertNotIn(SECRET, json.dumps(caught.exception.diagnostic()))
+            if reason == 'login_expired':
+                result = with_guidance({'ok': False, 'reason': reason})
+                self.assertEqual(result['guidance']['category'], 'login')
+                self.assertIn('login explicitly', result['guidance']['nextAction'])
+        # Locally elapsed login.json must use the same actionable reason.
+        with patch.object(control, 'private_read', return_value=json.dumps({
+                'server': 'https://relay.example.test', 'token': SECRET, 'expiresAt': 1})):
+            with self.assertRaises(Rejected) as expired:
+                control.session(SimpleNamespace(root=Path('/synthetic')))
+        self.assertEqual(str(expired.exception), 'login_expired')
+
     def test_untrusted_exception_messages_are_not_exposed(self):
         for exc in (RuntimeError(SECRET), ValueError(SECRET), Rejected(SECRET),
                     urllib.error.URLError(SECRET), ssl.SSLError(SECRET)):

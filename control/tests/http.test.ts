@@ -76,9 +76,13 @@ it("starts real compiled server only on loopback; enforces host, body limit and 
     expect((await fetch(origin + "/healthz")).status).toBe(200);
     const html = await (await fetch(origin + "/login")).text();
     expect(html).toContain('id="root"');
+    expect(await (await fetch(origin + "/sessions")).text()).toContain('id="root"');
     expect(await (await fetch(origin + "/admin/metrics")).text()).toContain('id="root"');
     const asset = /src="([^"]+\.js)"/.exec(html)![1];
     expect((await fetch(origin + asset)).status).toBe(200);
+    const bundle = await (await fetch(origin + asset)).text();
+    expect(bundle).toContain("Revoke all sessions");
+    expect(bundle).toContain("/api/control/sessions/revoke-others");
     const webAssets = fileURLToPath(
       new URL("../dist/web/assets/", import.meta.url),
     );
@@ -91,6 +95,7 @@ it("starts real compiled server only on loopback; enforces host, body limit and 
     expect(imageResponse.headers.get("content-type")).toBe("image/png");
     expect((await fetch(origin + "/api/relay/devices")).status).toBe(401);
     expect((await fetch(origin + "/api/admin/metrics")).status).toBe(401);
+    expect((await fetch(origin + "/api/control/sessions")).status).toBe(401);
     const metricsResponse = await fetch(
       adminOrigin + "/session-peer/api/metrics",
     );
