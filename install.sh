@@ -291,7 +291,9 @@ prepare_source() {
     if [ "$SOURCE_MODE" = release ]; then
         verify_release "$destination" || die "release verification failed; no files installed"
     elif [ "$SOURCE_MODE" = local ]; then
-        [ -n "$src_dir" ] && [ -f "$src_dir/session_peer.py" ] || die "--local-source needs trusted local source files"
+        if [ -z "$src_dir" ] || [ ! -f "$src_dir/session_peer.py" ]; then
+            die "--local-source needs trusted local source files"
+        fi
         cp "$src_dir/session_peer.py" "$destination/session_peer.py" || return 1
         if [ -f "$src_dir/skills/session-peer/SKILL.md" ]; then
             cp "$src_dir/skills/session-peer/SKILL.md" "$destination/SKILL.md" || return 1
