@@ -2032,20 +2032,45 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     except FileNotFoundError as exc:
         raise ssh_failure_error(host, ssh_info, "transport_failed", "ssh not found on PATH") from exc
     except subprocess.TimeoutExpired as exc:
+        if argv and argv[0] == "send":
+            raise CcPeerError(
+                f"SSH send to {host} timed out; submission outcome unknown. "
+                "Do not automatically retry; check the target before retrying.",
+                {**ssh_info, "sshFailure": "timeout", "status": "unknown",
+                 "reason": "outcome_unknown", "retryAllowed": False},
+            ) from exc
         raise ssh_failure_error(host, ssh_info, "timeout") from exc
     except OSError as exc:
         raise ssh_failure_error(host, ssh_info, "transport_failed", str(exc)) from exc
 
     stdout = completed.stdout.strip()
     detail = completed.stderr.strip() or f"ssh exited {completed.returncode}"
+    try:
+        result = json.loads(stdout) if stdout else None
+    except ValueError:
+        result = None
+        parsed_result = False
+    else:
+        parsed_result = bool(stdout)
+    # A complete response proves the remote command ran, even if the SSH
+    # process later exits 255. Login-shell stderr must not hide submission
+    # evidence or turn a remote partial failure into an invitation to resend.
+    valid_result = (
+        isinstance(result, dict)
+        and type(result.get("schemaVersion")) is int
+        and result["schemaVersion"] == JSON_RESPONSE_SCHEMA_VERSION
+        and type(result.get("ok")) is bool
+        and bool(argv) and result.get("command") == argv[0]
+    )
     failure = (
         classify_ssh_failure(detail, completed.returncode)
-        if completed.returncode != 0 else None
+        if (not valid_result and completed.returncode != 0
+            and (completed.returncode == 255 or not stdout)) else None
     )
     if failure:
         raise ssh_failure_error(host, ssh_info, failure, detail)
     runtime_output = (completed.stdout + "\n" + completed.stderr).strip().lower()
-    if (runtime_output == "python"
+    if not valid_result and (runtime_output == "python"
             or "python was not found" in runtime_output
             or ("python3" in runtime_output and any(marker in runtime_output for marker in (
                 "command not found", "not recognized as", "no such file", "python3: not found",
@@ -2060,10 +2085,9 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
         )
     if not stdout:
         raise CcPeerError(f"{host}: {detail}", ssh_info)
-    try:
-        result = json.loads(stdout)
-    except ValueError as exc:
-        raise CcPeerError(f"{host}: unexpected output: {stdout[:200]}", ssh_info) from exc
+    if not parsed_result or (isinstance(result, dict)
+                             and "schemaVersion" in result and not valid_result):
+        raise CcPeerError(f"{host}: unexpected output: {stdout[:200]}", ssh_info)
     if isinstance(result, dict):
         result.update(ssh_info)
 
