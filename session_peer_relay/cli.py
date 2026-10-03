@@ -308,7 +308,7 @@ async def manage(kind, args):
 
 
 def parser(kind):
-    p = argparse.ArgumentParser(prog='session-peer '+kind)
+    p = core.HumanArgumentParser(prog='session-peer '+kind)
     sub = p.add_subparsers(dest='action', required=True)
     def command(name, state=True):
         item = sub.add_parser(name)
