@@ -40,12 +40,36 @@ CLI login uses BetterAuth `deviceAuthorization()` and `bearer()`:
 - `access_token` is a **first-party BetterAuth session token**, not an OAuth
   provider access token, an OAuth-protected resource token, or a relay JWT.
 - Send it only to this configured control origin as `Authorization: Bearer …`.
-  Tokens expire with the BetterAuth session (24 hours); no refresh-token or
-  perpetual background sign-in promise is added here. OS credential storage and
+  Tokens expire 24 hours after the BetterAuth session's creation; API activity
+  never extends that boundary. No refresh-token or perpetual background sign-in
+  promise is added here. OS credential storage and
   CLI UX are the Python/client owner's integration responsibility.
 - Only the browser cookie session may verify/approve/deny; bearer approval is
   rejected. The device code lifetime is 5 minutes; denial, expiry, polling limits
   and one-time redemption use the pinned BetterAuth implementation.
+
+Browser cookie sessions have the same absolute 24-hour lifetime. Sign in again
+after expiry. On Control startup, previously sliding sessions are capped at their
+original creation time plus 24 hours, preserving any earlier expiry. Old sessions
+may therefore require immediate sign-in again after upgrading.
+
+The Sessions page at `/sessions` lists only your active browser and CLI logins,
+with creation/expiry times, available client details and the current-browser label.
+You can revoke one other login, all other logins, or all logins including the current
+browser. Session management requires a same-origin browser cookie session; its
+API exposes opaque session IDs and metadata, never other sessions' bearer tokens.
+The CLI surfaces `login_expired` when its local login expires or Control rejects
+an expired, revoked or invalid stored login with HTTP 401. Run explicit device
+login again; HTTP 403 remains a permission/origin refusal.
+
+Device revocation and login-session revocation are separate. Device login happens
+before enrollment and produces an account-level token that can manage multiple
+device identities; it is not cryptographically bound to one device principal.
+Automatically assigning that token to one enrolled device would give misleading
+revocation guarantees. If a device is lost or `login.json` was copied, revoke the
+device and its login session on the Sessions page. When the affected login cannot
+be identified, revoke all other sessions (or all sessions). Already-issued relay
+admission credentials retain their separate short lifetime and device-state checks.
 
 OAuth callbacks (operator app configuration required):
 

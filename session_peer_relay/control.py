@@ -86,8 +86,13 @@ def call(server, path, body=None, token=None):
                                http_status=status, retry_after=retry_after) from None
     if status >= 400:
         error = value.get('error', value.get('code', 'control_request_refused'))
+        # A stored account login may expire or be revoked before its local
+        # expiresAt. Relay 401s require explicit login again; 403s still mean
+        # permissions or origin checks, and device polling keeps its own errors.
+        if status == 401 and token and path.startswith('/api/relay/'):
+            error = 'login_expired'
         # Only known protocol errors may reach logs/output; server strings may contain secrets.
-        known = {'authorization_pending', 'slow_down', 'access_denied', 'expired_token',
+        known = {'login_expired', 'authorization_pending', 'slow_down', 'access_denied', 'expired_token',
                  'invalid_grant', 'invalid_client', 'operation_already_committed',
                  'operation_conflict', 'operation_not_found'}
         refused = TransportFailure('control_response', error if isinstance(error, str) and error in known else 'control_request_refused',
