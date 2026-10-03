@@ -2128,9 +2128,22 @@ def installed_update_rejection(output: str | bytes | None, expected: str) -> dic
     if (not isinstance(output, str) or not output.startswith("{")
             or not output.endswith(("}\n", "}\r\n")) or output.count("\n") != 1):
         return None
+
+    def unique_fields(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate update rejection field")
+            result[key] = value
+        return result
+
+    def invalid_constant(value):
+        raise ValueError("non-JSON update rejection constant")
+
     try:
-        result = json.loads(output)
-    except ValueError:
+        result = json.loads(output, object_pairs_hook=unique_fields,
+                            parse_constant=invalid_constant)
+    except (ValueError, RecursionError):
         return None
     if (not isinstance(result, dict) or set(result) != {
             "schemaVersion", "command", "status", "reason", "remoteVersion"}
@@ -2140,7 +2153,10 @@ def installed_update_rejection(output: str | bytes | None, expected: str) -> dic
     reason, remote = result["reason"], result["remoteVersion"]
     if reason in ("installed_version_unusable", "local_version_unusable") and remote is None:
         return result
-    current, wanted = release_version(remote), release_version(expected)
+    try:
+        current, wanted = release_version(remote), release_version(expected)
+    except ValueError:
+        return None
     if reason == "remote_not_older" and current is not None and wanted is not None and current >= wanted:
         return result
     return None

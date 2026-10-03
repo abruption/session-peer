@@ -682,21 +682,58 @@ class RemotePushContract(unittest.TestCase):
         receipt = json.dumps({'schemaVersion': 1, 'command': 'update', 'status': 'rejected',
                               'reason': 'remote_not_older', 'remoteVersion': '1.0.4'}) + '\n'
         for output in (receipt, receipt.encode()):
-            with self.subTest(output=output), \
-                 mock.patch.object(session_peer.Path, 'read_bytes', return_value=self.SOURCE), \
-                 mock.patch.object(session_peer, '__version__', self.VERSION), \
-                 mock.patch.object(session_peer.subprocess, 'run', return_value=
-                                   subprocess.CompletedProcess([], 255, output, b'\xff')) as run, \
-                 self.assertRaises(session_peer.CcPeerError) as caught:
-                session_peer.push_to_remote('fixture', [], {})
-            self.assertEqual(caught.exception.details['commitStatus'], 'not_started')
-            self.assertFalse(caught.exception.details['retryAllowed'])
-            self.assertEqual(caught.exception.details['remoteVersion'], '1.0.4')
-            run.assert_called_once()
+            for outcome in (subprocess.CompletedProcess([], 0, output, b'\xff'),
+                            subprocess.CompletedProcess([], 255, output, b'\xff'),
+                            subprocess.TimeoutExpired(['ssh'], 120, output=output)):
+                with self.subTest(output=output, outcome=type(outcome).__name__), \
+                     mock.patch.object(session_peer.Path, 'read_bytes', return_value=self.SOURCE), \
+                     mock.patch.object(session_peer, '__version__', self.VERSION), \
+                     mock.patch.object(session_peer.subprocess, 'run', side_effect=[outcome]) as run, \
+                     self.assertRaises(session_peer.CcPeerError) as caught:
+                    session_peer.push_to_remote('fixture', [], {})
+                self.assertEqual(caught.exception.details['commitStatus'], 'not_started')
+                self.assertFalse(caught.exception.details['retryAllowed'])
+                self.assertEqual(caught.exception.details['remoteVersion'], '1.0.4')
+                run.assert_called_once()
         for output in (receipt.rstrip(), receipt + '\n', receipt + 'noise\n',
                        receipt.replace('1.0.4', '1.0.2'), receipt.encode() + b'\xff'):
             with self.subTest(output=output):
                 self.assertIsNone(session_peer.installed_update_rejection(output, self.VERSION))
+
+    def test_invalid_json_rejections_preserve_unknown_commit_without_retry(self):
+        receipt = json.dumps({'schemaVersion': 1, 'command': 'update', 'status': 'rejected',
+                              'reason': 'installed_version_unusable', 'remoteVersion': None}) + '\n'
+        malformed = [
+            ('duplicate status', receipt.replace('"status": "rejected"',
+                                                  '"status": "committed", "status": "rejected"')),
+            ('duplicate schema', receipt.replace('"schemaVersion": 1',
+                                                  '"schemaVersion": 1, "schemaVersion": 1')),
+            ('oversized version', json.dumps({'schemaVersion': 1, 'command': 'update',
+                                             'status': 'rejected', 'reason': 'remote_not_older',
+                                             'remoteVersion': '1' + '0' * 5000 + '.0.0'}) + '\n'),
+        ]
+        for constant in ('NaN', 'Infinity', '-Infinity'):
+            malformed.append((constant, receipt.replace('"remoteVersion": null',
+                                '"remoteVersion": ' + constant + ', "remoteVersion": null')))
+            malformed.append((constant + ' without duplicate',
+                              receipt.replace('"remoteVersion": null', '"remoteVersion": ' + constant)))
+        for label, text in malformed:
+            for output in (text, text.encode()):
+                for outcome in (subprocess.CompletedProcess([], 0, output, b'\xff'),
+                                subprocess.CompletedProcess([], 255, output, b'\xff'),
+                                subprocess.TimeoutExpired(['ssh'], 120, output=output)):
+                    with self.subTest(case=label, output=type(output).__name__,
+                                      outcome=type(outcome).__name__), \
+                         mock.patch.object(session_peer.Path, 'read_bytes', return_value=self.SOURCE), \
+                         mock.patch.object(session_peer, '__version__', self.VERSION), \
+                         mock.patch.object(session_peer.subprocess, 'run', side_effect=[outcome]) as run, \
+                         self.assertRaises(session_peer.CcPeerError) as caught:
+                        session_peer.push_to_remote('fixture', [], {})
+                    self.assertEqual(caught.exception.details['commitStatus'], 'unknown')
+                    self.assertFalse(caught.exception.details['retryAllowed'])
+                    self.assertNotIn('committed', caught.exception.details)
+                    self.assertNotIn('updated', caught.exception.details)
+                    run.assert_called_once()
 
 
 class RemoteVersions(unittest.TestCase):
