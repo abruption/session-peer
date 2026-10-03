@@ -8,15 +8,16 @@ import sys
 import time
 
 
-root = Path(os.environ['CODEX_HOME'])
 if sys.argv[1:] == ['--version']:
     print('codex-cli 0.154.0')
 elif sys.argv[1] == 'queue':
+    root = Path(os.environ['CODEX_HOME'])
     with (root / 'queue-submissions').open('a') as stream:
         stream.write('queued\n')
     thread = sys.argv[sys.argv.index('--thread') + 1]
     print(f'Queued message fixture-queue for thread {thread}.')
 elif sys.argv[1:] == ['app-server']:
+    root = Path(os.environ['CODEX_HOME'])
     mode = os.environ['WAKE_TEST_MODE']
     if mode == 'resistant':
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
