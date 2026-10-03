@@ -52,8 +52,8 @@ class RemoteInstalledVersion(unittest.TestCase):
     asking the remote command to report itself would only echo our version.
     The installed copy is the one that can fall behind."""
 
-    def run_with(self, stdout, returncode=0):
-        completed = mock.Mock(stdout=stdout, stderr="", returncode=returncode)
+    def run_with(self, stdout, returncode=0, stderr=""):
+        completed = mock.Mock(stdout=stdout, stderr=stderr, returncode=returncode)
         with mock.patch.object(session_peer.subprocess, "run", return_value=completed):
             return session_peer.remote_installed_version("web-01", [])
 
@@ -62,6 +62,19 @@ class RemoteInstalledVersion(unittest.TestCase):
 
     def test_none_when_not_installed(self):
         self.assertIsNone(self.run_with("session-peer: not installed\n", returncode=3))
+
+    def test_absence_sentinel_accepts_benign_stderr_but_not_ssh_failure(self):
+        for noise in ("Warning: Permanently added fixture to the list of known hosts.\n",
+                      "bash: warning: setlocale: LC_ALL: cannot change locale\n",
+                      "login notice with known_hosts in the text\n"):
+            with self.subTest(stderr=noise):
+                self.assertIsNone(self.run_with(
+                    "session-peer: not installed\n", returncode=3, stderr=noise))
+        for detail, category in (("Permission denied (publickey).", "authentication_failed"),
+                                 ("Connection closed", "transport_failed")):
+            with self.subTest(category=category), self.assertRaises(session_peer.CcPeerError) as caught:
+                self.run_with("session-peer: not installed\n", returncode=255, stderr=detail)
+            self.assertEqual(caught.exception.details["sshFailure"], category)
 
     def test_broken_or_malformed_installed_version_is_not_missing(self):
         for output in ("", "python3: can't open file\n", "session-peer-bogus 1.0.3\n",

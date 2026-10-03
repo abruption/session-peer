@@ -28,7 +28,7 @@ def remote_installed_version(host: str, ssh_opts: list[str],
     except OSError as exc:
         raise ssh_failure_error(host, ssh_info, "transport_failed", str(exc)) from exc
     out = done.stdout.strip()
-    if done.returncode == 3 and out == "session-peer: not installed" and not done.stderr.strip():
+    if done.returncode == 3 and out == "session-peer: not installed":
         return None
     detail = done.stderr.strip() or f"ssh exited {done.returncode}"
     failure = classify_ssh_failure(detail, done.returncode) if done.returncode != 0 else None
@@ -530,6 +530,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                         f"installed remote version did not match {__version__}", ssh_info
                     )
                 committed = {**ssh_info, "committed": True,
+                             "commitStatus": "committed", "retryAllowed": False,
                              "installedVersionVerified": new_version}
                 try:
                     verified = remote_installed_version(requested_host, ssh_opts, ssh_info)
