@@ -12,6 +12,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
 import signal
 import subprocess
 import sys
@@ -64,7 +65,7 @@ class RemoteTransfer(unittest.TestCase):
              mock.patch.object(session_peer.subprocess, "run", return_value=completed) as run:
             session_peer.push_to_remote("fixture", [], {})
         self.assertEqual(run.call_args.args[0][:2], ["ssh", "fixture"])
-        return run.call_args.args[0][-1], run.call_args.kwargs["input"]
+        return run.call_args.args[0][-1], run.call_args.kwargs["input"].decode("ascii")
 
     def execute(self, script, payload):
         return subprocess.run(["sh", "-c", script], input=payload, text=True,
@@ -153,10 +154,109 @@ class RemoteTransfer(unittest.TestCase):
         self.assertEqual(self.target.read_bytes(), second)
         self.assert_clean()
 
+    def test_newer_client_finishes_first_then_stale_client_cannot_downgrade(self):
+        local_run = subprocess.run
+        def probe(command, **options):
+            return local_run(['sh', '-c', command[-1]], env=self.environment, **options)
+        # Both real installed probes succeed before either client publishes.
+        with mock.patch.object(session_peer.subprocess, 'run', side_effect=probe):
+            self.assertEqual(session_peer.remote_installed_version('fixture', [], {}), '1.0.2')
+            self.assertEqual(session_peer.remote_installed_version('fixture', [], {}), '1.0.2')
+        newer = (b"import os, time\nfrom pathlib import Path\n"
+                 b"home = Path(os.environ['HOME'])\n"
+                 b"if not Path(__file__).parent.name.startswith('.session-peer-update.'):\n"
+                 b"    (home / 'newer-installed').touch()\n"
+                 b"    while not (home / 'release-newer').exists(): time.sleep(0.01)\n"
+                 b"print('session-peer 1.0.4')\n")
+        a = self.start(*self.script(newer, '1.0.4'))
+        self.wait_for(self.home / 'newer-installed', a)
+        script, payload = self.script()
+        b = self.start(self.mark_lock_attempt(script, 'older-lock-attempt'), payload)
+        self.wait_for(self.home / 'older-lock-attempt', b)
+        self.assertIsNone(b.poll())
+        (self.home / 'release-newer').touch()
+        newer_output, newer_error = a.communicate(timeout=5)
+        output, error = b.communicate(timeout=5)
+        self.assertEqual(a.returncode, 0, newer_error)
+        self.assertEqual(newer_output, 'session-peer 1.0.4\n')
+        self.assertNotEqual(b.returncode, 0, error)
+        self.assertEqual(json.loads(output)['reason'], 'remote_not_older')
+        self.assertEqual(json.loads(output)['remoteVersion'], '1.0.4')
+        self.assertEqual(self.target.read_bytes(), newer)
+        self.assertEqual(self.launcher.lstat().st_ino, self.link_inode)
+        with mock.patch.object(session_peer.Path, 'read_bytes', return_value=self.SOURCE), \
+             mock.patch.object(session_peer, '__version__', self.VERSION), \
+             mock.patch.object(session_peer.subprocess, 'run', return_value=
+                               subprocess.CompletedProcess([], b.returncode, output, error)) as run, \
+             self.assertRaises(session_peer.CcPeerError) as caught:
+            session_peer.push_to_remote('fixture', [], {})
+        self.assertEqual(caught.exception.details['commitStatus'], 'not_started')
+        self.assertFalse(caught.exception.details['retryAllowed'])
+        self.assertEqual(caught.exception.details['reason'], 'remote_not_older')
+        run.assert_called_once()
+        self.assert_clean()
+
+    def test_locked_version_check_rejects_unusable_equal_and_newer_releases(self):
+        for installed, local in (
+            ('unknown', '1.0.3'), ('1.0.3', '1.0.3'), ('1.0.4', '1.0.3'),
+            ('1.0.3', '1.0.3rc1'), ('v1.0.3', '1.0.3'),
+            ('1.0.3beta2', '1.0.3a9'), ('1.0.3preview2', '1.0.3rc1'),
+            ('1.0.3', 'unknown'), ('1.0.3.1', '1.0.3'),
+            (str(sys.maxsize + 1) + '.0.0', '1.0.3'),
+        ):
+            with self.subTest(installed=installed, local=local):
+                previous = ('print(' + repr('session-peer ' + installed) + ')\n').encode()
+                self.target.write_bytes(previous)
+                original = self.target.stat()
+                source = ('print(' + repr('session-peer ' + local) + ')\n').encode()
+                result = self.execute(*self.script(source, local))
+                self.assertNotEqual(result.returncode, 0, result.stderr)
+                receipt = json.loads(result.stdout)
+                wanted, current = session_peer.release_version(local), session_peer.release_version(installed)
+                reason = ('local_version_unusable' if wanted is None else
+                          'installed_version_unusable' if current is None else 'remote_not_older')
+                self.assertEqual(receipt['reason'], reason)
+                self.assertIsNotNone(session_peer.installed_update_rejection(result.stdout, local))
+                self.assertEqual(self.target.read_bytes(), previous)
+                self.assertEqual(self.target.stat().st_ino, original.st_ino)
+                self.assertEqual(self.launcher.lstat().st_ino, self.link_inode)
+                self.assert_clean()
+
+    def test_locked_version_check_allows_stable_and_prerelease_upgrades(self):
+        for installed, local in (('1.0.2', '1.0.3rc1'), ('1.0.3rc1', '1.0.3'),
+                                 ('1.0.3a9', '1.0.3b1'), ('1.0.3beta1', '1.0.3preview1'),
+                                 ('1.0.3pre1', '1.0.3RC-2')):
+            with self.subTest(installed=installed, local=local):
+                self.target.write_text('print(' + repr('session-peer ' + installed) + ')\n')
+                source = ('print(' + repr('session-peer ' + local) + ')\n').encode()
+                result = self.execute(*self.script(source, local))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, 'session-peer ' + local + '\n')
+                self.assertEqual(self.target.read_bytes(), source)
+                self.assert_clean()
+
+    def test_publisher_release_parser_matches_client_release_ordering(self):
+        script, _ = self.script()
+        publisher = next(part for part in shlex.split(script) if 'def comparable_update_release' in part)
+        helper = 'def comparable_update_release' + publisher.split('def comparable_update_release', 1)[1]
+        helper = helper.split('def reject_update', 1)[0]
+        namespace = {'re': session_peer.re, 'sys': sys}
+        exec(helper, namespace)
+        for version in ('1.0.3', 'v1.0.3', 'V1.0.3', '1.0.3a1', '1.0.3-alpha.2',
+                        '1.0.3b1', '1.0.3-BETA-2', '1.0.3rc1', '1.0.3pre2',
+                        '1.0.3-preview.3', '1.0.3rc999999999999999999999999',
+                        str(sys.maxsize) + '.0.0', str(sys.maxsize + 1) + '.0.0',
+                        ' 1.0.3 ', '1.0', '1.0.3.1', '01.0.3', '1.0.3rc01',
+                        'unknown', '', '1.0.3+build'):
+            with self.subTest(version=version):
+                self.assertEqual(namespace['comparable_update_release'](version),
+                                 session_peer.release_version(version))
+
     def test_rollback_preserves_target_replaced_or_modified_outside_lock(self):
         replacement = b"print('session-peer 1.0.4')\n"
         for method in ('replace', 'inplace'):
             with self.subTest(method=method):
+                self.target.write_bytes(self.old)
                 source = (
                     "from pathlib import Path\n"
                     "target = Path(__file__)\n"
@@ -306,7 +406,7 @@ class RemoteTransfer(unittest.TestCase):
         source = (b"import os, time\nfrom pathlib import Path\n"
                   b"if not Path(__file__).parent.name.startswith('.session-peer-update.'):\n"
                   b"    (Path(os.environ['HOME']) / 'published-marker').touch()\n"
-                  b"    time.sleep(30)\n"
+                  b"    while not (Path(os.environ['HOME']) / 'resume-version').exists(): time.sleep(0.01)\n"
                   b"print('session-peer 1.0.3')\n")
         script, payload = self.script(source)
         process = subprocess.Popen(["sh", "-c", script], stdin=subprocess.PIPE,
@@ -341,9 +441,11 @@ class RemoteTransfer(unittest.TestCase):
             self.assertNotIn("submitted", caught.exception.details)
             # A terminated lock holder releases its kernel lock; its retained
             # metadata file must not strand the next updater.
+            (self.home / 'resume-version').touch()
             subsequent = self.execute(*self.script())
-            self.assertEqual(subsequent.returncode, 0, subsequent.stderr)
-            self.assertEqual(self.target.read_bytes(), self.SOURCE)
+            self.assertNotEqual(subsequent.returncode, 0, subsequent.stderr)
+            self.assertEqual(json.loads(subsequent.stdout)['reason'], 'remote_not_older')
+            self.assertEqual(self.target.read_bytes(), source)
             self.assert_clean()
         finally:
             if process.poll() is None:
@@ -413,6 +515,74 @@ class RemoteTransfer(unittest.TestCase):
             self.assertIsNone(session_peer.remote_installed_version("fixture", [], {}))
 
 
+class RemoteRawSSH(unittest.TestCase):
+    """Exercise real subprocess byte capture through an explicit local fake SSH."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix='codex-fake-ssh-')
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.fake = self.root / 'fake_ssh.py'
+        self.local_run = subprocess.run
+
+    def run_fake(self, command, **options):
+        self.assertEqual(command[:2], ['ssh', 'fixture'])
+        self.assertNotIn('encoding', options)
+        self.assertNotIn('text', options)
+        options['timeout'] = 10
+        return self.local_run([sys.executable, str(self.fake)],
+                              env={'HOME': str(self.root), 'PATH': os.defpath}, **options)
+
+    def fake_output(self, output, status, with_input=False):
+        self.fake.write_text('import base64, os, sys\n' +
+                             ('base64.b64decode(sys.stdin.buffer.read(), validate=True)\n' if with_input else '') +
+                             'os.write(1, ' + repr(output) + ')\n' +
+                             "os.write(2, b'\\xff')\n" +
+                             'raise SystemExit(' + str(status) + ')\n')
+
+    def test_complete_push_receipt_survives_invalid_stderr_from_real_subprocess(self):
+        for status in (0, 255):
+            with self.subTest(status=status):
+                self.fake_output(b'session-peer 1.0.3\n', status, with_input=True)
+                with mock.patch.object(session_peer.Path, 'read_bytes', return_value=RemoteTransfer.SOURCE), \
+                     mock.patch.object(session_peer, '__version__', '1.0.3'), \
+                     mock.patch.object(session_peer.subprocess, 'run', side_effect=self.run_fake) as run:
+                    self.assertEqual(session_peer.push_to_remote('fixture', [], {}), '1.0.3')
+                run.assert_called_once()
+
+    def test_incomplete_or_mismatched_push_stdout_remains_unknown(self):
+        for output in (b'session-peer 1.0.4\n', b'session-peer 1.0.3',
+                       b'session-peer 1.0.3\n\xff'):
+            for status in (0, 255):
+                with self.subTest(output=output, status=status):
+                    self.fake_output(output, status, with_input=True)
+                    with mock.patch.object(session_peer.Path, 'read_bytes', return_value=RemoteTransfer.SOURCE), \
+                         mock.patch.object(session_peer, '__version__', '1.0.3'), \
+                         mock.patch.object(session_peer.subprocess, 'run', side_effect=self.run_fake) as run, \
+                         self.assertRaises(session_peer.CcPeerError) as caught:
+                        session_peer.push_to_remote('fixture', [], {})
+                    self.assertEqual(caught.exception.details['commitStatus'], 'unknown')
+                    self.assertFalse(caught.exception.details['retryAllowed'])
+                    run.assert_called_once()
+
+    def test_installed_probe_decodes_stdout_strictly_and_stderr_as_diagnostic(self):
+        for output, usable in ((b'session-peer 1.0.3\n', True),
+                               (b'session-peer 1.0.3\xff\n', False)):
+            with self.subTest(output=output):
+                self.fake_output(output, 0)
+                with mock.patch.object(session_peer.subprocess, 'run', side_effect=self.run_fake):
+                    if usable:
+                        self.assertEqual(session_peer.remote_installed_version('fixture', [], {}), '1.0.3')
+                    else:
+                        with self.assertRaises(session_peer.CcPeerError):
+                            session_peer.remote_installed_version('fixture', [], {})
+        self.fake_output(b'', 255)
+        with mock.patch.object(session_peer.subprocess, 'run', side_effect=self.run_fake), \
+             self.assertRaises(session_peer.CcPeerError) as caught:
+            session_peer.remote_installed_version('fixture', [], {})
+        self.assertEqual(caught.exception.details['sshFailure'], 'transport_failed')
+
+
 class RemotePushContract(unittest.TestCase):
     VERSION = RemoteTransfer.VERSION
     SOURCE = RemoteTransfer.SOURCE
@@ -427,6 +597,9 @@ class RemotePushContract(unittest.TestCase):
         self.assertEqual(version, self.VERSION)
         self.assertEqual(run.call_args.args[0][:-1], ["ssh", "-p", "2222", "fixture"])
         self.assertEqual(base64.b64decode(run.call_args.kwargs["input"], validate=True), source)
+        self.assertIsInstance(run.call_args.kwargs['input'], bytes)
+        self.assertNotIn('encoding', run.call_args.kwargs)
+        self.assertNotIn('text', run.call_args.kwargs)
         self.assertIn(f"{hashlib.sha256(source).hexdigest()} {len(source)};", run.call_args.args[0][-1])
         run.assert_called_once()
 
@@ -505,8 +678,90 @@ class RemotePushContract(unittest.TestCase):
         self.assertTrue(caught.exception.details["retryAllowed"])
         run.assert_called_once()
 
+    def test_only_complete_valid_rejections_resolve_uncertainty(self):
+        receipt = json.dumps({'schemaVersion': 1, 'command': 'update', 'status': 'rejected',
+                              'reason': 'remote_not_older', 'remoteVersion': '1.0.4'}) + '\n'
+        for output in (receipt, receipt.encode()):
+            for outcome in (subprocess.CompletedProcess([], 0, output, b'\xff'),
+                            subprocess.CompletedProcess([], 255, output, b'\xff'),
+                            subprocess.TimeoutExpired(['ssh'], 120, output=output)):
+                with self.subTest(output=output, outcome=type(outcome).__name__), \
+                     mock.patch.object(session_peer.Path, 'read_bytes', return_value=self.SOURCE), \
+                     mock.patch.object(session_peer, '__version__', self.VERSION), \
+                     mock.patch.object(session_peer.subprocess, 'run', side_effect=[outcome]) as run, \
+                     self.assertRaises(session_peer.CcPeerError) as caught:
+                    session_peer.push_to_remote('fixture', [], {})
+                self.assertEqual(caught.exception.details['commitStatus'], 'not_started')
+                self.assertFalse(caught.exception.details['retryAllowed'])
+                self.assertEqual(caught.exception.details['remoteVersion'], '1.0.4')
+                run.assert_called_once()
+        for output in (receipt.rstrip(), receipt + '\n', receipt + 'noise\n',
+                       receipt.replace('1.0.4', '1.0.2'), receipt.encode() + b'\xff'):
+            with self.subTest(output=output):
+                self.assertIsNone(session_peer.installed_update_rejection(output, self.VERSION))
+
+    def test_invalid_json_rejections_preserve_unknown_commit_without_retry(self):
+        receipt = json.dumps({'schemaVersion': 1, 'command': 'update', 'status': 'rejected',
+                              'reason': 'installed_version_unusable', 'remoteVersion': None}) + '\n'
+        malformed = [
+            ('duplicate status', receipt.replace('"status": "rejected"',
+                                                  '"status": "committed", "status": "rejected"')),
+            ('duplicate schema', receipt.replace('"schemaVersion": 1',
+                                                  '"schemaVersion": 1, "schemaVersion": 1')),
+            ('oversized version', json.dumps({'schemaVersion': 1, 'command': 'update',
+                                             'status': 'rejected', 'reason': 'remote_not_older',
+                                             'remoteVersion': '1' + '0' * 5000 + '.0.0'}) + '\n'),
+        ]
+        for constant in ('NaN', 'Infinity', '-Infinity'):
+            malformed.append((constant, receipt.replace('"remoteVersion": null',
+                                '"remoteVersion": ' + constant + ', "remoteVersion": null')))
+            malformed.append((constant + ' without duplicate',
+                              receipt.replace('"remoteVersion": null', '"remoteVersion": ' + constant)))
+        for label, text in malformed:
+            for output in (text, text.encode()):
+                for outcome in (subprocess.CompletedProcess([], 0, output, b'\xff'),
+                                subprocess.CompletedProcess([], 255, output, b'\xff'),
+                                subprocess.TimeoutExpired(['ssh'], 120, output=output)):
+                    with self.subTest(case=label, output=type(output).__name__,
+                                      outcome=type(outcome).__name__), \
+                         mock.patch.object(session_peer.Path, 'read_bytes', return_value=self.SOURCE), \
+                         mock.patch.object(session_peer, '__version__', self.VERSION), \
+                         mock.patch.object(session_peer.subprocess, 'run', side_effect=[outcome]) as run, \
+                         self.assertRaises(session_peer.CcPeerError) as caught:
+                        session_peer.push_to_remote('fixture', [], {})
+                    self.assertEqual(caught.exception.details['commitStatus'], 'unknown')
+                    self.assertFalse(caught.exception.details['retryAllowed'])
+                    self.assertNotIn('committed', caught.exception.details)
+                    self.assertNotIn('updated', caught.exception.details)
+                    run.assert_called_once()
+
 
 class RemoteVersions(unittest.TestCase):
+    def test_publication_rejection_is_an_error_without_success_or_resubmission(self):
+        receipt = json.dumps({'schemaVersion': 1, 'command': 'update', 'status': 'rejected',
+                              'reason': 'remote_not_older', 'remoteVersion': '1.0.4'}) + '\n'
+        args = argparse.Namespace(host=['fixture'], ssh_opt=[], check=False, json=True)
+        output = io.StringIO()
+        with mock.patch.object(session_peer, '__version__', '1.0.3'), \
+             mock.patch.object(session_peer, 'tailscale_status', return_value={}), \
+             mock.patch.object(session_peer, 'ssh_user_metadata', return_value={}), \
+             mock.patch.object(session_peer, 'remote_installed_version', return_value='1.0.2') as probe, \
+             mock.patch.object(session_peer.Path, 'read_bytes', return_value=RemoteTransfer.SOURCE), \
+             mock.patch.object(session_peer.subprocess, 'run', return_value=
+                               subprocess.CompletedProcess([], 1, receipt.encode(), b'\xff')) as run, \
+             contextlib.redirect_stdout(output):
+            code = session_peer.cmd_update(args)
+        result = json.loads(output.getvalue())
+        self.assertEqual(code, session_peer.EXIT_ERROR)
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['commitStatus'], 'not_started')
+        self.assertEqual(result['remoteVersion'], '1.0.4')
+        self.assertFalse(result['retryAllowed'])
+        self.assertNotIn('updated', result)
+        self.assertNotIn('committed', result)
+        probe.assert_called_once()
+        run.assert_called_once()
+
     def test_transport_receipt_still_requires_fresh_probe_and_preserves_probe_failure(self):
         for outcome in (
             subprocess.CompletedProcess([], 255, b"session-peer 1.0.3\n", "Connection closed"),

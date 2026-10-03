@@ -2196,6 +2196,55 @@ def installed_update_receipt(output: str | bytes | None, expected: str) -> bool:
     return isinstance(output, str) and output in (expected + "\n", expected + "\r\n")
 
 
+def update_diagnostic_text(output: str | bytes | None) -> str:
+    """Decode diagnostic bytes without repairing protocol stdout."""
+    return output.decode("utf-8", errors="replace") if isinstance(output, bytes) else (output or "")
+
+
+def installed_update_rejection(output: str | bytes | None, expected: str) -> dict | None:
+    """Recognize only a complete publisher rejection before any publication."""
+    if isinstance(output, bytes):
+        try:
+            output = output.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            return None
+    if (not isinstance(output, str) or not output.startswith("{")
+            or not output.endswith(("}\n", "}\r\n")) or output.count("\n") != 1):
+        return None
+
+    def unique_fields(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate update rejection field")
+            result[key] = value
+        return result
+
+    def invalid_constant(value):
+        raise ValueError("non-JSON update rejection constant")
+
+    try:
+        result = json.loads(output, object_pairs_hook=unique_fields,
+                            parse_constant=invalid_constant)
+    except (ValueError, RecursionError):
+        return None
+    if (not isinstance(result, dict) or set(result) != {
+            "schemaVersion", "command", "status", "reason", "remoteVersion"}
+            or type(result["schemaVersion"]) is not int or result["schemaVersion"] != 1
+            or result["command"] != "update" or result["status"] != "rejected"):
+        return None
+    reason, remote = result["reason"], result["remoteVersion"]
+    if reason in ("installed_version_unusable", "local_version_unusable") and remote is None:
+        return result
+    try:
+        current, wanted = release_version(remote), release_version(expected)
+    except ValueError:
+        return None
+    if reason == "remote_not_older" and current is not None and wanted is not None and current >= wanted:
+        return result
+    return None
+
+
 def push_to_remote(host: str, ssh_opts: list[str], ssh_info: dict | None = None) -> str:
     """Push this script to a remote machine's skill dir over SSH.
 
@@ -2204,6 +2253,8 @@ def push_to_remote(host: str, ssh_opts: list[str], ssh_info: dict | None = None)
     no install.sh. In-process publication/verification exceptions attempt
     rollback. Signals, rollback failure, or loss of SSH at publication can
     leave the commit outcome unknown; never automatically retry such a transfer.
+    A complete rejection reports publication as not_started even though the
+    SSH transfer ran; it never permits automatic resubmission.
     """
     check_ssh_argument(host, "--host")
     for opt in ssh_opts:
@@ -2218,7 +2269,7 @@ def push_to_remote(host: str, ssh_opts: list[str], ssh_info: dict | None = None)
 
     import hashlib
 
-    source_b64 = base64.b64encode(source).decode("ascii")
+    source_b64 = base64.b64encode(source)
     # Python is already required on the destination. Strict, bounded decoding
     # avoids platform-specific base64 flags and detects even clean truncation.
     decoder = """import base64, hashlib, sys
@@ -2238,8 +2289,28 @@ with open(sys.argv[1], 'xb') as staged:
 if size != int(sys.argv[3]) or digest.hexdigest() != sys.argv[2]:
     raise SystemExit('remote update: transfer digest or size mismatch')
 """
-    publisher = """import fcntl, hashlib, os, stat, subprocess, sys, time
+    publisher = """import fcntl, hashlib, json, os, re, stat, subprocess, sys, time
 staged, target, launcher, expected = sys.argv[1:]
+def comparable_update_release(text):
+    match = re.fullmatch(
+        r'[vV]?(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)'
+        r'(?:(?:-)?(a|alpha|b|beta|rc|pre|preview)[.-]?(0|[1-9]\\d*))?',
+        text.strip(), re.IGNORECASE)
+    if match is None:
+        return None
+    major, minor, patch = (int(part) for part in match.groups()[:3])
+    if any(value > sys.maxsize for value in (major, minor, patch)):
+        return None
+    label, serial = match.groups()[3:]
+    if label is None:
+        return major, minor, patch, 3, 0
+    stage = {'a': 0, 'alpha': 0, 'b': 1, 'beta': 1,
+             'rc': 2, 'pre': 2, 'preview': 2}[label.lower()]
+    return major, minor, patch, stage, int(serial)
+def reject_update(reason, remote_version=None):
+    print(json.dumps({'schemaVersion': 1, 'command': 'update', 'status': 'rejected',
+                      'reason': reason, 'remoteVersion': remote_version}), flush=True)
+    raise SystemExit(1)
 lock_path = os.path.join(os.path.dirname(target), '.session-peer-install.lock')
 lock = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
 try:
@@ -2260,9 +2331,24 @@ try:
         raise SystemExit('remote update: installation lock changed')
     backup = os.path.join(os.path.dirname(staged), 'previous.py')
     previous = os.path.lexists(target)
+    wanted = comparable_update_release(expected.removeprefix('session-peer '))
+    if wanted is None:
+        reject_update('local_version_unusable')
     if previous:
         if not stat.S_ISREG(os.lstat(target).st_mode):
             raise SystemExit('remote update: installed program is not a regular file')
+        try:
+            observed = subprocess.run([sys.executable, target, '--version'],
+                                      capture_output=True, timeout=30)
+            reported = observed.stdout.decode('utf-8', errors='strict').strip()
+            match = re.fullmatch(r'session-peer ([^\\s]+)', reported)
+            current = comparable_update_release(match.group(1)) if match else None
+        except (OSError, subprocess.TimeoutExpired, UnicodeError, ValueError):
+            reject_update('installed_version_unusable')
+        if observed.returncode != 0 or current is None:
+            reject_update('installed_version_unusable')
+        if current >= wanted:
+            reject_update('remote_not_older', match.group(1))
         os.link(target, backup)
     created = None
     if os.path.lexists(launcher):
@@ -2349,9 +2435,17 @@ finally:
         })
         return error
 
+    def reject_receipt(output: str | bytes | None) -> None:
+        rejection = installed_update_rejection(output, __version__)
+        if rejection is not None:
+            raise CcPeerError(f"{host}: remote update rejected: {rejection['reason']}", {
+                **ssh_info, "commitStatus": "not_started", "retryAllowed": False,
+                "reason": rejection["reason"], "remoteVersion": rejection["remoteVersion"],
+            })
+
     try:
         completed = subprocess.run(
-            command, input=source_b64, encoding="utf-8",
+            command, input=source_b64,
             capture_output=True, timeout=120,
         )
     except FileNotFoundError as exc:
@@ -2359,14 +2453,16 @@ finally:
     except subprocess.TimeoutExpired as exc:
         if installed_update_receipt(exc.stdout, expected_line):
             return __version__
+        reject_receipt(exc.stdout)
         raise push_failure("timeout") from exc
     except OSError as exc:
         raise push_failure("transport_failed", str(exc)) from exc
 
     if installed_update_receipt(completed.stdout, expected_line):
         return __version__
+    reject_receipt(completed.stdout)
     if completed.returncode != 0:
-        detail = completed.stderr.strip() or f"ssh exited {completed.returncode}"
+        detail = update_diagnostic_text(completed.stderr).strip() or f"ssh exited {completed.returncode}"
         failure = classify_ssh_failure(detail, completed.returncode)
         if failure:
             raise push_failure(failure, detail)
@@ -4038,7 +4134,7 @@ def remote_installed_version(host: str, ssh_opts: list[str],
     try:
         done = subprocess.run(
             ["ssh", *ssh_opts, host, probe],
-            capture_output=True, encoding="utf-8", errors="replace", timeout=30,
+            capture_output=True, timeout=30,
         )
     except FileNotFoundError as exc:
         raise ssh_failure_error(host, ssh_info, "transport_failed", "ssh not found on PATH") from exc
@@ -4046,10 +4142,14 @@ def remote_installed_version(host: str, ssh_opts: list[str],
         raise ssh_failure_error(host, ssh_info, "timeout") from exc
     except OSError as exc:
         raise ssh_failure_error(host, ssh_info, "transport_failed", str(exc)) from exc
-    out = done.stdout.strip()
+    try:
+        out = (done.stdout.decode("utf-8", errors="strict")
+               if isinstance(done.stdout, bytes) else done.stdout).strip()
+    except UnicodeError as exc:
+        raise CcPeerError(f"{host}: installed program did not report a usable version", ssh_info) from exc
     if done.returncode == 3 and out == "session-peer: not installed":
         return None
-    detail = done.stderr.strip() or f"ssh exited {done.returncode}"
+    detail = update_diagnostic_text(done.stderr).strip() or f"ssh exited {done.returncode}"
     failure = classify_ssh_failure(detail, done.returncode) if done.returncode != 0 else None
     if failure:
         raise ssh_failure_error(host, ssh_info, failure, detail)
