@@ -297,6 +297,78 @@ class SshRemoteOutcomes(unittest.TestCase):
         self.assertIn("submission outcome unknown", result["error"])
         self.assertIn("Do not automatically retry", result["error"])
 
+    def test_complete_timeout_outcomes_match_normal_exit_for_text_and_utf8_bytes(self):
+        for payload in (
+            {"schemaVersion": 1, "command": "send", "ok": True, "submitted": True,
+             "agent": "codex", "queueId": "fixture-한국어"},
+            {"schemaVersion": 1, "command": "send", "ok": False, "submitted": True,
+             "wake": {"status": "unknown"}},
+            {"schemaVersion": 1, "command": "list", "ok": True, "sessions": []},
+            {"schemaVersion": 1, "command": "doctor", "ok": True, "status": "ok"},
+        ):
+            text = json.dumps(payload, ensure_ascii=False) + "\n"
+            for captured in (text, text.encode("utf-8")):
+                with self.subTest(payload=payload, bytes=isinstance(captured, bytes)), \
+                     mock.patch.object(session_peer.Path, "read_text", return_value="source"), \
+                     mock.patch.object(session_peer.subprocess, "run", side_effect=
+                         subprocess.TimeoutExpired(["ssh"], 120, output=captured,
+                                                   stderr=b"Permission denied")) as run:
+                    result = session_peer.run_remote("user@fixture", [payload["command"]], [])
+                    self.assertEqual(result, {**payload, **self.SSH_INFO})
+                    run.assert_called_once()
+
+    def test_complete_timeout_response_preserved_through_send_cli(self):
+        thread = "01900000-0000-7000-8000-000000000001"
+        payload = {"schemaVersion": 1, "command": "send", "ok": True,
+                   "agent": "codex", "target": {"id": thread},
+                   "queueId": "fixture-queue", "submitted": True}
+        output = io.StringIO()
+        with mock.patch.object(session_peer, "tailscale_status", return_value=None), \
+             mock.patch.object(session_peer.Path, "read_text", return_value="source"), \
+             mock.patch.object(session_peer.subprocess, "run", side_effect=
+                 subprocess.TimeoutExpired(["ssh"], 120, output=json.dumps(payload).encode())) as run, \
+             contextlib.redirect_stdout(output):
+            code = session_peer.main(["send", "--host", "user@fixture", "--to", "codex:" + thread,
+                                      "--no-from", "--no-reply-to", "--no-update-notice",
+                                      "--json", "hello"])
+        result = json.loads(output.getvalue())
+        self.assertEqual(code, 0)
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["submitted"])
+        self.assertEqual(result["queueId"], "fixture-queue")
+        self.assertNotIn("sshFailure", result)
+        run.assert_called_once()
+
+    def test_invalid_timeout_responses_remain_unknown_without_retry(self):
+        valid = '{"schemaVersion":1,"command":"send","ok":true,"submitted":true}'
+        for captured in (
+            None, "", valid[:-1], valid + " trailing", (valid + "\n{}").encode(),
+            b'\xff' + valid.encode(), valid.replace('"ok":true', '"ok":"true"'),
+            valid.replace('"schemaVersion":1', '"schemaVersion":true'),
+            valid.replace('"command":"send"', '"command":"list"'),
+            valid.replace('"ok":true', '"ok":false,"ok":true'),
+            valid.replace('"submitted":true', '"submitted":NaN'),
+            '{"ok":true,"submitted":true}',
+        ):
+            with self.subTest(captured=captured), \
+                 mock.patch.object(session_peer.Path, "read_text", return_value="source"), \
+                 mock.patch.object(session_peer.subprocess, "run", side_effect=
+                     subprocess.TimeoutExpired(["ssh"], 120, output=captured)) as run, \
+                 self.assertRaises(session_peer.CcPeerError) as caught:
+                session_peer.run_remote("user@fixture", ["send"], [])
+            self.assertEqual(caught.exception.details["status"], "unknown")
+            self.assertFalse(caught.exception.details["retryAllowed"])
+            self.assertNotIn("submitted", caught.exception.details)
+            run.assert_called_once()
+
+    def test_duplicate_keys_and_non_json_constants_rejected_in_normal_path(self):
+        for body in (
+            '{"schemaVersion":1,"command":"send","ok":false,"ok":true}',
+            '{"schemaVersion":1,"command":"send","ok":true,"value":NaN}',
+        ):
+            with self.subTest(body=body), self.assertRaisesRegex(session_peer.CcPeerError, "unexpected output"):
+                self.remote("send", body, "", 0)
+
     def test_non_send_timeouts_keep_the_transport_timeout_behavior(self):
         for operation in ("list", "doctor", "push", "version"):
             with self.subTest(operation=operation), \
