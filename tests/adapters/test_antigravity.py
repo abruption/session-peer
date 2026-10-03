@@ -45,9 +45,23 @@ class Protocol(unittest.TestCase):
                 self.bridge.handle({**req, 'text': 'changed'})
             self.assertEqual(run.call_count, 1)
             self.assertEqual(run.call_args.args[0], [
-                str(Path('/fixture/bin/agentapi')), 'send-message', '--title=session-peer', THREAD, req['text']])
+                str(Path('/fixture/bin/agentapi')), 'send-message', '--title=session-peer', '--', THREAD, req['text']])
             self.assertEqual(run.call_args.args[0][-1], req['text'])
             self.assertEqual(run.call_args.kwargs['stdout'], subprocess.DEVNULL)
+
+    def test_dash_bodies_are_native_positionals(self):
+        # Assert the exact native argv contract. Python argparse is not agentapi
+        # and treats a second '--' differently across supported Python versions.
+        # Actual native parsing is verified by the opt-in agy_wire_probe fixture.
+        for text in ('hello', '-x', '--help', '- item', '--', '- first\n-- second\n한국어'):
+            bridge = p.AgyBridge(INFO, Path('/fixture/bin/agentapi'), 2)
+            with self.subTest(text=text), \
+                 mock.patch.object(p.subprocess, 'run', return_value=argparse.Namespace(returncode=0)) as run:
+                result = bridge.handle(self.req(text=text))
+                self.assertTrue(result['submitted'])
+                run.assert_called_once()
+                self.assertEqual(run.call_args.args[0], [str(bridge.api), 'send-message',
+                                                        '--title=session-peer', '--', THREAD, text])
 
     def test_timeout_and_nonzero_remain_unknown_without_retry(self):
         for outcome in (subprocess.TimeoutExpired('api', 15), argparse.Namespace(returncode=1)):
@@ -120,6 +134,48 @@ class Adapter(unittest.TestCase):
             self.args.dry_run=False
             result=self.adapter.submit(self.ctx,'hi');self.assertEqual(result['status'],'unknown')
             self.assertFalse(result['retryAllowed']);self.assertEqual(rpc.call_count,1)
+
+    def test_dash_bodies_agree_for_dry_run_and_real_send(self):
+        for text in ('-x', '--help', '- item', '--', '- first\n-- second\n한국어'):
+            for dry_run in (True, False):
+                bridge = p.AgyBridge(INFO, Path('/fixture/bin/agentapi'), 2)
+                out = io.StringIO()
+                with self.subTest(text=text, dry_run=dry_run), \
+                     mock.patch.object(p, 'agy_registrations', return_value=[INFO]), \
+                     mock.patch.object(p, 'agy_owner_live', return_value=True), \
+                     mock.patch.object(p, 'agy_rpc', side_effect=lambda info, req: bridge.handle(req)) as rpc, \
+                     mock.patch.object(p.subprocess, 'run', return_value=argparse.Namespace(returncode=0)) as run, \
+                     contextlib.redirect_stdout(out):
+                    argv = ['send', '--to', 'antigravity:' + THREAD, '--message=' + text,
+                            '--no-from', '--no-reply-to', '--json']
+                    code = p.main(argv + (['--dry-run'] if dry_run else []))
+                self.assertEqual(code, 0)
+                self.assertEqual(json.loads(out.getvalue())['submitted'], not dry_run)
+                if dry_run:
+                    rpc.assert_not_called(); run.assert_not_called()
+                else:
+                    self.assertEqual(run.call_args.args[0], [str(Path('/fixture/bin/agentapi')), 'send-message',
+                                                            '--title=session-peer', '--', THREAD, text])
+
+    def test_invalid_bodies_agree_for_dry_run_and_real_send(self):
+        for text in ('', ' \n', 'x\0y', '한' * 10923):
+            for dry_run in (True, False):
+                out = io.StringIO()
+                with self.subTest(text=text[:10], dry_run=dry_run), \
+                     mock.patch.object(p, 'agy_registrations', side_effect=AssertionError('registration before body validation')) as registrations, \
+                     mock.patch.object(p, 'agy_rpc') as rpc, \
+                     mock.patch.object(p.subprocess, 'run') as run, contextlib.redirect_stdout(out):
+                    argv = ['send', '--to', 'antigravity:' + THREAD, '--message=' + text,
+                            '--no-from', '--no-reply-to', '--json']
+                    code = p.main(argv + (['--dry-run'] if dry_run else []))
+                self.assertEqual(code, 1)
+                result = json.loads(out.getvalue())
+                self.assertFalse(result['ok'])
+                self.assertEqual(result['error'], 'Antigravity: invalid_message' if text.strip() else 'refusing to send an empty message')
+                if text.strip():
+                    self.assertEqual(result['reason'], 'invalid_message')
+                registrations.assert_not_called()
+                rpc.assert_not_called(); run.assert_not_called()
 
     def test_explicit_id_requires_pinned_generation_and_wake_refused(self):
         self.args.request_id=str(uuid.uuid4())

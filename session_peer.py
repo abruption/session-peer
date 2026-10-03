@@ -875,7 +875,8 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
     process_home = getattr(args, "codex_native_home", None) or str(root)
     env = dict(os.environ, CODEX_HOME=process_home)
     try:
-        done = subprocess.run([executable, "queue", "--thread", thread_id, "--message", text],
+        # Keep leading dashes inside the option value, including with --no-from.
+        done = subprocess.run([executable, "queue", "--thread", thread_id, "--message=" + text],
                               env=env, capture_output=True, encoding="utf-8", errors="replace",
                               timeout=CODEX_QUEUE_TIMEOUT)
     except subprocess.TimeoutExpired as exc:
@@ -3089,7 +3090,7 @@ class AgyBridge:
         try:
             # No shell; native stdout/stderr may contain credentials and are discarded.
             done = subprocess.run([str(self.api), 'send-message', '--title=session-peer',
-                                   self.info['id'], text], stdout=subprocess.DEVNULL,
+                                   '--', self.info['id'], text], stdout=subprocess.DEVNULL,
                                   stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, timeout=15)
             result = {**result, 'nativeExitCode': done.returncode}
             if done.returncode == 0:
@@ -4330,8 +4331,21 @@ def cmd_optional_relay(args):
     return optional_relay().main(args.command, ["--help"] if args.relay_help else args.relay_args)
 
 
+class MessageArgumentParser(argparse.ArgumentParser):
+    def _get_values(self, action, arg_strings):
+        # Python 3.9 strips '--' even from an already recognized option value.
+        # Preserve only this declared single message value; option recognition
+        # still rejects the ambiguous separated form '--message --'.
+        if (action.dest == "message_option" and "--message" in action.option_strings
+                and action.nargs is None and arg_strings == ["--"]):
+            value = self._get_value(action, arg_strings[0])
+            self._check_value(action, value)
+            return value
+        return super()._get_values(action, arg_strings)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = MessageArgumentParser(
         prog="session-peer",
         description="Message Claude Code and Codex sessions locally or over SSH.",
     )
