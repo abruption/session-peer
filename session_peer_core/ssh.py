@@ -282,6 +282,16 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     return result
 
 
+def installed_update_receipt(output: str | bytes | None, expected: str) -> bool:
+    """Accept only the publisher's complete single installed-version line."""
+    if isinstance(output, bytes):
+        try:
+            output = output.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            return False
+    return isinstance(output, str) and output in (expected + "\n", expected + "\r\n")
+
+
 def push_to_remote(host: str, ssh_opts: list[str], ssh_info: dict | None = None) -> str:
     """Push this script to a remote machine's skill dir over SSH.
 
@@ -324,41 +334,85 @@ with open(sys.argv[1], 'xb') as staged:
 if size != int(sys.argv[3]) or digest.hexdigest() != sys.argv[2]:
     raise SystemExit('remote update: transfer digest or size mismatch')
 """
-    publisher = """import os, stat, subprocess, sys
+    publisher = """import fcntl, hashlib, os, stat, subprocess, sys, time
 staged, target, launcher, expected = sys.argv[1:]
-backup = os.path.join(os.path.dirname(staged), 'previous.py')
-previous = os.path.lexists(target)
-if previous:
-    if not stat.S_ISREG(os.lstat(target).st_mode):
-        raise SystemExit('remote update: installed program is not a regular file')
-    os.link(target, backup)
-created = None
-if os.path.lexists(launcher):
-    if not os.path.islink(launcher) or os.path.realpath(launcher) != os.path.realpath(target):
-        raise SystemExit('remote update: launcher belongs to another installation')
-else:
-    os.symlink(target, launcher)
-    created = os.lstat(launcher)
-published = False
+lock_path = os.path.join(os.path.dirname(target), '.session-peer-install.lock')
+lock = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
 try:
-    os.replace(staged, target)
-    published = True
-    result = subprocess.run([sys.executable, target, '--version'],
-                            capture_output=True, timeout=30)
-    if result.returncode != 0 or result.stdout.strip() != expected.encode('utf-8'):
-        raise RuntimeError('remote update: installed version mismatch')
-except BaseException:
-    if published:
-        if previous:
-            os.replace(backup, target)
-        else:
-            os.unlink(target)
-    if created is not None:
-        current = os.lstat(launcher)
-        if (current.st_dev, current.st_ino) == (created.st_dev, created.st_ino):
-            os.unlink(launcher)
-    raise
-print(expected)
+    lock_stat = os.fstat(lock)
+    if not stat.S_ISREG(lock_stat.st_mode) or lock_stat.st_nlink != 1:
+        raise SystemExit('remote update: installation lock is not a regular private file')
+    deadline = time.monotonic() + 30
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise SystemExit('remote update: installation lock is busy')
+            time.sleep(0.05)
+    current_lock = os.lstat(lock_path)
+    if (current_lock.st_dev, current_lock.st_ino) != (lock_stat.st_dev, lock_stat.st_ino):
+        raise SystemExit('remote update: installation lock changed')
+    backup = os.path.join(os.path.dirname(staged), 'previous.py')
+    previous = os.path.lexists(target)
+    if previous:
+        if not stat.S_ISREG(os.lstat(target).st_mode):
+            raise SystemExit('remote update: installed program is not a regular file')
+        os.link(target, backup)
+    created = None
+    if os.path.lexists(launcher):
+        if not os.path.islink(launcher) or os.path.realpath(launcher) != os.path.realpath(target):
+            raise SystemExit('remote update: launcher belongs to another installation')
+    else:
+        os.symlink(target, launcher)
+        created = os.lstat(launcher)
+    staged_stat = os.stat(staged)
+    with open(staged, 'rb') as source:
+        published_digest = hashlib.sha256(source.read()).digest()
+    def owns_publication():
+        try:
+            fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, 'rb') as installed:
+                current = os.fstat(installed.fileno())
+                if (not stat.S_ISREG(current.st_mode) or
+                        (current.st_dev, current.st_ino) !=
+                        (staged_stat.st_dev, staged_stat.st_ino) or
+                        hashlib.sha256(installed.read()).digest() != published_digest):
+                    return False
+                bound = os.lstat(target)
+                return (bound.st_dev, bound.st_ino) == (current.st_dev, current.st_ino)
+        except OSError:
+            return False
+    published = False
+    try:
+        os.replace(staged, target)
+        published = True
+        result = subprocess.run([sys.executable, target, '--version'],
+                                capture_output=True, timeout=30)
+        if result.returncode != 0 or result.stdout.strip() != expected.encode('utf-8'):
+            raise RuntimeError('remote update: installed version mismatch')
+    except BaseException:
+        owned = not published or owns_publication()
+        if published and owned:
+            if previous:
+                os.replace(backup, target)
+            else:
+                os.unlink(target)
+        if created is not None and owned:
+            try:
+                current = os.lstat(launcher)
+            except FileNotFoundError:
+                current = None
+            if current is not None and (current.st_dev, current.st_ino) == (created.st_dev, created.st_ino):
+                os.unlink(launcher)
+        raise
+    print(expected, flush=True)
+finally:
+    # Keep the lock inode: unlinking it lets a waiter and a new opener lock
+    # different files. Kernel locks expire on close/termination, without PID
+    # guesses, stale-file deletion, or touching another updater's staging.
+    os.close(lock)
 """
     expected_line = f"session-peer {__version__}"
     remote_script = (
@@ -399,10 +453,14 @@ print(expected)
     except FileNotFoundError as exc:
         raise push_failure("transport_failed", "ssh not found on PATH", started=False) from exc
     except subprocess.TimeoutExpired as exc:
+        if installed_update_receipt(exc.stdout, expected_line):
+            return __version__
         raise push_failure("timeout") from exc
     except OSError as exc:
         raise push_failure("transport_failed", str(exc)) from exc
 
+    if installed_update_receipt(completed.stdout, expected_line):
+        return __version__
     if completed.returncode != 0:
         detail = completed.stderr.strip() or f"ssh exited {completed.returncode}"
         failure = classify_ssh_failure(detail, completed.returncode)
@@ -410,6 +468,4 @@ print(expected)
             raise push_failure(failure, detail)
         raise CcPeerError(f"{host}: {detail}", uncertain)
 
-    if completed.stdout.strip() != expected_line:
-        raise CcPeerError(f"{host}: installed version did not match {__version__}", uncertain)
-    return __version__
+    raise CcPeerError(f"{host}: installed version did not match {__version__}", uncertain)
