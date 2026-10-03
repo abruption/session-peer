@@ -138,15 +138,22 @@ class Codex(unittest.TestCase):
         self.assertTrue(value.endswith("\n\n--help"), value)
 
     def test_invalid_bodies_fail_before_queue_for_dry_run_and_real_send(self):
-        for text in ("", " \n", "x\x00y", "한" * 10923):
+        cases = (("", "refusing to send an empty message"),
+                 (" \n", "refusing to send an empty message"),
+                 ("x\x00y", "Codex messages cannot contain NUL characters (CLI argument limitation)"),
+                 ("한" * 10923, "Codex message is 32769 UTF-8 bytes; session-peer limit is 32768, including headers"))
+        for text, error in cases:
             for dry_run in (True, False):
                 with self.subTest(text=text[:10], dry_run=dry_run), \
+                     mock.patch.object(peer, "resolve_codex_home", side_effect=AssertionError("home resolution before body validation")) as resolve, \
                      mock.patch.object(peer.subprocess, "run") as run:
                     argv = ["send", "--to", "codex:" + THREAD, "--message=" + text,
                             "--no-from", "--no-reply-to", "--json"]
                     code, result = self.invoke(*argv, *(["--dry-run"] if dry_run else []))
                 self.assertEqual(code, 1)
                 self.assertFalse(result["ok"])
+                self.assertEqual(result["error"], error)
+                resolve.assert_not_called()
                 run.assert_not_called()
 
     def test_queue_uses_private_native_home_for_child_only(self):

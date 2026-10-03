@@ -56,7 +56,7 @@ class Protocol(unittest.TestCase):
         parser.add_argument('--title')
         parser.add_argument('recipient_id')
         parser.add_argument('content')
-        for text in ('-x', '--help', '- item', '--', '- first\n-- second\n한국어'):
+        for text in ('hello', '-x', '--help', '- item', '--', '- first\n-- second\n한국어'):
             bridge = p.AgyBridge(INFO, Path('/fixture/bin/agentapi'), 2)
             def parse_native(argv, **kwargs):
                 self.assertEqual(argv[:4], ['/fixture/bin/agentapi', 'send-message', '--title=session-peer', '--'])
@@ -169,13 +169,19 @@ class Adapter(unittest.TestCase):
             for dry_run in (True, False):
                 out = io.StringIO()
                 with self.subTest(text=text[:10], dry_run=dry_run), \
+                     mock.patch.object(p, 'agy_registrations', side_effect=AssertionError('registration before body validation')) as registrations, \
                      mock.patch.object(p, 'agy_rpc') as rpc, \
                      mock.patch.object(p.subprocess, 'run') as run, contextlib.redirect_stdout(out):
                     argv = ['send', '--to', 'antigravity:' + THREAD, '--message=' + text,
                             '--no-from', '--no-reply-to', '--json']
                     code = p.main(argv + (['--dry-run'] if dry_run else []))
                 self.assertEqual(code, 1)
-                self.assertFalse(json.loads(out.getvalue())['ok'])
+                result = json.loads(out.getvalue())
+                self.assertFalse(result['ok'])
+                self.assertEqual(result['error'], 'Antigravity: invalid_message' if text.strip() else 'refusing to send an empty message')
+                if text.strip():
+                    self.assertEqual(result['reason'], 'invalid_message')
+                registrations.assert_not_called()
                 rpc.assert_not_called(); run.assert_not_called()
 
     def test_explicit_id_requires_pinned_generation_and_wake_refused(self):

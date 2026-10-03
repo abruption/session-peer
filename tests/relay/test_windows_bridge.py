@@ -82,6 +82,62 @@ class WindowsBridge(unittest.TestCase):
                 self.assertTrue(native.invoke_windows_codex(self.binding, operation, text)['ok'])
             self.assertIn('--message=' + text, run.call_args.args[0])
 
+    def test_ascii_byte_limit_refuses_before_native_launch(self):
+        for operation in ('resolve', 'send'):
+            with self.subTest(operation=operation), mock.patch.object(native.subprocess, 'run') as run:
+                result = native.invoke_windows_codex(self.binding, operation, 'x' * 32768)
+            self.assertEqual(result, {'ok': False, 'status': 'refused', 'submitted': False,
+                                     'reason': 'native_windows_command_too_long', 'retryAllowed': False,
+                                     'consumptionConfirmed': False})
+            run.assert_not_called()
+
+    def test_full_command_boundary_counts_windows_quoting_and_unicode_paths(self):
+        self.binding['codexPython'] = '/mnt/c/工具 🧪/python.exe'
+        native.validate_wsl_codex.return_value = 'C:\\工具 🧪\\home'
+        native.windows_codex_home.return_value = 'C:\\工具 🧪\\codex.exe'
+        for operation in ('resolve', 'send'):
+            for sample in ('x', ' "', ' \\'):
+                with self.subTest(operation=operation, sample=sample):
+                    _, run = self.run_result({'ok': True}, operation)
+                    baseline = run.call_args.args[0]
+                    self.assertIn('C:\\工具 🧪\\home', baseline)
+                    self.assertIn('C:\\工具 🧪\\codex.exe', baseline)
+                    index = next(i for i, arg in enumerate(baseline) if arg.startswith('--message='))
+                    def units(text):
+                        args = baseline[:]
+                        args[index] = '--message=' + text
+                        return len(subprocess.list2cmdline(args).encode('utf-16-le')) // 2 + 1
+                    # Find the largest repeated body that fits without exceeding
+                    # the independent 32 KiB UTF-8 message policy.
+                    low, high = 1, 32768 // len(sample.encode())
+                    while low < high:
+                        middle = (low + high + 1) // 2
+                        if units(sample * middle) <= 32767:
+                            low = middle
+                        else:
+                            high = middle - 1
+                    fits, oversized = sample * low, sample * (low + 1)
+                    self.assertLessEqual(units(fits), 32767)
+                    self.assertGreater(units(oversized), 32767)
+                    self.assertLessEqual(len(oversized.encode()), 32768)
+                    with mock.patch.object(native.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, b'{"ok":true}', b'')) as run:
+                        self.assertTrue(native.invoke_windows_codex(self.binding, operation, fits)['ok'])
+                    run.assert_called_once()
+                    with mock.patch.object(native.subprocess, 'run') as run:
+                        result = native.invoke_windows_codex(self.binding, operation, oversized)
+                    self.assertEqual(result['status'], 'refused')
+                    self.assertEqual(result['reason'], 'native_windows_command_too_long')
+                    run.assert_not_called()
+
+    def test_emoji_utf8_boundary_fits_without_changing_message_policy(self):
+        text = '🧪' * 8192
+        self.assertEqual(len(text.encode()), 32768)
+        for operation in ('resolve', 'send'):
+            with self.subTest(operation=operation), \
+                 mock.patch.object(native.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, b'{"ok":true}', b'')) as run:
+                self.assertTrue(native.invoke_windows_codex(self.binding, operation, text)['ok'])
+            run.assert_called_once()
+
     def test_timeout_is_unknown_and_never_retried(self):
         with mock.patch.object(native.subprocess, 'run', side_effect=subprocess.TimeoutExpired('native', 32)) as run:
             result = native.invoke_windows_codex(self.binding, 'send', 'hello')
