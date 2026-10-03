@@ -105,8 +105,14 @@ class DetachedWakeCleanup(unittest.IsolatedAsyncioTestCase):
                 self.stream.close()
 
         def spawn(argv, **kwargs):
+            is_cli = len(argv) > 1 and argv[1] == str(Path(mcp.core.__file__).resolve())
+            if is_cli:
+                # Native --version preflight has no home requirement. Reproduce
+                # a clean CI environment even when the local launcher sets one.
+                kwargs['env'] = {key: value for key, value in os.environ.items()
+                                 if key != 'CODEX_HOME'}
             process = real_popen(argv, **kwargs)
-            if len(argv) > 1 and argv[1] == str(Path(mcp.core.__file__).resolve()):
+            if is_cli:
                 self.processes.append(process)
                 process.stdout = RecordingPipe(process.stdout)
             return process
