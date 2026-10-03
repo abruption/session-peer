@@ -142,6 +142,7 @@ def collect_listing(args: argparse.Namespace) -> dict:
 
 
 def render_listing(payload: dict, where: str, selected: str | None) -> str:
+    payload, where = human_text(payload), human_text(where)
     sessions = payload["sessions"]
     if selected:
         human = AGENTS.get(selected).render(sessions, where)
@@ -157,5 +158,5 @@ def render_listing(payload: dict, where: str, selected: str | None) -> str:
             human += "\n" + note
     for agent, info in payload.get("discovery", {}).items():
         if info["status"] == "error":
-            human += f"\n{agent} discovery failed: {info['error']}"
+            human += f"\n{human_text(agent)} discovery failed: {info['error']}"
     return human

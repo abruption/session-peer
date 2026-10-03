@@ -29,8 +29,8 @@ def cmd_list(args: argparse.Namespace) -> int:
                 exit_code = EXIT_ERROR
             if remote_version and remote_version != __version__:
                 human = (
-                    f"{shown_host} runs session-peer {remote_version}; this machine has {__version__}."
-                    f"\nUpdate it with:  session-peer update --host {requested_host}\n\n{human}"
+                    f"{shown_host} runs session-peer {human_text(remote_version)}; this machine has {__version__}."
+                    f"\nUpdate it with:  session-peer update --host {human_text(requested_host)}\n\n{human}"
                 )
             host_result = json_result("list", {
                 **host_metadata(requested_host, host),
@@ -54,7 +54,7 @@ def cmd_list(args: argparse.Namespace) -> int:
                 ok=False,
             ))
             if not args.json:
-                print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
+                print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
 
     if args.json:
         emit_json_results(all_results)
@@ -124,7 +124,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 ok=False,
             ))
             if not args.json:
-                print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
+                print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
     if args.json:
         emit_json_results(all_results)
     return exit_code

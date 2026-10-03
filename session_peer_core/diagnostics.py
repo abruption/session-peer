@@ -340,6 +340,7 @@ def doctor_payload(args: argparse.Namespace) -> dict:
 
 
 def render_doctor(payload: dict, where: str) -> str:
+    payload, where = human_text(payload), human_text(where)
     lines = [
         f"Diagnostics on {where}:",
         *("  " + AGENTS.get(name).diagnostic_text(payload[name]) for name in AGENTS.names() if name in payload),

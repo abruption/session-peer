@@ -308,7 +308,7 @@ async def manage(kind, args):
 
 
 def parser(kind):
-    p = argparse.ArgumentParser(prog='session-peer '+kind)
+    p = core.HumanArgumentParser(prog='session-peer '+kind)
     sub = p.add_subparsers(dest='action', required=True)
     def command(name, state=True):
         item = sub.add_parser(name)
@@ -433,12 +433,13 @@ def invoke_core(args):
                   'retryAllowed': False, 'consumptionConfirmed': False, **connection_diagnostics(exc)}
     result = with_guidance(result)
     result.update(device=args.device, host='device:'+args.device, transport='paired_device')
-    human = 'Device result: '+str(result.get('status', 'ok' if result.get('ok') else result.get('reason')))
-    if result.get('guidance'):
-        human += '\n' + result['guidance']['nextAction']
+    display = core.human_text(result)
+    human = 'Device result: '+str(display.get('status', 'ok' if display.get('ok') else display.get('reason')))
+    if display.get('guidance'):
+        human += '\n' + display['guidance']['nextAction']
     if args.command == 'list':
         human += '\nTARGET  AGENT  ID  STATUS\n' + '\n'.join(
             str(row.get('target', ''))+'  '+str(row.get('agent', ''))+'  '+str(row.get('id', row.get('pid', '')))+'  '+str(row.get('status', 'unknown'))
-            for row in result.get('sessions', []))
+            for row in display.get('sessions', []))
     core.emit(args.json, result, human, command=args.command)
     return 0 if result.get('ok') else 1
