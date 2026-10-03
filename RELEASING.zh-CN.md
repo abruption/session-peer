@@ -1,6 +1,6 @@
 # 发布 session-peer
 
-公开 GitHub Release 会触发 `.github/workflows/publish.yml`，构建指定标签的 wheel 和 sdist，并通过 Trusted Publishing 上传 PyPI。草稿不会发布。请分开准备、最终批准、公开和验证。受保护的 `main` 需要最新 PR 以及覆盖各平台 Python、文档、Shell、软件包、MCP、Relay、control、集成测试和依赖审计的 `release gate`。实际 OAuth、代理 ACK 和生产 Relay 状态是独立的运维证据。
+公开 GitHub Release 会触发 `.github/workflows/publish.yml`，构建指定标签的 wheel 和 sdist，并在环境批准后通过 Trusted Publishing 上传 PyPI。草稿不会发布。请分开准备、最终批准、公开和验证。受保护的 `main` 需要最新 PR 以及覆盖各平台 Python、文档、Shell、软件包、MCP、Relay、control、集成测试和依赖审计的 `release gate`。实际 OAuth、代理 ACK 和生产 Relay 状态是独立的运维证据。
 
 ## v1.0.0 证据与 v1.0.2 维护条件
 
@@ -13,6 +13,10 @@ Python/PyPI 版本是 `1.0.2`，Git 标签和 GitHub Release 是 `v1.0.2`。不�
 ## Trusted Publisher
 
 PyPI 项目 `session-peer` 对应 GitHub `abruption/session-peer` 的 `publish.yml` 和环境 `pypi`。仓库不保存长期 PyPI 凭据。过去成功不证明配置未变，发布前需要确认。
+
+所有者[已于 2026-09-29 验证 PyPI 对应关系](https://github.com/abruption/session-peer/issues/235#issuecomment-5882178667)。这是所有者的检查记录，不是新的 PyPI UI 检查。2026-10-03 的 GitHub API 检查确认，`pypi` 的必需审核人为 `abruption`，允许自我审核（`prevent_self_review: false`），并有仅允许匹配 `v*` 标签的自定义部署策略。这些是仓库设置，而非工作流源代码设置，发布前需重新确认。
+
+管理员绕过仍处于启用状态（`can_admins_bypass: true`）。请使用正常环境审核。例外绕过需要所有者明确授权，并记录原因、执行者、时间、工作流运行、标签与提交；绕过不证明批准等待已生效。不要悄悄绕过审核，也不要声称绕过已禁用。
 
 ## 准备与验证
 
@@ -40,7 +44,7 @@ gh release create v1.0.2 \
 
 ## 公开
 
-**公开前必须获得用户最终批准。** 发布命令：
+公开 GitHub 草稿前必须立即获得所有者最终批准。未经批准，应保持草稿。公开会使 GitHub Release 对外可见并启动工作流，但 PyPI 上传必须等待对待处理的 `pypi` 部署进行单独的明确审核。
 
 ```bash
 gh release edit v1.0.2 \
@@ -48,7 +52,16 @@ gh release edit v1.0.2 \
   --draft=false --prerelease=false --latest
 ```
 
-工作流必须检查标签/版本/受保护 main、可复现的 wheel 与 sdist、归档/安装/审计、SHA256SUMS 和 provenance，然后才通过 OIDC 上传。已有 PyPI 文件属于硬错误。失败后不能用修改过的产物重传。如果 `1.0.2` 部分发布或哈希不符，停止升级、保存证据，通过审查后的新版本（通常是 `1.0.3`）修复。撤回版本也不能重复使用。
+工作流必须检查标签/版本/受保护 main、可复现的 wheel 与 sdist、归档/安装/审计、SHA256SUMS 和 provenance，然后才通过 OIDC 上传。已有 PyPI 文件属于硬错误。
+
+## 审核待处理的 PyPI 部署
+
+1. 构建、wheel/sdist 安装检查与依赖审计成功后，在 GitHub Actions 中打开准确的工作流运行。确认上传前发布作业正在等待 `pypi` 审核。记录运行 URL/ID、尝试编号、标签、提交、SHA256SUMS 和 release-provenance.json 中的候选哈希，以及待处理状态与时间。源代码测试和 API 设置本身不能证明这一等待；在下一次发布中观察它仍是 #235 未完成的验收项。
+2. 必需审核人检查候选证据及当前 Trusted Publisher/环境设置。在 **Review deployments** 中选择 `pypi`，仅在发布已获授权时明确选择 **Approve and deploy**。公开 GitHub 草稿的批准不能代替此审核。
+3. 如需拒绝发布，在 **Review deployments** 中选择 `pypi`，输入原因并选择 **Reject**。如果预期的审核控件或等待状态缺失，停止并在上传前取消运行。保留拒绝或取消的运行；不要移动标签或重复使用版本来规避拒绝。通过经过审查的准备工作解决原因并取得新的批准。
+4. 连同运行与候选证据，记录审核人、批准或拒绝、评论、时间戳与部署结果。批准后，保留首次上传和发布后验证结果。被拒绝的部署不得记为成功发布或批准等待验证成功。
+
+失败后不能用修改过的产物重传。如果 `1.0.2` 部分发布或哈希不符，停止升级、保存证据，通过审查后的新版本（通常是 `1.0.3`）修复。撤回版本也不能重复使用。
 
 ## 发布后验证
 
