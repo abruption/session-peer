@@ -311,8 +311,10 @@ class SshRemoteOutcomes(unittest.TestCase):
                     session_peer.remote_installed_version("user@fixture", [])
                 else:
                     session_peer.run_remote("user@fixture", [operation], [])
-            self.assertEqual(caught.exception.details,
-                             {**self.SSH_INFO, "sshFailure": "timeout"})
+            # Update-transfer outcomes (#229) may add commit metadata. Keep the
+            # original transport classification and identity contract exact.
+            expected = {**self.SSH_INFO, "sshFailure": "timeout"}
+            self.assertEqual({key: caught.exception.details[key] for key in expected}, expected)
             self.assertEqual(str(caught.exception), "SSH connection to user@fixture timed out")
             run.assert_called_once()
 
@@ -324,8 +326,8 @@ class SshRemoteOutcomes(unittest.TestCase):
                  mock.patch.object(session_peer.subprocess, "run", return_value=completed) as run, \
                  self.assertRaises(session_peer.CcPeerError) as caught:
                 operation("user@fixture", [])
-            self.assertEqual(caught.exception.details,
-                             {**self.SSH_INFO, "sshFailure": "authentication_failed"})
+            expected = {**self.SSH_INFO, "sshFailure": "authentication_failed"}
+            self.assertEqual({key: caught.exception.details[key] for key in expected}, expected)
             self.assertIn("--host USER@HOST", str(caught.exception))
             run.assert_called_once()
 
