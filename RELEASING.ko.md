@@ -1,6 +1,73 @@
 # session-peer 릴리스
 
-GitHub 릴리스 게시가 `.github/workflows/publish.yml`을 실행해 해당 태그의 wheel과 sdist를 빌드하고 환경 승인 후 PyPI Trusted Publishing으로 업로드합니다. 드래프트는 게시되지 않습니다. 준비·최종 승인·게시·검증을 분리하십시오. 보호된 `main`에는 최신 PR과 전체 Python 플랫폼 매트릭스, 문서·셸·패키지 설치·MCP·Relay·control·통합 테스트 및 의존성 감사가 포함된 `release gate`가 필요합니다. 라이브 OAuth, 에이전트 ACK, 운영 Relay 상태는 별도의 운영 증거입니다.
+GitHub 릴리스 게시가 `.github/workflows/publish.yml`을 실행해 잠긴 자산을 검증하고 환경 승인 후 wheel과 sdist를 PyPI Trusted Publishing으로 업로드합니다. 드래프트는 게시되지 않습니다. 준비·최종 승인·게시·검증을 분리하십시오. 보호된 `main`에는 최신 PR과 전체 Python 플랫폼 매트릭스, 문서·셸·패키지 설치·MCP·Relay·control·통합 테스트 및 의존성 감사가 포함된 `release gate`가 필요합니다. 라이브 OAuth, 에이전트 ACK, 운영 Relay 상태는 별도의 운영 증거입니다.
+
+## 변경 불가능한 릴리스 준비 (다음 승인된 릴리스)
+
+2026-10-03 소유자가 GitHub Immutable Releases와 `refs/tags/v*` 대상 활성 태그 규칙
+24408525를 설정했습니다. 우회 없이 태그 수정·삭제가 차단되며 생성은 허용됩니다.
+기존 `v1.0.2`는 자산 없이 `immutable: false` 상태이며 검증된 독립형 릴리스가 아닙니다.
+매 릴리스 전 저장소 설정을 다시 확인하십시오. 이 변경은 향후 게시를 준비하며 게시를 승인하지 않습니다.
+
+소유자가 보호된 `main`의 정확한 태그 커밋에서 `prepare-release.yml`을 수동 실행합니다.
+소스·참조·버전·조상 관계, 재현 빌드와 패키지 설치를 확인한 뒤 빈 안정판 드래프트에
+wheel, sdist, `session_peer.py`, `install.sh`, `SKILL.md`, `SHA256SUMS`,
+`release-provenance.json`의 일곱 자산을 증명하고 첨부합니다. 매니페스트는 다섯 페이로드를
+포함하며 서명된 증명은 매니페스트와 근거도 포함합니다. 첨부는 게시하지 않습니다.
+게시하면 파일이 잠기며 `publish.yml`은 재빌드나 자산 추가 없이 잠긴 패키지를 검증하고
+PyPI에 업로드합니다. PyPI 워크플로·환경 연결을 유지하십시오.
+
+```bash
+# Set the next approved version; no tag/version is changed by this document.
+release_tag=vX.Y.Z
+git fetch origin main --tags
+release_commit=$(git rev-parse origin/main)
+git tag "$release_tag" "$release_commit"
+git push origin "$release_tag"
+gh release create "$release_tag" --repo abruption/session-peer \\
+  --target "$release_commit" --title "session-peer $release_tag" \\
+  --notes-file "docs/releases/$release_tag.md" --draft --latest
+gh workflow run prepare-release.yml --repo abruption/session-peer \\
+  --ref main -f tag="$release_tag"
+# Review successful preparation, the seven draft assets, and their attestations.
+# Obtain final approval before the separate publication command:
+gh release edit "$release_tag" --repo abruption/session-peer \\
+  --draft=false --prerelease=false --latest
+```
+
+검증된 독립형 설치·업데이트에는 서명 워크플로, 소스 참조·다이제스트 및 호스팅 러너
+정책을 지원하는 최신 GitHub CLI의 `gh attestation verify`가 필요합니다.
+설치기는 기본적으로 검증된 최신 불변 릴리스를 설치합니다. `--local-source`는 인접 소스를
+명시적으로 신뢰하고 `--main`은 미검증 개발 코드에 명시적으로 동의합니다.
+이전 릴리스나 증명 누락 시 자동 대체는 없습니다. 검증 릴리스 게시 전에는 pipx/uv/pip를
+사용하십시오. 설치기를 실행하기 전에 인증하려면 다음을 사용하십시오(경량 버전 태그 필요).
+
+```bash
+set -eu
+repo=abruption/session-peer
+tag=$(gh api "repos/$repo/releases/latest" --jq \\
+  'if .immutable == true and .draft == false and .prerelease == false then .tag_name else error("no immutable stable release") end')
+commit=$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object | select(.type == "commit") | .sha')
+case "$commit" in ????????* ) ;; * ) echo "expected a lightweight release tag" >&2; exit 1 ;; esac
+staging=$(mktemp -d)
+trap 'rm -f "$staging/install.sh"; rmdir "$staging"' EXIT
+curl --fail --location --proto '=https' --proto-redir '=https' \\
+  --max-filesize 262144 --max-time 30 \\
+  "https://github.com/$repo/releases/download/$tag/install.sh" -o "$staging/install.sh"
+gh attestation verify "$staging/install.sh" --repo "$repo" \\
+  --signer-workflow "$repo/.github/workflows/prepare-release.yml" \\
+  --source-ref refs/heads/main --source-digest "$commit" \\
+  --cert-oidc-issuer https://token.actions.githubusercontent.com \
+  --deny-self-hosted-runners --format json
+sh "$staging/install.sh"
+```
+
+다운로드 제한은 독립형 8 MiB, 지원 파일 256 KiB, 메타데이터 1 MiB입니다.
+교체 전에 인증된 매니페스트·증명, 정확한 태그·버전, 준비 파일의 성공적인 `--version`이
+필요합니다. SSH 배포 전에 송신 측에서 검증하므로 오프라인 대상에는 Python만 필요합니다.
+검증 실패 시 기존 파일은 유지됩니다. 아래 v1.0.2 절차는 역사적 기록이며
+향후 릴리스에는 위 준비 워크플로를 사용하십시오.
+
 
 ## v1.0.0 근거와 v1.0.2 유지보수 조건
 

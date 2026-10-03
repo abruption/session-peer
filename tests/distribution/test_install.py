@@ -30,7 +30,7 @@ class Install(unittest.TestCase):
             env = {**os.environ, 'HOME': str(home)}
             env.pop('CLAUDE_CONFIG_DIR', None)
             env.pop('ANTHROPIC_CONFIG_DIR', None)
-            subprocess.run(['sh', str(repo / 'install.sh')], env=env, check=True, capture_output=True)
+            subprocess.run(['sh', str(repo / 'install.sh'), '--local-source'], env=env, check=True, capture_output=True)
             program = home / '.local/share/session-peer/session_peer.py'
             launcher = home / '.local/bin/session-peer'
             skills = [home / '.claude/skills/session-peer/SKILL.md', home / '.agents/skills/session-peer/SKILL.md']
@@ -58,7 +58,7 @@ esac
                        FIXTURE_SKILL=str(repo / 'skills/session-peer/SKILL.md'))
             for mode in ('partial', 'http', 'invalid', 'valid'):
                 with self.subTest(mode=mode):
-                    result = subprocess.run(['sh', str(source / 'install.sh')],
+                    result = subprocess.run(['sh', str(source / 'install.sh'), '--main'],
                         env={**env, 'FIXTURE_MODE': mode}, capture_output=True)
                     self.assertEqual(result.returncode == 0, mode == 'valid', result.stderr)
                     self.assertEqual([p.read_bytes() for p in [program, *skills]], previous)
@@ -73,7 +73,7 @@ esac
             env = {**os.environ, 'HOME': str(root)}
             env.pop('CLAUDE_CONFIG_DIR', None)
             env.pop('ANTHROPIC_CONFIG_DIR', None)
-            subprocess.run(['sh', str(repo / 'install.sh')], env=env, check=True, capture_output=True)
+            subprocess.run(['sh', str(repo / 'install.sh'), '--local-source'], env=env, check=True, capture_output=True)
             program = root / '.local/share/session-peer/session_peer.py'
             before = program.read_bytes()
             source = root / 'source'
@@ -85,7 +85,7 @@ esac
             ssh.write_text('#!/bin/sh\nshift\nexec "$@"\n')
             ssh.chmod(0o755)
             env['PATH'] = str(source)+os.pathsep+os.environ['PATH']
-            for args in ([], ['--host', 'fixture']):
+            for args in (['--local-source'], ['--local-source', '--host', 'fixture']):
                 result = subprocess.run(['sh', str(source / 'install.sh'), *args], env=env, capture_output=True)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(program.read_bytes(), before)
@@ -100,7 +100,7 @@ esac
             env = dict(os.environ, HOME=str(root), CLAUDE_CONFIG_DIR=str(root / "custom claude"))
             script = str(Path(__file__).parents[2] / "install.sh")
             for _ in range(2):
-                result = subprocess.run(["sh", script], env=env, capture_output=True, text=True)
+                result = subprocess.run(["sh", script, "--local-source"], env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertTrue((root / ".local/bin/session-peer").is_symlink())
                 self.assertTrue((root / ".local/share/session-peer/session_peer.py").is_file())
@@ -128,7 +128,7 @@ esac
             env.pop("ANTHROPIC_CONFIG_DIR", None)
             script = str(Path(__file__).parents[2] / "install.sh")
 
-            for args in ([], ["--uninstall"]):
+            for args in (["--local-source"], ["--uninstall"]):
                 result = subprocess.run(["sh", script, *args], env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual((codex_skill / "SKILL.md").read_text(encoding="utf-8"), "independent skill")
@@ -154,7 +154,7 @@ esac
             env.pop("ANTHROPIC_CONFIG_DIR", None)
             script = str(Path(__file__).parents[2] / "install.sh")
 
-            for args in (["--host", "fixture"], ["--uninstall", "--host", "fixture"]):
+            for args in (["--local-source", "--host", "fixture"], ["--uninstall", "--host", "fixture"]):
                 result = subprocess.run(["sh", script, *args], env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual((codex_skill / "SKILL.md").read_text(encoding="utf-8"), "independent skill")

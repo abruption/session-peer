@@ -420,7 +420,10 @@ def latest_release() -> tuple[str, str]:
     request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
     try:
         with urllib.request.urlopen(request, timeout=DETECT_TIMEOUT * 4) as response:
-            release = json.load(response)
+            payload = response.read(RELEASE_METADATA_LIMIT + 1)
+            if len(payload) > RELEASE_METADATA_LIMIT:
+                raise ValueError("release metadata exceeds its size limit")
+            release = json.loads(payload)
             if not isinstance(release, dict):
                 raise ValueError("unexpected release response")
             tag = release.get("tag_name", "")
@@ -434,7 +437,7 @@ def latest_release() -> tuple[str, str]:
         raise CcPeerError("GitHub returned no release tag")
     if stable_version(tag) is None:
         raise CcPeerError(f"GitHub returned a non-stable release tag: {tag!r}")
-    return tag, f"https://raw.githubusercontent.com/{GITHUB_REPO}/{tag}/session_peer.py"
+    return tag, f"https://github.com/{GITHUB_REPO}/releases/download/{tag}/session_peer.py"
 
 
 def installed_as_distribution() -> bool:
@@ -591,22 +594,12 @@ def cmd_update(args: argparse.Namespace) -> int:
 
     target = Path(__file__).resolve()
     try:
-        with urllib.request.urlopen(url, timeout=DETECT_TIMEOUT * 4) as response:
-            source = response.read()
-    except (urllib.error.URLError, OSError) as exc:
-        raise CcPeerError(f"could not download {tag}: {exc}") from exc
-    if b"__version__" not in source:
-        raise CcPeerError(f"what came back from {url} does not look like session_peer.py")
-
-    # We are running from the file being replaced. Write beside it and rename,
-    # so a failed download can't leave a half-written script behind.
-    staged = target.with_suffix(".py.new")
-    try:
-        staged.write_bytes(source)
-        staged.chmod(target.stat().st_mode & 0o777)
-        staged.replace(target)
-    except OSError as exc:
-        staged.unlink(missing_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".session-peer-update-", dir=target.parent) as temporary:
+            verified_release_download(Path(temporary), tag=tag)
+            staged = Path(temporary) / "session_peer.py"
+            staged.chmod(target.stat().st_mode & 0o777)
+            staged.replace(target)
+    except (OSError, ReleaseVerificationError) as exc:
         raise CcPeerError(f"could not replace {target}: {exc}") from exc
 
     emit(

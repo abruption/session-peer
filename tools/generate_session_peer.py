@@ -26,6 +26,7 @@ SEGMENTS = (
     "registry.py",
     "commands.py",
     "messages.py",
+    "release_verification.py",
     "updates.py",
     "sending.py",
     "relay.py",
@@ -93,6 +94,22 @@ def main(argv: list[str] | None = None) -> int:
     output = args.output.resolve()
     source = render()
     validate(source)
+    # Keep the installer's pre-execution trust gate identical to the runtime.
+    installer = ROOT / "install.sh"
+    # Source distributions deliberately omit the installer, but retain this tool.
+    if installer.is_file():
+        text = installer.read_text(encoding="utf-8")
+        start_marker = "    python3 - \"$1\" <<'SESSION_PEER_RELEASE_VERIFIER'\n"
+        end_marker = "\ntry:\n    print(verified_release_download(Path(sys.argv[1]), include_support=True))"
+        start = text.index(start_marker) + len(start_marker)
+        end = text.index(end_marker, start)
+        verifier = (SOURCE_DIRECTORY / "release_verification.py").read_text(encoding="utf-8").rstrip()
+        expected_installer = text[:start] + verifier + "\n" + text[end:]
+        if args.check and text != expected_installer:
+            print("install.sh verifier is stale; run: python3 tools/generate_session_peer.py", file=sys.stderr)
+            return 1
+        if not args.check and text != expected_installer:
+            write_atomic(installer, expected_installer.encode("utf-8"))
     if args.check:
         try:
             current = output.read_bytes()

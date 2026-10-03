@@ -33,6 +33,8 @@ class ReleaseArtifacts(unittest.TestCase):
         payload.write_bytes(metadata + suffix)
         with tarfile.open(sdist, "w:gz") as archive:
             archive.add(payload, arcname="session_peer-1.2.3/PKG-INFO")
+        for name in ("session_peer.py", "install.sh", "SKILL.md"):
+            (directory / name).write_bytes(b"fixture" + suffix)
         return directory
 
     def test_pypi_download_accepts_only_the_exact_files_host(self):
@@ -91,6 +93,24 @@ class ReleaseArtifacts(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             self.assertIn('"commit": "' + "a" * 40 + '"', text)
             self.assertIn('"sha256":', text)
+            for name in ("session_peer.py", "install.sh", "SKILL.md"):
+                self.assertIn(name, text)
+
+    def test_manifest_requires_standalone_support_assets(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            dist = self.make_dist(Path(temporary))
+            (dist / "session_peer.py").unlink()
+            with self.assertRaisesRegex(release_artifacts.VerificationError, "support asset is missing"):
+                release_artifacts.write_manifest(dist, self.version)
+
+    def test_standalone_must_be_exact_tagged_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dist = self.make_dist(root)
+            (root / "session_peer.py").write_bytes(b"reviewed source")
+            with mock.patch.object(release_artifacts.subprocess, "run"):
+                with self.assertRaisesRegex(release_artifacts.VerificationError, "differs from tagged source"):
+                    release_artifacts.verify_standalone(dist, root)
 
 
 if __name__ == "__main__":
