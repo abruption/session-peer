@@ -18,6 +18,15 @@ from .rotation import remote_prepare, remote_commit, remote_status
 from .transport_errors import failure, NoAuthenticatedRoute, TransportFailure
 
 
+# Pre-authentication admission is bounded separately from paired connections.
+# A reserved relay lane prevents direct-port traffic from consuming its budget.
+DIRECT_PREAUTH_LIMIT = 16
+RELAY_PREAUTH_LIMIT = 2
+AUTHENTICATED_LIMIT = 8
+PREAUTH_TLS_TIMEOUT = 2
+CERTLESS_REQUEST_TIMEOUT = 2
+
+
 class Receiver:
     def __init__(self, store, policy, *, diagnostic_events=False):
         self.store = store
@@ -25,6 +34,9 @@ class Receiver:
         self.native = Native()
         self.tasks = set()
         self.connections = set()
+        self.direct_preauth = set()
+        self.relay_preauth = set()
+        self.authenticated = set()
         self.rejected = 0
         self.relay_failure_last_logged = float('-inf')
         self.diagnostic_events = diagnostic_events
@@ -128,17 +140,14 @@ class Receiver:
         return self.store.finish(peer, value['id'], result)
 
     async def handle(self, raw):
-        if len(self.connections) >= 8:
-            await raw.close()
-            return
-        self.connections.add(raw)
         channel = None
         watch = None
         try:
             channel = Secure(raw, context(self.store.identity_root, True, self.store.trusted()), server=True)
             started = time.monotonic()
             try:
-                await channel.handshake()
+                async with asyncio.timeout(PREAUTH_TLS_TIMEOUT):
+                    await channel.handshake()
             except Exception as exc:
                 if isinstance(raw, Ws):
                     self.lifecycle_event('peer_tls', outcome='failed',
@@ -151,39 +160,73 @@ class Receiver:
                     elapsedMs=round((time.monotonic()-started)*1000),
                     attemptId=getattr(raw, 'attempt_id', None))
             if channel.peer:
+                if len(self.authenticated) >= AUTHENTICATED_LIMIT:
+                    return
+                self.authenticated.add(raw)
+                self.direct_preauth.discard(raw)
+                self.relay_preauth.discard(raw)
                 watch = asyncio.create_task(self.watch_peer(channel))
             # Bound unauthenticated pairing attempts per TLS connection.
             budget = 100 if channel.peer else 1
-            for _ in range(budget):
-                request = await channel.recv()
-                try:
-                    result = await self.dispatch(channel.peer, request)
-                except Rejected as exc:
-                    self.rejected += 1
-                    result = {'ok': False, 'status': 'refused', 'reason': str(exc),
-                              'consumptionConfirmed': False, 'retryAllowed': False}
-                except Exception:
-                    self.rejected += 1
-                    result = {'ok': False, 'status': 'unknown', 'reason': 'unknown',
-                              'retryAllowed': False, 'consumptionConfirmed': False}
-                if len(json.dumps(result, ensure_ascii=False).encode()) > 60*1024:
-                    result = {'ok': False, 'reason': 'result_too_large', 'retryAllowed': False,
-                              'consumptionConfirmed': False}
-                await channel.send(result)
+            async with asyncio.timeout(None if channel.peer else CERTLESS_REQUEST_TIMEOUT):
+                for _ in range(budget):
+                    request = await channel.recv()
+                    try:
+                        result = await self.dispatch(channel.peer, request)
+                    except Rejected as exc:
+                        self.rejected += 1
+                        result = {'ok': False, 'status': 'refused', 'reason': str(exc),
+                                  'consumptionConfirmed': False, 'retryAllowed': False}
+                    except Exception:
+                        self.rejected += 1
+                        result = {'ok': False, 'status': 'unknown', 'reason': 'unknown',
+                                  'retryAllowed': False, 'consumptionConfirmed': False}
+                    if len(json.dumps(result, ensure_ascii=False).encode()) > 60*1024:
+                        result = {'ok': False, 'reason': 'result_too_large', 'retryAllowed': False,
+                                  'consumptionConfirmed': False}
+                    await channel.send(result)
         except Exception:
             self.rejected += 1
         finally:
-            if watch:
-                watch.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await watch
-            await (channel.close() if channel is not None else raw.close())
-            self.connections.discard(raw)
+            try:
+                if watch:
+                    watch.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await watch
+            finally:
+                try:
+                    await (channel.close() if channel is not None else raw.close())
+                finally:
+                    raw.abort()
+                    self.release(raw)
+
+    def release(self, raw):
+        self.connections.discard(raw)
+        self.direct_preauth.discard(raw)
+        self.relay_preauth.discard(raw)
+        self.authenticated.discard(raw)
 
     def spawn(self, raw):
+        preauth, limit = ((self.relay_preauth, RELAY_PREAUTH_LIMIT) if isinstance(raw, Ws)
+                          else (self.direct_preauth, DIRECT_PREAUTH_LIMIT))
+        # Reserve synchronously, before scheduling: a burst cannot create an
+        # unbounded queue of handling or rejection/close tasks.
+        if len(preauth) >= limit:
+            raw.abort()
+            return
+        preauth.add(raw)
+        self.connections.add(raw)
         task = asyncio.create_task(self.handle(raw))
         self.tasks.add(task)
-        task.add_done_callback(self.tasks.discard)
+
+        def completed(task):
+            # Cancellation before handle starts never executes its finally.
+            if raw in self.connections:
+                raw.abort()
+                self.release(raw)
+            self.tasks.discard(task)
+
+        task.add_done_callback(completed)
 
     async def listen(self, host, port):
         return await asyncio.start_server(lambda r, w: self.spawn(Tcp(r, w)), host, port, limit=65536)
