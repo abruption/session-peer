@@ -1,6 +1,73 @@
 # session-peer のリリース
 
-GitHub Release を公開すると `.github/workflows/publish.yml` が対象タグの wheel と sdist をビルドし、Trusted Publishing で PyPI にアップロードします。ドラフトは公開しません。準備、最終承認、公開、検証を分けてください。保護された `main` には最新の PR と、全プラットフォームの Python、ドキュメント、シェル、パッケージ、MCP、Relay、control、統合、依存関係監査を含む `release gate` が必要です。ライブ OAuth、エージェント ACK、運用 Relay の状態は別の運用証拠です。
+GitHub Release を公開すると `.github/workflows/publish.yml` が固定資産を検証し、wheel と sdist を Trusted Publishing で PyPI にアップロードします。ドラフトは公開しません。準備、最終承認、公開、検証を分けてください。保護された `main` には最新の PR と、全プラットフォームの Python、ドキュメント、シェル、パッケージ、MCP、Relay、control、統合、依存関係監査を含む `release gate` が必要です。ライブ OAuth、エージェント ACK、運用 Relay の状態は別の運用証拠です。
+
+## 不変リリースの準備（次の承認済みリリース）
+
+2026-10-03に所有者がGitHub Immutable Releasesと `refs/tags/v*` の有効なタグルール
+24408525を設定しました。迂回なしで更新・削除を禁止し、作成は許可します。
+既存の `v1.0.2` は資産がなく `immutable: false` のままで、検証済み単体リリースでは
+ありません。毎回設定を再確認してください。この変更は公開の準備であり公開承認ではありません。
+
+所有者が保護された `main` の正確なタグコミットで `prepare-release.yml` を手動実行します。
+ソース・参照・バージョン・祖先関係、再現ビルドとインストールを確認し、空の安定版ドラフトに
+wheel、sdist、`session_peer.py`、`install.sh`、`SKILL.md`、`SHA256SUMS`、
+`release-provenance.json` の七資産を証明して添付します。マニフェストは五ペイロードを対象にし、
+署名された証明はマニフェストと証拠も対象にします。添付は公開しません。公開でファイルが固定され、
+`publish.yml` は再ビルドや資産追加なしで固定パッケージを検証しPyPIに送ります。
+PyPIのワークフローと環境の対応を維持してください。
+
+```bash
+# Set the next approved version; no tag/version is changed by this document.
+release_tag=vX.Y.Z
+git fetch origin main --tags
+release_commit=$(git rev-parse origin/main)
+git tag "$release_tag" "$release_commit"
+git push origin "$release_tag"
+gh release create "$release_tag" --repo abruption/session-peer \\
+  --target "$release_commit" --title "session-peer $release_tag" \\
+  --notes-file "docs/releases/$release_tag.md" --draft --latest
+gh workflow run prepare-release.yml --repo abruption/session-peer \\
+  --ref main -f tag="$release_tag"
+# Review successful preparation, the seven draft assets, and their attestations.
+# Obtain final approval before the separate publication command:
+gh release edit "$release_tag" --repo abruption/session-peer \\
+  --draft=false --prerelease=false --latest
+```
+
+検証済み単体インストール・更新には、署名ワークフロー、ソース参照・ダイジェストとホスト型
+ランナーポリシーを扱う最新GitHub CLIの `gh attestation verify` が必要です。
+既定で最新の検証済み不変リリースを使います。`--local-source` は隣接ソースを明示的に信頼し、
+`--main` は未検証の開発コードを選択します。古いリリースや証明不足時の自動代替はありません。
+検証リリース公開前はpipx/uv/pipを使ってください。実行前のインストーラー認証には
+以下を使います（軽量バージョンタグが必要）。
+
+```bash
+set -eu
+repo=abruption/session-peer
+tag=$(gh api "repos/$repo/releases/latest" --jq \\
+  'if .immutable == true and .draft == false and .prerelease == false then .tag_name else error("no immutable stable release") end')
+commit=$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object | select(.type == "commit") | .sha')
+case "$commit" in ????????* ) ;; * ) echo "expected a lightweight release tag" >&2; exit 1 ;; esac
+staging=$(mktemp -d)
+trap 'rm -f "$staging/install.sh"; rmdir "$staging"' EXIT
+curl --fail --location --proto '=https' --proto-redir '=https' \\
+  --max-filesize 262144 --max-time 30 \\
+  "https://github.com/$repo/releases/download/$tag/install.sh" -o "$staging/install.sh"
+gh attestation verify "$staging/install.sh" --repo "$repo" \\
+  --signer-workflow "$repo/.github/workflows/prepare-release.yml" \\
+  --source-ref refs/heads/main --source-digest "$commit" \\
+  --cert-oidc-issuer https://token.actions.githubusercontent.com \
+  --deny-self-hosted-runners --format json
+sh "$staging/install.sh"
+```
+
+上限は単体8 MiB、補助資産256 KiB、メタデータ1 MiBです。置換前に認証された
+マニフェスト・証明、正確なタグとバージョン、ステージ済み `--version` の成功が必要です。
+SSH転送前に送信側で検証するため、オフライン宛先にはPythonだけ必要です。
+検証失敗時は既存ファイルを維持します。以下のv1.0.2手順は過去の記録です。
+今後は上記準備ワークフローを使ってください。
+
 
 ## v1.0.0 の証拠と v1.0.2 メンテナンス条件
 

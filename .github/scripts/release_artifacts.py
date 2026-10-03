@@ -47,6 +47,8 @@ def verify_source(tag: str, target: str, expected_sha: str, root: Path = ROOT) -
     from packaging.version import InvalidVersion, Version
 
     version = project_version(root)
+    if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:(?:a|b|rc)[0-9]+|-(?:alpha|beta|rc)\.[0-9]+)?", tag):
+        raise VerificationError("release must use a canonical version tag")
     try:
         tag_version = Version(tag.removeprefix("v"))
         package_version = Version(version)
@@ -146,6 +148,11 @@ def verify_artifacts(directory: Path, version: str) -> dict[str, str]:
 
 def write_manifest(directory: Path, version: str) -> Path:
     hashes = verify_artifacts(directory, version)
+    for name in ("session_peer.py", "install.sh", "SKILL.md"):
+        path = directory / name
+        if not path.is_file():
+            raise VerificationError(f"release support asset is missing: {name}")
+        hashes[name] = sha256(path)
     manifest = directory / "SHA256SUMS"
     manifest.write_text(
         "".join(f"{digest}  {name}\n" for name, digest in sorted(hashes.items())),
@@ -155,7 +162,7 @@ def write_manifest(directory: Path, version: str) -> Path:
 
 
 def read_manifest(directory: Path, version: str) -> dict[str, str]:
-    expected_files = set(verify_artifacts(directory, version))
+    expected_files = set(verify_artifacts(directory, version)) | {"session_peer.py", "install.sh", "SKILL.md"}
     manifest = directory / "SHA256SUMS"
     if not manifest.is_file():
         raise VerificationError("SHA256SUMS is missing")
@@ -169,7 +176,7 @@ def read_manifest(directory: Path, version: str) -> dict[str, str]:
             raise VerificationError(f"duplicate SHA256SUMS entry: {name}")
         entries[name] = digest
     if set(entries) != expected_files:
-        raise VerificationError("SHA256SUMS does not name exactly the wheel and sdist")
+        raise VerificationError("SHA256SUMS does not name exactly the package and standalone/support assets")
     for name, expected in entries.items():
         actual = sha256(directory / name)
         if actual != expected:
@@ -185,6 +192,17 @@ def compare_builds(first: Path, second: Path, version: str) -> None:
             "independent builds are not byte-for-byte reproducible: "
             f"{first_hashes!r} != {second_hashes!r}"
         )
+
+
+def verify_standalone(directory: Path, root: Path = ROOT) -> None:
+    """Require release assets to be the exact reviewed tagged source bytes."""
+    subprocess.run([sys.executable, str(root / "tools/generate_session_peer.py"), "--check"],
+                   cwd=root, check=True)
+    for name, source in (("session_peer.py", root / "session_peer.py"),
+                         ("install.sh", root / "install.sh"),
+                         ("SKILL.md", root / "skills/session-peer/SKILL.md")):
+        if (directory / name).read_bytes() != source.read_bytes():
+            raise VerificationError(f"release asset differs from tagged source: {name}")
 
 
 def write_provenance(
@@ -235,7 +253,8 @@ def _pypi_json(version: str, attempts: int, delay: float) -> dict:
 
 
 def download_from_pypi(expected_dir: Path, output_dir: Path, version: str, attempts: int, delay: float) -> None:
-    expected = read_manifest(expected_dir, version)
+    expected = {name: digest for name, digest in read_manifest(expected_dir, version).items()
+                if name.endswith((".whl", ".tar.gz"))}
     payload = _pypi_json(version, attempts, delay)
     release_version = payload.get("info", {}).get("version")
     if release_version != version:
@@ -270,6 +289,8 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser()
     subparsers = result.add_subparsers(dest="command", required=True)
     subparsers.add_parser("version")
+    standalone = subparsers.add_parser("verify-standalone")
+    standalone.add_argument("--dist", type=Path, required=True)
 
     source = subparsers.add_parser("verify-source")
     source.add_argument("--tag", required=True)
@@ -314,6 +335,8 @@ def main() -> int:
     try:
         if args.command == "version":
             print(project_version())
+        elif args.command == "verify-standalone":
+            verify_standalone(args.dist)
         elif args.command == "verify-source":
             print(verify_source(args.tag, args.target, args.expected_sha))
         elif args.command == "verify-artifacts":

@@ -135,6 +135,8 @@ npx -y skills@latest add abruption/session-peer-skill \
 
 ### install.sh
 
+Verified standalone installation needs a recent GitHub CLI with attestation verification. Until a verified immutable release is published, use pipx/uv/pip; historical v1.0.2 has no verified standalone assets. Authenticate the installer before executing downloaded code using the [bootstrap procedure](../RELEASING.md). The commands below assume an already trusted installer checkout; its default still downloads the verified latest release. Local files require explicit `--local-source`; unverified development main requires explicit `--main`.
+
 Installs both the command and the skill in one step. Use this for air-gapped
 hosts or remote deployment over SSH:
 
@@ -153,7 +155,7 @@ including symlinks, and existing cc-peer files are preserved. Remove installer-o
 files with `./install.sh --uninstall [--host ...]`; unmarked legacy skills remain.
 
 `session-peer update` refreshes a standalone program from the latest GitHub release.
-`./install.sh --host <host>` pushes this checkout's program and skill over SSH.
+`./install.sh --host <host>` verifies the latest release and pushes its program and skill over SSH.
 `session-peer update --host <host>` pushes only the program when the installed
 version differs or is absent; add `--check` to report without changing anything.
 See [Updating](#updating) for package-managed installs and remote limitations.
@@ -163,11 +165,11 @@ no internet access. Installing the standalone files requires `python3` and SSH
 access. Messaging also requires the selected agent's native inbox or queue on
 the destination.
 
-Or skip the installer entirely and copy the one file:
+For explicitly trusted local development source:
 
 ```bash
-curl -O https://raw.githubusercontent.com/abruption/session-peer/main/session_peer.py
-chmod +x session_peer.py
+# Explicitly trust reviewed local source for development only.
+./install.sh --local-source
 ```
 
 ### The skill

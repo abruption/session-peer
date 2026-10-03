@@ -3,6 +3,7 @@
 import importlib.util
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import tempfile
 import unittest
@@ -22,6 +23,18 @@ def load_generator():
 
 
 class StandaloneGenerationTest(unittest.TestCase):
+    def test_sdist_generator_works_without_the_repository_installer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "tools").mkdir()
+            shutil.copyfile(GENERATOR, root / "tools/generate_session_peer.py")
+            shutil.copytree(ROOT / "session_peer_core", root / "session_peer_core",
+                            ignore=shutil.ignore_patterns("__pycache__"))
+            shutil.copyfile(ROOT / "session_peer.py", root / "session_peer.py")
+            done = subprocess.run([sys.executable, str(root / "tools/generate_session_peer.py"), "--check"],
+                                  capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+
     def test_checked_in_artifact_matches_canonical_segments(self):
         generator = load_generator()
         rendered = generator.render()
