@@ -151,7 +151,8 @@ def release_commit(tag):
 def release_attest(path, commit):
     if shutil.which("gh") is None:
         raise ReleaseVerificationError("verified standalone installation needs GitHub CLI (gh) with "
-                                       "attestation verify support; install/upgrade gh or use pip/uv/pipx")
+                                       "attestation policy flags; use gh 2.102.0 or later, authenticate with "
+                                       "gh auth login / GH_TOKEN, or install via pip/uv/pipx")
     command = ["gh", "attestation", "verify", str(path), "--repo", RELEASE_REPOSITORY,
                "--signer-workflow", RELEASE_BUILDER, "--source-ref", "refs/heads/main",
                "--source-digest", commit, "--cert-oidc-issuer", "https://token.actions.githubusercontent.com",
@@ -160,9 +161,11 @@ def release_attest(path, commit):
         done = subprocess.run(command, capture_output=True, text=True, timeout=120)
         result = json.loads(done.stdout) if done.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired, ValueError) as error:
-        raise ReleaseVerificationError("could not verify release build attestation; install/upgrade gh") from error
+        raise ReleaseVerificationError("could not verify release build attestation; use gh 2.102.0 or later "
+                                       "and authenticate with gh auth login / GH_TOKEN") from error
     if done.returncode or not isinstance(result, list) or not result:
-        raise ReleaseVerificationError("release build attestation did not verify against protected main: "
+        raise ReleaseVerificationError("release build attestation did not verify against protected main; "
+                                       "check gh policy flag support (tested with 2.102.0) and gh auth login / GH_TOKEN: "
                                        + done.stderr.strip()[:1000])
 
 
@@ -289,16 +292,16 @@ prepare_source() {
         verify_release "$destination" || die "release verification failed; no files installed"
     elif [ "$SOURCE_MODE" = local ]; then
         [ -n "$src_dir" ] && [ -f "$src_dir/session_peer.py" ] || die "--local-source needs trusted local source files"
-        cp "$src_dir/session_peer.py" "$destination/session_peer.py"
+        cp "$src_dir/session_peer.py" "$destination/session_peer.py" || return 1
         if [ -f "$src_dir/skills/session-peer/SKILL.md" ]; then
-            cp "$src_dir/skills/session-peer/SKILL.md" "$destination/SKILL.md"
+            cp "$src_dir/skills/session-peer/SKILL.md" "$destination/SKILL.md" || return 1
         else
-            cp "$src_dir/SKILL.md" "$destination/SKILL.md"
+            cp "$src_dir/SKILL.md" "$destination/SKILL.md" || return 1
         fi
     else
         echo 'install.sh: explicit --main installs unverified development code' >&2
-        fetch "$RAW/session_peer.py" "$destination/session_peer.py"
-        fetch "$RAW/skills/session-peer/SKILL.md" "$destination/SKILL.md"
+        fetch "$RAW/session_peer.py" "$destination/session_peer.py" || return 1
+        fetch "$RAW/skills/session-peer/SKILL.md" "$destination/SKILL.md" || return 1
     fi
 }
 
@@ -393,9 +396,15 @@ remote_run() {
     fi
 
     command -v python3 >/dev/null 2>&1 || die "python3 not found"
-    tmp_dir=$(mktemp -d)
+    tmp_dir=$(mktemp -d) || return 1
     trap 'rm -f "$tmp_dir/session_peer.py" "$tmp_dir/SKILL.md" "$tmp_dir/install.sh" "$tmp_dir/SHA256SUMS" "$tmp_dir/release-provenance.json"; rmdir "$tmp_dir"' EXIT
-    prepare_source "$tmp_dir" || return 1
+    trap 'exit 1' HUP INT TERM
+    if ! prepare_source "$tmp_dir"; then
+        rm -f "$tmp_dir/session_peer.py" "$tmp_dir/SKILL.md" "$tmp_dir/install.sh" "$tmp_dir/SHA256SUMS" "$tmp_dir/release-provenance.json"
+        rmdir "$tmp_dir"
+        trap - EXIT HUP INT TERM
+        return 1
+    fi
     py="$tmp_dir/session_peer.py"
     skill="$tmp_dir/SKILL.md"
 
@@ -426,7 +435,7 @@ remote_run() {
     remote_status=$?
     rm -f "$tmp_dir/session_peer.py" "$tmp_dir/SKILL.md" "$tmp_dir/install.sh" "$tmp_dir/SHA256SUMS" "$tmp_dir/release-provenance.json"
     rmdir "$tmp_dir"
-    trap - EXIT
+    trap - EXIT HUP INT TERM
     return "$remote_status"
 }
 

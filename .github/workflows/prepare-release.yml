@@ -11,10 +11,14 @@ on:
 # Grant each job only what it needs. PyPI authentication remains OIDC-only.
 permissions: {}
 
+# Serialize the empty-draft check and attachment for each immutable tag.
+concurrency:
+  group: prepare-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: build and attest release artifacts
-    if: ${{ github.repository == 'abruption/session-peer' && github.actor == github.repository_owner && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       attestations: write
@@ -23,6 +27,12 @@ jobs:
     outputs:
       version: ${{ steps.source.outputs.version }}
     steps:
+      - name: Require the repository owner and protected main
+        run: |
+          if [ "$GITHUB_REPOSITORY" != abruption/session-peer ] || [ "$GITHUB_ACTOR" != "$GITHUB_REPOSITORY_OWNER" ] || [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo '::error::Release preparation requires the repository owner on protected main.'
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tag }}
@@ -188,14 +198,21 @@ jobs:
           path: dist/
       - name: Require an empty draft targeted at exact main SHA
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > draft.json
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isPrerelease,tagName,targetCommitish,assets > draft.json
           python - <<'PY'
           import json, os
           release = json.load(open('draft.json'))
-          assert release['draft'] is True and type(release['prerelease']) is bool
-          assert release['tag_name'] == os.environ['RELEASE_TAG']
-          assert release['target_commitish'] == os.environ['GITHUB_SHA']
-          assert release['assets'] == [], 'draft already has assets; never overwrite candidates'
+          checks = [
+              (release.get('isDraft') is True, 'release is not a draft'),
+              (type(release.get('isPrerelease')) is bool, 'release status is missing'),
+              (release.get('tagName') == os.environ['RELEASE_TAG'], 'draft tag differs from input'),
+              (release.get('targetCommitish') == os.environ['GITHUB_SHA'], 'draft target differs from exact main SHA'),
+              (release.get('assets') == [], 'draft already has assets or asset metadata is missing; never overwrite candidates'),
+          ]
+          for valid, message in checks:
+              if not valid:
+                  raise SystemExit(message)
           PY
       - name: Attach candidates without publishing or overwriting
         run: gh release upload "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY"
