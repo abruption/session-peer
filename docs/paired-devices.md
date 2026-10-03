@@ -5,6 +5,21 @@ Claude, Codex or registered Antigravity endpoints. The usual local/SSH commands
 stay dependency-free. This is an explicit CLI workflow; no mobile application,
 NAT traversal, WireGuard tunnel or automatic public service is installed.
 
+The receiver admits up to 16 direct and two Relay-attached connections before
+device authentication, separately from its eight authenticated connections.
+TLS must finish within two seconds, including network and scheduling delays.
+After TLS, a cert-less bootstrap connection has another two seconds to complete
+its single pairing request and response; authenticated request deadlines remain
+45 seconds. These short deadlines may refuse a legitimate slow connection.
+Eight idle or slow-TLS direct sockets leave room for paired direct and Relay
+requests. Saturating all 16 direct pre-authentication slots can still refuse a
+paired direct connection, and both reserved Relay slots can also saturate;
+availability under arbitrary floods is not guaranteed. Admission creates no
+handler task for an excess socket or once receiver shutdown starts. Aggregate
+admission counters retain refusals and cleanup failures without identities;
+opt-in `receiver_admission` events report fixed counters and allowlisted reasons
+at most once per minute. No automatic application retry is enabled.
+
 ## Connection failures and safe setup retry
 
 `no_authenticated_route` retains `retryAllowed:false` and

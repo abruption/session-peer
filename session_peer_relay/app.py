@@ -37,6 +37,11 @@ class Receiver:
         self.direct_preauth = set()
         self.relay_preauth = set()
         self.authenticated = set()
+        self.closing = False
+        self.admission_counters = dict.fromkeys(('directPreauthRefused', 'relayPreauthRefused',
+                                                'authenticatedRefused', 'closingRefused',
+                                                'abortFailed', 'handlerFailed'), 0)
+        self.admission_last_logged = float('-inf')
         self.rejected = 0
         self.relay_failure_last_logged = float('-inf')
         self.diagnostic_events = diagnostic_events
@@ -46,6 +51,24 @@ class Receiver:
             logging.getLogger(__name__).warning('relay_lifecycle %s',
                 json.dumps({'event': event, 'eventTimeUtcMs': int(time.time()*1000),
                             **values}, sort_keys=True))
+
+    def admission_event(self, reason):
+        # Fixed counters retain aggregate evidence; flood diagnostics emit at
+        # most one allowlisted event per minute, without connection metadata.
+        if self.diagnostic_events and time.monotonic()-self.admission_last_logged >= 60:
+            self.admission_last_logged = time.monotonic()
+            with contextlib.suppress(Exception):
+                self.lifecycle_event('receiver_admission', reason=reason,
+                                     counters=dict(self.admission_counters))
+
+    def abort(self, raw):
+        try:
+            raw.abort()
+        except Exception:
+            self.admission_counters['abortFailed'] += 1
+            self.admission_event('abort_failed')
+        finally:
+            self.release(raw)
 
     async def watch_peer(self, channel):
         while True:
@@ -161,6 +184,8 @@ class Receiver:
                     attemptId=getattr(raw, 'attempt_id', None))
             if channel.peer:
                 if len(self.authenticated) >= AUTHENTICATED_LIMIT:
+                    self.admission_counters['authenticatedRefused'] += 1
+                    self.admission_event('authenticated_full')
                     return
                 self.authenticated.add(raw)
                 self.direct_preauth.discard(raw)
@@ -197,8 +222,7 @@ class Receiver:
                 try:
                     await (channel.close() if channel is not None else raw.close())
                 finally:
-                    raw.abort()
-                    self.release(raw)
+                    self.abort(raw)
 
     def release(self, raw):
         self.connections.discard(raw)
@@ -207,12 +231,21 @@ class Receiver:
         self.authenticated.discard(raw)
 
     def spawn(self, raw):
+        if self.closing:
+            self.admission_counters['closingRefused'] += 1
+            self.admission_event('closing')
+            self.abort(raw)
+            return
         preauth, limit = ((self.relay_preauth, RELAY_PREAUTH_LIMIT) if isinstance(raw, Ws)
                           else (self.direct_preauth, DIRECT_PREAUTH_LIMIT))
         # Reserve synchronously, before scheduling: a burst cannot create an
         # unbounded queue of handling or rejection/close tasks.
         if len(preauth) >= limit:
-            raw.abort()
+            counter, reason = (('relayPreauthRefused', 'relay_preauth_full') if isinstance(raw, Ws)
+                               else ('directPreauthRefused', 'direct_preauth_full'))
+            self.admission_counters[counter] += 1
+            self.admission_event(reason)
+            self.abort(raw)
             return
         preauth.add(raw)
         self.connections.add(raw)
@@ -221,10 +254,15 @@ class Receiver:
 
         def completed(task):
             # Cancellation before handle starts never executes its finally.
-            if raw in self.connections:
-                raw.abort()
+            try:
+                if raw in self.connections:
+                    self.abort(raw)
+                if not task.cancelled() and task.exception() is not None:
+                    self.admission_counters['handlerFailed'] += 1
+                    self.admission_event('handler_failed')
+            finally:
                 self.release(raw)
-            self.tasks.discard(task)
+                self.tasks.discard(task)
 
         task.add_done_callback(completed)
 
@@ -283,6 +321,7 @@ class Receiver:
                 delay = .5 if expired else min(5, delay*2)
 
     async def close(self):
+        self.closing = True
         tasks = list(self.tasks)
         for task in tasks:
             task.cancel()

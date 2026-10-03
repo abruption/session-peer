@@ -39,7 +39,11 @@ class Tcp:
             pass
 
     def abort(self):
-        self.writer.transport.abort()
+        try:
+            self.writer.transport.abort()
+        except Exception:
+            self.writer.close()
+            raise
 
 
 class Ws:
@@ -61,7 +65,11 @@ class Ws:
         await self.ws.close()
 
     def abort(self):
-        self.ws.transport.abort()
+        try:
+            self.ws.transport.abort()
+        except Exception:
+            self.ws.transport.close()
+            raise
 
 
 class PinnedConnect(connect):

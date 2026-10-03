@@ -9,11 +9,13 @@ import tempfile
 import time
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 from tests.relay import test_native_relay as platform_guard
+from websockets.exceptions import ConnectionClosed
 from session_peer_relay import app, wire
 from session_peer_relay.relay import Relay
+from session_peer_relay.identity import context, fingerprint
 from session_peer_relay.store import Store
 from session_peer_relay.transport_errors import NoAuthenticatedRoute
 
@@ -42,6 +44,7 @@ class ReceiverAdmission(unittest.IsolatedAsyncioTestCase):
         self.channels = []
         await app.pair(self.client, self.invite, 'direct')
         await self.wait_for(lambda: not self.receiver.connections)
+        await self.wait_for(lambda: self.relay.metrics()['current']['waitingRooms'] == 1)
 
     async def asyncTearDown(self):
         self.relay_listener.cancel()
@@ -199,6 +202,7 @@ class ReceiverAdmission(unittest.IsolatedAsyncioTestCase):
         self.channels.append(extra)
         await self.wait_for(lambda: not self.receiver.direct_preauth)
         self.assertEqual(len(self.receiver.authenticated), 8)
+        self.assertEqual(self.receiver.admission_counters['authenticatedRefused'], 1)
         with self.assertRaises((EOFError, OSError)):
             await extra.recv()
         await self.channels[0].send(app.request(self.client, self.host.device, 'probe'))
@@ -276,7 +280,9 @@ class ReceiverAdmission(unittest.IsolatedAsyncioTestCase):
             self.assert_empty()
         finally:
             await relay.close()
-        self.assertTrue((await self.probe())['ok'])
+        with self.assertRaises(NoAuthenticatedRoute):
+            await self.probe()
+        self.assert_empty()
 
     async def test_failed_tls_releases_admission(self):
         reader, writer = (await self.idle(1))[0]
@@ -303,6 +309,178 @@ class ReceiverAdmission(unittest.IsolatedAsyncioTestCase):
             await self.wait_for(lambda: not self.receiver.tasks)
             self.assert_empty()
             transport.abort.assert_called_once()
+
+    def fake_raw(self, relay=False, abort_error=False):
+        transport = Mock()
+        if abort_error:
+            transport.abort.side_effect = OSError('SECRET-abort-error')
+        if relay:
+            return wire.Ws(SimpleNamespace(transport=transport, close=AsyncMock()))
+        return wire.Tcp(None, SimpleNamespace(transport=transport, close=Mock(),
+                                             wait_closed=AsyncMock()))
+
+    async def test_abort_errors_during_prestart_cancellation_and_handler_exception(self):
+        self.receiver.diagnostic_events = True
+        for relay in (False, True):
+            raw = self.fake_raw(relay, abort_error=True)
+            with self.assertLogs('session_peer_relay.app', level='WARNING') if not relay else contextlib.nullcontext():
+                self.receiver.spawn(raw)
+                task = next(iter(self.receiver.tasks))
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                await self.wait_for(lambda: not self.receiver.tasks)
+            self.assert_empty()
+        self.assertEqual(self.receiver.admission_counters['abortFailed'], 2)
+        errors = []
+        loop = asyncio.get_running_loop()
+        previous = loop.get_exception_handler()
+        loop.set_exception_handler(lambda loop, detail: errors.append(detail))
+        try:
+            raw = self.fake_raw(abort_error=True)
+            with patch.object(self.receiver, 'handle', new=AsyncMock(side_effect=RuntimeError('SECRET-handler-error'))):
+                self.receiver.spawn(raw)
+                await self.wait_for(lambda: not self.receiver.tasks)
+            self.assert_empty()
+            self.assertEqual(self.receiver.admission_counters['handlerFailed'], 1)
+            self.assertEqual(self.receiver.admission_counters['abortFailed'], 3)
+            self.assertFalse(errors)
+            self.assertTrue((await self.probe())['ok'])
+        finally:
+            loop.set_exception_handler(previous)
+
+    async def test_abort_error_in_handler_finally_releases_admission(self):
+        reader, _ = (await self.idle(1))[0]
+        await self.wait_for(lambda: len(self.receiver.direct_preauth) == 1)
+        raw = next(iter(self.receiver.connections))
+        # The normal close releases the real descriptor; inject an abort error
+        # to verify terminal cleanup still releases admission and task tracking.
+        with patch.object(raw, 'abort', side_effect=OSError('SECRET-abort-error')):
+            for task in self.receiver.tasks:
+                task.cancel()
+            await self.wait_for(lambda: not self.receiver.tasks)
+        self.assertEqual(await asyncio.wait_for(reader.read(1), .5), b'')
+        self.assertEqual(self.receiver.admission_counters['abortFailed'], 1)
+        self.assert_empty()
+
+    async def test_saturation_counters_and_diagnostics_are_bounded_and_sanitized(self):
+        self.receiver.diagnostic_events = True
+        async def blocked(raw):
+            await asyncio.Future()
+        with self.assertLogs('session_peer_relay.app', level='WARNING') as logs:
+            for relay, limit in ((False, app.DIRECT_PREAUTH_LIMIT), (True, app.RELAY_PREAUTH_LIMIT)):
+                with patch.object(self.receiver, 'handle', new=blocked):
+                    for _ in range(limit):
+                        self.receiver.spawn(self.fake_raw(relay))
+                    for _ in range(50):
+                        rejected = self.fake_raw(relay, abort_error=True)
+                        self.receiver.spawn(rejected)
+                        if relay:
+                            rejected.ws.transport.close.assert_called_once()
+                        else:
+                            rejected.writer.close.assert_called_once()
+                self.assertEqual(len(self.receiver.tasks), app.DIRECT_PREAUTH_LIMIT if not relay
+                                 else app.DIRECT_PREAUTH_LIMIT+app.RELAY_PREAUTH_LIMIT)
+            self.assertEqual(self.receiver.admission_counters['directPreauthRefused'], 50)
+            self.assertEqual(self.receiver.admission_counters['relayPreauthRefused'], 50)
+            self.assertEqual(self.receiver.admission_counters['abortFailed'], 100)
+            await self.receiver.close()
+        self.assertEqual(len(logs.output), 1)
+        event = json.loads(logs.output[0].split('relay_lifecycle ', 1)[1])
+        self.assertEqual(event['event'], 'receiver_admission')
+        self.assertEqual(event['reason'], 'direct_preauth_full')
+        self.assertEqual(set(event), {'event', 'eventTimeUtcMs', 'reason', 'counters'})
+        self.assertNotIn('SECRET', logs.output[0])
+        self.assert_empty()
+        next_minute = self.receiver.admission_last_logged+60
+        with patch.object(app, 'time', SimpleNamespace(monotonic=lambda: next_minute, time=time.time)), \
+                self.assertLogs('session_peer_relay.app', level='WARNING') as renewed:
+            self.receiver.spawn(self.fake_raw())
+            self.receiver.spawn(self.fake_raw())
+        self.assertEqual(len(renewed.output), 1)
+        counters = json.loads(renewed.output[0].split('relay_lifecycle ', 1)[1])['counters']
+        self.assertEqual(counters['directPreauthRefused'], 50)
+        self.assertEqual(counters['relayPreauthRefused'], 50)
+        self.assertEqual(counters['abortFailed'], 100)
+        self.assert_empty()
+
+    async def test_close_rejects_new_spawn_during_and_after_shutdown(self):
+        entered, finish = asyncio.Event(), asyncio.Event()
+        raw = self.fake_raw()
+        async def handler(raw):
+            entered.set()
+            try:
+                await asyncio.Future()
+            finally:
+                await finish.wait()
+        with patch.object(self.receiver, 'handle', side_effect=handler):
+            self.receiver.spawn(raw)
+            await entered.wait()
+            closing = asyncio.create_task(self.receiver.close())
+            await self.wait_for(lambda: self.receiver.closing)
+            rejected = self.fake_raw(abort_error=True)
+            self.receiver.spawn(rejected)
+            self.assertEqual(len(self.receiver.tasks), 1)
+            finish.set()
+            await closing
+        self.assert_empty()
+        self.receiver.spawn(self.fake_raw(relay=True, abort_error=True))
+        self.assert_empty()
+        self.assertEqual(self.receiver.admission_counters['closingRefused'], 2)
+        self.assertEqual(self.receiver.admission_counters['abortFailed'], 2)
+
+    async def test_delayed_real_tls_succeeds_before_deadline_and_refuses_after(self):
+        class GatedFirstSend:
+            def __init__(self, raw):
+                self.raw = raw
+                self.entered, self.allow = asyncio.Event(), asyncio.Event()
+            async def send(self, data):
+                if not self.entered.is_set():
+                    self.entered.set()
+                    await self.allow.wait()
+                await self.raw.send(data)
+            async def recv(self):
+                return await self.raw.recv()
+            async def close(self):
+                await self.raw.close()
+
+        self.receiver.native.invoke = AsyncMock()
+        for route in ('direct', 'relay'):
+            for over_deadline in (False, True):
+                with self.subTest(route=route, over_deadline=over_deadline):
+                    raw = (wire.Tcp(*await asyncio.open_connection('127.0.0.1', self.port))
+                           if route == 'direct' else await wire.relay_stream(self.url, self.client_token))
+                    delayed = GatedFirstSend(raw)
+                    channel = wire.Secure(delayed, context(self.client.identity_root, False, [self.host.cert]),
+                                          expected=fingerprint(self.host.cert))
+                    self.channels.append(channel)
+                    handshake = asyncio.create_task(channel.handshake())
+                    try:
+                        await delayed.entered.wait()
+                        await self.wait_for(lambda: len(self.receiver.connections) == 1)
+                        started = time.monotonic()
+                        if over_deadline:
+                            await self.wait_for(lambda: not self.receiver.tasks,
+                                                app.PREAUTH_TLS_TIMEOUT+1)
+                            self.assertGreaterEqual(time.monotonic()-started, app.PREAUTH_TLS_TIMEOUT-.1)
+                            delayed.allow.set()
+                            with self.assertRaises((EOFError, OSError, ConnectionClosed)) as refused:
+                                await handshake
+                            if isinstance(refused.exception, ConnectionClosed):
+                                self.assertEqual(refused.exception.rcvd.code, 1001)
+                            self.assert_empty()
+                        else:
+                            await asyncio.sleep(.25)
+                            delayed.allow.set()
+                            await handshake
+                            self.assertLess(time.monotonic()-started, app.PREAUTH_TLS_TIMEOUT)
+                            await channel.send(app.request(self.client, self.host.device, 'probe'))
+                            self.assertTrue((await channel.recv())['ok'])
+                    finally:
+                        handshake.cancel()
+                        await asyncio.gather(handshake, return_exceptions=True)
+                        await channel.close()
+                        await self.wait_for(lambda: not self.receiver.tasks)
+                    self.receiver.native.invoke.assert_not_awaited()
 
 
 if __name__ == '__main__':
