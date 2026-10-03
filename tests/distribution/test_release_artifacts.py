@@ -3,6 +3,7 @@
 import importlib.util
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -23,13 +24,20 @@ class ReleaseArtifacts(unittest.TestCase):
     version = "1.2.3"
 
     def test_same_named_branch_cannot_replace_the_trusted_tag_source(self):
+        git_executable = shutil.which("git")
+        self.assertIsNotNone(git_executable, "the source verification fixture requires Git")
+        git_executable = str(Path(git_executable).resolve())
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            env = {"PATH": os.defpath, "HOME": temporary, "GIT_CONFIG_NOSYSTEM": "1",
+            env = {"PATH": str(Path(git_executable).parent) + os.pathsep + os.defpath,
+                   "HOME": temporary, "GIT_CONFIG_NOSYSTEM": "1",
                    "GIT_CONFIG_GLOBAL": os.devnull}
+            # Windows requires this runtime location when launching child processes.
+            if "SYSTEMROOT" in os.environ:
+                env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
 
             def git(*args):
-                return subprocess.run(["git", *args], cwd=root, env=env, check=True,
+                return subprocess.run([git_executable, *args], cwd=root, env=env, check=True,
                                       capture_output=True, text=True).stdout.strip()
 
             def verify(expected):

@@ -18,6 +18,21 @@ JOB = re.compile(r"^  ([a-z][a-z0-9-]*):\s*$", re.MULTILINE)
 
 
 class ReleaseWorkflows(unittest.TestCase):
+    def test_core_matrix_installs_only_the_pinned_source_test_dependency(self):
+        requirements = ROOT / ".github/requirements"
+        declared = [line for line in (requirements / "test.txt").read_text().splitlines()
+                    if line and not line.startswith("#")]
+        build_pin = re.findall(r"^packaging==[^\s]+$", (requirements / "build.txt").read_text(), re.MULTILINE)
+        self.assertEqual(len(build_pin), 1)
+        self.assertEqual(declared, build_pin, "test packaging pin must track the release build verifier")
+        text = (ROOT / ".github/workflows/ci.yml").read_text()
+        matrix = text.split("\n  test:\n", 1)[1].split("\n  docs:\n", 1)[0]
+        install = "run: python -m pip install --requirement .github/requirements/test.txt"
+        self.assertIn(install, matrix)
+        self.assertNotIn("--requirement .github/requirements/build.txt", matrix)
+        self.assertLess(matrix.index(install), matrix.index("- name: Distribution source tests"))
+        self.assertLess(matrix.index(install), matrix.index("- name: Complete default discovery contract"))
+
     def test_every_release_checkout_uses_the_immutable_event_commit(self):
         for name, count in (("prepare-release.yml", 4), ("publish.yml", 6)):
             text = (ROOT / ".github/workflows" / name).read_text()
