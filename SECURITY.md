@@ -36,3 +36,19 @@ English and Korean reports are welcome.
 
 For ordinary bugs and feature requests, use the
 [public issue templates](https://github.com/abruption/session-peer/issues/new/choose).
+
+## Dependency vulnerability monitoring
+
+Dependabot vulnerability alerts are enabled independently of version-update
+pull requests. Automatic Dependabot security-update pull requests remain
+disabled, and there is no Dependabot version-update configuration. Maintainers
+review alerts and update dependency and build-tool pins manually.
+
+The separate [scheduled dependency audit](.github/workflows/dependency-audit.yml)
+runs every Monday at 06:23 UTC and can be started manually with
+`workflow_dispatch`. It audits the Python `relay,mcp` runtime dependencies in
+an isolated environment with `pip-audit` and the `control/` Node runtime
+dependencies with `npm audit --omit=dev`. Findings and audit errors fail that
+audit run and remain visible in job summaries and downloadable JSON/log
+artifacts retained for 30 days. This workflow does not run for pull requests or
+participate in the CI `release-gate`; existing CI and release audits still apply.

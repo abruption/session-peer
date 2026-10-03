@@ -17,3 +17,9 @@
 维护者将与报告者协调调查和披露事宜。私密报告和电子邮件不会自动转换为公开议题。欢迎使用英文和韩文提交报告。
 
 对于普通错误和功能请求，请使用[公开议题模板](https://github.com/abruption/session-peer/issues/new/choose)。
+
+## 依赖漏洞监控
+
+Dependabot 漏洞警报已启用，与版本更新拉取请求相互独立。Dependabot 自动安全更新拉取请求仍处于禁用状态，也没有 Dependabot 版本更新配置。维护者会审查警报并手动更新依赖和构建工具的固定版本。
+
+独立的[定期依赖审计](.github/workflows/dependency-audit.yml)每周一 06:23 UTC 运行，也可通过 `workflow_dispatch` 手动启动。它使用 `pip-audit` 审计隔离环境中的 Python `relay,mcp` 运行时依赖，并使用 `npm audit --omit=dev` 审计 `control/` 的 Node 运行时依赖。发现漏洞或审计错误会使该次审计运行失败，并显示在作业摘要以及保留 30 天的可下载 JSON/日志工件中。该工作流不在拉取请求中运行，也不参与 CI 的 `release-gate`；现有 CI 和发布审计仍然适用。

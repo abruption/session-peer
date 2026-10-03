@@ -6,21 +6,36 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-ACTION_REF = re.compile(r"^\s*- uses: [^@\s]+@([^\s#]+)", re.MULTILINE)
+ACTION_REF = re.compile(r"^\s*(?:-\s+)?uses: ([^\s#]+)", re.MULTILINE)
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
 JOB = re.compile(r"^  ([a-z][a-z0-9-]*):\s*$", re.MULTILINE)
 
 
 class ReleaseWorkflows(unittest.TestCase):
     def test_every_third_party_action_is_commit_pinned(self):
-        for relative in (".github/workflows/ci.yml", ".github/workflows/publish.yml"):
-            text = (ROOT / relative).read_text(encoding="utf-8")
+        for workflow in sorted((ROOT / ".github/workflows").glob("*.yml")):
+            relative = workflow.relative_to(ROOT)
+            text = workflow.read_text(encoding="utf-8")
             refs = ACTION_REF.findall(text)
             self.assertTrue(refs, relative)
-            for ref in refs:
+            for action in refs:
+                if action.startswith("./"):
+                    continue
+                ref = action.partition("@")[2]
                 self.assertIsNotNone(
-                    FULL_SHA.fullmatch(ref), f"{relative}: unpinned action ref {ref}"
+                    FULL_SHA.fullmatch(ref), f"{relative}: unpinned action {action}"
                 )
+
+    def test_action_ref_detection_includes_named_and_unpinned_steps(self):
+        text = """      - uses: actions/checkout@main
+      - name: Upload evidence
+        uses: actions/upload-artifact
+      - uses: ./local-action
+"""
+        self.assertEqual(
+            ["actions/checkout@main", "actions/upload-artifact", "./local-action"],
+            ACTION_REF.findall(text),
+        )
 
     def test_release_gate_needs_every_other_ci_job(self):
         text = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
