@@ -7,6 +7,7 @@ Termination after publication need not roll back, even when staging is cleaned.
 import argparse
 import base64
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -22,6 +23,11 @@ from unittest import mock
 import session_peer
 
 
+# These execute the POSIX SSH destination locally. Git sh plus native Windows
+# Python has different paths, modes and process signals, so it is not a valid
+# receiver fixture. Mocked client payload/receipt/version contracts below run
+# on every platform, including native Windows clients.
+@unittest.skipUnless(os.name == "posix", "local POSIX SSH receiver fixture")
 class RemoteTransfer(unittest.TestCase):
     VERSION = "1.0.3"
     SOURCE = b'#!/usr/bin/env python3\nprint("session-peer 1.0.3")\n' + b'# padding\n' * 20_000
@@ -243,6 +249,39 @@ class RemoteTransfer(unittest.TestCase):
         self.assertFalse(self.launcher.is_symlink())
         self.assert_clean()
 
+    def test_installed_probe_distinguishes_absent_and_broken_programs_locally(self):
+        local_run = subprocess.run
+
+        def probe(command, **options):
+            self.assertEqual(command[:2], ["ssh", "fixture"])
+            return local_run(["sh", "-c", command[-1]], env=self.environment, **options)
+
+        with mock.patch.object(session_peer.subprocess, "run", side_effect=probe):
+            self.assertEqual(session_peer.remote_installed_version("fixture", [], {}), "1.0.2")
+            self.target.write_text("raise SystemExit(3)\n")
+            with self.assertRaises(session_peer.CcPeerError):
+                session_peer.remote_installed_version("fixture", [], {})
+            self.target.unlink()
+            self.assertIsNone(session_peer.remote_installed_version("fixture", [], {}))
+
+
+class RemotePushContract(unittest.TestCase):
+    VERSION = RemoteTransfer.VERSION
+    SOURCE = RemoteTransfer.SOURCE
+
+    def test_command_and_payload_preserve_exact_sender_bytes(self):
+        source = '#!/usr/bin/env python3\n# quoted \' 한글 payload\n'.encode("utf-8")
+        completed = subprocess.CompletedProcess([], 0, f"session-peer {self.VERSION}\n", "")
+        with mock.patch.object(session_peer.Path, "read_bytes", return_value=source), \
+             mock.patch.object(session_peer, "__version__", self.VERSION), \
+             mock.patch.object(session_peer.subprocess, "run", return_value=completed) as run:
+            version = session_peer.push_to_remote("fixture", ["-p", "2222"], {})
+        self.assertEqual(version, self.VERSION)
+        self.assertEqual(run.call_args.args[0][:-1], ["ssh", "-p", "2222", "fixture"])
+        self.assertEqual(base64.b64decode(run.call_args.kwargs["input"], validate=True), source)
+        self.assertIn(f"{hashlib.sha256(source).hexdigest()} {len(source)};", run.call_args.args[0][-1])
+        run.assert_called_once()
+
     def test_empty_or_wrong_remote_success_output_is_rejected(self):
         for output in ("", "session-peer unknown\n", "session-peer 9.9.9\n", "noise 1.0.3\n"):
             with self.subTest(output=output), \
@@ -283,21 +322,6 @@ class RemoteTransfer(unittest.TestCase):
         self.assertEqual(caught.exception.details["commitStatus"], "not_started")
         self.assertTrue(caught.exception.details["retryAllowed"])
         run.assert_called_once()
-
-    def test_installed_probe_distinguishes_absent_and_broken_programs_locally(self):
-        local_run = subprocess.run
-
-        def probe(command, **options):
-            self.assertEqual(command[:2], ["ssh", "fixture"])
-            return local_run(["sh", "-c", command[-1]], env=self.environment, **options)
-
-        with mock.patch.object(session_peer.subprocess, "run", side_effect=probe):
-            self.assertEqual(session_peer.remote_installed_version("fixture", [], {}), "1.0.2")
-            self.target.write_text("raise SystemExit(3)\n")
-            with self.assertRaises(session_peer.CcPeerError):
-                session_peer.remote_installed_version("fixture", [], {})
-            self.target.unlink()
-            self.assertIsNone(session_peer.remote_installed_version("fixture", [], {}))
 
 
 class RemoteVersions(unittest.TestCase):
