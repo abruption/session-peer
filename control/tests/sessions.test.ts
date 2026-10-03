@@ -243,6 +243,45 @@ it("enforces session-management methods, JSON bodies and the account rate limit"
   expect(await limited.json()).toEqual({ error: "rate_limited" });
 });
 
+it("lets the same owner's browser revoke a leaked CLI login after its relay budget is exhausted", async () => {
+  f = await fixture();
+  const leaked = await f.context.internalAdapter.createSession(f.owner.id);
+  if (!leaked) throw new Error("fixture_session");
+  const leakedHeaders = { authorization: "Bearer " + leaked.token };
+  for (let i = 0; i < 60; i++)
+    expect((await f.request("/api/relay/devices", undefined, leakedHeaders)).status).toBe(200);
+  const limited = await f.request("/api/relay/devices", undefined, leakedHeaders);
+  expect(limited.status).toBe(429);
+  expect(await limited.json()).toEqual({ error: "rate_limited" });
+  // Relay limits remain per account, including another login of this owner.
+  expect((await f.request("/api/relay/devices")).status).toBe(429);
+  const list = await f.request("/api/control/sessions", undefined, browser());
+  expect(list.status).toBe(200);
+  const body = await list.json();
+  expect(body.sessions.some((session: { id: string }) => session.id === leaked.id)).toBe(true);
+  expect(JSON.stringify(body)).not.toContain(leaked.token);
+  expect((await f.request(`/api/control/sessions/${leaked.id}/revoke`, {}, browser())).status).toBe(200);
+  expect((await f.request("/api/relay/devices", undefined, leakedHeaders)).status).toBe(401);
+  expect(await f.auth.api.getSession({ headers: new Headers(browser()) })).toBeTruthy();
+  expect(await f.auth.api.getSession({ headers: new Headers(f.otherHeaders) })).toBeTruthy();
+  // The list and revoke used two requests from the independent browser budget.
+  for (let i = 0; i < 58; i++)
+    expect((await f.request("/api/control/sessions", undefined, browser())).status).toBe(200);
+  expect((await f.request("/api/control/sessions", undefined, browser())).status).toBe(429);
+});
+
+it("keeps the CLI's 60-request budget available after browser management reaches its own limit", async () => {
+  f = await fixture();
+  for (let i = 0; i < 60; i++)
+    expect((await f.request("/api/control/sessions", undefined, browser())).status).toBe(200);
+  const limited = await f.request("/api/control/sessions/revoke-others", {}, browser());
+  expect(limited.status).toBe(429);
+  expect(await limited.json()).toEqual({ error: "rate_limited" });
+  for (let i = 0; i < 60; i++)
+    expect((await f.request("/api/relay/devices")).status).toBe(200);
+  expect((await f.request("/api/relay/devices")).status).toBe(429);
+});
+
 it("an expired or revoked browser cannot list or revoke another session", async () => {
   f = await fixture();
   const session = await ownerSession();

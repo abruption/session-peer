@@ -87,7 +87,11 @@ https://relay.abruption.dev/api/auth/callback/google
 ## Control API (v1.0)
 
 JSON bodies only; 16 KiB maximum. Unknown protocol fields are rejected.
-Authenticated API requests are limited to 60/user/minute. Limits are 16 active
+Authenticated `/api/relay/*` requests are limited to 60/user/minute. Browser
+`/api/control/sessions*` management has a separate 60/user/minute budget, so a
+leaked CLI token cannot exhaust the owner's login-revocation allowance. Both
+limiters use separate bounded in-memory state (4096 user buckets each).
+Limits are 16 active
 challenges, 32 total device identities including tombstones, and 4096 durable
 operations per owner. Operation records are never silently deleted to make space;
 the limit fails closed, including pending operations.
