@@ -13,6 +13,9 @@ from concurrent.futures import ThreadPoolExecutor
 import session_peer as core
 
 CLI_TIMEOUT = 130
+# Give an interrupted wake CLI its entire native cleanup budget before killing
+# its group. The detached app-server is owned and reaped by that CLI, not MCP.
+WAKE_CLI_CLEANUP_GRACE = core.CODEX_WAKE_CLEANUP_BUDGET + 1
 
 
 async def invoke_posix(argv, message):
@@ -37,10 +40,14 @@ async def invoke_posix(argv, message):
                         loop.run_in_executor(executor, process.stderr.read),
                         loop.run_in_executor(executor, feed))
     interrupted = False
+    completed = False
     try:
         stdout, _, _ = await asyncio.wait_for(asyncio.shield(io), CLI_TIMEOUT)
+        completed = True
     finally:
-        cleanup = loop.run_in_executor(executor, core.stop_codex_wake, process)
+        grace = (WAKE_CLI_CLEANUP_GRACE if '--wake' in argv and not completed
+                 else core.CODEX_WAKE_CLEANUP_GRACE)
+        cleanup = loop.run_in_executor(executor, core.stop_codex_wake, process, grace)
         # Repeated cancellation cannot abandon cleanup or the owned pipe tasks.
         while not cleanup.done():
             try:
