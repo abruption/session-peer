@@ -131,8 +131,10 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.13'
-      - name: Fresh install
-        run: ./install.sh
+      - name: Fresh install from the trusted candidate checkout
+        # This tests installer mechanics, not published release attestation.
+        # The production default still requires verified immutable Latest assets.
+        run: ./install.sh --local-source
       - name: Verify installation
         run: |
           test -f "$HOME/.local/share/session-peer/session_peer.py"
@@ -140,10 +142,10 @@ jobs:
           test -f "$HOME/.claude/skills/session-peer/SKILL.md"
           test -f "$HOME/.agents/skills/session-peer/SKILL.md"
           "$HOME/.local/bin/session-peer" --version
-      - name: Re-run upgrades existing install
+      - name: Re-run the trusted candidate installer upgrades existing install
         run: |
           sed -i 's/__version__ = .*/__version__ = "0.0.1"/' "$HOME/.local/share/session-peer/session_peer.py"
-          ./install.sh
+          ./install.sh --local-source
           version=$("$HOME/.local/bin/session-peer" --version)
           echo "$version"
           echo "$version" | grep -qvF "0.0.1"
