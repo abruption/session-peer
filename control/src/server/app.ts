@@ -115,6 +115,9 @@ export function createApp(
 ) {
   capExistingSessions(db);
   const rates = new BoundedRateLimiter();
+  // A leaked CLI token must not exhaust the owner's browser revocation budget.
+  // Separate instances also isolate the bounded bucket-capacity limits.
+  const sessionManagementRates = new BoundedRateLimiter();
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
       status,
@@ -139,7 +142,7 @@ export function createApp(
       assert(sameOrigin(request, config.origin), "csrf_rejected", 403);
       const current = await auth.api.getSession({ headers: request.headers });
       assert(current && allowedUser(db, config, current.user.id), "authentication_required", 401);
-      assert(rates.check(current.user.id), "rate_limited", 429);
+      assert(sessionManagementRates.check(current.user.id), "rate_limited", 429);
       if (path === "/api/control/sessions" && request.method === "GET") {
         const rows = db.prepare(`SELECT id,createdAt,expiresAt,userAgent FROM session
           WHERE userId=? AND julianday(expiresAt)>julianday('now') ORDER BY createdAt DESC`)
