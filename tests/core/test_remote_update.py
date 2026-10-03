@@ -1,4 +1,8 @@
-"""Exercise the generated SSH updater locally, without hosts or user accounts."""
+"""Local SSH-updater fixtures: handled faults roll back; lost receipts are unknown.
+
+Transfer interruption precedes publication and preserves the previous install.
+Termination after publication need not roll back, even when staging is cleaned.
+"""
 
 import argparse
 import base64
@@ -150,6 +154,48 @@ class RemoteTransfer(unittest.TestCase):
                 process.communicate(timeout=5)
         self.assert_preserved()
 
+    def test_termination_after_publication_does_not_claim_rollback(self):
+        source = (b"import os, time\nfrom pathlib import Path\n"
+                  b"if not Path(__file__).parent.name.startswith('.session-peer-update.'):\n"
+                  b"    (Path(os.environ['HOME']) / 'published-marker').touch()\n"
+                  b"    time.sleep(30)\n"
+                  b"print('session-peer 1.0.3')\n")
+        script, payload = self.script(source)
+        process = subprocess.Popen(["sh", "-c", script], stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True, env=self.environment, start_new_session=True)
+        try:
+            process.stdin.write(payload)
+            process.stdin.close()
+            process.stdin = None
+            marker = self.home / "published-marker"
+            deadline = time.monotonic() + 5
+            while not marker.exists():
+                if process.poll() is not None or time.monotonic() >= deadline:
+                    self.fail("receiver did not reach installed-path verification")
+                time.sleep(0.01)
+            os.killpg(process.pid, signal.SIGTERM)
+            stdout, stderr = process.communicate(timeout=5)
+            self.assertNotEqual(process.returncode, 0)
+            # SIGTERM is outside the publisher's in-process exception rollback.
+            self.assertEqual(self.target.read_bytes(), source)
+            self.assertEqual(self.launcher.lstat().st_ino, self.link_inode)
+            self.assert_clean()
+            receipt = subprocess.CompletedProcess([], process.returncode, stdout, stderr)
+            with mock.patch.object(session_peer.Path, "read_bytes", return_value=source), \
+                 mock.patch.object(session_peer, "__version__", self.VERSION), \
+                 mock.patch.object(session_peer.subprocess, "run", return_value=receipt), \
+                 self.assertRaises(session_peer.CcPeerError) as caught:
+                session_peer.push_to_remote("fixture", [], {})
+            self.assertEqual(caught.exception.details["commitStatus"], "unknown")
+            self.assertFalse(caught.exception.details["retryAllowed"])
+            self.assertNotIn("updated", caught.exception.details)
+            self.assertNotIn("submitted", caught.exception.details)
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.communicate(timeout=5)
+
     def test_custom_launcher_and_symlink_directory_are_not_overwritten(self):
         script, payload = self.script()
         self.launcher.unlink()
@@ -206,6 +252,37 @@ class RemoteTransfer(unittest.TestCase):
                                    subprocess.CompletedProcess([], 0, output, "")), \
                  self.assertRaises(session_peer.CcPeerError):
                 session_peer.push_to_remote("fixture", [], {})
+
+    def test_started_push_failures_report_unknown_without_retry(self):
+        for outcome, category in (
+            (subprocess.TimeoutExpired(["ssh"], 120), "timeout"),
+            (OSError("connection interrupted"), "transport_failed"),
+            (subprocess.CompletedProcess([], 255, "", "Connection closed"), "transport_failed"),
+            (subprocess.CompletedProcess([], 255, "", "Permission denied (publickey)."), "authentication_failed"),
+            (subprocess.CompletedProcess([], 0, "untrusted receipt\n", ""), None),
+            (subprocess.CompletedProcess([], 1, "", "publisher terminated"), None),
+        ):
+            with self.subTest(outcome=outcome), \
+                 mock.patch.object(session_peer.Path, "read_bytes", return_value=self.SOURCE), \
+                 mock.patch.object(session_peer.subprocess, "run", side_effect=[outcome]) as run, \
+                 self.assertRaises(session_peer.CcPeerError) as caught:
+                session_peer.push_to_remote("fixture", [], {})
+            details = caught.exception.details
+            self.assertEqual(details["commitStatus"], "unknown")
+            self.assertFalse(details["retryAllowed"])
+            self.assertEqual(details.get("sshFailure"), category)
+            self.assertNotIn("updated", details)
+            self.assertNotIn("submitted", details)
+            run.assert_called_once()
+
+    def test_missing_ssh_is_known_not_started(self):
+        with mock.patch.object(session_peer.Path, "read_bytes", return_value=self.SOURCE), \
+             mock.patch.object(session_peer.subprocess, "run", side_effect=FileNotFoundError("ssh")) as run, \
+             self.assertRaises(session_peer.CcPeerError) as caught:
+            session_peer.push_to_remote("fixture", [], {})
+        self.assertEqual(caught.exception.details["commitStatus"], "not_started")
+        self.assertTrue(caught.exception.details["retryAllowed"])
+        run.assert_called_once()
 
     def test_installed_probe_distinguishes_absent_and_broken_programs_locally(self):
         local_run = subprocess.run
@@ -291,6 +368,8 @@ class RemoteVersions(unittest.TestCase):
         self.assertEqual(code, session_peer.EXIT_ERROR)
         self.assertFalse(result["ok"])
         self.assertTrue(result["committed"])
+        self.assertEqual(result["commitStatus"], "committed")
+        self.assertFalse(result["retryAllowed"])
         self.assertEqual(result["installedVersionVerified"], "1.0.3")
         self.assertEqual(result["verificationStatus"], "unknown")
         self.assertEqual(result["sshFailure"], "timeout")

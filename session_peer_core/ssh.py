@@ -226,8 +226,9 @@ def push_to_remote(host: str, ssh_opts: list[str], ssh_info: dict | None = None)
 
     Returns the version string reported by the newly installed copy.
     The remote machine needs only python3 and ssh access — no internet,
-    no install.sh. Loss of the SSH connection at publication can leave the
-    commit outcome unknown; never automatically retry such a transfer.
+    no install.sh. In-process publication/verification exceptions attempt
+    rollback. Signals, rollback failure, or loss of SSH at publication can
+    leave the commit outcome unknown; never automatically retry such a transfer.
     """
     check_ssh_argument(host, "--host")
     for opt in ssh_opts:
@@ -318,25 +319,36 @@ print(expected)
         f'"$D/session_peer.py" "$B/session-peer" {shlex.quote(expected_line)}'
     )
     command = ["ssh", *ssh_opts, host, remote_script]
+    uncertain = {**ssh_info, "commitStatus": "unknown", "retryAllowed": False}
+
+    def push_failure(failure: str, detail: str | None = None,
+                     started: bool = True) -> CcPeerError:
+        error = ssh_failure_error(host, ssh_info, failure, detail)
+        error.details.update({
+            "commitStatus": "unknown" if started else "not_started",
+            "retryAllowed": not started,
+        })
+        return error
+
     try:
         completed = subprocess.run(
             command, input=source_b64, encoding="utf-8",
             capture_output=True, timeout=120,
         )
     except FileNotFoundError as exc:
-        raise ssh_failure_error(host, ssh_info, "transport_failed", "ssh not found on PATH") from exc
+        raise push_failure("transport_failed", "ssh not found on PATH", started=False) from exc
     except subprocess.TimeoutExpired as exc:
-        raise ssh_failure_error(host, ssh_info, "timeout") from exc
+        raise push_failure("timeout") from exc
     except OSError as exc:
-        raise ssh_failure_error(host, ssh_info, "transport_failed", str(exc)) from exc
+        raise push_failure("transport_failed", str(exc)) from exc
 
     if completed.returncode != 0:
         detail = completed.stderr.strip() or f"ssh exited {completed.returncode}"
         failure = classify_ssh_failure(detail, completed.returncode)
         if failure:
-            raise ssh_failure_error(host, ssh_info, failure, detail)
-        raise CcPeerError(f"{host}: {detail}", ssh_info)
+            raise push_failure(failure, detail)
+        raise CcPeerError(f"{host}: {detail}", uncertain)
 
     if completed.stdout.strip() != expected_line:
-        raise CcPeerError(f"{host}: installed version did not match {__version__}", ssh_info)
+        raise CcPeerError(f"{host}: installed version did not match {__version__}", uncertain)
     return __version__
