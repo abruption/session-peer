@@ -110,7 +110,7 @@ def cmd_send(args: argparse.Namespace) -> int:
                 ok=False,
             ))
             if not args.json:
-                print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
+                print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
 
     if args.json:
         emit_json_results(all_results)

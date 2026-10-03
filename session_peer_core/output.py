@@ -3,7 +3,28 @@
 # --------------------------------------------------------------------------
 
 
+def human_text(value):
+    """Escape terminal controls in display-only values, retaining Unicode.
+
+    Copy containers so rendering cannot alter JSON results or message bodies.
+    Apply this before assembling lines (and measuring table widths): newlines
+    in external fields are escaped, while renderer-owned newlines stay intact.
+    Escaping is idempotent because printable backslashes are left unchanged.
+    """
+    if isinstance(value, str):
+        return "".join(
+            f"\\x{ord(char):02x}" if ord(char) < 0x20 or 0x7f <= ord(char) <= 0x9f else char
+            for char in value
+        )
+    if isinstance(value, dict):
+        return {key: human_text(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return type(value)(human_text(item) for item in value)
+    return value
+
+
 def render_sessions(sessions: list[dict], where: str) -> str:
+    sessions, where = human_text(sessions), human_text(where)
     if not sessions:
         return f"No reachable Claude Code sessions on {where}."
 
@@ -80,13 +101,14 @@ def emit_json_results(results: list[dict]) -> None:
 
 def emit_human_update_notice() -> None:
     if _CLIENT_UPDATE_NOTICE is not None:
+        notice = human_text(_CLIENT_UPDATE_NOTICE)
         print(
-            f"Update available: {_CLIENT_UPDATE_NOTICE['current']} → "
-            f"{_CLIENT_UPDATE_NOTICE['latest']}. "
-            f"Run: {_CLIENT_UPDATE_NOTICE['command']}",
+            f"Update available: {notice['current']} → "
+            f"{notice['latest']}. "
+            f"Run: {notice['command']}",
             file=sys.stderr,
         )
-    for notice in _SKILL_UPDATE_NOTICES:
+    for notice in human_text(_SKILL_UPDATE_NOTICES):
         command = notice.get("command") or "check the skill's installation manager"
         print(f"Skill update available ({notice['location']}): "
               f"{notice['current']} → {notice['latest']}. Run: {command}", file=sys.stderr)
@@ -100,6 +122,7 @@ def host_metadata(ssh_host: str, canonical_host: str) -> dict:
 
 
 def display_host(ssh_host: str, canonical_host: str) -> str:
+    ssh_host, canonical_host = human_text(ssh_host), human_text(canonical_host)
     if ssh_host == canonical_host:
         return canonical_host
     return f"{canonical_host} (via SSH {ssh_host})"

@@ -1141,12 +1141,14 @@ def codex_remote_options(args: argparse.Namespace) -> list[str]:
 
 
 def render_codex(sessions: list[dict], where: str) -> str:
+    sessions, where = human_text(sessions), human_text(where)
     rows = [f"Saved Codex sessions on {where} (execution state unknown):", "THREAD  NAME  ARCHIVED  CWD  CODEX HOME"]
     rows.extend(f"{s['id']}  {s['name']}  {s['archived']}  {s['cwd']}  {s.get('codexHome', '-')}" for s in sessions)
     return "\n".join(rows) if sessions else f"No saved Codex sessions on {where}."
 
 
 def codex_submission_text(result: dict, where: str) -> str:
+    result, where = human_text(result), human_text(where)
     home = f" (Codex home: {result['codexHome']})" if "codexHome" in result else ""
     if result.get("submitted") is False and result.get("ok") is False and "wake" in result:
         reason = result.get("error") or result["wake"].get("reason", "refused")
@@ -2263,7 +2265,28 @@ print(expected)
 # --------------------------------------------------------------------------
 
 
+def human_text(value):
+    """Escape terminal controls in display-only values, retaining Unicode.
+
+    Copy containers so rendering cannot alter JSON results or message bodies.
+    Apply this before assembling lines (and measuring table widths): newlines
+    in external fields are escaped, while renderer-owned newlines stay intact.
+    Escaping is idempotent because printable backslashes are left unchanged.
+    """
+    if isinstance(value, str):
+        return "".join(
+            f"\\x{ord(char):02x}" if ord(char) < 0x20 or 0x7f <= ord(char) <= 0x9f else char
+            for char in value
+        )
+    if isinstance(value, dict):
+        return {key: human_text(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return type(value)(human_text(item) for item in value)
+    return value
+
+
 def render_sessions(sessions: list[dict], where: str) -> str:
+    sessions, where = human_text(sessions), human_text(where)
     if not sessions:
         return f"No reachable Claude Code sessions on {where}."
 
@@ -2340,13 +2363,14 @@ def emit_json_results(results: list[dict]) -> None:
 
 def emit_human_update_notice() -> None:
     if _CLIENT_UPDATE_NOTICE is not None:
+        notice = human_text(_CLIENT_UPDATE_NOTICE)
         print(
-            f"Update available: {_CLIENT_UPDATE_NOTICE['current']} → "
-            f"{_CLIENT_UPDATE_NOTICE['latest']}. "
-            f"Run: {_CLIENT_UPDATE_NOTICE['command']}",
+            f"Update available: {notice['current']} → "
+            f"{notice['latest']}. "
+            f"Run: {notice['command']}",
             file=sys.stderr,
         )
-    for notice in _SKILL_UPDATE_NOTICES:
+    for notice in human_text(_SKILL_UPDATE_NOTICES):
         command = notice.get("command") or "check the skill's installation manager"
         print(f"Skill update available ({notice['location']}): "
               f"{notice['current']} → {notice['latest']}. Run: {command}", file=sys.stderr)
@@ -2360,6 +2384,7 @@ def host_metadata(ssh_host: str, canonical_host: str) -> dict:
 
 
 def display_host(ssh_host: str, canonical_host: str) -> str:
+    ssh_host, canonical_host = human_text(ssh_host), human_text(canonical_host)
     if ssh_host == canonical_host:
         return canonical_host
     return f"{canonical_host} (via SSH {ssh_host})"
@@ -2726,6 +2751,7 @@ def doctor_payload(args: argparse.Namespace) -> dict:
 
 
 def render_doctor(payload: dict, where: str) -> str:
+    payload, where = human_text(payload), human_text(where)
     lines = [
         f"Diagnostics on {where}:",
         *("  " + AGENTS.get(name).diagnostic_text(payload[name]) for name in AGENTS.names() if name in payload),
@@ -2833,6 +2859,7 @@ class AgentAdapter:
         return {"status": "unavailable", "checks": []}
 
     def diagnostic_text(self, result: dict) -> str:
+        result = human_text(result)
         return f"{self.name}: {result['status']}"
 
     def remote_options(self, args: argparse.Namespace) -> list[str]:
@@ -2842,6 +2869,7 @@ class AgentAdapter:
         return str(session["id"]), str(session.get("status", "unknown"))
 
     def render(self, sessions: list[dict], where: str) -> str:
+        sessions, where = human_text(sessions), human_text(where)
         return f"Sessions on {where}:\n" + "\n".join(
             f"{self.name}  {self.display_row(row)[0]}  {self.display_row(row)[1]}"
             for row in sessions)
@@ -2850,6 +2878,7 @@ class AgentAdapter:
         return []
 
     def submission_text(self, result: dict, where: str) -> str:
+        result, where = human_text(result), human_text(where)
         return f"{self.name} submission on {where}: {result.get('status', 'unknown')}"
 
     def remote_submission(self, result: dict, args: argparse.Namespace, text: str) -> dict:
@@ -2884,6 +2913,7 @@ class ClaudeAdapter(AgentAdapter):
         return diagnose_claude()
 
     def diagnostic_text(self, result: dict) -> str:
+        result = human_text(result)
         return f"Claude inbox: {result['status']}"
 
     def display_row(self, session: dict) -> tuple[str, str]:
@@ -2896,6 +2926,7 @@ class ClaudeAdapter(AgentAdapter):
         return render_sessions(sessions, where)
 
     def submission_text(self, result: dict, where: str) -> str:
+        result, where = human_text(result), human_text(where)
         target = result.get("target", {})
         name = target.get("name") or target.get("pid")
         verb = "Would post to" if result["dryRun"] else "Posted to"
@@ -2929,6 +2960,7 @@ class CodexAdapter(AgentAdapter):
         return diagnose_codex(context.options)
 
     def diagnostic_text(self, result: dict) -> str:
+        result = human_text(result)
         return f"Codex: {result['status']} ({result.get('selectedHome', 'unknown')})"
 
     def remote_options(self, args: argparse.Namespace) -> list[str]:
@@ -2942,6 +2974,7 @@ class CodexAdapter(AgentAdapter):
         return render_codex(sessions, where)
 
     def listing_notes(self, payload: dict) -> list[str]:
+        payload = human_text(payload)
         notes = []
         if "codexHome" in payload:
             notes.append(f"Codex home: {payload['codexHome']} (single candidate home).")
@@ -3505,6 +3538,7 @@ def collect_listing(args: argparse.Namespace) -> dict:
 
 
 def render_listing(payload: dict, where: str, selected: str | None) -> str:
+    payload, where = human_text(payload), human_text(where)
     sessions = payload["sessions"]
     if selected:
         human = AGENTS.get(selected).render(sessions, where)
@@ -3520,7 +3554,7 @@ def render_listing(payload: dict, where: str, selected: str | None) -> str:
             human += "\n" + note
     for agent, info in payload.get("discovery", {}).items():
         if info["status"] == "error":
-            human += f"\n{agent} discovery failed: {info['error']}"
+            human += f"\n{human_text(agent)} discovery failed: {info['error']}"
     return human
 
 
@@ -3555,8 +3589,8 @@ def cmd_list(args: argparse.Namespace) -> int:
                 exit_code = EXIT_ERROR
             if remote_version and remote_version != __version__:
                 human = (
-                    f"{shown_host} runs session-peer {remote_version}; this machine has {__version__}."
-                    f"\nUpdate it with:  session-peer update --host {requested_host}\n\n{human}"
+                    f"{shown_host} runs session-peer {human_text(remote_version)}; this machine has {__version__}."
+                    f"\nUpdate it with:  session-peer update --host {human_text(requested_host)}\n\n{human}"
                 )
             host_result = json_result("list", {
                 **host_metadata(requested_host, host),
@@ -3580,7 +3614,7 @@ def cmd_list(args: argparse.Namespace) -> int:
                 ok=False,
             ))
             if not args.json:
-                print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
+                print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
 
     if args.json:
         emit_json_results(all_results)
@@ -3650,7 +3684,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 ok=False,
             ))
             if not args.json:
-                print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
+                print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
     if args.json:
         emit_json_results(all_results)
     return exit_code
@@ -4333,7 +4367,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                 args.json,
                 {"current": __version__, "latest": tag, "outdated": outdated,
                  "managedBy": "package-manager", "updateCommand": command},
-                f"session-peer {__version__} — {state}. Upgrade with: {command}",
+                human_text(f"session-peer {__version__} — {state}. Upgrade with: {command}"),
                 command="update",
             )
             return 0
@@ -4341,7 +4375,7 @@ def cmd_update(args: argparse.Namespace) -> int:
             args.json,
             {"current": __version__, "updated": False,
              "managedBy": "package-manager", "updateCommand": command},
-            f"This installation is package-managed. Upgrade with: {command}",
+            human_text(f"This installation is package-managed. Upgrade with: {command}"),
             command="update",
         )
         return 0
@@ -4378,7 +4412,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                         "outdated": outdated,
                     }))
                     if not args.json:
-                        print(f"{shown_host}: session-peer {there or '(none)'} — {state}")
+                        print(human_text(f"{shown_host}: session-peer {there or '(none)'} — {state}"))
                     continue
 
                 if not outdated:
@@ -4388,7 +4422,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                         "updated": False,
                     }))
                     if not args.json:
-                        print(f"{shown_host} runs session-peer {there} — already current or newer.")
+                        print(human_text(f"{shown_host} runs session-peer {there} — already current or newer."))
                     continue
 
                 new_version = push_to_remote(requested_host, ssh_opts, ssh_info)
@@ -4416,7 +4450,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                 }))
                 if not args.json:
                     prev = there or "(none)"
-                    print(f"{shown_host}: session-peer {prev} → {new_version}")
+                    print(human_text(f"{shown_host}: session-peer {prev} → {new_version}"))
 
             except CcPeerError as exc:
                 exit_code = EXIT_ERROR
@@ -4426,7 +4460,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                     ok=False,
                 ))
                 if not args.json:
-                    print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
+                    print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
         if args.json:
             emit_json_results(all_results)
         return exit_code
@@ -4445,7 +4479,7 @@ def cmd_update(args: argparse.Namespace) -> int:
         emit(
             args.json,
             {"current": __version__, "latest": tag, "outdated": current < latest},
-            f"session-peer {__version__} — {state}",
+            human_text(f"session-peer {__version__} — {state}"),
             command="update",
         )
         return 0
@@ -4454,7 +4488,7 @@ def cmd_update(args: argparse.Namespace) -> int:
         emit(
             args.json,
             {"current": __version__, "latest": tag, "updated": False},
-            f"session-peer {__version__} is already current ({tag}).",
+            human_text(f"session-peer {__version__} is already current ({tag})."),
             command="update",
         )
         return 0
@@ -4472,7 +4506,7 @@ def cmd_update(args: argparse.Namespace) -> int:
     emit(
         args.json,
         {"current": __version__, "latest": tag, "updated": True, "path": str(target)},
-        f"session-peer {__version__} → {tag}  ({target})",
+        human_text(f"session-peer {__version__} → {tag}  ({target})"),
         command="update",
     )
     return 0
@@ -4590,7 +4624,7 @@ def cmd_send(args: argparse.Namespace) -> int:
                 ok=False,
             ))
             if not args.json:
-                print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
+                print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
 
     if args.json:
         emit_json_results(all_results)
@@ -4644,8 +4678,14 @@ def cmd_optional_relay(args):
     return optional_relay().main(args.command, ["--help"] if args.relay_help else args.relay_args)
 
 
+class HumanArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        # argparse includes untrusted argv in errors before main's handler.
+        super().error(human_text(message))
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = HumanArgumentParser(
         prog="session-peer",
         description="Message Claude Code and Codex sessions locally or over SSH.",
     )
@@ -4824,7 +4864,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = json_error_result(args, {"error": message, **exc.details})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
-            print(f"session-peer: {message}", file=sys.stderr)
+            print(human_text(f"session-peer: {message}"), file=sys.stderr)
         exit_code = (
             EXIT_NO_TARGET
             if isinstance(exc, NoTargetError) or "no reachable session" in message
@@ -4839,7 +4879,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = json_error_result(args, {"error": message})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
-            print(f"session-peer: {message}", file=sys.stderr)
+            print(human_text(f"session-peer: {message}"), file=sys.stderr)
         exit_code = EXIT_ERROR
     if show_human_notice and not args.json:
         emit_human_update_notice()

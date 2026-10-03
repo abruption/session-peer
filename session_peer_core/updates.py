@@ -466,7 +466,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                 args.json,
                 {"current": __version__, "latest": tag, "outdated": outdated,
                  "managedBy": "package-manager", "updateCommand": command},
-                f"session-peer {__version__} — {state}. Upgrade with: {command}",
+                human_text(f"session-peer {__version__} — {state}. Upgrade with: {command}"),
                 command="update",
             )
             return 0
@@ -474,7 +474,7 @@ def cmd_update(args: argparse.Namespace) -> int:
             args.json,
             {"current": __version__, "updated": False,
              "managedBy": "package-manager", "updateCommand": command},
-            f"This installation is package-managed. Upgrade with: {command}",
+            human_text(f"This installation is package-managed. Upgrade with: {command}"),
             command="update",
         )
         return 0
@@ -511,7 +511,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                         "outdated": outdated,
                     }))
                     if not args.json:
-                        print(f"{shown_host}: session-peer {there or '(none)'} — {state}")
+                        print(human_text(f"{shown_host}: session-peer {there or '(none)'} — {state}"))
                     continue
 
                 if not outdated:
@@ -521,7 +521,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                         "updated": False,
                     }))
                     if not args.json:
-                        print(f"{shown_host} runs session-peer {there} — already current or newer.")
+                        print(human_text(f"{shown_host} runs session-peer {there} — already current or newer."))
                     continue
 
                 new_version = push_to_remote(requested_host, ssh_opts, ssh_info)
@@ -549,7 +549,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                 }))
                 if not args.json:
                     prev = there or "(none)"
-                    print(f"{shown_host}: session-peer {prev} → {new_version}")
+                    print(human_text(f"{shown_host}: session-peer {prev} → {new_version}"))
 
             except CcPeerError as exc:
                 exit_code = EXIT_ERROR
@@ -559,7 +559,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                     ok=False,
                 ))
                 if not args.json:
-                    print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
+                    print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
         if args.json:
             emit_json_results(all_results)
         return exit_code
@@ -578,7 +578,7 @@ def cmd_update(args: argparse.Namespace) -> int:
         emit(
             args.json,
             {"current": __version__, "latest": tag, "outdated": current < latest},
-            f"session-peer {__version__} — {state}",
+            human_text(f"session-peer {__version__} — {state}"),
             command="update",
         )
         return 0
@@ -587,7 +587,7 @@ def cmd_update(args: argparse.Namespace) -> int:
         emit(
             args.json,
             {"current": __version__, "latest": tag, "updated": False},
-            f"session-peer {__version__} is already current ({tag}).",
+            human_text(f"session-peer {__version__} is already current ({tag})."),
             command="update",
         )
         return 0
@@ -605,7 +605,7 @@ def cmd_update(args: argparse.Namespace) -> int:
     emit(
         args.json,
         {"current": __version__, "latest": tag, "updated": True, "path": str(target)},
-        f"session-peer {__version__} → {tag}  ({target})",
+        human_text(f"session-peer {__version__} → {tag}  ({target})"),
         command="update",
     )
     return 0
