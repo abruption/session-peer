@@ -1,7 +1,8 @@
 # Releasing session-peer
 
 Publishing a GitHub release triggers `.github/workflows/publish.yml`, which builds
-the selected tag and uploads wheel and sdist to PyPI through Trusted Publishing.
+the selected tag and, after environment approval, uploads wheel and sdist to PyPI
+through Trusted Publishing.
 A draft does not publish. Keep preparation, final approval, publication, and
 verification separate. Protected `main` requires an up-to-date PR and the
 aggregate `release gate`: Linux, macOS and Windows Python matrices; documentation,
@@ -44,6 +45,19 @@ The PyPI project `session-peer` maps to GitHub repository
 credential is stored in the repository. Prior success is not proof the mapping
 has remained unchanged; verify it before publication.
 
+The owner [verified the PyPI mapping on 2026-09-29](https://github.com/abruption/session-peer/issues/235#issuecomment-5882178667).
+This records the owner's check, not a new PyPI UI inspection. The GitHub API check
+on 2026-10-03 confirmed that `pypi` requires reviewer `abruption`, allows
+self-review (`prevent_self_review: false`), and has a custom deployment policy
+for tags matching `v*`. These are repository settings, not workflow source
+settings; recheck them before publication.
+
+Administrator bypass remains enabled (`can_admins_bypass: true`). Use the normal
+environment review. An exceptional bypass requires explicit owner authorization
+and recorded reason, actor, time, workflow run, tag and commit; it does not prove
+that the approval pause worked. Do not silently bypass review or describe bypass
+as disabled.
+
 ## Prepare and verify
 
 1. Confirm the v1.0.2 milestone's completed fixes and keep #161 open as
@@ -83,8 +97,10 @@ Draft creation does not authorize publication.
 
 ## Publish
 
-Obtain final user approval immediately before publication. Publishing makes the
-GitHub release public and starts the immutable PyPI upload:
+Obtain the owner's final approval immediately before publishing the GitHub draft.
+Without that approval, leave it as a draft. Publishing makes the GitHub release
+public and starts the workflow; the PyPI upload must wait for a separate explicit
+review of the pending `pypi` deployment:
 
 ```bash
 gh release edit v1.0.2 \
@@ -98,6 +114,29 @@ identical wheel and sdist twice. It installs both candidates, checks archives,
 audits dependencies, records SHA256SUMS and release-provenance.json, requests
 GitHub/PyPI attestations, and uploads via OIDC. Existing PyPI files are a hard
 error; do not skip them.
+
+## Review the pending PyPI deployment
+
+1. After build, wheel/sdist install checks and dependency audits succeed, open
+   the exact workflow run in GitHub Actions. Confirm that the publish job is
+   waiting for review of `pypi` before any upload. Record the run URL/ID and
+   attempt, tag, commit, candidate hashes from SHA256SUMS and
+   release-provenance.json, and the pending status/time. Source tests and API
+   settings alone cannot prove this pause; observing it on the next release
+   remains an outstanding acceptance check for #235.
+2. The required reviewer checks the candidate evidence and current Trusted
+   Publisher/environment settings. In **Review deployments**, select `pypi`
+   and explicitly choose **Approve and deploy** only when publication is
+   authorized. Approval to publish the GitHub draft does not replace this review.
+3. To refuse publication, select `pypi` in **Review deployments**, add the reason
+   and choose **Reject**. If the expected review controls or pause are missing,
+   stop and cancel the run before upload. Preserve the rejected/cancelled run;
+   do not move the tag or reuse the version to evade rejection. Resolve the
+   reason through reviewed preparation and obtain fresh approval.
+4. Record the reviewer, approval or rejection, comment, timestamp and deployment
+   result alongside the run and candidate evidence. After approval, retain the
+   first upload and post-publication verification results. A rejected deployment
+   must not be recorded as a successful publication or approval-pause validation.
 
 Do not rerun an upload with modified artifacts after failure. Preserve the failed
 run and any accepted files, then diagnose the first failed gate. PyPI versions
