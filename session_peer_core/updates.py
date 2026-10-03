@@ -19,7 +19,7 @@ def remote_installed_version(host: str, ssh_opts: list[str],
     try:
         done = subprocess.run(
             ["ssh", *ssh_opts, host, probe],
-            capture_output=True, encoding="utf-8", errors="replace", timeout=30,
+            capture_output=True, timeout=30,
         )
     except FileNotFoundError as exc:
         raise ssh_failure_error(host, ssh_info, "transport_failed", "ssh not found on PATH") from exc
@@ -27,10 +27,14 @@ def remote_installed_version(host: str, ssh_opts: list[str],
         raise ssh_failure_error(host, ssh_info, "timeout") from exc
     except OSError as exc:
         raise ssh_failure_error(host, ssh_info, "transport_failed", str(exc)) from exc
-    out = done.stdout.strip()
+    try:
+        out = (done.stdout.decode("utf-8", errors="strict")
+               if isinstance(done.stdout, bytes) else done.stdout).strip()
+    except UnicodeError as exc:
+        raise CcPeerError(f"{host}: installed program did not report a usable version", ssh_info) from exc
     if done.returncode == 3 and out == "session-peer: not installed":
         return None
-    detail = done.stderr.strip() or f"ssh exited {done.returncode}"
+    detail = update_diagnostic_text(done.stderr).strip() or f"ssh exited {done.returncode}"
     failure = classify_ssh_failure(detail, done.returncode) if done.returncode != 0 else None
     if failure:
         raise ssh_failure_error(host, ssh_info, failure, detail)
