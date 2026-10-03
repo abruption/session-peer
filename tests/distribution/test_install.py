@@ -9,6 +9,37 @@ import unittest
 
 @unittest.skipIf(os.name == "nt", "POSIX installer; Windows uses pip")
 class Install(unittest.TestCase):
+    def test_remote_main_fetch_failure_stops_before_skill_or_ssh_and_cleans_every_stage(self):
+        repo = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            program = home / ".local/share/session-peer/session_peer.py"
+            program.parent.mkdir(parents=True)
+            program.write_bytes(b"existing program")
+            staging = root / "staging"
+            staging.mkdir()
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            curl = fake_bin / "curl"
+            curl.write_text('#!/bin/sh\ncase "$2" in\n'
+                            '*/session_peer.py) printf "partial" > "$4"; exit 18 ;;\n'
+                            '*) touch "$SKILL_FETCHED"; exit 0 ;;\nesac\n')
+            curl.chmod(0o755)
+            ssh = fake_bin / "ssh"
+            ssh.write_text('#!/bin/sh\ntouch "$SSH_CALLED"\nexit 0\n')
+            ssh.chmod(0o755)
+            env = {**os.environ, "HOME": str(home), "TMPDIR": str(staging),
+                   "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"],
+                   "SKILL_FETCHED": str(root / "skill-fetched"), "SSH_CALLED": str(root / "ssh-called")}
+            done = subprocess.run(["sh", str(repo / "install.sh"), "--main", "--host", "a", "--host", "b"],
+                                  env=env, capture_output=True, text=True)
+            self.assertNotEqual(done.returncode, 0)
+            self.assertFalse((root / "skill-fetched").exists())
+            self.assertFalse((root / "ssh-called").exists())
+            self.assertEqual(program.read_bytes(), b"existing program")
+            self.assertEqual(list(staging.iterdir()), [])
+
     def test_failed_network_install_preserves_program_launcher_and_skills(self):
         self._check_failed_network_install(symlink_root=False)
 

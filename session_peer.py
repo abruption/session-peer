@@ -3786,7 +3786,8 @@ def release_commit(tag):
 def release_attest(path, commit):
     if shutil.which("gh") is None:
         raise ReleaseVerificationError("verified standalone installation needs GitHub CLI (gh) with "
-                                       "attestation verify support; install/upgrade gh or use pip/uv/pipx")
+                                       "attestation policy flags; use gh 2.102.0 or later, authenticate with "
+                                       "gh auth login / GH_TOKEN, or install via pip/uv/pipx")
     command = ["gh", "attestation", "verify", str(path), "--repo", RELEASE_REPOSITORY,
                "--signer-workflow", RELEASE_BUILDER, "--source-ref", "refs/heads/main",
                "--source-digest", commit, "--cert-oidc-issuer", "https://token.actions.githubusercontent.com",
@@ -3795,9 +3796,11 @@ def release_attest(path, commit):
         done = subprocess.run(command, capture_output=True, text=True, timeout=120)
         result = json.loads(done.stdout) if done.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired, ValueError) as error:
-        raise ReleaseVerificationError("could not verify release build attestation; install/upgrade gh") from error
+        raise ReleaseVerificationError("could not verify release build attestation; use gh 2.102.0 or later "
+                                       "and authenticate with gh auth login / GH_TOKEN") from error
     if done.returncode or not isinstance(result, list) or not result:
-        raise ReleaseVerificationError("release build attestation did not verify against protected main: "
+        raise ReleaseVerificationError("release build attestation did not verify against protected main; "
+                                       "check gh policy flag support (tested with 2.102.0) and gh auth login / GH_TOKEN: "
                                        + done.stderr.strip()[:1000])
 
 

@@ -73,6 +73,21 @@ gh attestation verify "$staging/install.sh" --repo "$repo" \\
 sh "$staging/install.sh"
 ```
 
+The tested GitHub CLI baseline is 2.102.0; the earliest version supporting every
+policy flag has not been established. Online attestation lookup requires authenticated
+gh (`gh auth login` or `GH_TOKEN`); the installer needs repository/attestation read
+access, not publication permission. See the [GitHub CLI verifier source](https://github.com/cli/cli/blob/v2.102.0/pkg/cmd/attestation/verify/verify.go).
+These local fixtures establish policy/order/error behavior, not live signature acceptance.
+
+GitHub and PyPI publication are separate irreversible steps. Dependency audits remain
+mandatory both during preparation and again before PyPI upload. A newly disclosed CVE
+between those checks can leave a locked public GitHub release without its PyPI version.
+Preparation-time audit success is not current audit evidence. Treat publication as
+incomplete until the publication workflow and PyPI verification succeed; retain both
+run records and exact assets, diagnose the failed gate, and fix forward with a reviewed
+new version when necessary. No audit bypass is authorized by this procedure; changing
+the audit policy requires a separate owner decision.
+
 Downloads are capped (standalone 8 MiB; support 256 KiB; metadata 1 MiB).
 Authenticated manifest/provenance, exact tag/version and a successful staged
 `--version` are required before replacement. The installer verifies on the sender

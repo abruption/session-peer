@@ -23,6 +23,13 @@ def load_generator():
 
 
 class StandaloneGenerationTest(unittest.TestCase):
+    def test_installer_embeds_the_exact_canonical_release_verifier(self):
+        installer = (ROOT / "install.sh").read_text()
+        start_marker = "    python3 - \"$1\" <<'SESSION_PEER_RELEASE_VERIFIER'\n"
+        end_marker = "\ntry:\n    print(verified_release_download(Path(sys.argv[1]), include_support=True))"
+        payload = installer.split(start_marker, 1)[1].split(end_marker, 1)[0]
+        self.assertEqual(payload, (ROOT / "session_peer_core/release_verification.py").read_text().rstrip() + "\n")
+
     def test_sdist_generator_works_without_the_repository_installer(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

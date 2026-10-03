@@ -62,14 +62,14 @@ class VerifiedRelease(unittest.TestCase):
                         [], 0, stdout='[{}]', stderr='')) as run:
                 self.assertEqual(session_peer.verified_release_download(root, tag=self.tag), "9.8.7")
                 self.assertEqual(run.call_count, 3)
-                for call in run.call_args_list:
-                    command = call.args[0]
-                    self.assertIn(session_peer.RELEASE_BUILDER, command)
-                    self.assertIn("refs/heads/main", command)
-                    self.assertIn(self.commit, command)
-                    self.assertIn("--deny-self-hosted-runners", command)
-                    self.assertIn("--cert-oidc-issuer", command)
-                    self.assertIn("https://token.actions.githubusercontent.com", command)
+                for call, name in zip(run.call_args_list, ("SHA256SUMS", "release-provenance.json", "session_peer.py")):
+                    self.assertEqual(call.args[0], [
+                        "gh", "attestation", "verify", str(root / name), "--repo", "abruption/session-peer",
+                        "--signer-workflow", "abruption/session-peer/.github/workflows/prepare-release.yml",
+                        "--source-ref", "refs/heads/main", "--source-digest", self.commit,
+                        "--cert-oidc-issuer", "https://token.actions.githubusercontent.com",
+                        "--deny-self-hosted-runners", "--format", "json"])
+                    self.assertEqual(call.kwargs, {"capture_output": True, "text": True, "timeout": 120})
                 runtime.assert_called_once_with(root / "session_peer.py", "9.8.7")
             session_peer.release_validate_runtime(root / "session_peer.py", "9.8.7")
 
@@ -105,7 +105,7 @@ class VerifiedRelease(unittest.TestCase):
                 self.assertEqual(list(root.iterdir()), [])
 
     def test_hostile_metadata_manifest_and_provenance_never_execute(self):
-        for mode in ("legacy", "draft", "prerelease", "oversized", "evil-url", "duplicate", "digest",
+        for mode in ("legacy", "draft", "prerelease", "oversized", "evil-url", "duplicate", "extra-asset", "digest",
                      "provenance", "manifest-duplicate", "manifest-traversal", "attestation", "missing-gh"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
@@ -117,6 +117,7 @@ class VerifiedRelease(unittest.TestCase):
                 if mode == "oversized": release["assets"][0]["size"] = session_peer.RELEASE_SOURCE_LIMIT + 1
                 if mode == "evil-url": release["assets"][0]["browser_download_url"] = "https://evil.example/source"
                 if mode == "duplicate": release["assets"].append(release["assets"][0])
+                if mode == "extra-asset": release["assets"].append({"name": "unreviewed.txt"})
                 if mode == "digest": urls[prefix + "session_peer.py"] = b"x" * len(payloads["session_peer.py"])
                 if mode == "provenance":
                     provenance = json.loads(payloads["release-provenance.json"])
@@ -137,12 +138,58 @@ class VerifiedRelease(unittest.TestCase):
                         session_peer.verified_release_download(root, tag=self.tag)
                     runtime.assert_not_called()
 
+    def test_annotated_tag_resolves_to_commit_and_invalid_chain_never_runs(self):
+        for valid in (True, False):
+            with self.subTest(valid=valid), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                urls, _, _ = self.fixture(root)
+                tag_sha = "b" * 40
+                urls["https://api.github.com/repos/abruption/session-peer/git/ref/tags/" + self.tag] = json.dumps(
+                    {"object": {"type": "tag", "sha": tag_sha}}).encode()
+                urls["https://api.github.com/repos/abruption/session-peer/git/tags/" + tag_sha] = json.dumps(
+                    {"object": {"type": "commit" if valid else "tree", "sha": self.commit}}).encode()
+                with mock.patch.object(session_peer.urllib.request, "urlopen", side_effect=self.open_fixture(urls)), \
+                        mock.patch.object(session_peer.shutil, "which", return_value="gh"), \
+                        mock.patch.object(session_peer, "release_validate_runtime") as runtime, \
+                        mock.patch.object(session_peer.subprocess, "run", return_value=subprocess.CompletedProcess(
+                            [], 0, stdout='[{}]', stderr='')) as run:
+                    if valid:
+                        self.assertEqual(session_peer.verified_release_download(root), "9.8.7")
+                        self.assertIn(self.commit, run.call_args_list[0].args[0])
+                        runtime.assert_called_once()
+                    else:
+                        with self.assertRaisesRegex(session_peer.ReleaseVerificationError, "commit SHA"):
+                            session_peer.verified_release_download(root)
+                        run.assert_not_called()
+                        runtime.assert_not_called()
+
+    def test_latest_release_race_rejected_before_asset_download(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            urls, _, _ = self.fixture(root)
+            with mock.patch.object(session_peer.urllib.request, "urlopen", side_effect=self.open_fixture(urls)), \
+                    mock.patch.object(session_peer, "release_attest") as attest, \
+                    mock.patch.object(session_peer, "release_validate_runtime") as runtime:
+                with self.assertRaisesRegex(session_peer.ReleaseVerificationError, "changed"):
+                    session_peer.verified_release_download(root, tag="v9.8.6")
+                attest.assert_not_called()
+                runtime.assert_not_called()
+                self.assertEqual(list(root.iterdir()), [])
+
     def test_stream_cap_is_enforced_even_without_content_length(self):
         response = io.BytesIO(b"x" * 100)
         response.headers = {}
         with mock.patch.object(session_peer.urllib.request, "urlopen", return_value=response):
             with self.assertRaisesRegex(session_peer.ReleaseVerificationError, "size limit"):
                 session_peer.release_read("https://example.invalid", 10)
+
+    def test_unsupported_gh_policy_flags_report_an_actionable_failure(self):
+        with mock.patch.object(session_peer.shutil, "which", return_value="gh"), \
+                mock.patch.object(session_peer.subprocess, "run", return_value=subprocess.CompletedProcess(
+                    [], 1, stdout="", stderr="unknown flag: --source-digest")):
+            with self.assertRaisesRegex(session_peer.ReleaseVerificationError,
+                                        "tested with 2.102.0.*gh auth login.*unknown flag"):
+                session_peer.release_attest(Path("fixture"), self.commit)
 
     def test_wrong_literal_syntax_nonrunning_and_timeout_rejected(self):
         sources = [b'__version__ = "0.0.0"\nprint("session-peer 9.8.7")\n',
