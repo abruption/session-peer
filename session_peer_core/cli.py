@@ -1,5 +1,11 @@
+class HumanArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        # argparse includes untrusted argv in errors before main's handler.
+        super().error(human_text(message))
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = HumanArgumentParser(
         prog="session-peer",
         description="Message Claude Code and Codex sessions locally or over SSH.",
     )
@@ -178,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = json_error_result(args, {"error": message, **exc.details})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
-            print(f"session-peer: {message}", file=sys.stderr)
+            print(human_text(f"session-peer: {message}"), file=sys.stderr)
         exit_code = (
             EXIT_NO_TARGET
             if isinstance(exc, NoTargetError) or "no reachable session" in message
@@ -193,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = json_error_result(args, {"error": message})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
-            print(f"session-peer: {message}", file=sys.stderr)
+            print(human_text(f"session-peer: {message}"), file=sys.stderr)
         exit_code = EXIT_ERROR
     if show_human_notice and not args.json:
         emit_human_update_notice()

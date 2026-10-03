@@ -1034,12 +1034,14 @@ def codex_remote_options(args: argparse.Namespace) -> list[str]:
 
 
 def render_codex(sessions: list[dict], where: str) -> str:
+    sessions, where = human_text(sessions), human_text(where)
     rows = [f"Saved Codex sessions on {where} (execution state unknown):", "THREAD  NAME  ARCHIVED  CWD  CODEX HOME"]
     rows.extend(f"{s['id']}  {s['name']}  {s['archived']}  {s['cwd']}  {s.get('codexHome', '-')}" for s in sessions)
     return "\n".join(rows) if sessions else f"No saved Codex sessions on {where}."
 
 
 def codex_submission_text(result: dict, where: str) -> str:
+    result, where = human_text(result), human_text(where)
     home = f" (Codex home: {result['codexHome']})" if "codexHome" in result else ""
     if result.get("submitted") is False and result.get("ok") is False and "wake" in result:
         reason = result.get("error") or result["wake"].get("reason", "refused")
