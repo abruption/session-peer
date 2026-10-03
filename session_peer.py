@@ -1999,6 +1999,50 @@ def ssh_failure_error(host: str, ssh_info: dict, failure: str,
     return CcPeerError(message, {**ssh_info, "sshFailure": failure})
 
 
+def parse_ssh_response(output, argv):
+    """Parse one complete response with the same rules on exit and timeout.
+
+    TimeoutExpired captures bytes even when run() requested text. Do not repair
+    invalid UTF-8 or accept a prefix, duplicate keys, or non-JSON constants as
+    proof that the remote command finished. Legacy JSON remains usable only
+    on the normal-exit path, not as timeout outcome evidence.
+    """
+    if isinstance(output, bytes):
+        try:
+            output = output.decode("utf-8")
+        except UnicodeDecodeError:
+            return "", None, False, False
+    # Only JSON's four whitespace characters may surround the document.
+    # str.strip() also removes framing controls such as VT and FS, which must
+    # not convert malformed captured output into a completed outcome.
+    stdout = output.strip(" \t\r\n") if isinstance(output, str) else ""
+
+    def object_value(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate JSON response key")
+            value[key] = item
+        return value
+
+    def constant_value(value):
+        raise ValueError("non-JSON response constant")
+
+    try:
+        result = json.loads(stdout, object_pairs_hook=object_value,
+                            parse_constant=constant_value) if stdout else None
+    except (ValueError, RecursionError):
+        return stdout, None, False, False
+    valid = (
+        isinstance(result, dict)
+        and type(result.get("schemaVersion")) is int
+        and result["schemaVersion"] == JSON_RESPONSE_SCHEMA_VERSION
+        and type(result.get("ok")) is bool
+        and bool(argv) and result.get("command") == argv[0]
+    )
+    return stdout, result, bool(stdout), valid
+
+
 def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     check_ssh_argument(host, "--host")
     for opt in ssh_opts:
@@ -2027,25 +2071,53 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     command = ["ssh", *ssh_opts, host, remote]
     try:
         completed = subprocess.run(
-            command, input=source, encoding="utf-8", capture_output=True, timeout=120
+            command, input=source.encode("utf-8"), capture_output=True, timeout=120
         )
     except FileNotFoundError as exc:
         raise ssh_failure_error(host, ssh_info, "transport_failed", "ssh not found on PATH") from exc
     except subprocess.TimeoutExpired as exc:
-        raise ssh_failure_error(host, ssh_info, "timeout") from exc
+        stdout, _, _, valid = parse_ssh_response(exc.output, argv)
+        if valid:
+            stderr = exc.stderr
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
+            # A timeout after the complete application response is a transport
+            # shutdown problem, not evidence that its result was never received.
+            completed = subprocess.CompletedProcess(command, 255, stdout,
+                                                    stderr if isinstance(stderr, str) else "")
+        else:
+            if argv and argv[0] == "send":
+                raise CcPeerError(
+                    f"SSH send to {host} timed out; submission outcome unknown. "
+                    "Do not automatically retry; check the target before retrying.",
+                    {**ssh_info, "sshFailure": "timeout", "status": "unknown",
+                     "reason": "outcome_unknown", "retryAllowed": False},
+                ) from exc
+            raise ssh_failure_error(host, ssh_info, "timeout") from exc
     except OSError as exc:
         raise ssh_failure_error(host, ssh_info, "transport_failed", str(exc)) from exc
 
-    stdout = completed.stdout.strip()
-    detail = completed.stderr.strip() or f"ssh exited {completed.returncode}"
+    stdout, result, parsed_result, valid_result = parse_ssh_response(completed.stdout, argv)
+    # Keep diagnostic decoding independent of protocol decoding. A locale's
+    # stderr bytes must not prevent a complete stdout response reaching its
+    # strict parser. Only diagnostic text may use replacement characters.
+    stderr = completed.stderr
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode("utf-8", errors="replace")
+    stderr = stderr if isinstance(stderr, str) else ""
+    detail = stderr.strip() or f"ssh exited {completed.returncode}"
+    # A complete response proves the remote command ran, even if the SSH
+    # process later exits 255. Login-shell stderr must not hide submission
+    # evidence or turn a remote partial failure into an invitation to resend.
     failure = (
         classify_ssh_failure(detail, completed.returncode)
-        if completed.returncode != 0 else None
+        if (not valid_result and completed.returncode != 0
+            and (completed.returncode == 255 or not stdout)) else None
     )
     if failure:
         raise ssh_failure_error(host, ssh_info, failure, detail)
-    runtime_output = (completed.stdout + "\n" + completed.stderr).strip().lower()
-    if (runtime_output == "python"
+    runtime_output = (stdout + "\n" + stderr).strip().lower()
+    if not valid_result and (runtime_output == "python"
             or "python was not found" in runtime_output
             or ("python3" in runtime_output and any(marker in runtime_output for marker in (
                 "command not found", "not recognized as", "no such file", "python3: not found",
@@ -2060,10 +2132,9 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
         )
     if not stdout:
         raise CcPeerError(f"{host}: {detail}", ssh_info)
-    try:
-        result = json.loads(stdout)
-    except ValueError as exc:
-        raise CcPeerError(f"{host}: unexpected output: {stdout[:200]}", ssh_info) from exc
+    if not parsed_result or (isinstance(result, dict)
+                             and "schemaVersion" in result and not valid_result):
+        raise CcPeerError(f"{host}: unexpected output: {stdout[:200]}", ssh_info)
     if isinstance(result, dict):
         result.update(ssh_info)
 
