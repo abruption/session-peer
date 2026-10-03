@@ -1,7 +1,9 @@
 """Release artifact checksum and reproducibility contracts."""
 
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -19,6 +21,57 @@ SPEC.loader.exec_module(release_artifacts)
 
 class ReleaseArtifacts(unittest.TestCase):
     version = "1.2.3"
+
+    def test_same_named_branch_cannot_replace_the_trusted_tag_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            env = {"PATH": os.defpath, "HOME": temporary, "GIT_CONFIG_NOSYSTEM": "1",
+                   "GIT_CONFIG_GLOBAL": os.devnull}
+
+            def git(*args):
+                return subprocess.run(["git", *args], cwd=root, env=env, check=True,
+                                      capture_output=True, text=True).stdout.strip()
+
+            def verify(expected):
+                with mock.patch.dict(os.environ, env, clear=True):
+                    return release_artifacts.verify_source("v1.2.3", "main", expected, root)
+
+            git("init", "--initial-branch=main")
+            git("config", "user.name", "Release fixture")
+            git("config", "user.email", "fixture@example.invalid")
+            source = root / "session_peer.py"
+            source.write_text('__version__ = "1.2.3"\n# trusted release source\n')
+            git("add", "session_peer.py")
+            git("commit", "-m", "trusted main release")
+            trusted = git("rev-parse", "HEAD")
+            git("update-ref", "refs/remotes/origin/main", trusted)
+            git("tag", "v1.2.3", trusted)
+            git("switch", "--create", "v1.2.3")
+            source.write_text('__version__ = "1.2.3"\n# untrusted branch source\n')
+            git("commit", "-am", "same-name branch changes source")
+            branch = git("rev-parse", "HEAD")
+            git("checkout", "main")
+            # A bare checkout selects the branch when both namespaces contain the name.
+            git("checkout", "v1.2.3")
+            self.assertEqual(git("rev-parse", "HEAD"), branch)
+            with self.assertRaisesRegex(release_artifacts.VerificationError, "event commit"):
+                verify(trusted)
+            # Event-SHA checkout never loads source from the colliding branch.
+            git("checkout", "--detach", trusted)
+            self.assertIn("trusted release source", source.read_text())
+            self.assertEqual(verify(trusted), self.version)
+            # Even a matching event/checkout SHA must not substitute the branch for the tag.
+            git("checkout", "--detach", branch)
+            with self.assertRaisesRegex(release_artifacts.VerificationError, "not checked-out"):
+                verify(branch)
+            git("checkout", "--detach", trusted)
+            # Retain protected-main ancestry validation independently of tag matching.
+            git("checkout", "--orphan", "unrelated-main")
+            git("commit", "-m", "unrelated protected main")
+            git("update-ref", "refs/remotes/origin/main", git("rev-parse", "HEAD"))
+            git("checkout", "--detach", trusted)
+            with self.assertRaisesRegex(release_artifacts.VerificationError, "not contained in origin/main"):
+                verify(trusted)
 
     def make_dist(self, parent: Path, suffix: bytes = b"") -> Path:
         directory = parent / "dist"
