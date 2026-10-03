@@ -349,16 +349,26 @@ class ReceiverAdmission(unittest.IsolatedAsyncioTestCase):
             loop.set_exception_handler(previous)
 
     async def test_abort_error_in_handler_finally_releases_admission(self):
-        reader, _ = (await self.idle(1))[0]
-        await self.wait_for(lambda: len(self.receiver.direct_preauth) == 1)
-        raw = next(iter(self.receiver.connections))
-        # The normal close releases the real descriptor; inject an abort error
-        # to verify terminal cleanup still releases admission and task tracking.
-        with patch.object(raw, 'abort', side_effect=OSError('SECRET-abort-error')):
-            for task in self.receiver.tasks:
-                task.cancel()
-            await self.wait_for(lambda: not self.receiver.tasks)
+        entered = asyncio.Event()
+        original_handshake = wire.Secure.handshake
+        async def observed_handshake(channel):
+            entered.set()
+            return await original_handshake(channel)
+        # Admission is reserved before handle starts. Wait for the actual TLS
+        # coroutine so cancellation exercises its finally on every Python version.
+        with patch.object(wire.Secure, 'handshake', new=observed_handshake):
+            reader, _ = (await self.idle(1))[0]
+            await asyncio.wait_for(entered.wait(), .5)
+            raw = next(iter(self.receiver.connections))
+            descriptor = raw.writer.get_extra_info('socket')
+            # The normal close releases the real descriptor; inject an abort
+            # error to verify admission and task cleanup still run afterward.
+            with patch.object(raw, 'abort', side_effect=OSError('SECRET-abort-error')):
+                for task in self.receiver.tasks:
+                    task.cancel()
+                await self.wait_for(lambda: not self.receiver.tasks)
         self.assertEqual(await asyncio.wait_for(reader.read(1), .5), b'')
+        self.assertEqual(descriptor.fileno(), -1)
         self.assertEqual(self.receiver.admission_counters['abortFailed'], 1)
         self.assert_empty()
 
