@@ -201,7 +201,11 @@ class HumanOutput(unittest.TestCase):
         with mock.patch.object(peer, "tailscale_status", return_value={}), \
              mock.patch.object(peer.SshTransport, "execute", return_value=self.listing()), \
              mock.patch.object(peer, "remote_installed_version", return_value=EXTERNAL), \
+             mock.patch.object(peer, "release_version", return_value=(1, 0, 2, 3, 0)), \
              mock.patch.object(peer, "ssh_user_metadata", return_value={}):
+            # This fixture checks display escaping, not version validity. The
+            # ordered updater (#229) rejects malformed versions before display;
+            # stub only its semantic comparison without changing that guard.
             for command in (("list", "--host", "fixture"),
                             ("update", "--check", "--host", "fixture")):
                 with self.subTest(command=command):
