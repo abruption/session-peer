@@ -172,7 +172,7 @@ def invoke_windows_codex(binding, operation, text=None):
     else:
         if not isinstance(text, str) or not text.strip() or len(text.encode()) > 32768 or '\0' in text:
             raise Rejected('invalid_message')
-        args += ['--to', binding['target'], '--message', text, '--no-from', '--no-reply-to']
+        args += ['--to', binding['target'], '--message=' + text, '--no-from', '--no-reply-to']
         if operation == 'resolve':
             args += ['--dry-run']
     try:

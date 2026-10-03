@@ -55,6 +55,33 @@ class WindowsBridge(unittest.TestCase):
             self.assertIn('--no-reply-to', args)
             self.assertFalse(value['consumptionConfirmed'])
 
+    def test_dash_bodies_reach_core_argparse_for_resolve_and_send(self):
+        for text in ('-x', '--help', '- item', '--', '- first\n-- second\n한국어'):
+            for operation in ('resolve', 'send'):
+                def parse_native(argv, **kwargs):
+                    self.assertEqual(argv[:3], [self.binding['codexPython'], '-', 'send'])
+                    self.assertIn('--message=' + text, argv)
+                    args = native.core.build_parser().parse_args(argv[2:])
+                    self.assertEqual(native.core.read_message(args), text)
+                    self.assertTrue(args.no_from)
+                    self.assertTrue(args.no_reply_to)
+                    self.assertEqual(args.dry_run, operation == 'resolve')
+                    return subprocess.CompletedProcess(argv, 0, json.dumps({'ok': True}).encode(), b'')
+                with self.subTest(text=text, operation=operation), \
+                     mock.patch.object(native.subprocess, 'run', side_effect=parse_native) as run:
+                    value = native.invoke_windows_codex(self.binding, operation, text)
+                self.assertTrue(value['ok'])
+                run.assert_called_once()
+
+    def test_utf8_size_boundary_accepts_for_resolve_and_send(self):
+        text = '한' * 10922 + 'ab'
+        self.assertEqual(len(text.encode()), 32768)
+        for operation in ('resolve', 'send'):
+            with self.subTest(operation=operation), \
+                 mock.patch.object(native.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, b'{"ok":true}', b'')) as run:
+                self.assertTrue(native.invoke_windows_codex(self.binding, operation, text)['ok'])
+            self.assertIn('--message=' + text, run.call_args.args[0])
+
     def test_timeout_is_unknown_and_never_retried(self):
         with mock.patch.object(native.subprocess, 'run', side_effect=subprocess.TimeoutExpired('native', 32)) as run:
             result = native.invoke_windows_codex(self.binding, 'send', 'hello')
@@ -69,7 +96,8 @@ class WindowsBridge(unittest.TestCase):
 
     def test_invalid_operations_and_message_fail_before_launch(self):
         with mock.patch.object(native.subprocess, 'run') as run:
-            for operation, text in (('shell', 'hello'), ('send', ''), ('send', 'x\0y')):
+            invalid = (None, '', ' \n', 'x\0y', 'x' * 32769, '한' * 10923)
+            for operation, text in [('shell', 'hello')] + [(op, text) for op in ('resolve', 'send') for text in invalid]:
                 with self.assertRaises(native.Rejected):
                     native.invoke_windows_codex(self.binding, operation, text)
             run.assert_not_called()
