@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { SessionList, type AccountSession } from "./session-list.js";
 import githubMark from "./assets/github-invertocat-white.svg";
 import googleSignIn from "./assets/google-signin-dark-2x.png";
 import "./style.css";
@@ -25,7 +26,7 @@ async function api<T>(
   return res.json() as Promise<T>;
 }
 function safeReturn(value: string | null) {
-  return value && /^\/(device|devices|admin\/metrics)(?:\?[^#]*)?$/.test(value)
+  return value && /^\/(device|devices|sessions|admin\/metrics)(?:\?[^#]*)?$/.test(value)
     ? value
     : "/devices";
 }
@@ -126,6 +127,7 @@ function App() {
           {session && (
             <>
               <a href="/devices">Devices</a>
+              <a href="/sessions">Sessions</a>
               <a href="/device">Authorize</a>
               {admin && <a href="/admin/metrics">Metrics</a>}
               <button
@@ -196,6 +198,8 @@ function App() {
           <Authorize />
         ) : path === "/admin/metrics" ? (
           <Metrics />
+        ) : path === "/sessions" ? (
+          <Sessions />
         ) : (
           <Devices />
         )}
@@ -203,6 +207,48 @@ function App() {
       <footer>
         End-to-end encrypted relay · Only approve devices you recognize.
       </footer>
+    </>
+  );
+}
+function Sessions() {
+  const [sessions, setSessions] = useState<AccountSession[]>();
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const refresh = async () => {
+    try {
+      setSessions((await api<{ sessions: AccountSession[] }>("/api/control/sessions")).sessions);
+      setError("");
+    } catch (e) { setError((e as Error).message); }
+  };
+  useEffect(() => { void refresh(); }, []);
+  const revoke = async (path: string, all = false) => {
+    const confirmation = all
+      ? "Sign out every browser and CLI login, including this browser?"
+      : path.endsWith("revoke-others")
+        ? "Revoke every other browser and CLI login? This browser will stay signed in."
+        : "Revoke this login access? CLI users will need to log in again.";
+    if (!window.confirm(confirmation)) return;
+    setBusy(true);
+    try {
+      await api(path, {});
+      if (all) location.assign("/login");
+      else await refresh();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+  return (
+    <>
+      <h1>Active sessions</h1>
+      <p className="muted">Browser and CLI logins expire 24 hours after sign-in. Activity does not extend them.</p>
+      <p className="warning">Device revocation does not revoke account login access. If a login.json was copied or a device was lost, revoke its session here as well. If unsure, revoke all other sessions.</p>
+      {error && <p role="alert" className="error">{error}</p>}
+      <div className="actions">
+        <button disabled={busy || !sessions} onClick={() => void revoke("/api/control/sessions/revoke-others")}>Revoke other sessions</button>
+        <button disabled={busy || !sessions} onClick={() => void revoke("/api/control/sessions/revoke-all", true)}>Revoke all sessions</button>
+      </div>
+      {!sessions ? (!error && <p>Loading sessions…</p>) : (
+        <SessionList sessions={sessions} busy={busy} revoke={(id) => void revoke(`/api/control/sessions/${encodeURIComponent(id)}/revoke`)} />
+      )}
     </>
   );
 }

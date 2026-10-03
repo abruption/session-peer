@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve, join, extname } from "node:path";
 import type Database from "better-sqlite3";
-import { allowedUser, operatorUser, type Auth } from "./auth.js";
+import { allowedUser, capExistingSessions, operatorUser, type Auth } from "./auth.js";
 import type { Config } from "./config.js";
 import {
   adminMetricDetails,
@@ -113,7 +113,11 @@ export function createApp(
   config: Config,
   webDir: string,
 ) {
+  capExistingSessions(db);
   const rates = new BoundedRateLimiter();
+  // A leaked CLI token must not exhaust the owner's browser revocation budget.
+  // Separate instances also isolate the bounded bucket-capacity limits.
+  const sessionManagementRates = new BoundedRateLimiter();
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
       status,
@@ -130,6 +134,49 @@ export function createApp(
     }
     if (path === "/api/control/config" && request.method === "GET")
       return json({ providers: Object.keys(config.providers) });
+    if (path === "/api/control/sessions" || path.startsWith("/api/control/sessions/")) {
+      assert(request.method === "GET" || request.method === "POST", "method_not_allowed", 405);
+      assert(request.headers.has("cookie") && !request.headers.has("authorization"), "browser_session_required", 401);
+      // Cookie authentication plus Origin/Fetch Metadata checks protects this
+      // browser transport; it does not prove human presence. IDs are not tokens.
+      assert(sameOrigin(request, config.origin), "csrf_rejected", 403);
+      const current = await auth.api.getSession({ headers: request.headers });
+      assert(current && allowedUser(db, config, current.user.id), "authentication_required", 401);
+      assert(sessionManagementRates.check(current.user.id), "rate_limited", 429);
+      if (path === "/api/control/sessions" && request.method === "GET") {
+        const rows = db.prepare(`SELECT id,createdAt,expiresAt,userAgent FROM session
+          WHERE userId=? AND julianday(expiresAt)>julianday('now') ORDER BY createdAt DESC`)
+          .all(current.user.id) as { id: string; createdAt: string; expiresAt: string; userAgent: string | null }[];
+        return json({ sessions: rows.map((row) => ({
+          ...row,
+          userAgent: (row.userAgent ?? "").slice(0, 256),
+          current: row.id === current.session.id,
+        })) });
+      }
+      if (request.method === "POST") {
+        assert(request.headers.get("content-type")?.split(";")[0] === "application/json", "json_required", 415);
+        const text = await request.text();
+        assert(Buffer.byteLength(text) <= MAX_BODY, "body_too_large", 413);
+        let body: unknown;
+        try { body = JSON.parse(text); } catch { throw new ControlError("invalid_json"); }
+        assert(body !== null && typeof body === "object" && !Array.isArray(body) && Object.keys(body).length === 0, "invalid_request");
+        if (path === "/api/control/sessions/revoke-others") {
+          db.prepare("DELETE FROM session WHERE userId=? AND id<>?").run(current.user.id, current.session.id);
+          return json({ ok: true });
+        }
+        if (path === "/api/control/sessions/revoke-all") {
+          db.prepare("DELETE FROM session WHERE userId=?").run(current.user.id);
+          return json({ ok: true });
+        }
+        const revoke = /^\/api\/control\/sessions\/([A-Za-z0-9_-]{1,128})\/revoke$/.exec(path);
+        if (revoke) {
+          const result = db.prepare("DELETE FROM session WHERE userId=? AND id=?").run(current.user.id, revoke[1]);
+          assert(result.changes === 1, "session_not_found", 404);
+          return json({ ok: true });
+        }
+      }
+      return json({ error: "not_found" }, 404);
+    }
     if (path === "/api/control/me" && request.method === "GET") {
       const session = await auth.api.getSession({ headers: request.headers });
       assert(session && allowedUser(db, config, session.user.id), "authentication_required", 401);
@@ -147,6 +194,10 @@ export function createApp(
       return json(adminMetrics(db, config, control.isHealthy()));
     }
     if (path.startsWith("/api/auth/")) {
+      // Better Auth's list-sessions API includes other sessions' bearer tokens.
+      // Use our metadata-only list and ID-based revocation instead.
+      if (["/api/auth/list-sessions", "/api/auth/revoke-session", "/api/auth/revoke-sessions", "/api/auth/revoke-other-sessions"].includes(path.replace(/\/+$/, "")))
+        return json({ error: "not_found" }, 404);
       const mutating = request.method !== "GET" && request.method !== "HEAD";
       const publicDevice = [
         "/api/auth/device/code",
@@ -241,7 +292,17 @@ export function createApp(
         "method_not_allowed",
         405,
       );
-      return auth.handler(request);
+      const response = await auth.handler(request);
+      if (!request.headers.has("authorization")) return response;
+      // The bearer plugin internally signs raw tokens. Some auth endpoints
+      // (including update-user) then emit that signed cookie and set-auth-token.
+      // Do not let a copied CLI bearer acquire cookie-only approval/revocation.
+      const headers = new Headers(response.headers);
+      headers.delete("set-cookie");
+      headers.delete("set-auth-token");
+      return new Response(response.body, {
+        status: response.status, statusText: response.statusText, headers,
+      });
     }
     if (path.startsWith("/api/relay/")) {
       assert(
@@ -307,7 +368,7 @@ export function createApp(
     if (request.method !== "GET" && request.method !== "HEAD")
       return json({ error: "method_not_allowed" }, 405);
     let file: string;
-    if (["/", "/login", "/device", "/devices", "/admin/metrics"].includes(path))
+    if (["/", "/login", "/device", "/devices", "/sessions", "/admin/metrics"].includes(path))
       file = join(webDir, "index.html");
     else if (/^\/assets\/[A-Za-z0-9_.-]+$/.test(path))
       file = join(webDir, path);
