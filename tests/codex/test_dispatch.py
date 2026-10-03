@@ -100,10 +100,61 @@ class Codex(unittest.TestCase):
         self.assertEqual(result["codexHome"], str(self.root.resolve()))
         self.assertTrue(result["submitted"])
         self.assertIs(result["consumptionConfirmed"], False)
-        self.assertEqual(run.call_args.args[0], ["/path with space/codex", "queue", "--thread", THREAD, "--message", message])
+        self.assertEqual(run.call_args.args[0], ["/path with space/codex", "queue", "--thread", THREAD, "--message=" + message])
         self.assertEqual(run.call_args.kwargs["env"]["CODEX_HOME"], str(self.root.resolve()))
         self.assertNotIn("shell", run.call_args.kwargs)
         self.assertEqual(run.call_count, 1)
+
+    def test_dash_bodies_agree_for_dry_run_and_real_send(self):
+        for text in ("-x", "--help", "- item", "--", "- first\n-- second\n한국어"):
+            for dry_run in (True, False):
+                with self.subTest(text=text, dry_run=dry_run), \
+                     mock.patch.object(peer, "codex_executable", return_value="/fixture/codex"), \
+                     mock.patch.object(peer.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "accepted", "")) as run:
+                    argv = ["send", "--to", "codex:" + THREAD, "--codex-home", str(self.root),
+                            "--allow-inactive-codex-home", "--message=" + text,
+                            "--no-from", "--no-reply-to", "--json"]
+                    code, result = self.invoke(*argv, *(["--dry-run"] if dry_run else []))
+                self.assertEqual(code, 0)
+                self.assertTrue(result["ok"])
+                self.assertEqual(result["submitted"], not dry_run)
+                self.assertEqual(result["chars"], len(text))
+                if dry_run:
+                    run.assert_not_called()
+                else:
+                    self.assertEqual(run.call_args.args[0], ["/fixture/codex", "queue", "--thread", THREAD,
+                                                            "--message=" + text])
+
+    def test_header_wrapping_preserves_dash_body(self):
+        identity = {"agent": "codex", "id": OTHER, "host": "fixture@fixture.example"}
+        with mock.patch.object(peer, "sender_identity", return_value=identity), \
+             mock.patch.object(peer, "codex_executable", return_value="/fixture/codex"), \
+             mock.patch.object(peer.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "accepted", "")) as run:
+            code, _ = self.invoke("send", "--to", "codex:" + THREAD, "--codex-home", str(self.root),
+                                  "--allow-inactive-codex-home", "--message=--help", "--no-reply-to", "--json")
+        self.assertEqual(code, 0)
+        value = run.call_args.args[0][-1].removeprefix("--message=")
+        self.assertTrue(value.startswith("From: "), value)
+        self.assertTrue(value.endswith("\n\n--help"), value)
+
+    def test_invalid_bodies_fail_before_queue_for_dry_run_and_real_send(self):
+        cases = (("", "refusing to send an empty message"),
+                 (" \n", "refusing to send an empty message"),
+                 ("x\x00y", "Codex messages cannot contain NUL characters (CLI argument limitation)"),
+                 ("한" * 10923, "Codex message is 32769 UTF-8 bytes; session-peer limit is 32768, including headers"))
+        for text, error in cases:
+            for dry_run in (True, False):
+                with self.subTest(text=text[:10], dry_run=dry_run), \
+                     mock.patch.object(peer, "resolve_codex_home", side_effect=AssertionError("home resolution before body validation")) as resolve, \
+                     mock.patch.object(peer.subprocess, "run") as run:
+                    argv = ["send", "--to", "codex:" + THREAD, "--message=" + text,
+                            "--no-from", "--no-reply-to", "--json"]
+                    code, result = self.invoke(*argv, *(["--dry-run"] if dry_run else []))
+                self.assertEqual(code, 1)
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["error"], error)
+                resolve.assert_not_called()
+                run.assert_not_called()
 
     def test_queue_uses_private_native_home_for_child_only(self):
         self.args.codex_native_home = r"C:\Users\alice\.codex"

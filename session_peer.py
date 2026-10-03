@@ -875,7 +875,8 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
     process_home = getattr(args, "codex_native_home", None) or str(root)
     env = dict(os.environ, CODEX_HOME=process_home)
     try:
-        done = subprocess.run([executable, "queue", "--thread", thread_id, "--message", text],
+        # Keep leading dashes inside the option value, including with --no-from.
+        done = subprocess.run([executable, "queue", "--thread", thread_id, "--message=" + text],
                               env=env, capture_output=True, encoding="utf-8", errors="replace",
                               timeout=CODEX_QUEUE_TIMEOUT)
     except subprocess.TimeoutExpired as exc:
@@ -3189,7 +3190,7 @@ class AgyBridge:
         try:
             # No shell; native stdout/stderr may contain credentials and are discarded.
             done = subprocess.run([str(self.api), 'send-message', '--title=session-peer',
-                                   self.info['id'], text], stdout=subprocess.DEVNULL,
+                                   '--', self.info['id'], text], stdout=subprocess.DEVNULL,
                                   stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, timeout=15)
             result = {**result, 'nativeExitCode': done.returncode}
             if done.returncode == 0:

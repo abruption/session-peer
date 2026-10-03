@@ -229,7 +229,7 @@ class AgyBridge:
         try:
             # No shell; native stdout/stderr may contain credentials and are discarded.
             done = subprocess.run([str(self.api), 'send-message', '--title=session-peer',
-                                   self.info['id'], text], stdout=subprocess.DEVNULL,
+                                   '--', self.info['id'], text], stdout=subprocess.DEVNULL,
                                   stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, timeout=15)
             result = {**result, 'nativeExitCode': done.returncode}
             if done.returncode == 0:
