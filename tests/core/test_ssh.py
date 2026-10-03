@@ -364,6 +364,20 @@ class SshRemoteOutcomes(unittest.TestCase):
             self.assertNotIn("submitted", caught.exception.details)
             run.assert_called_once()
 
+    def test_timeout_decoder_failure_preserves_unknown_without_retry(self):
+        # JSON's C decoder depth limit varies by interpreter; inject its failure
+        # rather than assuming Python's recursionlimit defines that boundary.
+        with mock.patch.object(session_peer.Path, "read_text", return_value="fixture source"), \
+             mock.patch.object(session_peer.subprocess, "run", side_effect=
+                 subprocess.TimeoutExpired(["ssh"], 120, output=b'{"unused":[]}')) as run, \
+             mock.patch.object(session_peer.json, "loads", side_effect=RecursionError), \
+             self.assertRaises(session_peer.CcPeerError) as caught:
+            session_peer.run_remote("user@fixture", ["send"], [])
+        self.assertEqual(caught.exception.details["status"], "unknown")
+        self.assertFalse(caught.exception.details["retryAllowed"])
+        self.assertNotIn("submitted", caught.exception.details)
+        run.assert_called_once()
+
     def test_duplicate_keys_and_non_json_constants_rejected_in_normal_path(self):
         for body in (
             '{"schemaVersion":1,"command":"send","ok":false,"ok":true}',
