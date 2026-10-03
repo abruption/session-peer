@@ -8,6 +8,7 @@ import json
 import os
 import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -349,6 +350,8 @@ class SshRemoteOutcomes(unittest.TestCase):
             valid.replace('"ok":true', '"ok":false,"ok":true'),
             valid.replace('"submitted":true', '"submitted":NaN'),
             '{"ok":true,"submitted":true}',
+            b'\x1c' + valid.encode() + b'\x1c', '\v' + valid + '\v',
+            '\u0085' + valid + '\u0085', '\u2003' + valid + '\u2003',
         ):
             with self.subTest(captured=captured), \
                  mock.patch.object(session_peer.Path, "read_text", return_value="source"), \
@@ -368,6 +371,72 @@ class SshRemoteOutcomes(unittest.TestCase):
         ):
             with self.subTest(body=body), self.assertRaisesRegex(session_peer.CcPeerError, "unexpected output"):
                 self.remote("send", body, "", 0)
+
+    def test_real_process_non_utf8_stderr_cannot_destroy_complete_stdout(self):
+        payload = {"schemaVersion": 1, "command": "send", "ok": True,
+                   "agent": "codex", "queueId": "fixture-한국어", "submitted": True}
+        frame = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+        real_run = subprocess.run
+        script = (
+            "import os, sys\n"
+            "sys.stdin.buffer.read()\n"
+            "sys.stdout.buffer.write(bytes.fromhex(os.environ['FIXTURE_STDOUT_HEX']))\n"
+            "sys.stdout.buffer.flush()\n"
+            "sys.stderr.buffer.write(b'\\xff\\xfePermission denied fixture\\n')\n"
+            "sys.stderr.buffer.flush()\n"
+            "raise SystemExit(int(os.environ['FIXTURE_EXIT']))\n"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            for code in (0, 255):
+                env = {"HOME": temporary, "PATH": os.defpath,
+                       "FIXTURE_STDOUT_HEX": frame.hex(), "FIXTURE_EXIT": str(code)}
+                if "SYSTEMROOT" in os.environ:
+                    env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
+                # Reproduce the exact pre-parser failure of the former text
+                # capture independently, without ever contacting an SSH host.
+                with self.subTest(code=code), self.assertRaises(UnicodeDecodeError):
+                    real_run([sys.executable, "-c", script], input="fixture",
+                             encoding="utf-8", capture_output=True, timeout=5, env=env)
+
+                def fake_ssh(command, **options):
+                    self.assertEqual(command[0], "ssh")
+                    self.assertIsInstance(options["input"], bytes)
+                    self.assertNotIn("encoding", options)
+                    self.assertNotIn("text", options)
+                    return real_run([sys.executable, "-c", script], env=env,
+                                    **{**options, "timeout": 5})
+
+                with self.subTest(code=code), \
+                     mock.patch.object(session_peer.Path, "read_text", return_value="fixture source"), \
+                     mock.patch.object(session_peer.subprocess, "run", side_effect=fake_ssh) as run:
+                    result = session_peer.run_remote("user@fixture", ["send"], [])
+                self.assertEqual(result, {**payload, **self.SSH_INFO})
+                run.assert_called_once()
+
+    def test_real_process_invalid_stdout_is_not_repaired_for_protocol_acceptance(self):
+        real_run = subprocess.run
+        script = (
+            "import sys\n"
+            "sys.stdin.buffer.read()\n"
+            "sys.stdout.buffer.write(b'\\xff{\\\"schemaVersion\\\":1,\\\"command\\\":\\\"send\\\",\\\"ok\\\":true}')\n"
+            "sys.stderr.buffer.write(b'\\xfe diagnostic')\n"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            env = {"HOME": temporary, "PATH": os.defpath}
+            if "SYSTEMROOT" in os.environ:
+                env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
+
+            def fake_ssh(command, **options):
+                return real_run([sys.executable, "-c", script], env=env,
+                                **{**options, "timeout": 5})
+
+            with mock.patch.object(session_peer.Path, "read_text", return_value="fixture source"), \
+                 mock.patch.object(session_peer.subprocess, "run", side_effect=fake_ssh) as run, \
+                 self.assertRaises(session_peer.CcPeerError) as caught:
+                session_peer.run_remote("user@fixture", ["send"], [])
+            self.assertNotIn("submitted", caught.exception.details)
+            self.assertIn("\ufffd diagnostic", str(caught.exception))
+            run.assert_called_once()
 
     def test_non_send_timeouts_keep_the_transport_timeout_behavior(self):
         for operation in ("list", "doctor", "push", "version"):

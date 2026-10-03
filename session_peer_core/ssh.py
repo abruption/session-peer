@@ -130,7 +130,10 @@ def parse_ssh_response(output, argv):
             output = output.decode("utf-8")
         except UnicodeDecodeError:
             return "", None, False, False
-    stdout = output.strip() if isinstance(output, str) else ""
+    # Only JSON's four whitespace characters may surround the document.
+    # str.strip() also removes framing controls such as VT and FS, which must
+    # not convert malformed captured output into a completed outcome.
+    stdout = output.strip(" \t\r\n") if isinstance(output, str) else ""
 
     def object_value(pairs):
         value = {}
@@ -186,7 +189,7 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     command = ["ssh", *ssh_opts, host, remote]
     try:
         completed = subprocess.run(
-            command, input=source, encoding="utf-8", capture_output=True, timeout=120
+            command, input=source.encode("utf-8"), capture_output=True, timeout=120
         )
     except FileNotFoundError as exc:
         raise ssh_failure_error(host, ssh_info, "transport_failed", "ssh not found on PATH") from exc
@@ -213,7 +216,14 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
         raise ssh_failure_error(host, ssh_info, "transport_failed", str(exc)) from exc
 
     stdout, result, parsed_result, valid_result = parse_ssh_response(completed.stdout, argv)
-    detail = completed.stderr.strip() or f"ssh exited {completed.returncode}"
+    # Keep diagnostic decoding independent of protocol decoding. A locale's
+    # stderr bytes must not prevent a complete stdout response reaching its
+    # strict parser. Only diagnostic text may use replacement characters.
+    stderr = completed.stderr
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode("utf-8", errors="replace")
+    stderr = stderr if isinstance(stderr, str) else ""
+    detail = stderr.strip() or f"ssh exited {completed.returncode}"
     # A complete response proves the remote command ran, even if the SSH
     # process later exits 255. Login-shell stderr must not hide submission
     # evidence or turn a remote partial failure into an invitation to resend.
@@ -224,7 +234,7 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     )
     if failure:
         raise ssh_failure_error(host, ssh_info, failure, detail)
-    runtime_output = (stdout + "\n" + completed.stderr).strip().lower()
+    runtime_output = (stdout + "\n" + stderr).strip().lower()
     if not valid_result and (runtime_output == "python"
             or "python was not found" in runtime_output
             or ("python3" in runtime_output and any(marker in runtime_output for marker in (
