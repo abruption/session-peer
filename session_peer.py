@@ -2031,7 +2031,7 @@ def parse_ssh_response(output, argv):
     try:
         result = json.loads(stdout, object_pairs_hook=object_value,
                             parse_constant=constant_value) if stdout else None
-    except ValueError:
+    except (ValueError, RecursionError):
         return stdout, None, False, False
     valid = (
         isinstance(result, dict)
