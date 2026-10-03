@@ -4694,9 +4694,22 @@ def cmd_optional_relay(args):
     return optional_relay().main(args.command, ["--help"] if args.relay_help else args.relay_args)
 
 
-class HumanArgumentParser(argparse.ArgumentParser):
+class MessageArgumentParser(argparse.ArgumentParser):
+    def _get_values(self, action, arg_strings):
+        # Python 3.9 strips '--' even from an already recognized option value.
+        # Preserve only this declared single message value; option recognition
+        # still rejects the ambiguous separated form '--message --'.
+        if (action.dest == "message_option" and "--message" in action.option_strings
+                and action.nargs is None and arg_strings == ["--"]):
+            value = self._get_value(action, arg_strings[0])
+            self._check_value(action, value)
+            return value
+        return super()._get_values(action, arg_strings)
+
+
+class HumanArgumentParser(MessageArgumentParser):
     def error(self, message):
-        # argparse includes untrusted argv in errors before main's handler.
+        # Preserve both the message-value and display-only escaping contracts.
         super().error(human_text(message))
 
 

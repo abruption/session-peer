@@ -85,6 +85,15 @@ The synthetic queue database's `queued_items` count was 0. This establishes
 parser acceptance on 0.159.2; live queue consumption and older versions were
 not exercised. All temporary probe state was disposable.
 
+Python 3.9.6's `argparse.ArgumentParser._get_values` also strips a literal `--`
+from an already recognized single option value: `--message=--` became `[]`.
+The CLI now preserves this exact value only for the declared message option,
+using normal argparse value conversion and validation. Actual Python 3.9.6 and
+3.13.7 regressions verify the named message is the string `--`, all five native
+adapter bodies remain exact, following flags still parse, and ambiguous
+separated `--message --` still fails with usage exit 2. Unrelated option parsing
+retains each Python version's baseline behavior.
+
 ## Windows native relay
 
 Offline tests pass the relay-produced argv through session-peer's actual

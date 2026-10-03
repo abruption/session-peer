@@ -50,25 +50,18 @@ class Protocol(unittest.TestCase):
             self.assertEqual(run.call_args.kwargs['stdout'], subprocess.DEVNULL)
 
     def test_dash_bodies_are_native_positionals(self):
-        # An offline positional parser fixture checks the argv boundary only;
-        # it does not claim native agentapi parser or delivery verification.
-        parser = argparse.ArgumentParser()
-        parser.add_argument('--title')
-        parser.add_argument('recipient_id')
-        parser.add_argument('content')
+        # Assert the exact native argv contract. Python argparse is not agentapi
+        # and treats a second '--' differently across supported Python versions.
+        # Actual native parsing is verified by the opt-in agy_wire_probe fixture.
         for text in ('hello', '-x', '--help', '- item', '--', '- first\n-- second\n한국어'):
             bridge = p.AgyBridge(INFO, Path('/fixture/bin/agentapi'), 2)
-            def parse_native(argv, **kwargs):
-                self.assertEqual(argv[:4], ['/fixture/bin/agentapi', 'send-message', '--title=session-peer', '--'])
-                parsed = parser.parse_args(argv[2:])
-                self.assertEqual(parsed.recipient_id, THREAD)
-                self.assertEqual(parsed.content, text)
-                self.assertEqual(parsed.title, 'session-peer')
-                return argparse.Namespace(returncode=0)
-            with self.subTest(text=text), mock.patch.object(p.subprocess, 'run', side_effect=parse_native) as run:
+            with self.subTest(text=text), \
+                 mock.patch.object(p.subprocess, 'run', return_value=argparse.Namespace(returncode=0)) as run:
                 result = bridge.handle(self.req(text=text))
-            self.assertTrue(result['submitted'])
-            run.assert_called_once()
+                self.assertTrue(result['submitted'])
+                run.assert_called_once()
+                self.assertEqual(run.call_args.args[0], [str(bridge.api), 'send-message',
+                                                        '--title=session-peer', '--', THREAD, text])
 
     def test_timeout_and_nonzero_remain_unknown_without_retry(self):
         for outcome in (subprocess.TimeoutExpired('api', 15), argparse.Namespace(returncode=1)):
@@ -161,7 +154,7 @@ class Adapter(unittest.TestCase):
                 if dry_run:
                     rpc.assert_not_called(); run.assert_not_called()
                 else:
-                    self.assertEqual(run.call_args.args[0], ['/fixture/bin/agentapi', 'send-message',
+                    self.assertEqual(run.call_args.args[0], [str(Path('/fixture/bin/agentapi')), 'send-message',
                                                             '--title=session-peer', '--', THREAD, text])
 
     def test_invalid_bodies_agree_for_dry_run_and_real_send(self):
