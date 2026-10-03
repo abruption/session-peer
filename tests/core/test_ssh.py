@@ -408,9 +408,22 @@ class SshRemoteOutcomes(unittest.TestCase):
                     env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
                 # Reproduce the exact pre-parser failure of the former text
                 # capture independently, without ever contacting an SSH host.
-                with self.subTest(code=code), self.assertRaises(UnicodeDecodeError):
-                    real_run([sys.executable, "-c", script], input="fixture",
-                             encoding="utf-8", capture_output=True, timeout=5, env=env)
+                # Windows communicates through reader threads: decode failure
+                # is sent to excepthook and leaves stderr unavailable, rather
+                # than propagating through run(). Capture and assert the exact
+                # failure instead of assuming POSIX exception delivery.
+                reader_errors = []
+                with self.subTest(code=code), \
+                     mock.patch("threading.excepthook",
+                                side_effect=lambda failure: reader_errors.append(failure.exc_type)):
+                    try:
+                        old = real_run([sys.executable, "-c", script], input="fixture",
+                                       encoding="utf-8", capture_output=True, timeout=5, env=env)
+                    except UnicodeDecodeError:
+                        self.assertEqual(reader_errors, [])
+                    else:
+                        self.assertEqual(reader_errors, [UnicodeDecodeError])
+                        self.assertIsNone(old.stderr)
 
                 def fake_ssh(command, **options):
                     self.assertEqual(command[0], "ssh")
