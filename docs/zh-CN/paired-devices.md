@@ -5,6 +5,8 @@ Claude、Codex 或已注册的 Antigravity 端点。通常的本地/SSH 命令
 保持无外部依赖。这是一个显式的 CLI 工作流；不会安装移动端应用程序、
 NAT 穿透、WireGuard 隧道或自动公开服务。
 
+接收端在设备认证前最多允许 16 条直接连接和 2 条已 attach 的 Relay 连接，与 8 条已认证连接分别管理。TLS 必须在两秒内完成，包含网络和调度延迟。TLS 完成后，没有客户端证书的初始配对连接还有两秒用于完成唯一一次配对请求及响应；已认证请求的期限仍为 45 秒。这些较短的期限也可能拒绝合法的慢速连接。存在 8 个空闲或慢速 TLS 直接套接字时，仍有空间接收已配对设备的直接连接和 Relay 请求。但全部 16 个直接连接认证前名额耗尽时，仍可能拒绝已配对设备的直接连接，两个预留的 Relay 名额也可能饱和；不保证在任意洪水攻击下的可用性。超额套接字或接收端开始关闭后的套接字不会创建处理任务。汇总准入计数器保留拒绝和清理失败数量，不包含身份；显式启用的 `receiver_admission` 事件每分钟最多报告一次固定计数器和允许列表内的原因。不会启用应用程序自动重试。
+
 ## 连接失败诊断与安全的连接重试
 
 `no_authenticated_route` 保留 `retryAllowed:false` 和 `consumptionConfirmed:false`。`routeFailures` 给出每条失败路径最后一次的 `stage`、允许列表中的 `reason` 和 `attempts`。有界的 `attemptHistory` 保留每次尝试的阶段、原因和 `elapsedMs`；HTTP 拒绝还可能包含 `httpStatus`，WebSocket 关闭可能包含 `closeCode`。控制、准入、升级、attach、对端 TLS 和 probe 故障可以区分，但不会记录 URL、凭据、原始异常或消息正文。第二次尝试成功时会有 `setupDegraded:true`、`setupAttempts:2` 和 `setupFailureHistory`，不能算作干净的稳定性测试通过。
