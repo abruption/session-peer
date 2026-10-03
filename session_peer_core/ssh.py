@@ -226,7 +226,8 @@ def push_to_remote(host: str, ssh_opts: list[str], ssh_info: dict | None = None)
 
     Returns the version string reported by the newly installed copy.
     The remote machine needs only python3 and ssh access — no internet,
-    no install.sh.
+    no install.sh. Loss of the SSH connection at publication can leave the
+    commit outcome unknown; never automatically retry such a transfer.
     """
     check_ssh_argument(host, "--host")
     for opt in ssh_opts:
@@ -239,16 +240,82 @@ def push_to_remote(host: str, ssh_opts: list[str], ssh_info: dict | None = None)
 
     ssh_info = ssh_user_metadata(host, ssh_opts) if ssh_info is None else ssh_info
 
-    source_b64 = base64.b64encode(source).decode("ascii")
+    import hashlib
 
+    source_b64 = base64.b64encode(source).decode("ascii")
+    # Python is already required on the destination. Strict, bounded decoding
+    # avoids platform-specific base64 flags and detects even clean truncation.
+    decoder = """import base64, hashlib, sys
+digest = hashlib.sha256()
+size = 0
+with open(sys.argv[1], 'xb') as staged:
+    while True:
+        chunk = sys.stdin.buffer.read(65536)
+        if not chunk:
+            break
+        decoded = base64.b64decode(chunk, validate=True)
+        size += len(decoded)
+        if size > int(sys.argv[3]):
+            raise SystemExit('remote update: transfer exceeds expected size')
+        digest.update(decoded)
+        staged.write(decoded)
+if size != int(sys.argv[3]) or digest.hexdigest() != sys.argv[2]:
+    raise SystemExit('remote update: transfer digest or size mismatch')
+"""
+    publisher = """import os, stat, subprocess, sys
+staged, target, launcher, expected = sys.argv[1:]
+backup = os.path.join(os.path.dirname(staged), 'previous.py')
+previous = os.path.lexists(target)
+if previous:
+    if not stat.S_ISREG(os.lstat(target).st_mode):
+        raise SystemExit('remote update: installed program is not a regular file')
+    os.link(target, backup)
+created = None
+if os.path.lexists(launcher):
+    if not os.path.islink(launcher) or os.path.realpath(launcher) != os.path.realpath(target):
+        raise SystemExit('remote update: launcher belongs to another installation')
+else:
+    os.symlink(target, launcher)
+    created = os.lstat(launcher)
+published = False
+try:
+    os.replace(staged, target)
+    published = True
+    result = subprocess.run([sys.executable, target, '--version'],
+                            capture_output=True, timeout=30)
+    if result.returncode != 0 or result.stdout.strip() != expected.encode('utf-8'):
+        raise RuntimeError('remote update: installed version mismatch')
+except BaseException:
+    if published:
+        if previous:
+            os.replace(backup, target)
+        else:
+            os.unlink(target)
+    if created is not None:
+        current = os.lstat(launcher)
+        if (current.st_dev, current.st_ino) == (created.st_dev, created.st_ino):
+            os.unlink(launcher)
+    raise
+print(expected)
+"""
+    expected_line = f"session-peer {__version__}"
     remote_script = (
-        "set -eu; "
-        'D="$HOME/.local/share/session-peer"; '
-        'mkdir -p "$D" "$HOME/.local/bin"; '
-        'base64 -d > "$D/session_peer.py"; '
-        'chmod +x "$D/session_peer.py"; '
-        'ln -sf "$D/session_peer.py" "$HOME/.local/bin/session-peer"; '
-        'python3 "$D/session_peer.py" --version 2>/dev/null || echo "session-peer unknown"'
+        "set -eu; umask 077; "
+        'D="$HOME/.local/share/session-peer"; B="$HOME/.local/bin"; '
+        'for P in "$HOME/.local" "$HOME/.local/share" "$D" "$B"; do '
+        '[ ! -L "$P" ] || '
+        "{ echo 'remote update: installation directory is a symlink' >&2; exit 1; }; done; "
+        'mkdir -p "$D" "$B"; '
+        'T=$(mktemp -d "$D/.session-peer-update.XXXXXXXX"); '
+        "trap 'rm -rf \"$T\"' EXIT; trap 'exit 1' HUP INT TERM; "
+        f'python3 -c {shlex.quote(decoder)} "$T/session_peer.py" '
+        f"{hashlib.sha256(source).hexdigest()} {len(source)}; "
+        'V=$(python3 "$T/session_peer.py" --version); '
+        f'[ "$V" = {shlex.quote(expected_line)} ] || '
+        "{ echo 'remote update: staged version mismatch' >&2; exit 1; }; "
+        'chmod 755 "$T/session_peer.py"; '
+        f'python3 -c {shlex.quote(publisher)} "$T/session_peer.py" '
+        f'"$D/session_peer.py" "$B/session-peer" {shlex.quote(expected_line)}'
     )
     command = ["ssh", *ssh_opts, host, remote_script]
     try:
@@ -270,6 +337,6 @@ def push_to_remote(host: str, ssh_opts: list[str], ssh_info: dict | None = None)
             raise ssh_failure_error(host, ssh_info, failure, detail)
         raise CcPeerError(f"{host}: {detail}", ssh_info)
 
-    version_line = completed.stdout.strip()
-    parts = version_line.split()
-    return parts[-1] if parts else "unknown"
+    if completed.stdout.strip() != expected_line:
+        raise CcPeerError(f"{host}: installed version did not match {__version__}", ssh_info)
+    return __version__

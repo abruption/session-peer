@@ -11,7 +11,11 @@ def remote_installed_version(host: str, ssh_opts: list[str],
     for opt in ssh_opts:
         check_ssh_argument(opt, "--ssh-opt")
     ssh_info = ssh_user_metadata(host, ssh_opts) if ssh_info is None else ssh_info
-    probe = 'python3 "$HOME/.local/share/session-peer/session_peer.py" --version 2>/dev/null'
+    probe = (
+        'P="$HOME/.local/share/session-peer/session_peer.py"; '
+        'if [ -e "$P" ] || [ -L "$P" ]; then python3 "$P" --version; '
+        "else printf '%s\\n' 'session-peer: not installed'; exit 3; fi"
+    )
     try:
         done = subprocess.run(
             ["ssh", *ssh_opts, host, probe],
@@ -24,11 +28,16 @@ def remote_installed_version(host: str, ssh_opts: list[str],
     except OSError as exc:
         raise ssh_failure_error(host, ssh_info, "transport_failed", str(exc)) from exc
     out = done.stdout.strip()
+    if done.returncode == 3 and out == "session-peer: not installed" and not done.stderr.strip():
+        return None
     detail = done.stderr.strip() or f"ssh exited {done.returncode}"
     failure = classify_ssh_failure(detail, done.returncode) if done.returncode != 0 else None
     if failure:
         raise ssh_failure_error(host, ssh_info, failure, detail)
-    return out.split()[-1] if out.startswith("session-peer") else None
+    match = re.fullmatch(r"session-peer ([^\s]+)", out)
+    if done.returncode != 0 or match is None:
+        raise CcPeerError(f"{host}: installed program did not report a usable version", ssh_info)
+    return match.group(1)
 
 
 def parse_version(text: str) -> tuple[int, ...]:
@@ -478,37 +487,62 @@ def cmd_update(args: argparse.Namespace) -> int:
                 shown_host = display_host(requested_host, host)
                 ssh_info = ssh_user_metadata(requested_host, ssh_opts)
                 there = remote_installed_version(requested_host, ssh_opts, ssh_info)
+                current = release_version(__version__)
+                installed = release_version(there) if there is not None else None
+                if current is None or (there is not None and installed is None):
+                    raise CcPeerError("could not compare the local and remote release versions", ssh_info)
+                outdated = installed is None or installed < current
 
                 if args.check:
                     if there is None:
                         state = "not installed"
-                    elif there == __version__:
+                    elif installed == current:
                         state = "up to date"
+                    elif installed > current:
+                        state = "newer than local client; no downgrade available"
                     else:
                         state = f"{there} → {__version__} available"
                     all_results.append(json_result("update", {
                         **host_metadata(requested_host, host), **ssh_info,
                         "remoteVersion": there, "current": __version__,
-                        "outdated": there != __version__,
+                        "outdated": outdated,
                     }))
                     if not args.json:
                         print(f"{shown_host}: session-peer {there or '(none)'} — {state}")
                     continue
 
-                if there == __version__:
+                if not outdated:
                     all_results.append(json_result("update", {
                         **host_metadata(requested_host, host), **ssh_info,
                         "remoteVersion": there, "current": __version__,
                         "updated": False,
                     }))
                     if not args.json:
-                        print(f"{shown_host} runs session-peer {there} — already current.")
+                        print(f"{shown_host} runs session-peer {there} — already current or newer.")
                     continue
 
                 new_version = push_to_remote(requested_host, ssh_opts, ssh_info)
+                if new_version != __version__:
+                    raise CcPeerError(
+                        f"installed remote version did not match {__version__}", ssh_info
+                    )
+                committed = {**ssh_info, "committed": True,
+                             "installedVersionVerified": new_version}
+                try:
+                    verified = remote_installed_version(requested_host, ssh_opts, ssh_info)
+                except CcPeerError as exc:
+                    raise CcPeerError(str(exc), {
+                        **exc.details, **committed, "verificationStatus": "unknown",
+                    }) from exc
+                if verified != __version__:
+                    raise CcPeerError(
+                        f"installed remote version did not match {__version__}",
+                        {**committed, "verificationStatus": "mismatch", "remoteVersion": verified},
+                    )
                 all_results.append(json_result("update", {
                     **host_metadata(requested_host, host), **ssh_info,
-                    "previous": there, "current": __version__, "updated": True,
+                    "previous": there, "current": __version__,
+                    "remoteVersion": verified, "updated": True,
                 }))
                 if not args.json:
                     prev = there or "(none)"
