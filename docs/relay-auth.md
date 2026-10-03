@@ -51,12 +51,18 @@ CLI login uses BetterAuth `deviceAuthorization()` and `bearer()`:
 Browser cookie sessions have the same absolute 24-hour lifetime. Sign in again
 after expiry. On Control startup, previously sliding sessions are capped at their
 original creation time plus 24 hours, preserving any earlier expiry. Old sessions
-may therefore require immediate sign-in again after upgrading.
+may therefore require immediate sign-in again after upgrading. Malformed dates
+and unsupported numeric timestamps fail closed by deleting the affected session;
+the pinned SQLite adapter stores ISO date strings.
 
 The Sessions page at `/sessions` lists only your active browser and CLI logins,
 with creation/expiry times, available client details and the current-browser label.
 You can revoke one other login, all other logins, or all logins including the current
-browser. Session management requires a same-origin browser cookie session; its
+browser. Session management requires cookie authentication and matching Origin
+or same-origin Fetch Metadata; these checks do not prove human presence. Auth
+responses to requests carrying Authorization never emit signed cookies or the
+`set-auth-token` header, so a copied raw CLI bearer cannot gain cookie-only
+approval or session-management access through an auth endpoint. The Sessions
 API exposes opaque session IDs and metadata, never other sessions' bearer tokens.
 The CLI surfaces `login_expired` when its local login expires or Control rejects
 an expired, revoked or invalid stored login with HTTP 401. Run explicit device

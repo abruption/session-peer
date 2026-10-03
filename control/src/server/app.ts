@@ -134,8 +134,8 @@ export function createApp(
     if (path === "/api/control/sessions" || path.startsWith("/api/control/sessions/")) {
       assert(request.method === "GET" || request.method === "POST", "method_not_allowed", 405);
       assert(request.headers.has("cookie") && !request.headers.has("authorization"), "browser_session_required", 401);
-      // Session metadata and revocations are available only to the account's
-      // same-origin browser. IDs are opaque identifiers, never bearer tokens.
+      // Cookie authentication plus Origin/Fetch Metadata checks protects this
+      // browser transport; it does not prove human presence. IDs are not tokens.
       assert(sameOrigin(request, config.origin), "csrf_rejected", 403);
       const current = await auth.api.getSession({ headers: request.headers });
       assert(current && allowedUser(db, config, current.user.id), "authentication_required", 401);
@@ -289,7 +289,17 @@ export function createApp(
         "method_not_allowed",
         405,
       );
-      return auth.handler(request);
+      const response = await auth.handler(request);
+      if (!request.headers.has("authorization")) return response;
+      // The bearer plugin internally signs raw tokens. Some auth endpoints
+      // (including update-user) then emit that signed cookie and set-auth-token.
+      // Do not let a copied CLI bearer acquire cookie-only approval/revocation.
+      const headers = new Headers(response.headers);
+      headers.delete("set-cookie");
+      headers.delete("set-auth-token");
+      return new Response(response.body, {
+        status: response.status, statusText: response.statusText, headers,
+      });
     }
     if (path.startsWith("/api/relay/")) {
       assert(
