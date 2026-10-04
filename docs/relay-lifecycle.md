@@ -167,6 +167,20 @@ discarding an already issued one-use session. The defaults are safety bounds,
 not a supported-user-count guarantee, and must remain below measured systemd
 memory, task and file-descriptor limits.
 
+Only `/v1/session` admission attempts spend the handshake window. Unknown paths
+return 404, and `/v1/connect` without a valid one-use session returns 401, without
+spending it. Each source is limited to `--client-handshake-rate` (default 5, never
+above `--handshake-rate`), so one source cannot exhaust the global window. A direct
+peer address identifies its source. Behind a loopback reverse proxy, sources are
+distinguished only when `--trusted-proxy-secret-file` is configured and the proxy
+overwrites both `X-Session-Peer-Proxy-Token` and `X-Session-Peer-Client-IP`;
+`X-Forwarded-For` is never trusted. Without that secret, proxied requests share the
+global window, so keep an edge rate rule for `/v1/session`. IPv6 sources are grouped
+by /64. Many distinct sources, or a source limit equal to the global limit, can still
+exhaust the global window; clients behind one shared NAT or non-loopback proxy share
+one source limit. Metrics report the source limit under `sourceCapacity`, leaving the
+schema version 1 `capacity` keys unchanged.
+
 The optional metrics listener binds only to `127.0.0.1` on a separate port. Do
 not reverse-proxy it. The control service reads its fixed, non-identifying schema
 and exposes it only through the existing Authelia-protected operator boundary.
