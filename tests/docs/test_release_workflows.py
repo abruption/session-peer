@@ -4,11 +4,13 @@ from pathlib import Path
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
+import venv
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,6 +20,73 @@ JOB = re.compile(r"^  ([a-z][a-z0-9-]*):\s*$", re.MULTILINE)
 
 
 class ReleaseWorkflows(unittest.TestCase):
+    def installed_runtime_checks(self, name):
+        text = (ROOT / ".github/workflows" / name).read_text()
+        return re.findall(
+            r'^\s*(test "\$\((/tmp/[^\s]+/bin/python) ([^\n]+)\)" = "\$RELEASE_VERSION")$',
+            text, re.MULTILINE)
+
+    def test_release_install_probes_use_isolated_virtualenv_imports_and_exact_cli_versions(self):
+        probes = set()
+        for name, expected in (("prepare-release.yml", 2), ("publish.yml", 4)):
+            text = (ROOT / ".github/workflows" / name).read_text()
+            checks = self.installed_runtime_checks(name)
+            self.assertEqual(len(checks), expected, name)
+            for _, python, arguments in checks:
+                tokens = shlex.split(arguments)
+                self.assertEqual(tokens[:2], ["-I", "-c"], name)
+                probes.add(tokens[2])
+                cli = python.removesuffix("python") + "session-peer"
+                self.assertIn(f'test "$({cli} --version)" = "session-peer $RELEASE_VERSION"', text, name)
+        self.assertEqual(len(probes), 1, "all six release checks must verify the same import contract")
+        for name, expected in (("ci.yml", 1), ("prepare-release.yml", 3), ("publish.yml", 5)):
+            text = (ROOT / ".github/workflows" / name).read_text()
+            probes = re.findall(r"/tmp/[^\s]+/bin/python ([^\n]+)", text)
+            self.assertEqual(len(probes), expected, name)
+            for arguments in probes:
+                self.assertTrue(arguments.startswith("-I -c "), (name, arguments))
+
+    @unittest.skipIf(os.name == "nt", "release checks use POSIX shell")
+    def test_release_install_checks_reject_real_virtualenv_shadowing_from_checkout(self):
+        with tempfile.TemporaryDirectory(prefix="release-installed-import-") as temporary:
+            root = Path(temporary)
+            environment = root / "venv"
+            # This is an import-origin fixture, not a fresh pip/artifact installation.
+            venv.EnvBuilder(with_pip=False, symlinks=True).create(environment)
+            python = str(environment / "bin/python")
+            installed_directory = Path(subprocess.run(
+                [python, "-I", "-c", 'import sysconfig; print(sysconfig.get_path("purelib"))'],
+                cwd=ROOT, check=True, capture_output=True, text=True).stdout.strip())
+            installed = installed_directory / "session_peer.py"
+            version = re.search(r'^__version__ = "([^"]+)"$',
+                                (ROOT / "session_peer.py").read_text(), re.MULTILINE).group(1)
+            installed.write_text('__version__ = "0.0.0"\n')
+            env = {**os.environ, "RELEASE_VERSION": version, "PYTHONPATH": str(ROOT)}
+            old = subprocess.run(
+                [python, "-c", 'import session_peer; print(session_peer.__version__); print(session_peer.__file__)'],
+                cwd=ROOT, env=env, check=True, capture_output=True, text=True)
+            self.assertEqual(old.stdout.splitlines(), [version, str(ROOT / "session_peer.py")])
+            checks = [check for name in ("prepare-release.yml", "publish.yml")
+                      for check in self.installed_runtime_checks(name)]
+            self.assertEqual(len(checks), 6)
+            command, original_python, arguments = checks[0]
+            old_command = command.replace(arguments, "-c 'import session_peer; print(session_peer.__version__)'", 1)
+            old_check = subprocess.run(
+                ["sh", "-c", old_command.replace(original_python, shlex.quote(python), 1)],
+                cwd=ROOT, env=env, capture_output=True, text=True)
+            self.assertEqual(old_check.returncode, 0, old_check.stderr)
+            for mode in ("wrong-version", "installed-version", "outside-site-packages"):
+                if mode == "installed-version":
+                    installed.write_text(f'__version__ = {version!r}\n# matching installed module\n')
+                elif mode == "outside-site-packages":
+                    installed.write_text(f'__version__ = {version!r}\n__file__ = {str(ROOT / "session_peer.py")!r}\n')
+                for command, original_python, _ in checks:
+                    with self.subTest(mode=mode, python=original_python):
+                        done = subprocess.run(
+                            ["sh", "-c", command.replace(original_python, shlex.quote(python), 1)],
+                            cwd=ROOT, env=env, capture_output=True, text=True)
+                        self.assertEqual(done.returncode == 0, mode == "installed-version", done.stderr)
+
     def test_core_matrix_installs_only_the_pinned_source_test_dependency(self):
         requirements = ROOT / ".github/requirements"
         declared = [line for line in (requirements / "test.txt").read_text().splitlines()

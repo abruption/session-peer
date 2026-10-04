@@ -218,7 +218,7 @@ jobs:
           /tmp/session-peer-runtime-audit/bin/pip install '.[relay,mcp]'
       - name: Audit installed Python runtime dependencies
         run: |
-          audit_path=$(/tmp/session-peer-runtime-audit/bin/python -c 'import site; print(site.getsitepackages()[0])')
+          audit_path=$(/tmp/session-peer-runtime-audit/bin/python -I -c 'import site; print(site.getsitepackages()[0])')
           python -m pip_audit --path "$audit_path"
 
   release-gate:
