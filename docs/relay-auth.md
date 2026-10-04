@@ -33,7 +33,10 @@ this wrapper supplies the narrower session restriction.
 
 CLI login uses BetterAuth `deviceAuthorization()` and `bearer()`:
 
-- `POST /api/auth/device/code`, `client_id=session-peer-cli`.
+- `POST /api/auth/device/code`, `client_id=session-peer-cli`. The JSON body may contain
+  only `client_id`; other fields return `invalid_device_request`. Pending codes are
+  capped (503 `device_code_capacity`). Codes expired for more than 15 minutes are
+  pruned during issuance at most once a minute.
 - Open the supplied verification URI; authenticate and check/approve the code.
 - Poll `POST /api/auth/device/token` at the advertised interval (5 seconds).
   The grant is `urn:ietf:params:oauth:grant-type:device_code`.

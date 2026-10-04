@@ -106,6 +106,55 @@ export function createAdminMetricsApp(
     );
   };
 }
+// Device codes are issued without authentication, so issuance must stay bounded.
+export const MAX_PENDING_DEVICE_CODES = 500;
+// Keep recently expired rows briefly so late polls still receive expired_token.
+export const DEVICE_CODE_RETENTION_MS = 15 * 60 * 1000;
+// Pruning writes before BetterAuth's rate limit, so run it at most this often.
+export const DEVICE_CODE_PRUNE_INTERVAL_MS = 60 * 1000;
+async function deviceCodeBody(request: Request): Promise<unknown> {
+  try {
+    return await request.clone().json();
+  } catch {
+    throw new ControlError("invalid_device_request");
+  }
+}
+/**
+ * Single-process issuance gate. Counting stored codes and reserving a slot happen
+ * without an await, so concurrent requests cannot all pass the check before
+ * BetterAuth inserts. A reservation is released only after the handler settles;
+ * until then a just-inserted row is counted twice, which errs toward refusal.
+ */
+export class DeviceCodeGate {
+  private inFlight = 0;
+  private prunedAt = -Infinity;
+  constructor(private db: Database.Database) {}
+  admit(body: unknown, now = Date.now()): () => void {
+    assert(
+      !!body && typeof body === "object" && !Array.isArray(body) &&
+        Object.keys(body).length === 1 &&
+        typeof (body as { client_id?: unknown }).client_id === "string" &&
+        (body as { client_id: string }).client_id.length <= 64,
+      "invalid_device_request",
+    );
+    if (now - this.prunedAt >= DEVICE_CODE_PRUNE_INTERVAL_MS) {
+      this.db.prepare("DELETE FROM deviceCode WHERE expiresAt<=?")
+        .run(new Date(now - DEVICE_CODE_RETENTION_MS).toISOString());
+      this.prunedAt = now;
+    }
+    const pending = this.db.prepare("SELECT COUNT(*) AS n FROM deviceCode WHERE expiresAt>?")
+      .get(new Date(now).toISOString()) as { n: number };
+    assert(pending.n + this.inFlight < MAX_PENDING_DEVICE_CODES, "device_code_capacity", 503);
+    this.inFlight++;
+    let released = false;
+    return () => {
+      if (!released) {
+        released = true;
+        this.inFlight--;
+      }
+    };
+  }
+}
 export function createApp(
   auth: Auth,
   db: Database.Database,
@@ -118,6 +167,7 @@ export function createApp(
   // A leaked CLI token must not exhaust the owner's browser revocation budget.
   // Separate instances also isolate the bounded bucket-capacity limits.
   const sessionManagementRates = new BoundedRateLimiter();
+  const deviceCodes = new DeviceCodeGate(db);
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
       status,
@@ -214,6 +264,10 @@ export function createApp(
         assert(sameOrigin(request, config.origin), "csrf_rejected", 403);
       if (publicDevice && request.headers.has("origin"))
         assert(sameOrigin(request, config.origin), "csrf_rejected", 403);
+      const deviceCodeRequest =
+        path === "/api/auth/device/code" && request.method === "POST"
+          ? { body: await deviceCodeBody(request) }
+          : undefined;
       if (
         [
           "/api/auth/device",
@@ -292,17 +346,21 @@ export function createApp(
         "method_not_allowed",
         405,
       );
-      const response = await auth.handler(request);
-      if (!request.headers.has("authorization")) return response;
-      // The bearer plugin internally signs raw tokens. Some auth endpoints
-      // (including update-user) then emit that signed cookie and set-auth-token.
-      // Do not let a copied CLI bearer acquire cookie-only approval/revocation.
-      const headers = new Headers(response.headers);
-      headers.delete("set-cookie");
-      headers.delete("set-auth-token");
-      return new Response(response.body, {
-        status: response.status, statusText: response.statusText, headers,
-      });
+      // Reserve immediately before the handler so no earlier refusal can leak a slot.
+      const release = deviceCodeRequest && deviceCodes.admit(deviceCodeRequest.body);
+      try {
+        const response = await auth.handler(request);
+        if (!request.headers.has("authorization")) return response;
+        // Keep bearer response credentials from crossing the browser boundary.
+        const headers = new Headers(response.headers);
+        headers.delete("set-cookie");
+        headers.delete("set-auth-token");
+        return new Response(response.body, {
+          status: response.status, statusText: response.statusText, headers,
+        });
+      } finally {
+        release?.();
+      }
     }
     if (path.startsWith("/api/relay/")) {
       assert(
