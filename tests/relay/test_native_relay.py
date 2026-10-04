@@ -62,7 +62,11 @@ class NativeRelay(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         self.listener.cancel();await asyncio.gather(self.listener,return_exceptions=True)
-        self.server.close();await self.server.wait_closed();await self.receiver.close()
+        # Stop accepts, then close receiver-owned channels before awaiting all
+        # clients. Python 3.12+ wait_closed also waits for active connections.
+        self.server.close()
+        await self.receiver.close()
+        await self.server.wait_closed()
         self.relay.close();await self.relay.wait_closed()
         self.inbox.close();await self.inbox.wait_closed()
         self.host.close();self.client.close();self.env.stop();self.temp.cleanup()
@@ -208,6 +212,31 @@ class NativeRelay(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result['ok']);self.assertFalse(result['consumptionConfirmed'])
         result=await self.call('send',{'target':'review','message':'x'*32769})
         self.assertEqual(result['reason'],'invalid_message');self.assertEqual(self.effects,[])
+
+
+class NativeRelayTeardownTests(unittest.IsolatedAsyncioTestCase):
+    async def test_teardown_closes_an_idle_authenticated_direct_channel(self):
+        fixture = NativeRelay('test_direct_native_discovery_and_delivery')
+        await fixture.asyncSetUp()
+        channel = None
+        torn_down = False
+        try:
+            channel = await open_channel(fixture.client, fixture.host.cert,
+                                         fixture.invite['routes'], 'direct')
+            # Establish server-side authentication before leaving recv idle.
+            await channel.send(request(fixture.client, fixture.host.device, 'list'))
+            self.assertTrue((await channel.recv())['ok'])
+            await asyncio.wait_for(fixture.asyncTearDown(), 1)
+            torn_down = True
+            self.assertFalse(fixture.receiver.connections)
+            self.assertFalse(fixture.receiver.tasks)
+        finally:
+            if not torn_down:
+                await fixture.receiver.close()
+            if channel is not None:
+                await channel.close()
+            if not torn_down:
+                await fixture.asyncTearDown()
 
 
 class NativeWorkerFailureTests(unittest.IsolatedAsyncioTestCase):
