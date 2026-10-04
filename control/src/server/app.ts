@@ -13,6 +13,19 @@ import {
 import { ControlError, assert } from "./protocol.js";
 import type { RelayControl } from "./relay-control.js";
 const MAX_BODY = 16384;
+// Exact paths and methods used by the browser UI and first-party device CLI.
+// Unknown, encoded, repeated-slash and trailing-slash paths never reach the
+// upstream router. Its other APIs can return credentials in JSON bodies.
+const AUTH_ROUTES: Readonly<Record<string, { method: string; bearer: boolean }>> = {
+  "/api/auth/get-session": { method: "GET", bearer: true },
+  "/api/auth/sign-out": { method: "POST", bearer: true },
+  "/api/auth/sign-in/social": { method: "POST", bearer: false },
+  "/api/auth/device/code": { method: "POST", bearer: false },
+  "/api/auth/device/token": { method: "POST", bearer: false },
+  "/api/auth/device": { method: "GET", bearer: false },
+  "/api/auth/device/approve": { method: "POST", bearer: false },
+  "/api/auth/device/deny": { method: "POST", bearer: false },
+};
 export class BoundedRateLimiter {
   private readonly buckets = new Map<string, { start: number; count: number }>();
   constructor(
@@ -194,10 +207,16 @@ export function createApp(
       return json(adminMetrics(db, config, control.isHealthy()));
     }
     if (path.startsWith("/api/auth/")) {
-      // Better Auth's list-sessions API includes other sessions' bearer tokens.
-      // Use our metadata-only list and ID-based revocation instead.
-      if (["/api/auth/list-sessions", "/api/auth/revoke-session", "/api/auth/revoke-sessions", "/api/auth/revoke-other-sessions"].includes(path.replace(/\/+$/, "")))
-        return json({ error: "not_found" }, 404);
+      const callbackProvider = /^\/api\/auth\/callback\/(github|google)$/.exec(path)?.[1];
+      const route = Object.hasOwn(AUTH_ROUTES, path) ? AUTH_ROUTES[path]
+        : callbackProvider && Object.hasOwn(config.providers, callbackProvider)
+          ? { method: "GET", bearer: false } : undefined;
+      if (!route) return json({ error: "not_found" }, 404);
+      assert(request.method === route.method, "method_not_allowed", 405);
+      if (request.headers.has("authorization")) {
+        assert(!request.headers.has("cookie") && route.bearer, "browser_session_required", 401);
+        assert(/^Bearer [^\s]+$/.test(request.headers.get("authorization")!), "invalid_bearer", 401);
+      }
       const mutating = request.method !== "GET" && request.method !== "HEAD";
       const publicDevice = [
         "/api/auth/device/code",

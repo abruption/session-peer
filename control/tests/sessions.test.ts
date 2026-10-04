@@ -25,7 +25,7 @@ async function ownerSession() {
 }
 function browser() { return { cookie: f!.cookie, origin: f!.config.origin }; }
 
-it("does not turn a copied bearer into signed browser credentials through Better Auth update-user", async () => {
+it("does not expose unused Better Auth update-user through the public auth router", async () => {
   f = await fixture();
   const headers = { ...f.ownerHeaders, origin: f.config.origin, "content-type": "application/json" };
   // Pin the upstream behavior that made the transport boundary vulnerable.
@@ -59,12 +59,12 @@ it("does not turn a copied bearer into signed browser credentials through Better
   expect(Date.parse(renewed.expiresAt) - Date.parse(renewed.createdAt)).toBeLessThanOrEqual(86400_000);
   expect(Date.parse(renewed.expiresAt)).toBeGreaterThan(Date.parse(row(session.id).expiresAt) + 22 * 3600_000);
   const response = await f.request("/api/auth/update-user", { name: "Synthetic owner again" }, headers);
-  expect(response.status).toBe(200);
+  expect(response.status).toBe(404);
   expect(response.headers.getSetCookie()).toEqual([]);
   expect(response.headers.has("set-auth-token")).toBe(false);
   const cookieResponse = await f.request("/api/auth/update-user", { name: "Cookie owner" }, browser());
-  expect(cookieResponse.status).toBe(200);
-  expect(cookieResponse.headers.getSetCookie()).not.toEqual([]);
+  expect(cookieResponse.status).toBe(404);
+  expect(cookieResponse.headers.getSetCookie()).toEqual([]);
 });
 
 it("fails closed on malformed and numeric legacy dates while capping supported SQLite dates", async () => {
