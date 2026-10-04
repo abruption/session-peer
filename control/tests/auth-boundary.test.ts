@@ -38,7 +38,8 @@ it("dispatches only the required exact auth paths, methods and transports", asyn
   }));
   for (const [path, method, bearer] of routes) {
     const queryPath = path === "/api/auth/device" ? path + "?user_code=" + code.user_code : path;
-    const body = method === "POST" ? { userCode: code.user_code } : undefined;
+    const body = path === "/api/auth/device/code" ? { client_id: "session-peer-cli" }
+      : method === "POST" ? { userCode: code.user_code } : undefined;
     const headers = path === "/api/auth/device/code" || path === "/api/auth/device/token" ? {} : browser;
     handler.mockClear();
     const response = await f.request(queryPath, body, headers, method);
