@@ -120,7 +120,8 @@ jobs:
             --dist dist --version "$RELEASE_VERSION"
           python -m venv /tmp/session-peer-release-wheel
           /tmp/session-peer-release-wheel/bin/pip install --no-deps dist/*.whl
-          test "$(/tmp/session-peer-release-wheel/bin/python -c 'import session_peer; print(session_peer.__version__)')" = "$RELEASE_VERSION"
+          test "$(/tmp/session-peer-release-wheel/bin/python -I -c 'import pathlib, session_peer, sysconfig; pathlib.Path(session_peer.__file__).resolve().relative_to(pathlib.Path(sysconfig.get_path("purelib")).resolve()); print(session_peer.__version__)')" = "$RELEASE_VERSION"
+          test "$(/tmp/session-peer-release-wheel/bin/session-peer --version)" = "session-peer $RELEASE_VERSION"
           /tmp/session-peer-release-wheel/bin/session-peer --help
 
   test-sdist:
@@ -148,7 +149,8 @@ jobs:
             --dist dist --version "$RELEASE_VERSION"
           python -m venv /tmp/session-peer-release-sdist
           /tmp/session-peer-release-sdist/bin/pip install --no-deps dist/*.tar.gz
-          test "$(/tmp/session-peer-release-sdist/bin/python -c 'import session_peer; print(session_peer.__version__)')" = "$RELEASE_VERSION"
+          test "$(/tmp/session-peer-release-sdist/bin/python -I -c 'import pathlib, session_peer, sysconfig; pathlib.Path(session_peer.__file__).resolve().relative_to(pathlib.Path(sysconfig.get_path("purelib")).resolve()); print(session_peer.__version__)')" = "$RELEASE_VERSION"
+          test "$(/tmp/session-peer-release-sdist/bin/session-peer --version)" = "session-peer $RELEASE_VERSION"
           /tmp/session-peer-release-sdist/bin/session-peer --help
 
   dependency-audit:
@@ -174,7 +176,7 @@ jobs:
         run: |
           python -m venv /tmp/session-peer-release-audit
           /tmp/session-peer-release-audit/bin/pip install '.[relay,mcp]'
-          audit_path=$(/tmp/session-peer-release-audit/bin/python -c 'import site; print(site.getsitepackages()[0])')
+          audit_path=$(/tmp/session-peer-release-audit/bin/python -I -c 'import site; print(site.getsitepackages()[0])')
           python -m pip_audit --path "$audit_path"
       - name: Audit Node runtime dependencies
         working-directory: control
