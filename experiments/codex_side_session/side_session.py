@@ -119,7 +119,10 @@ class Rpc:
             if message.get("id") == request_id:
                 if "error" in message:
                     # Never expose provider errors, transcript content or paths.
-                    raise RpcRejected(method, message["error"].get("code"))
+                    error = message["error"]
+                    if not isinstance(error, dict) or type(error.get("code")) is not int:
+                        raise Refused("invalid_rpc_response")
+                    raise RpcRejected(method, error["code"])
                 result = message.get("result")
                 if not isinstance(result, dict):
                     raise Refused("invalid_rpc_response")
