@@ -1,4 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { fixture } from "./fixtures.js";
 
 let f: Awaited<ReturnType<typeof fixture>> | undefined;
@@ -137,4 +139,83 @@ it("preserves the pinned error landing page and query handling without credentia
   expect(f.db.prepare("SELECT * FROM session ORDER BY id").all()).toEqual(sessions);
   // No product flow calls the upstream health endpoint.
   expect((await f.request("/api/auth/ok", undefined, {})).status).toBe(404);
+});
+
+it("uses the actual production error redirect without leaking credentials or changing sessions", () => {
+  // Better Auth reads NODE_ENV during module initialization. Isolate that
+  // branch in a child instead of changing the shared Vitest process environment.
+  const output = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", `
+    import assert from "node:assert/strict";
+    import { resolve } from "node:path";
+    import { fixture } from "./tests/fixtures.ts";
+    import { createApp } from "./src/server/app.ts";
+    globalThis.fetch = async () => { throw new Error("unexpected_fixture_network"); };
+    const f = await fixture({ providers: {
+      google: { clientId: "fixture-google", clientSecret: "fixture-google-secret" },
+      github: { clientId: "fixture-github", clientSecret: "fixture-github-secret" },
+    } });
+    try {
+      assert.equal(process.env.NODE_ENV, "production");
+      assert.equal(f.config.production, true);
+      const syntheticCredentials = ["fixture-provider-access", "fixture-provider-refresh", "fixture-provider-id"];
+      f.db.prepare("UPDATE account SET accessToken=?,refreshToken=?,idToken=? WHERE userId=?")
+        .run(...syntheticCredentials, f.owner.id);
+      const before = ["session", "account"].map(table => f.db.prepare('SELECT * FROM "' + table + '" ORDER BY id').all());
+      const app = createApp(f.auth, f.db, f.control, f.config, resolve("dist/web"));
+      const home = await app(new Request(f.config.origin + "/"));
+      assert.equal(home.status, 200);
+      const homeBody = await home.text();
+      for (const secret of [...syntheticCredentials, f.ownerHeaders.authorization.slice(7), f.otherHeaders.authorization.slice(7)])
+        assert.equal(homeBody.includes(secret), false);
+      const callback = await app(new Request(f.config.origin + "/api/auth/callback/google?code=fixture-code&state=invalid-fixture-state"));
+      assert.equal(callback.status, 302);
+      const errorTarget = new URL(callback.headers.get("location"), f.config.origin);
+      assert.equal(errorTarget.origin, f.config.origin);
+      assert.equal(errorTarget.pathname, "/api/auth/error");
+      assert.equal(errorTarget.searchParams.get("error"), "state_mismatch");
+      const malicious = "<script>alert('fixture')</script>";
+      const cases = [["", "UNKNOWN", null], [errorTarget.search, "state_mismatch", null],
+        ["?error=" + encodeURIComponent(malicious) + "&error_description=" + encodeURIComponent(malicious), "UNKNOWN", malicious]];
+      let redirects = 0;
+      for (const [query, safeCode, description] of cases) {
+        for (const headers of [{}, { cookie: f.cookie }]) {
+          const response = await app(new Request(f.config.origin + "/api/auth/error" + query, { headers }));
+          assert.equal(response.status, 302);
+          const location = response.headers.get("location");
+          const target = new URL(location, f.config.origin);
+          assert.equal(target.origin, f.config.origin);
+          assert.equal(target.pathname, "/");
+          assert.equal(target.searchParams.get("error"), safeCode);
+          assert.equal(target.searchParams.get("error_description"), description);
+          assert.equal(location.includes(malicious), false);
+          if (description) assert.equal(location.includes(new URLSearchParams({ error_description: description }).toString()), true);
+          assert.equal(await response.text(), "");
+          assert.deepEqual(response.headers.getSetCookie(), []);
+          assert.equal(response.headers.has("set-auth-token"), false);
+          assert.equal(response.headers.get("cache-control"), "no-store");
+          assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+          assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+          assert.equal(response.headers.get("content-security-policy").includes("frame-ancestors 'none'"), true);
+          for (const secret of [...syntheticCredentials, f.ownerHeaders.authorization.slice(7), f.otherHeaders.authorization.slice(7)])
+            assert.equal(JSON.stringify([...response.headers]).includes(secret), false);
+          const landing = await app(new Request(target, { headers }));
+          assert.equal(landing.status, 200);
+          // Production serves the same static React shell. The App initializes
+          // its error state to empty and does not display error/error_description
+          // query values; its return link URL-encodes location.search.
+          assert.equal(await landing.text(), homeBody);
+          redirects++;
+        }
+      }
+      assert.equal((await app(new Request(f.config.origin + "/api/auth/error", { headers: f.ownerHeaders }))).status, 401);
+      assert.equal((await app(new Request(f.config.origin + "/api/auth/error", { headers: { cookie: f.cookie, ...f.ownerHeaders } }))).status, 401);
+      assert.deepEqual(["session", "account"].map(table => f.db.prepare('SELECT * FROM "' + table + '" ORDER BY id').all()), before);
+      process.stdout.write(JSON.stringify({ production: true, redirects, landing: "unchanged-react-shell" }));
+    } finally { f.cleanup(); }
+  `], {
+    cwd: fileURLToPath(new URL("../", import.meta.url)),
+    env: { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, NODE_ENV: "production" },
+    encoding: "utf8", timeout: 30_000,
+  });
+  expect(JSON.parse(output)).toEqual({ production: true, redirects: 6, landing: "unchanged-react-shell" });
 });
