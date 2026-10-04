@@ -1,13 +1,99 @@
 # Releasing session-peer
 
-Publishing a GitHub release triggers `.github/workflows/publish.yml`, which builds
-the selected tag and uploads wheel and sdist to PyPI through Trusted Publishing.
+Publishing a GitHub release triggers `.github/workflows/publish.yml`, which verifies
+the locked assets and uploads wheel and sdist to PyPI through Trusted Publishing.
 A draft does not publish. Keep preparation, final approval, publication, and
 verification separate. Protected `main` requires an up-to-date PR and the
 aggregate `release gate`: Linux, macOS and Windows Python matrices; documentation,
 shell, wheel, sdist, standalone, MCP, Relay and control tests; integration tests;
 and Python/Node dependency audits. Live OAuth, agent ACKs and production Relay
 health are separate operator evidence.
+
+## Immutable release preparation (next approved release)
+
+On 2026-10-03 the owner enabled GitHub Immutable Releases and active tag ruleset
+24408525 for `refs/tags/v*`: tag update/deletion are blocked with no bypass;
+creation is allowed. Historical `v1.0.2` remains `immutable: false` with no assets.
+It is not a verified standalone release. Recheck repository settings before every
+release; this change prepares future publication and does not authorize one.
+
+Manually dispatch `prepare-release.yml` as the owner on protected `main` at the
+exact tag commit. It checks source/ref/version/ancestry, reproducibility and package
+installation, then attests and attaches all seven assets to an empty stable draft:
+wheel, sdist, `session_peer.py`, `install.sh`, `SKILL.md`, `SHA256SUMS` and
+`release-provenance.json`. The manifest covers five payloads; signed provenance
+covers the manifest and evidence too. Draft attachment never publishes. Publishing
+locks those files; `publish.yml` verifies and uploads the exact locked packages to
+PyPI, without rebuilding or adding assets. Keep PyPI's workflow/environment mapping.
+
+```bash
+# Set the next approved version; no tag/version is changed by this document.
+release_tag=vX.Y.Z
+git fetch origin main --tags
+release_commit=$(git rev-parse origin/main)
+git tag "$release_tag" "$release_commit"
+git push origin "$release_tag"
+gh release create "$release_tag" --repo abruption/session-peer \
+  --target "$release_commit" --title "session-peer $release_tag" \
+  --notes-file "docs/releases/$release_tag.md" --draft --latest
+gh workflow run prepare-release.yml --repo abruption/session-peer \
+  --ref main -f tag="$release_tag"
+# Review successful preparation, the seven draft assets, and their attestations.
+# Obtain final approval before the separate publication command:
+gh release edit "$release_tag" --repo abruption/session-peer \
+  --draft=false --prerelease=false --latest
+```
+
+Verified standalone installation/update requires a recent GitHub CLI supporting
+`gh attestation verify`, including signer workflow, source ref/digest and hosted
+runner policy. The installer defaults to the verified latest immutable release;
+`--local-source` explicitly trusts adjacent source and `--main` explicitly opts in
+to unverified development code. There is no automatic fallback for old releases or
+missing attestations. Use pipx/uv/pip until a verified release exists. To authenticate
+the installer before executing it (requires a lightweight version tag):
+
+```bash
+set -eu
+repo=abruption/session-peer
+tag=$(gh api "repos/$repo/releases/latest" --jq \
+  'if .immutable == true and .draft == false and .prerelease == false then .tag_name else error("no immutable stable release") end')
+commit=$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object | select(.type == "commit") | .sha')
+case "$commit" in ????????* ) ;; * ) echo "expected a lightweight release tag" >&2; exit 1 ;; esac
+staging=$(mktemp -d)
+trap 'rm -f "$staging/install.sh"; rmdir "$staging"' EXIT
+curl --fail --location --proto '=https' --proto-redir '=https' \
+  --max-filesize 262144 --max-time 30 \
+  "https://github.com/$repo/releases/download/$tag/install.sh" -o "$staging/install.sh"
+gh attestation verify "$staging/install.sh" --repo "$repo" \
+  --signer-workflow "$repo/.github/workflows/prepare-release.yml" \
+  --source-ref refs/heads/main --source-digest "$commit" \
+  --cert-oidc-issuer https://token.actions.githubusercontent.com \
+  --deny-self-hosted-runners --format json
+sh "$staging/install.sh"
+```
+
+The tested GitHub CLI baseline is 2.102.0; the earliest version supporting every
+policy flag has not been established. Online attestation lookup requires authenticated
+gh (`gh auth login` or `GH_TOKEN`); the installer needs repository/attestation read
+access, not publication permission. See the [GitHub CLI verifier source](https://github.com/cli/cli/blob/v2.102.0/pkg/cmd/attestation/verify/verify.go).
+These local fixtures establish policy/order/error behavior, not live signature acceptance.
+
+GitHub and PyPI publication are separate irreversible steps. Dependency audits remain
+mandatory both during preparation and again before PyPI upload. A newly disclosed CVE
+between those checks can leave a locked public GitHub release without its PyPI version.
+Preparation-time audit success is not current audit evidence. Treat publication as
+incomplete until the publication workflow and PyPI verification succeed; retain both
+run records and exact assets, diagnose the failed gate, and fix forward with a reviewed
+new version when necessary. No audit bypass is authorized by this procedure; changing
+the audit policy requires a separate owner decision.
+
+Downloads are capped (standalone 8 MiB; support 256 KiB; metadata 1 MiB).
+Authenticated manifest/provenance, exact tag/version and a successful staged
+`--version` are required before replacement. The installer verifies on the sender
+before SSH deployment; offline destinations need Python only. Existing files remain
+untouched on verification failure. The following v1.0.2 procedure is historical;
+use the preparation workflow above for future releases.
+
 
 ## v1.0.0 evidence and v1.0.2 maintenance gate
 

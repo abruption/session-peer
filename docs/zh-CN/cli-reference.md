@@ -92,6 +92,8 @@ npx -y skills@latest add abruption/session-peer-skill \
 <a id="installsh"></a>
 ### install.sh
 
+验证独立安装需要支持证明验证的近期GitHub CLI。验证不可变发行发布前请使用pipx/uv/pip；历史v1.0.2没有经过验证的独立资产。执行下载代码前按[引导步骤](../../RELEASING.zh-CN.md)认证安装程序。以下命令假定已有可信安装程序检出，默认仍下载最新验证发行。本地文件需要明确 `--local-source`，未经验证的开发main需要明确 `--main`。
+
 一步安装命令和技能。适用于隔离环境主机或通过 SSH 远程部署：
 
 ```bash
@@ -104,15 +106,15 @@ git clone https://github.com/abruption/session-peer && cd session-peer
 
 这会将 `session_peer.py` 放置在 `~/.local/share/session-peer/` 中，将 [session-peer 技能](https://github.com/abruption/session-peer-skill/blob/main/session-peer/SKILL.md)的兼容副本安装在 `~/.claude/skills/session-peer/` 和 `~/.agents/skills/session-peer/` 中，并建立链接 `~/.local/bin/session-peer`。由其他管理器安装的技能、符号链接及现有 cc-peer 文件均会保留。`./install.sh --uninstall [--host ...]` 只移除安装器拥有的文件；没有所有权标记的旧技能会保留。
 
-`session-peer update` 会从最新的 GitHub Release 刷新独立程序。`./install.sh --host <host>` 通过 SSH 推送当前检出版本的程序和技能。当已安装版本不同或不存在时，`session-peer update --host <host>` 仅推送程序；添加 `--check` 仅报告而不作任何更改。有关包管理器安装和远程限制，请参阅[更新](#updating)。
+`session-peer update` 会从最新的 GitHub Release 刷新独立程序。`./install.sh --host <host>` 验证最新发行并通过SSH推送其程序和技能。当已安装版本不同或不存在时，`session-peer update --host <host>` 仅推送程序；添加 `--check` 仅报告而不作任何更改。有关包管理器安装和远程限制，请参阅[更新](#updating)。
 
 **远程安装直接通过 SSH 连接本身推送文件**，因此目标端无需互联网访问权限。安装独立文件需要 `python3` 和 SSH 访问权限。收发消息还需要目标端上存在所选代理的原生收件箱或队列。
 
-或者完全跳过安装程序，仅复制单个文件：
+对于明确信任的本地开发源码：
 
 ```bash
-curl -O https://raw.githubusercontent.com/abruption/session-peer/main/session_peer.py
-chmod +x session_peer.py
+# Explicitly trust reviewed local source for development only.
+./install.sh --local-source
 ```
 
 <a id="the-skill"></a>

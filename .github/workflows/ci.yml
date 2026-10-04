@@ -60,6 +60,8 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
+      - name: Install pinned test-only source verification dependency
+        run: python -m pip install --requirement .github/requirements/test.txt
       - name: Compile
         run: python -m compileall -q cc_peer.py session_peer.py tests
       - name: Generated standalone is current
@@ -131,8 +133,10 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.13'
-      - name: Fresh install
-        run: ./install.sh
+      - name: Fresh install from the trusted candidate checkout
+        # This tests installer mechanics, not published release attestation.
+        # The production default still requires verified immutable Latest assets.
+        run: ./install.sh --local-source
       - name: Verify installation
         run: |
           test -f "$HOME/.local/share/session-peer/session_peer.py"
@@ -140,10 +144,10 @@ jobs:
           test -f "$HOME/.claude/skills/session-peer/SKILL.md"
           test -f "$HOME/.agents/skills/session-peer/SKILL.md"
           "$HOME/.local/bin/session-peer" --version
-      - name: Re-run upgrades existing install
+      - name: Re-run the trusted candidate installer upgrades existing install
         run: |
           sed -i 's/__version__ = .*/__version__ = "0.0.1"/' "$HOME/.local/share/session-peer/session_peer.py"
-          ./install.sh
+          ./install.sh --local-source
           version=$("$HOME/.local/bin/session-peer" --version)
           echo "$version"
           echo "$version" | grep -qvF "0.0.1"
@@ -214,7 +218,7 @@ jobs:
           /tmp/session-peer-runtime-audit/bin/pip install '.[relay,mcp]'
       - name: Audit installed Python runtime dependencies
         run: |
-          audit_path=$(/tmp/session-peer-runtime-audit/bin/python -c 'import site; print(site.getsitepackages()[0])')
+          audit_path=$(/tmp/session-peer-runtime-audit/bin/python -I -c 'import site; print(site.getsitepackages()[0])')
           python -m pip_audit --path "$audit_path"
 
   release-gate:

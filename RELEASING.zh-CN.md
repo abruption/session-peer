@@ -1,6 +1,80 @@
 # 发布 session-peer
 
-公开 GitHub Release 会触发 `.github/workflows/publish.yml`，构建指定标签的 wheel 和 sdist，并通过 Trusted Publishing 上传 PyPI。草稿不会发布。请分开准备、最终批准、公开和验证。受保护的 `main` 需要最新 PR 以及覆盖各平台 Python、文档、Shell、软件包、MCP、Relay、control、集成测试和依赖审计的 `release gate`。实际 OAuth、代理 ACK 和生产 Relay 状态是独立的运维证据。
+公开 GitHub Release 会触发 `.github/workflows/publish.yml`，验证锁定资产，并将 wheel 和 sdist 通过 Trusted Publishing 上传 PyPI。草稿不会发布。请分开准备、最终批准、公开和验证。受保护的 `main` 需要最新 PR 以及覆盖各平台 Python、文档、Shell、软件包、MCP、Relay、control、集成测试和依赖审计的 `release gate`。实际 OAuth、代理 ACK 和生产 Relay 状态是独立的运维证据。
+
+## 不可变发行准备（下一个获批发行）
+
+2026-10-03所有者启用了GitHub Immutable Releases和针对 `refs/tags/v*` 的活动标签规则
+24408525，禁止更新和删除且无绕过，允许创建。历史 `v1.0.2` 仍无资产且为
+`immutable: false`，不是经过验证的独立发行。每次发行前重新检查设置。
+本变更仅准备未来发布，不授权发布。
+
+所有者在受保护 `main` 的准确标签提交上手动运行 `prepare-release.yml`。
+检查源码、引用、版本、祖先、可重现构建和包安装后，在空稳定草稿中证明并附加七个资产：
+wheel、sdist、`session_peer.py`、`install.sh`、`SKILL.md`、`SHA256SUMS` 和
+`release-provenance.json`。清单覆盖五个载荷，签名证明也覆盖清单和证据。
+附加不会发布。发布会锁定文件；`publish.yml` 验证并上传准确锁定的包到PyPI，
+不重新构建或添加资产。保留PyPI工作流和环境映射。
+
+```bash
+# Set the next approved version; no tag/version is changed by this document.
+release_tag=vX.Y.Z
+git fetch origin main --tags
+release_commit=$(git rev-parse origin/main)
+git tag "$release_tag" "$release_commit"
+git push origin "$release_tag"
+gh release create "$release_tag" --repo abruption/session-peer \
+  --target "$release_commit" --title "session-peer $release_tag" \
+  --notes-file "docs/releases/$release_tag.md" --draft --latest
+gh workflow run prepare-release.yml --repo abruption/session-peer \
+  --ref main -f tag="$release_tag"
+# Review successful preparation, the seven draft assets, and their attestations.
+# Obtain final approval before the separate publication command:
+gh release edit "$release_tag" --repo abruption/session-peer \
+  --draft=false --prerelease=false --latest
+```
+
+验证独立安装和更新需要近期GitHub CLI的 `gh attestation verify`，支持签名工作流、
+源码引用和摘要以及托管运行器策略。默认安装经过验证的最新不可变发行。
+`--local-source` 明确信任相邻源码，`--main` 明确选择未经验证的开发代码。
+旧发行或缺少证明时不会自动回退。验证发行发布前请用pipx/uv/pip。
+执行安装程序前使用以下命令认证（需要轻量版本标签）。
+
+```bash
+set -eu
+repo=abruption/session-peer
+tag=$(gh api "repos/$repo/releases/latest" --jq \
+  'if .immutable == true and .draft == false and .prerelease == false then .tag_name else error("no immutable stable release") end')
+commit=$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object | select(.type == "commit") | .sha')
+case "$commit" in ????????* ) ;; * ) echo "expected a lightweight release tag" >&2; exit 1 ;; esac
+staging=$(mktemp -d)
+trap 'rm -f "$staging/install.sh"; rmdir "$staging"' EXIT
+curl --fail --location --proto '=https' --proto-redir '=https' \
+  --max-filesize 262144 --max-time 30 \
+  "https://github.com/$repo/releases/download/$tag/install.sh" -o "$staging/install.sh"
+gh attestation verify "$staging/install.sh" --repo "$repo" \
+  --signer-workflow "$repo/.github/workflows/prepare-release.yml" \
+  --source-ref refs/heads/main --source-digest "$commit" \
+  --cert-oidc-issuer https://token.actions.githubusercontent.com \
+  --deny-self-hosted-runners --format json
+sh "$staging/install.sh"
+```
+
+已确认的GitHub CLI基准版本为2.102.0，尚未确定支持所有策略参数的最早版本。
+在线证明查询需要已认证的gh（`gh auth login` 或 `GH_TOKEN`）；安装程序仅需仓库和
+证明读取权限，不需要发布权限。参见[GitHub CLI验证器源码](https://github.com/cli/cli/blob/v2.102.0/pkg/cmd/attestation/verify/verify.go)。
+本地fixture仅验证策略、顺序和错误行为，不证明实际签名接受。
+
+GitHub与PyPI发布是分别不可逆的两个步骤。准备阶段与PyPI上传前均保留强制依赖审计。
+两次审计之间披露的新CVE可能导致仅有锁定的公开GitHub发行，而没有对应PyPI版本。
+准备时的审计成功不是当前审计证据。发布工作流和PyPI验证成功之前应视为未完成，
+保留两次执行记录和准确资产，诊断失败条件，必要时通过已审查的新版本向前修复。
+本流程不授权绕过审计；修改审计策略需要所有者另行决定。
+
+上限为独立程序8 MiB、支持资产256 KiB、元数据1 MiB。替换前必须通过认证的清单和证明、
+准确标签和版本、暂存文件的 `--version` 检查。SSH部署前在发送端验证，离线目标仅需Python。
+验证失败保留已有文件。下面v1.0.2步骤为历史记录；未来发行使用上述准备工作流。
+
 
 ## v1.0.0 证据与 v1.0.2 维护条件
 

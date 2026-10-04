@@ -135,6 +135,8 @@ npx -y skills@latest add abruption/session-peer-skill \
 <a id="installsh"></a>
 ### install.sh
 
+検証済み単体インストールには証明検証に対応する最新GitHub CLIが必要です。検証済み不変リリースの公開まではpipx/uv/pipを使ってください。既存v1.0.2には検証済み単体資産がありません。ダウンロードしたコードの実行前に[ブートストラップ手順](../../RELEASING.ja.md)でインストーラーを認証してください。以下は既に信頼したチェックアウトが前提で、既定では最新検証済みリリースを取得します。ローカルファイルには明示的な `--local-source`、未検証開発mainには `--main` が必要です。
+
 コマンドとスキルの両方をワンステップでインストールします。エアギャップ環境の
 ホストや、SSH 経由でのリモートデプロイに使用します:
 
@@ -153,7 +155,7 @@ git clone https://github.com/abruption/session-peer && cd session-peer
 所有するファイルのみを削除し、所有権マーカーのない既存スキルは残します。
 
 `session-peer update` は、最新の GitHub リリースからスタンドアロンプログラムを更新します。
-`./install.sh --host <host>` は、このチェックアウトのプログラムとスキルを SSH 経由でプッシュします。
+`./install.sh --host <host>` は最新リリースを検証し、そのプログラムとスキルをSSHで転送します。
 `session-peer update --host <host>` は、インストールされているバージョンが異なる場合
 または存在しない場合にのみプログラムをプッシュします。変更を加えずに報告するには `--check` を追加します。
 パッケージ管理されたインストールおよびリモートの制限事項については、[更新](#updating)を参照してください。
@@ -163,11 +165,11 @@ git clone https://github.com/abruption/session-peer && cd session-peer
 アクセスが必要です。メッセージングには、送信先に選択したエージェントのネイティブな受信トレイまたはキューも
 必要です。
 
-あるいは、インストーラーを完全にスキップして、1つのファイルだけをコピーすることもできます:
+明示的に信頼したローカル開発ソースの場合:
 
 ```bash
-curl -O https://raw.githubusercontent.com/abruption/session-peer/main/session_peer.py
-chmod +x session_peer.py
+# Explicitly trust reviewed local source for development only.
+./install.sh --local-source
 ```
 
 <a id="the-skill"></a>

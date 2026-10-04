@@ -1,26 +1,36 @@
-name: publish to PyPI
+name: prepare immutable release draft
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag at the current protected main commit
+        required: true
+        type: string
 
 # Grant each job only what it needs. PyPI authentication remains OIDC-only.
 permissions: {}
 
+# Serialize the empty-draft check and attachment for each immutable tag.
+concurrency:
+  group: prepare-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
 jobs:
   build:
-    name: verify already locked release artifacts
+    name: build and attest release artifacts
     runs-on: ubuntu-latest
     permissions:
-      attestations: read
+      attestations: write
       contents: read
+      id-token: write
     outputs:
       version: ${{ steps.source.outputs.version }}
     steps:
-      - name: Require owner publication (fail rather than silently skip)
+      - name: Require the repository owner and protected main
         run: |
-          if [ "$GITHUB_REPOSITORY" != abruption/session-peer ] || [ "$GITHUB_ACTOR" != "$GITHUB_REPOSITORY_OWNER" ]; then
-            echo '::error::Release publication requires the repository owner.'
+          if [ "$GITHUB_REPOSITORY" != abruption/session-peer ] || [ "$GITHUB_ACTOR" != "$GITHUB_REPOSITORY_OWNER" ] || [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo '::error::Release preparation requires the repository owner on protected main.'
             exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -39,30 +49,51 @@ jobs:
       - name: Verify release tag, target, commit, and protected-main ancestry
         id: source
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-          RELEASE_TARGET: ${{ github.event.release.target_commitish }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TARGET: ${{ 'main' }}
           RELEASE_SHA: ${{ github.sha }}
         run: |
           version=$(python .github/scripts/release_artifacts.py verify-source \
             --tag "$RELEASE_TAG" --target "$RELEASE_TARGET" --expected-sha "$RELEASE_SHA")
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - name: Download the exact immutable attested release assets (never rebuild or mutate)
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+      - name: Build twice from the exact release source
         run: |
-          # The API check in this verifier fails on nonimmutable releases even
-          # when the event payload omits the immutable field.
-          python .github/scripts/download_release.py --tag "$RELEASE_TAG" --expected-sha "$GITHUB_SHA" --output dist
+          SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
+          export SOURCE_DATE_EPOCH
+          python -m build --outdir dist
+          python -m build --outdir rebuilt
+          cp session_peer.py install.sh dist/
+          cp skills/session-peer/SKILL.md dist/SKILL.md
           python .github/scripts/release_artifacts.py verify-standalone --dist dist
-          python .github/scripts/release_artifacts.py verify-manifest --dist dist --version "${{ steps.source.outputs.version }}"
-      - name: Preserve verified publisher inputs
+      - name: Verify exact archive contents
+        env:
+          SESSION_PEER_DIST_DIR: dist
+        run: python -m unittest tests.distribution.test_distribution_contents -v
+      - name: Require reproducible artifacts and write release evidence
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+        run: |
+          python .github/scripts/release_artifacts.py compare \
+            --first dist --second rebuilt --version "$RELEASE_VERSION"
+          python .github/scripts/release_artifacts.py verify-artifacts \
+            --dist dist --version "$RELEASE_VERSION" --write-manifest
+          python .github/scripts/release_artifacts.py write-provenance \
+            --dist dist --version "$RELEASE_VERSION" \
+            --repository "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" \
+            --tag "$RELEASE_TAG" --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" --workflow-ref "$GITHUB_WORKFLOW_REF"
+      - name: Upload immutable release candidates
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-dist-${{ github.event.release.tag_name }}
+          name: release-dist-${{ inputs.tag }}
           path: dist/
           if-no-files-found: error
           retention-days: 90
+      - name: Record GitHub build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: 'dist/*'
 
   test-wheel:
     name: install release wheel
@@ -79,7 +110,7 @@ jobs:
           python-version: '3.13'
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: release-dist-${{ github.event.release.tag_name }}
+          name: release-dist-${{ inputs.tag }}
           path: dist/
       - name: Verify and install only the wheel
         env:
@@ -108,7 +139,7 @@ jobs:
           python-version: '3.13'
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: release-dist-${{ github.event.release.tag_name }}
+          name: release-dist-${{ inputs.tag }}
           path: dist/
       - name: Verify and install only the sdist
         env:
@@ -153,91 +184,37 @@ jobs:
           npm ci
           npm audit --omit=dev
 
-  publish:
-    name: publish with PyPI Trusted Publishing
+  attach-draft:
+    name: attach all verified assets before owner publication
     needs: [build, test-wheel, test-sdist, dependency-audit]
     runs-on: ubuntu-latest
-    environment: pypi
     permissions:
-      contents: read
-      id-token: write
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: '3.13'
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: release-dist-${{ github.event.release.tag_name }}
+          name: release-dist-${{ inputs.tag }}
           path: dist/
-      - name: Reverify the exact files handed to the publisher
-        env:
-          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+      - name: Require an empty draft targeted at exact main SHA
         run: |
-          python .github/scripts/release_artifacts.py verify-manifest --dist dist --version "$RELEASE_VERSION"
-          mkdir publish
-          cp dist/*.whl dist/*.tar.gz publish/
-          python .github/scripts/release_artifacts.py compare \
-            --first dist --second publish --version "$RELEASE_VERSION"
-      - name: Publish immutable files and PEP 740 attestations
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
-        with:
-          attestations: true
-          packages-dir: publish/
-          skip-existing: false
-          verify-metadata: true
-
-  verify-pypi:
-    name: verify published PyPI artifacts
-    needs: [build, publish]
-    if: ${{ needs.publish.result == 'success' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: '3.13'
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: release-dist-${{ github.event.release.tag_name }}
-          path: expected/
-      - name: Download and match the PyPI file set and hashes
-        env:
-          RELEASE_VERSION: ${{ needs.build.outputs.version }}
-        run: |
-          python .github/scripts/release_artifacts.py download-pypi \
-            --expected expected --output pypi --version "$RELEASE_VERSION"
-          python .github/scripts/release_artifacts.py compare \
-            --first expected --second pypi --version "$RELEASE_VERSION"
-      - name: Independently install the downloaded wheel and sdist
-        env:
-          RELEASE_VERSION: ${{ needs.build.outputs.version }}
-        run: |
-          python -m venv /tmp/session-peer-pypi-wheel
-          /tmp/session-peer-pypi-wheel/bin/pip install --no-deps pypi/*.whl
-          test "$(/tmp/session-peer-pypi-wheel/bin/python -I -c 'import pathlib, session_peer, sysconfig; pathlib.Path(session_peer.__file__).resolve().relative_to(pathlib.Path(sysconfig.get_path("purelib")).resolve()); print(session_peer.__version__)')" = "$RELEASE_VERSION"
-          test "$(/tmp/session-peer-pypi-wheel/bin/session-peer --version)" = "session-peer $RELEASE_VERSION"
-          /tmp/session-peer-pypi-wheel/bin/session-peer --help
-          python -m venv /tmp/session-peer-pypi-sdist
-          /tmp/session-peer-pypi-sdist/bin/pip install --no-deps pypi/*.tar.gz
-          test "$(/tmp/session-peer-pypi-sdist/bin/python -I -c 'import pathlib, session_peer, sysconfig; pathlib.Path(session_peer.__file__).resolve().relative_to(pathlib.Path(sysconfig.get_path("purelib")).resolve()); print(session_peer.__version__)')" = "$RELEASE_VERSION"
-          test "$(/tmp/session-peer-pypi-sdist/bin/session-peer --version)" = "session-peer $RELEASE_VERSION"
-          /tmp/session-peer-pypi-sdist/bin/session-peer --help
-      - name: Preserve post-publication verification evidence
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: pypi-verification-${{ github.event.release.tag_name }}
-          path: |
-            expected/SHA256SUMS
-            expected/release-provenance.json
-            pypi/*.whl
-            pypi/*.tar.gz
-          if-no-files-found: warn
-          retention-days: 90
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isPrerelease,tagName,targetCommitish,assets > draft.json
+          python - <<'PY'
+          import json, os
+          release = json.load(open('draft.json'))
+          checks = [
+              (release.get('isDraft') is True, 'release is not a draft'),
+              (type(release.get('isPrerelease')) is bool, 'release status is missing'),
+              (release.get('tagName') == os.environ['RELEASE_TAG'], 'draft tag differs from input'),
+              (release.get('targetCommitish') == os.environ['GITHUB_SHA'], 'draft target differs from exact main SHA'),
+              (release.get('assets') == [], 'draft already has assets or asset metadata is missing; never overwrite candidates'),
+          ]
+          for valid, message in checks:
+              if not valid:
+                  raise SystemExit(message)
+          PY
+      - name: Attach candidates without publishing or overwriting
+        run: gh release upload "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY"
