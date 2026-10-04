@@ -322,6 +322,11 @@ it("pins the synthetic Google credential-to-session baseline and closes both JSO
     .get() as { userId: string };
   const copiedSession = f!.db.prepare("SELECT id,token FROM session WHERE userId=?").get(account.userId) as
     { id: string; token: string };
+  // Deliberate conditional fixture: the original CLI session is 23 hours old,
+  // while mocked Google supplies a currently valid 5-minute ID token and a
+  // usable refresh grant. This does not assert that Google always provides a
+  // refresh token or that an ID token remains valid for the CLI's 24 hours.
+  // The pinned verifier still enforces its 1-hour maximum ID-token age.
   f!.db.prepare("UPDATE session SET createdAt=?,updatedAt=?,expiresAt=? WHERE id=?").run(
     new Date(Date.now() - 23 * 3600_000).toISOString(),
     new Date(Date.now() - 23 * 3600_000).toISOString(),
