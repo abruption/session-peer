@@ -40,6 +40,26 @@ class Install(unittest.TestCase):
             self.assertEqual(program.read_bytes(), b"existing program")
             self.assertEqual(list(staging.iterdir()), [])
 
+    def test_host_is_validated_before_splitting_or_running_ssh(self):
+        repo = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fake_bin = root / 'bin'
+            fake_bin.mkdir()
+            marker = root / 'ssh-ran'
+            fake_ssh = fake_bin / 'ssh'
+            fake_ssh.write_text('#!/bin/sh\ntouch "$FIXTURE_MARKER"\nexit 0\n')
+            fake_ssh.chmod(0o755)
+            env = {**os.environ, 'HOME': str(root), 'FIXTURE_MARKER': str(marker),
+                   'PATH': str(fake_bin)+os.pathsep+os.environ['PATH']}
+            for host in ('', '-Fconfig', 'fixture other', 'fixture\nother', 'fixture;true'):
+                for args in (['--host', host], ['--host='+host]):
+                    with self.subTest(args=args):
+                        result = subprocess.run(['sh', str(repo/'install.sh'), '--uninstall', *args],
+                                                env=env, capture_output=True, text=True)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertFalse(marker.exists())
+
     def test_failed_network_install_preserves_program_launcher_and_skills(self):
         self._check_failed_network_install(symlink_root=False)
 

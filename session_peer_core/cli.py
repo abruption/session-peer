@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
             action="append",
             default=[],
             metavar="OPT",
-            help="extra ssh argument, repeatable (e.g. --ssh-opt -p --ssh-opt 2222)",
+            help="allowlisted SSH connection option, repeatable (e.g. --ssh-opt=-p --ssh-opt=2222; see CLI reference)",
         )
         sub.add_argument("--output-format", choices=("text", "json"),
                          help="command result format (default: text); does not change message input")

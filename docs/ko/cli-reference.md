@@ -659,13 +659,7 @@ session-peer는 해당 인박스를 소유한 머신에서 연결합니다. SSH 
   속합니다. 올바른 계정과 홈을 사용하세요. `known_hosts` 항목은 해당 계정을 저장하지
   않습니다. 호출자의 샌드박스가 여전히 접근을 거부할 수 있으며, session-peer는 어느
   에이전트의 권한이나 할당량도 우회하지 않습니다.
-- **`--host` 및 `--ssh-opt`는 사용자의 ssh 구성만큼만 신뢰할 수 있습니다.** 이들은 `ssh`에
-  전달되므로, 이를 제어하는 사람이 사용자가 연결할 대상을 제어하게 됩니다. ssh가 로컬
-  명령어를 실행하게 만드는 값(`ProxyCommand` 및 관련 항목)은 거부되며, `-`로 시작하는
-  `--host`는 즉시 거부됩니다. 그러나 에이전트에 대해 `session-peer`를 허용 목록에
-  추가하는 경우, 이는 단순한 메시징뿐만 아니라 SSH 권한을 부여하는 것으로 취급하세요.
-  메시지 본문과 세션 이름에는 그러한 위험이 없습니다. 셸에 도달하기 전에 따옴표로
-  처리되기 때문입니다.
+- **`--host`와 `--ssh-opt`는 메시징뿐 아니라 SSH 접근 권한을 부여합니다.** 대상은 공백이나 셸 구문이 없는 단일 호스트 별칭 또는 주소여야 합니다. 설정 조회를 포함한 모든 `ssh` 실행 전에 옵션 허용 목록을 검사합니다. 허용 플래그는 `-4`, `-6`, `-p`, `-l`, `-i`, `-J`(값 분리 또는 결합), 그리고 `-oKEY=value` 또는 `-o` 다음의 `KEY=value`입니다. 허용 키는 Port, User, IdentityFile, HostName, HostKeyAlias, ConnectTimeout, BatchMode, ServerAliveInterval, ServerAliveCountMax, StrictHostKeyChecking, ProxyJump, IdentitiesOnly입니다. 대체 설정 파일, 제어 소켓, provider, 명령 hook을 포함한 나머지 옵션은 거부합니다. 기존 사용자·시스템 SSH 설정은 신뢰된 것으로 취급하며 그 자체로 명령을 실행할 수 있습니다. 이 필터는 해당 설정의 샌드박스가 아닙니다. 메시지 본문과 세션 이름은 셸 인용 처리됩니다. 명시적 `StrictHostKeyChecking`은 `yes`, `ask`, `accept-new`만 허용하고 `no`, `off`는 거부합니다. `UserKnownHostsFile` 경로 변경도 허용하지 않습니다. 강화된 문법은 SSH URI 형식의 점프 대상, 더하기 기호가 포함된 사용자명, 공백으로 구분한 옵션 대입을 거부합니다. 호스트 형식의 점프 대상과 등호 대입을 사용하십시오.
 - **Windows 지원.** Claude의 명명된 파이프 전송이 지원됩니다. `install.sh` 및
   독립 실행형 원격 설치 프로그램/업데이터는 POSIX 셸을 사용하므로, 네이티브 Windows에서는
   Python 패키지 관리자를 사용하세요. 실제 Codex 검증은 macOS 전용으로 유지되며,

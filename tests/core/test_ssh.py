@@ -57,8 +57,7 @@ class SshArgumentChecks(unittest.TestCase):
 
     def test_allows_ordinary_options(self):
         # ProxyJump takes a host, not a command — it is how you cross a bastion.
-        for value in ("-p", "2222", "-oConnectTimeout=8", "-oProxyJump=bastion"):
-            session_peer.check_ssh_argument(value, "--ssh-opt")
+        session_peer.check_ssh_options(["-p", "2222", "-oConnectTimeout=8", "-oProxyJump=bastion"])
 
     def test_allows_ordinary_hosts(self):
         for value in ("web-01", "ubuntu@10.0.0.4", "100.64.0.1"):
