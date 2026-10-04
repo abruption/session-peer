@@ -111,6 +111,8 @@ it("issues first-party device session only after code verification and explicit 
   f.db.prepare("UPDATE deviceCode SET lastPolledAt=NULL").run();
   const tokenResponse = await f.request("/api/auth/device/token", poll, {});
   expect(tokenResponse.status).toBe(200);
+  expect(tokenResponse.headers.getSetCookie()).toEqual([]);
+  expect(tokenResponse.headers.has("set-auth-token")).toBe(false);
   const token = await tokenResponse.json();
   expect(Object.keys(token).sort()).toEqual([
     "access_token",

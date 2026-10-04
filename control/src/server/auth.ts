@@ -133,14 +133,17 @@ export function createAuth(db: Database.Database, config: Config) {
     trustedOrigins: [config.origin],
     emailAndPassword: { enabled: false },
     socialProviders: { ...config.providers, ...(githubProvider ? {
-      github: { ...config.providers.github!, getUserInfo: async (tokens: Parameters<typeof githubProvider.getUserInfo>[0]) => {
+      github: { ...config.providers.github!, disableIdTokenSignIn: true, getUserInfo: async (tokens: Parameters<typeof githubProvider.getUserInfo>[0]) => {
         const profile = await githubProvider.getUserInfo(tokens);
         // Reject before Better Auth creates a user. A denied account-create hook
         // alone can leave an orphan user (and consume its unique email address).
         return profile && authorizeAccount(db, config, "github", String(profile.data.id)) ? profile : null;
       } },
     } : {}), ...(config.providers.google ? {
-      google: { ...config.providers.google, getUserInfo: verifiedGoogleUserInfo(
+      // The browser uses authorization codes only. A provider ID token must
+      // never be a second way to mint a first-party session from JSON input.
+      // Apply this after provider configuration so runtime extras cannot undo it.
+      google: { ...config.providers.google, disableIdTokenSignIn: true, getUserInfo: verifiedGoogleUserInfo(
         config,
         (accountId) => authorizeAccount(db, config, "google", accountId),
       ) },
