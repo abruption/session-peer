@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -34,6 +35,72 @@ class Fake:
 def send(rpc, **kwargs):
     return steer(rpc, THREAD, kwargs.pop("turn", "turn-test"), kwargs.pop("text", "test input"),
                  expected_home=kwargs.pop("home", HOME), opt_in=kwargs.pop("opt_in", True), **kwargs)
+
+
+class FrameSocket:
+    """In-memory JSON frames through the real RPC parser; no server or model."""
+
+    def __init__(self, method, error):
+        self.method, self.error = method, error
+        self.calls = []
+
+    def send(self, frame):
+        request = json.loads(frame)
+        self.calls.append(request)
+        result = Fake().call(request["method"], request["params"])
+        self.response = {"id": request["id"], "result": result}
+        if request["method"] == self.method:
+            # A plausible success result must not mask a malformed/error reply.
+            self.response["error"] = self.error
+
+    def recv(self, timeout):
+        return json.dumps(self.response)
+
+
+class RpcResponseContract(unittest.TestCase):
+    malformed_errors = (None, [], "private provider detail", {}, {"code": None},
+                        {"code": True}, {"code": False}, {"code": -32600.0},
+                        {"code": "-32600"}, {"code": []}, {"code": {}})
+
+    def rpc(self, method, error):
+        rpc = Rpc("/unused-fixture.sock")
+        rpc.info = {"codexHome": HOME}
+        rpc.socket = FrameSocket(method, error)
+        return rpc
+
+    def test_malformed_error_before_submission_is_refused(self):
+        for error in self.malformed_errors:
+            with self.subTest(error=error):
+                rpc = self.rpc("thread/loaded/list", error)
+                with self.assertRaisesRegex(Refused, "^invalid_rpc_response$") as raised:
+                    send(rpc)
+                self.assertIs(type(raised.exception), Refused)
+                self.assertEqual([r["method"] for r in rpc.socket.calls], ["thread/loaded/list"])
+
+    def test_malformed_error_after_attempt_is_unknown_without_resend(self):
+        for error in self.malformed_errors:
+            with self.subTest(error=error):
+                rpc = self.rpc("turn/steer", error)
+                with self.assertRaisesRegex(Unknown, "^submission_outcome_unknown$"):
+                    send(rpc)
+                self.assertEqual([r["method"] for r in rpc.socket.calls],
+                                 ["thread/loaded/list", "thread/read", "experimentalFeature/list", "turn/steer"])
+
+    def test_valid_error_codes_keep_existing_classification(self):
+        for code in (-32600, -32601, -32603, 0, 123):
+            with self.subTest(code=code):
+                rpc = self.rpc("turn/steer", {"code": code, "message": "private provider detail"})
+                expected = Rejected if code in (-32600, -32601) else Unknown
+                with self.assertRaises(expected) as raised:
+                    send(rpc)
+                self.assertNotIn("private provider detail", str(raised.exception))
+                self.assertEqual(sum(r["method"] == "turn/steer" for r in rpc.socket.calls), 1)
+
+    def test_absent_error_keeps_successful_result(self):
+        rpc = self.rpc("unused", None)
+        result = send(rpc)
+        self.assertTrue(result["submitted"])
+        self.assertFalse(result["consumptionConfirmed"])
 
 
 class Contract(unittest.TestCase):

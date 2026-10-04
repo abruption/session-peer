@@ -111,7 +111,10 @@ class Rpc:
             value = self.read(deadline)
             if value.get("id") == request_id:
                 if "error" in value:
-                    raise Rejected(method, value["error"].get("code"))
+                    error = value["error"]
+                    if not isinstance(error, dict) or type(error.get("code")) is not int:
+                        raise Refused("invalid_rpc_response")
+                    raise Rejected(method, error["code"])
                 if not isinstance(value.get("result"), dict):
                     raise Refused("invalid_rpc_response")
                 return value["result"]
