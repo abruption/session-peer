@@ -30,7 +30,7 @@ session-peer使用代理原生的收件箱和队列，由接收方决定如何�
 ### 安装
 
 需要Python 3.9或更高版本。核心本地与SSH CLI没有第三方Python依赖。
-当前稳定版：**1.0.2**。
+当前稳定版：**1.0.3**。
 
 ```bash
 pipx install session-peer

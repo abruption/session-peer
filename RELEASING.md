@@ -1,118 +1,87 @@
 # Releasing session-peer
 
-Publishing a GitHub release triggers `.github/workflows/publish.yml`, which builds
-the selected tag and uploads wheel and sdist to PyPI through Trusted Publishing.
-A draft does not publish. Keep preparation, final approval, publication, and
-verification separate. Protected `main` requires an up-to-date PR and the
-aggregate `release gate`: Linux, macOS and Windows Python matrices; documentation,
-shell, wheel, sdist, standalone, MCP, Relay and control tests; integration tests;
-and Python/Node dependency audits. Live OAuth, agent ACKs and production Relay
-health are separate operator evidence.
+Version 1.0.3 is a stable security and stability maintenance release after 1.0.2. Keep preparation, immutable GitHub publication, the human PyPI environment review and post-publication verification distinct. Protected main requires reviewed, up-to-date PRs and the aggregate release gate, including Python platform matrices, documentation, shell, package/standalone/MCP/Relay/Control tests, integrations and Python/Node dependency audits.
 
-## v1.0.0 evidence and v1.0.2 maintenance gate
+## Historical evidence and current boundaries
 
-The reviewed RC4 runtime was validated in the five-host `rc4-rerun-02` campaign:
-14,436.65 seconds with a `complete` record, public health 241/241, probes
-147/147, submissions 21/21, and Relay restart recovery in 3.182 seconds.
-Independent ACKs were 20/21. The original T120 Windows native Claude ACK is
-unconfirmed because its TUI closed; a distinct one-shot check of the same path
-subsequently received an exact ACK. The user explicitly accepted this operational
-exception in #164. Do not rewrite the original result as 21/21. #161's external
-stall origin remains unproven; mitigation is not root-cause repair. This is
-historical v1.0.0 evidence, not a validation claim for the v1.0.2 changes.
+The five-host v1.0.0 RC4 rc4-rerun-02 campaign ran for 14,436.65 seconds: complete record, public health 241/241, probes 147/147, submissions 21/21 and Relay restart recovery in 3.182 seconds. Independent ACKs were 20/21. T120 Windows native Claude had no confirmed original ACK because its TUI closed; a distinct one-shot check later received an exact ACK. The owner accepted this exception in #164. Keep 20/21 unchanged; this historical evidence does not validate v1.0.3. #161 remains open with the external stall root cause unconfirmed.
 
-The Python/PyPI version is `1.0.2`; the Git tag and GitHub release are `v1.0.2`.
-This is a stable release: do not mark it prerelease, and make it GitHub Latest.
-Normal package upgrades and standalone update notices may select v1.0.2 instead
-of v1.0.1. The plugin manifest keeps its independent version. The default core
-remains dependency-free on Python 3.9+; MCP needs Python 3.10+, and Relay
-receiver/server use requires Unix or WSL and Python 3.11+. Package publication
-does not guarantee hosted Relay/OAuth availability. A service-managed macOS or
-Linux receiver needs the target TUI's `codex` executable directory on its PATH
-or an operator-owned absolute `codexBin` binding. Relay login expires and can
-require reauthorization. #161 remains open with root cause unconfirmed.
+The Python/PyPI version is 1.0.3; the tag and GitHub release are v1.0.3. Make it stable and Latest. The plugin version remains independent. Core requires Python 3.9+, MCP 3.10+, Relay receiver/server Unix or WSL and Python 3.11+. Service receivers need Codex on their service PATH or an operator-owned codexBin binding. Package publication does not establish hosted remediation, fleet installation, production restarts, live OAuth health or agent ACKs. Unknown outcomes never authorize automatic resend.
 
-The root `cc_peer.py` is frozen for legacy self-update URLs and must be excluded
-from wheel and sdist. Include four READMEs, security policy, stable release notes,
-Relay documentation and optional runtime sources. Exclude credentials, device
-keys, auth databases, replay state, browser profiles, local evidence and chats.
+## Source and configuration gates
 
-## Trusted Publisher configuration
+1. Review the v1.0.3 changes against 1.0.2 and all four release notes. Integrate all five advisory fixes before publishing their details. CVE assignment is not a publication prerequisite. Confirm package/generated version, four README versions and archive notes; keep legacy cc_peer.py frozen and excluded from distributions. Exclude credentials, keys, databases, replay state, browser profiles, local evidence and chats.
+2. Run the complete local suite and PR release gate. Require successful CI on exact integrated public main after merge; private advisory forks do not run CI. Validate clean wheel/sdist installs, isolated installed imports, exact CLI version, initialized-home JSON list, extras and pip check. An explicit empty Codex home must fail closed with state_db_missing. Do not submit live messages for this gate.
+3. Verify PyPI has no 1.0.3 files. Verify GitHub Immutable Releases and the v* tag ruleset: creation allowed, tag update/deletion blocked with no bypass. The owner enabled these on 2026-10-03 (ruleset 24408525). Historical v1.0.2 was nonimmutable with no assets and is not a verified standalone release; recheck current settings.
+4. Verify the Trusted Publisher maps session-peer to abruption/session-peer, publish.yml and pypi. The owner checked this mapping on 2026-09-29; that record is not a new PyPI UI inspection. On 2026-10-03 pypi required reviewer abruption, allowed self-review and accepted v* tags; administrator bypass remained enabled. Recheck settings, use normal human review and never silently bypass it.
 
-The PyPI project `session-peer` maps to GitHub repository
-`abruption/session-peer`, workflow `publish.yml`, environment `pypi`. No long-lived PyPI
-credential is stored in the repository. Prior success is not proof the mapping
-has remained unchanged; verify it before publication.
+## Prepare the immutable draft
 
-## Prepare and verify
-
-1. Confirm the v1.0.2 milestone's completed fixes and keep #161 open as
-   monitoring with root cause unconfirmed. Review the runtime diff against
-   v1.0.1 and the v1.0.2 notes; do not merge `release/0.9.x` into `main`.
-2. Confirm `session_peer.__version__ == "1.0.2"`, generated `session_peer.py`
-   matches its source, four README install commands agree, and four stable
-   release notes are included in sdist. Run the complete local suite and the
-   PR `release gate`; after merge, require a successful CI run on exact `main`.
-3. Build wheel and sdist from the exact candidate with `python3 -m build`.
-   Inspect contents and install each archive independently in clean environments.
-   Check `session-peer --version`, JSON `list` against an initialized agent home,
-   `pip check`, Relay/MCP extras and help smoke tests. An explicit empty Codex
-   home must fail closed with `state_db_missing`; this is not an install failure.
-   Do not submit live model messages for this gate.
-4. Merge only after checks pass. Fetch `main`, record its exact commit, recheck
-   version and release notes, and confirm PyPI has no `1.0.2` files yet.
-
-## Prepare the draft
-
-Create the draft only after the preparation PR is merged; a squash or merge
-commit changes the release commit. Never move an existing published tag.
+After the preparation PR is merged, record the exact main commit and create a lightweight tag at it. Never move an existing tag. Run preparation as the repository owner on protected main at that exact commit; a main advance between dispatch and verification fails closed.
 
 ```bash
 git fetch origin main --tags
+release_tag=v1.0.3
 release_commit=$(git rev-parse origin/main)
-gh release create v1.0.2 \
-  --repo abruption/session-peer \
-  --target "$release_commit" \
-  --title "session-peer v1.0.2" \
-  --notes-file docs/releases/v1.0.2.md \
-  --draft --latest
+git tag "$release_tag" "$release_commit"
+git push origin "$release_tag"
+gh release create "$release_tag" --repo abruption/session-peer \
+  --target "$release_commit" --title "session-peer $release_tag" \
+  --notes-file "docs/releases/$release_tag.md" --draft --latest
+gh workflow run prepare-release.yml --repo abruption/session-peer \
+  --ref main -f tag="$release_tag"
 ```
 
-Verify tag, target, title, notes, draft status, stable status and Latest intent.
-Draft creation does not authorize publication.
+prepare-release.yml verifies source/ref/version/ancestry, builds twice reproducibly, inspects archives, tests isolated installations and audits dependencies. It attests and attaches exactly seven assets to an empty draft: wheel, sdist, session_peer.py, install.sh, SKILL.md, SHA256SUMS and release-provenance.json. The manifest covers five payloads; signed provenance covers the manifest and evidence too. No existing asset is overwritten. Review the successful preparation run, exact commit, seven files, hashes and attestations before publication. Draft attachment does not publish.
 
-## Publish
+## Publish the locked GitHub release
 
-Obtain final user approval immediately before publication. Publishing makes the
-GitHub release public and starts the immutable PyPI upload:
+Publish only with the owner's explicit authorization for this version. An existing instruction to complete this release satisfies the procedural approval requirement; do not demand a second confirmation solely because of this runbook. It does not replace the required human pypi environment review. Publishing locks the tag and assets and starts publish.yml.
 
 ```bash
-gh release edit v1.0.2 \
-  --repo abruption/session-peer \
+gh release edit v1.0.3 --repo abruption/session-peer \
   --draft=false --prerelease=false --latest
 ```
 
-The workflow must fail closed unless tag and package version agree, the tag is
-the event commit on protected main, and the clean source reproducibly builds
-identical wheel and sdist twice. It installs both candidates, checks archives,
-audits dependencies, records SHA256SUMS and release-provenance.json, requests
-GitHub/PyPI attestations, and uploads via OIDC. Existing PyPI files are a hard
-error; do not skip them.
+publish.yml requires the repository owner, verifies exact tag/source/main ancestry, downloads the locked immutable assets and verifies their authenticated provenance and manifest. It never rebuilds or adds assets. Package installation checks and current dependency audits must pass again before the PyPI job. Preparation-time audit success is not current audit evidence.
 
-Do not rerun an upload with modified artifacts after failure. Preserve the failed
-run and any accepted files, then diagnose the first failed gate. PyPI versions
-and filenames are immutable. A partial `1.0.2` publication or hash mismatch stops
-promotion; fix forward through reviewed changes and a new version (normally
-`1.0.3`), not a moved tag or reused version. Yanking does not make reuse safe.
+## Human review of the pending PyPI deployment
 
-## Verify publication
+1. Observe the exact Actions run waiting on pypi before any upload. Record run URL/ID and attempt, tag, commit, SHA256SUMS, release-provenance.json and pending time. Source tests and repository settings cannot prove this pause; observing the next release remains the #235 acceptance check.
+2. The required human reviewer checks the candidate evidence and current Trusted Publisher/environment settings. In Review deployments, select pypi and explicitly choose Approve and deploy only when authorized. GitHub publication approval does not replace this review. Keep the environment gate intact.
+3. To refuse upload, select pypi, explain the reason and choose Reject. If the expected pause or controls are absent, stop and cancel before upload. Preserve the rejected/cancelled run and resolve the cause; do not move the tag or reuse the version to evade rejection.
+4. Record reviewer, decision, comment, timestamp and result. Retain upload and verification evidence. Rejection is neither successful publication nor successful approval-pause validation. Administrator bypass is exceptional and requires separate explicit owner authorization with recorded reason, actor, time, run, tag and commit.
 
-1. Verify `publish.yml` succeeded for the exact tag and commit. Download both
-   PyPI files, compare hashes with preserved workflow candidates and provenance,
-   and install each independently from PyPI in fresh environments.
-2. Repeat version, JSON `list` on an initialized agent home, Relay/MCP extras and `pip check`.
-   Confirm GitHub says stable and Latest, and normal upgrade/update checks select
-   v1.0.2. Verify hosted Relay separately; a queued message is not an ACK.
-3. Record publication evidence before closing the v1.0.2 milestone. Keep #161
-   open in its existing monitoring milestone; do not imply a root-cause fix. Fleet deployment
-   or production service restarts require a separate operational decision.
+## Verify publication or recover
+
+Verify publish.yml and its PyPI verification succeeded for the exact tag/commit. Download both PyPI files, compare the exact file set and hashes with locked candidates/provenance, and install each independently in fresh environments. Recheck isolated version, JSON list on an initialized home, extras and pip check. Confirm stable/Latest and normal update selection of v1.0.3. Record evidence before closing the milestone; retain #161 as monitoring.
+
+GitHub and PyPI publication are separate irreversible steps. An audit failure after GitHub publication can leave a locked release without PyPI files; preserve both runs and exact assets. Do not bypass audits, rerun uploads with modified artifacts, skip existing files or reuse versions. A partial 1.0.3 upload or mismatch stops promotion. Diagnose the first failed gate and fix forward through reviewed changes and a new version, normally 1.0.4. Yanking does not permit reuse.
+
+## Verified standalone installation
+
+A recent authenticated GitHub CLI must support gh attestation verify and signer workflow, source ref/digest, OIDC issuer and hosted-runner policy. The tested baseline is 2.102.0; the earliest version supporting all flags is unestablished. Repository/attestation read access suffices; publication permission is unnecessary. [GitHub CLI verifier source](https://github.com/cli/cli/blob/v2.102.0/pkg/cmd/attestation/verify/verify.go) documents the policy flags. Local fixtures prove policy/order/error behavior, not live signature acceptance.
+
+The installer defaults to verified Latest immutable assets. --local-source explicitly trusts adjacent source; --main opts into unverified development source. Missing attestations or old unsigned releases fail closed; use pipx/uv/pip when verification is unavailable. Authenticate install.sh before execution:
+
+```bash
+set -eu
+repo=abruption/session-peer
+tag=$(gh api "repos/$repo/releases/latest" --jq \
+  'if .immutable == true and .draft == false and .prerelease == false then .tag_name else error("no immutable stable release") end')
+commit=$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object | select(.type == "commit") | .sha')
+case "$commit" in ????????* ) ;; * ) echo "expected a lightweight release tag" >&2; exit 1 ;; esac
+staging=$(mktemp -d)
+trap 'rm -f "$staging/install.sh"; rmdir "$staging"' EXIT
+curl --fail --location --proto '=https' --proto-redir '=https' \
+  --max-filesize 262144 --max-time 30 \
+  "https://github.com/$repo/releases/download/$tag/install.sh" -o "$staging/install.sh"
+gh attestation verify "$staging/install.sh" --repo "$repo" \
+  --signer-workflow "$repo/.github/workflows/prepare-release.yml" \
+  --source-ref refs/heads/main --source-digest "$commit" \
+  --cert-oidc-issuer https://token.actions.githubusercontent.com \
+  --deny-self-hosted-runners --format json
+sh "$staging/install.sh"
+```
+
+Downloads are capped at 8 MiB for standalone, 256 KiB for support files and 1 MiB for metadata. Authenticated manifest/provenance, exact tag/version and a staged --version check precede replacement. The sender verifies before SSH deployment; offline destinations need Python only. Verification failure leaves existing files untouched. Review the release notes for the SSH option allowlist, legacy pairing-binding review and Control login-session migration.
