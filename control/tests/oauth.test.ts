@@ -222,6 +222,21 @@ it("rejects tampered OAuth state before token exchange", async () => {
   expect(callback.status).toBe(302);
   expect(callback.headers.get("location")).toContain("error=");
   expect(fetchMock).not.toHaveBeenCalled();
+  const landingURL = new URL(callback.headers.get("location")!, f!.config.origin);
+  expect(landingURL.pathname).toBe("/api/auth/error");
+  const upstreamLanding = await f!.auth.handler(new Request(landingURL, {
+    headers: { cookie: started.cookie },
+  }));
+  expect(upstreamLanding.status).toBe(200);
+  const landingHeaders: Record<string, string>[] = [{}, { cookie: started.cookie }];
+  for (const headers of landingHeaders) {
+    const landing = await f!.request(landingURL.pathname + landingURL.search, undefined, headers);
+    expect(landing.status).toBe(200);
+    expect(landing.headers.get("content-type")).toContain("text/html");
+    expect(landing.headers.getSetCookie()).toEqual([]);
+    expect(landing.headers.has("set-auth-token")).toBe(false);
+    expect(await landing.text()).toContain("state_mismatch");
+  }
   expect(
     (
       await f!.request("/api/relay/devices", undefined, {

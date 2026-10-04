@@ -18,6 +18,7 @@ const MAX_BODY = 16384;
 // upstream router. Its other APIs can return credentials in JSON bodies.
 const AUTH_ROUTES: Readonly<Record<string, { method: string; bearer: boolean }>> = {
   "/api/auth/get-session": { method: "GET", bearer: true },
+  "/api/auth/error": { method: "GET", bearer: false },
   "/api/auth/sign-out": { method: "POST", bearer: true },
   "/api/auth/sign-in/social": { method: "POST", bearer: false },
   "/api/auth/device/code": { method: "POST", bearer: false },

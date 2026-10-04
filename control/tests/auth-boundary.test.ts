@@ -7,8 +7,11 @@ afterEach(() => { vi.restoreAllMocks(); f?.cleanup(); f = undefined; });
 // Product callers: main.tsx uses session/social/sign-out/device approval;
 // Python control.login uses unauthenticated device/code and device/token.
 // Configured GitHub/Google authorize URLs return to GET callback routes.
+// The pinned callback handler redirects failures to GET /error. These providers
+// use the default query response mode; form_post callbacks are not configured.
 const routes = [
   ["/api/auth/get-session", "GET", true],
+  ["/api/auth/error", "GET", false],
   ["/api/auth/sign-out", "POST", true],
   ["/api/auth/sign-in/social", "POST", false],
   ["/api/auth/callback/github", "GET", false],
@@ -99,4 +102,39 @@ it.each(["cookie", "bearer"] as const)("preserves actual %s sign-out without exp
   }
   expect((await f.request("/api/relay/devices")).status).toBe(401);
   expect((await f.request("/api/relay/devices", undefined, f.otherHeaders)).status).toBe(200);
+});
+
+it("preserves the pinned error landing page and query handling without credentials or mutations", async () => {
+  f = await fixture();
+  const sessions = f.db.prepare("SELECT * FROM session ORDER BY id").all();
+  const landingHeaders: Record<string, string>[] = [{}, { cookie: f.cookie }];
+  const malicious = "<script>alert('fixture')</script>";
+  for (const query of ["", "?error=state_mismatch", "?error=" + encodeURIComponent(malicious) +
+    "&error_description=" + encodeURIComponent(malicious)]) {
+    const path = "/api/auth/error" + query;
+    const expected = await f.auth.handler(new Request(f.config.origin + path));
+    expect(expected.status).toBe(200);
+    const expectedBody = await expected.text();
+    for (const headers of landingHeaders) {
+      const response = await f.request(path, undefined, headers);
+      expect(response.status).toBe(expected.status);
+      expect(response.headers.get("content-type")).toBe(expected.headers.get("content-type"));
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+      expect(response.headers.getSetCookie()).toEqual([]);
+      expect(response.headers.has("set-auth-token")).toBe(false);
+      const body = await response.text();
+      expect(body).toBe(expectedBody);
+      expect(body).not.toContain(malicious);
+      expect(body).not.toContain(f.ownerHeaders.authorization.slice("Bearer ".length));
+      expect(body).not.toContain(f.otherHeaders.authorization.slice("Bearer ".length));
+    }
+    expect((await f.request(path, undefined, f.ownerHeaders)).status).toBe(401);
+    expect((await f.request(path, undefined, { cookie: f.cookie, ...f.ownerHeaders })).status).toBe(401);
+  }
+  expect(f.db.prepare("SELECT * FROM session ORDER BY id").all()).toEqual(sessions);
+  // No product flow calls the upstream health endpoint.
+  expect((await f.request("/api/auth/ok", undefined, {})).status).toBe(404);
 });
