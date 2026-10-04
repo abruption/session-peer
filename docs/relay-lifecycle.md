@@ -10,6 +10,15 @@ versions have separate fingerprints and generations. Policies, routes and reques
 receipts stay attached to the logical ID, including across receiver key changes.
 The additive SQLite migration preserves existing v0.9 identities and receipts.
 
+New pairing binds generation zero to its certificate fingerprint. A rotated
+client cannot assert its stable ID to a receiver that has no trusted binding for
+that exact active key and generation; it fails with `unproven_principal` before
+reserving the invitation. For a first pairing after rotation, have the rotated
+device issue the invitation and serve as receiver, and verify that invitation
+out of band. The other device pins the supplied identity through that explicit
+invitation. Existing authenticated rotation and paired routes remain supported.
+This check does not audit or repair bindings saved by older versions.
+
 Stop the device receiver and other commands using its state before rotating:
 
 ```sh

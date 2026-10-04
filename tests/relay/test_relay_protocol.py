@@ -88,6 +88,27 @@ class RelayLab(unittest.IsolatedAsyncioTestCase):
     async def pair(self, route='direct'):
         return await pair(self.client, self.invite, route, self.client_token)
 
+    async def test_bootstrap_cannot_claim_an_allowlisted_other_principal(self):
+        attacker = Store(self.root/'attacker')
+        try:
+            for route in ('direct', 'relay'):
+                channel = await open_channel(attacker, self.host.cert, self.invite['routes'],
+                                             route, self.client_token, bootstrap=True)
+                try:
+                    await channel.send({'op': 'pair.prepare', 'invitation': self.invite['id'],
+                                        'secret': self.invite['secret'], 'certificate': attacker.cert,
+                                        'principal': self.client.device, 'generation': 1})
+                    result = await channel.recv()
+                    self.assertFalse(result['ok'])
+                    self.assertEqual(result['reason'], 'unproven_principal')
+                finally:
+                    await channel.close()
+                self.assertIsNone(self.host.peer(self.client.device))
+                self.assertEqual(self.effects, [])
+            self.assertTrue((await self.pair())['ok'])
+        finally:
+            attacker.close()
+
     async def test_pair_direct_send_and_duplicate(self):
         await self.pair()
         ident = str(uuid.uuid4())
