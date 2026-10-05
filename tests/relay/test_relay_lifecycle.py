@@ -15,6 +15,37 @@ class Lifecycle(unittest.IsolatedAsyncioTestCase):
     asyncTearDown = native_tests.NativeRelay.asyncTearDown
     call = native_tests.NativeRelay.call
 
+    async def test_rotated_first_pair_fails_closed_until_invitation_direction_is_reversed(self):
+        from session_peer_relay.app import Receiver, pair
+        self.assertTrue((await rotate(self.client, str(uuid.uuid4()), 'direct', None))['ok'])
+        extra = Store(self.root/'new-peer')
+        receivers, listeners = [], []
+        try:
+            for store in (extra, self.client):
+                receiver = Receiver(store, self.policy)
+                receivers.append(receiver)
+                listeners.append(await receiver.listen('127.0.0.1', 0))
+            routes = [{'direct': '127.0.0.1:'+str(listener.sockets[0].getsockname()[1])}
+                      for listener in listeners]
+            invite = extra.invite(routes[0])
+            with self.assertRaisesRegex(Rejected, 'unproven_principal'):
+                await pair(self.client, invite, 'direct')
+            self.assertIsNone(extra.peer(self.client.device))
+            self.assertIsNone(extra.db.execute('SELECT peer FROM invites WHERE id=?', (invite['id'],)).fetchone()[0])
+            reverse = self.client.invite(routes[1])
+            self.assertTrue((await pair(extra, reverse, 'direct'))['ok'])
+            self.assertEqual(extra.peer(self.client.device)['status'], 'paired')
+            self.assertEqual(extra.principal(self.client.key_id), self.client.device)
+            self.assertEqual(self.client.peer(extra.device)['status'], 'paired')
+            self.assertEqual(self.effects, [])
+        finally:
+            for listener in listeners:
+                listener.close()
+                await listener.wait_closed()
+            for receiver in receivers:
+                await receiver.close()
+            extra.close()
+
     async def test_rotation_preserves_principal_and_receipt_across_restart(self):
         principal = self.client.device
         before_key = self.client.key_id

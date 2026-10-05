@@ -45,7 +45,7 @@ try:
 except ImportError:  # Native Windows uses its own read-only writer inspection.
     fcntl = None
 
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 GITHUB_REPO = "abruption/session-peer"
 
 # Claude Code refuses a same-machine message once its serialized form passes
@@ -875,7 +875,8 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
     process_home = getattr(args, "codex_native_home", None) or str(root)
     env = dict(os.environ, CODEX_HOME=process_home)
     try:
-        done = subprocess.run([executable, "queue", "--thread", thread_id, "--message", text],
+        # Keep leading dashes inside the option value, including with --no-from.
+        done = subprocess.run([executable, "queue", "--thread", thread_id, "--message=" + text],
                               env=env, capture_output=True, encoding="utf-8", errors="replace",
                               timeout=CODEX_QUEUE_TIMEOUT)
     except subprocess.TimeoutExpired as exc:
@@ -948,7 +949,16 @@ def codex_wake_guard(root: Path, thread_id: str):
         os.close(fd)
 
 
-def stop_codex_wake(process, grace: float = 0.2) -> None:
+CODEX_WAKE_CLEANUP_GRACE = 0.2
+CODEX_WAKE_CLEANUP_WAIT = 3
+CODEX_WAKE_CLEANUP_PS_TIMEOUT = 1
+# A containing CLI must remain alive through TERM, both Darwin zombie probes,
+# escalation and wait(). Its app-server runs in a separate owned session.
+CODEX_WAKE_CLEANUP_BUDGET = (CODEX_WAKE_CLEANUP_GRACE + CODEX_WAKE_CLEANUP_WAIT
+                           + 2 * CODEX_WAKE_CLEANUP_PS_TIMEOUT)
+
+
+def stop_codex_wake(process, grace: float = CODEX_WAKE_CLEANUP_GRACE) -> None:
     # This Popen was started in a new session and has not been polled/reaped.
     # Keep its PID reserved through escalation, even when the leader exits
     # promptly on TERM. Never reuse a saved group ID after wait() has run.
@@ -965,7 +975,7 @@ def stop_codex_wake(process, grace: float = 0.2) -> None:
             if sys.platform != 'darwin':
                 raise
             members = subprocess.run(['ps', '-o', 'stat=', '-g', str(process.pid)],
-                                     capture_output=True, text=True, timeout=1)
+                                     capture_output=True, text=True, timeout=CODEX_WAKE_CLEANUP_PS_TIMEOUT)
             if members.returncode not in (0, 1) or any(
                     not line.strip().startswith('Z') for line in members.stdout.splitlines() if line.strip()):
                 raise
@@ -979,7 +989,7 @@ def stop_codex_wake(process, grace: float = 0.2) -> None:
         try:
             signal_group(signal.SIGKILL)
         finally:
-            process.wait(timeout=3)
+            process.wait(timeout=CODEX_WAKE_CLEANUP_WAIT)
 
 
 def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeout: float) -> dict:
@@ -1131,12 +1141,14 @@ def codex_remote_options(args: argparse.Namespace) -> list[str]:
 
 
 def render_codex(sessions: list[dict], where: str) -> str:
+    sessions, where = human_text(sessions), human_text(where)
     rows = [f"Saved Codex sessions on {where} (execution state unknown):", "THREAD  NAME  ARCHIVED  CWD  CODEX HOME"]
     rows.extend(f"{s['id']}  {s['name']}  {s['archived']}  {s['cwd']}  {s.get('codexHome', '-')}" for s in sessions)
     return "\n".join(rows) if sessions else f"No saved Codex sessions on {where}."
 
 
 def codex_submission_text(result: dict, where: str) -> str:
+    result, where = human_text(result), human_text(where)
     home = f" (Codex home: {result['codexHome']})" if "codexHome" in result else ""
     if result.get("submitted") is False and result.get("ok") is False and "wake" in result:
         reason = result.get("error") or result["wake"].get("reason", "refused")
@@ -1886,11 +1898,14 @@ def reply_line(explicit_host: str | None) -> str | None:
 # --------------------------------------------------------------------------
 
 
-# ssh options that make ssh run a command on *this* machine. A host or an
-# --ssh-opt value carrying one of these turns "message a session" into "run
-# whatever I say, locally". ProxyJump is deliberately absent: it takes a host,
-# not a command, and is the right way to reach a box behind a bastion.
-LOCAL_EXEC_SSH_OPTIONS = ("proxycommand", "localcommand", "permitlocalcommand")
+# Deliberately bounded: validate the complete argv before even `ssh -G`.
+# OpenSSH configuration files remain a user-owned trust boundary; in particular
+# `-F` must not let a supplied argument select an executable Match/Include file.
+SSH_OPTION_KEYS = frozenset({
+    "port", "user", "identityfile", "hostname", "hostkeyalias",
+    "connecttimeout", "batchmode", "serveraliveinterval", "serveralivecountmax",
+    "stricthostkeychecking", "proxyjump", "identitiesonly",
+})
 
 # Linux with 4 KiB pages permits at most 128 KiB per exec argument,
 # including NUL. Bound the entire quoted remote shell command, not characters
@@ -1899,24 +1914,56 @@ MAX_SSH_COMMAND_BYTES = 128 * 1024 - 1
 
 
 def check_ssh_argument(value: str, flag: str) -> None:
-    """Refuse a value that would make ssh do something other than connect.
+    """Validate one destination; options must be validated as an argv list."""
+    if flag != "--host":
+        check_ssh_options([value])
+        return
+    if (not isinstance(value, str) or not value or value.startswith("-")
+            or not re.fullmatch(r"[A-Za-z0-9_.@:\[\]%-]+", value)):
+        raise CcPeerError("--host must be one [USER@]HOST without whitespace or shell syntax")
 
-    ssh has no `--` separator, so a leading dash turns a destination into a
-    flag. Hosts never legitimately start with one, while --ssh-opt values
-    always do — so the leading-dash rule applies only to the host, and both
-    are checked for options that execute a local command.
-    """
-    if flag == "--host" and value.startswith("-"):
-        raise CcPeerError(
-            f"--host must not start with '-' (ssh would read {value!r} as an option)"
-        )
-    collapsed = value.lower().replace(" ", "").replace("=", "")
-    for banned in LOCAL_EXEC_SSH_OPTIONS:
-        if banned in collapsed:
-            raise CcPeerError(
-                f"{flag} must not carry {banned} — it would run a command on this "
-                f"machine. Put it in ~/.ssh/config if you really need it."
-            )
+
+def check_ssh_options(options: list[str]) -> None:
+    index = 0
+    while index < len(options):
+        token = options[index]
+        if not isinstance(token, str) or any(ord(c) < 32 or ord(c) == 127 for c in token):
+            raise CcPeerError("invalid --ssh-opt argument")
+        index += 1
+        if token in ("-4", "-6"):
+            continue
+        flag = token[:2]
+        if flag not in ("-o", "-p", "-l", "-i", "-J"):
+            raise CcPeerError("unsupported --ssh-opt; only connection options are allowed")
+        value = token[2:]
+        if not value:
+            if index == len(options):
+                raise CcPeerError("--ssh-opt option requires a value")
+            value = options[index]
+            index += 1
+        if (not isinstance(value, str) or not value or value.startswith("-")
+                or any(ord(c) < 32 or ord(c) == 127 for c in value)):
+            raise CcPeerError("invalid --ssh-opt value")
+        if flag == "-o":
+            key, separator, value = value.partition("=")
+            key = key.lower()
+            if not separator or key not in SSH_OPTION_KEYS or not value:
+                raise CcPeerError("unsupported --ssh-opt setting; use an allowed KEY=value")
+        else:
+            key = {"-p": "port", "-l": "user", "-i": "identityfile", "-J": "proxyjump"}[flag]
+        if key in ("hostname", "hostkeyalias", "user"):
+            check_ssh_argument(value, "--host")
+        if key == "proxyjump":
+            for jump in value.split(","):
+                check_ssh_argument(jump, "--host")
+        if key in ("port", "connecttimeout", "serveraliveinterval", "serveralivecountmax"):
+            if (not re.fullmatch(r"[0-9]+", value)
+                    or (key == "port" and (len(value) > 5 or not 1 <= int(value) <= 65535))):
+                raise CcPeerError("invalid numeric --ssh-opt value")
+        if key in ("batchmode", "identitiesonly") and value.lower() not in ("yes", "no"):
+            raise CcPeerError("invalid boolean --ssh-opt value")
+        if key == "stricthostkeychecking" and value.lower() not in ("yes", "ask", "accept-new"):
+            raise CcPeerError("invalid StrictHostKeyChecking value")
 
 
 SSH_METADATA_FIELDS = ("sshUser", "sshUserSource")
@@ -1929,8 +1976,7 @@ def ssh_metadata_from(payload: dict) -> dict:
 def ssh_user_metadata(host: str, ssh_opts: list[str]) -> dict:
     """Ask OpenSSH which login user it will use without making a connection."""
     check_ssh_argument(host, "--host")
-    for opt in ssh_opts:
-        check_ssh_argument(opt, "--ssh-opt")
+    check_ssh_options(ssh_opts)
 
     explicit_user, separator, _ = host.rpartition("@")
     if separator and explicit_user:
@@ -1999,10 +2045,53 @@ def ssh_failure_error(host: str, ssh_info: dict, failure: str,
     return CcPeerError(message, {**ssh_info, "sshFailure": failure})
 
 
+def parse_ssh_response(output, argv):
+    """Parse one complete response with the same rules on exit and timeout.
+
+    TimeoutExpired captures bytes even when run() requested text. Do not repair
+    invalid UTF-8 or accept a prefix, duplicate keys, or non-JSON constants as
+    proof that the remote command finished. Legacy JSON remains usable only
+    on the normal-exit path, not as timeout outcome evidence.
+    """
+    if isinstance(output, bytes):
+        try:
+            output = output.decode("utf-8")
+        except UnicodeDecodeError:
+            return "", None, False, False
+    # Only JSON's four whitespace characters may surround the document.
+    # str.strip() also removes framing controls such as VT and FS, which must
+    # not convert malformed captured output into a completed outcome.
+    stdout = output.strip(" \t\r\n") if isinstance(output, str) else ""
+
+    def object_value(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate JSON response key")
+            value[key] = item
+        return value
+
+    def constant_value(value):
+        raise ValueError("non-JSON response constant")
+
+    try:
+        result = json.loads(stdout, object_pairs_hook=object_value,
+                            parse_constant=constant_value) if stdout else None
+    except (ValueError, RecursionError):
+        return stdout, None, False, False
+    valid = (
+        isinstance(result, dict)
+        and type(result.get("schemaVersion")) is int
+        and result["schemaVersion"] == JSON_RESPONSE_SCHEMA_VERSION
+        and type(result.get("ok")) is bool
+        and bool(argv) and result.get("command") == argv[0]
+    )
+    return stdout, result, bool(stdout), valid
+
+
 def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     check_ssh_argument(host, "--host")
-    for opt in ssh_opts:
-        check_ssh_argument(opt, "--ssh-opt")
+    check_ssh_options(ssh_opts)
 
     remote = " ".join(shlex.quote(a) for a in ["python3", "-", *argv, "--json"])
     if len(remote.encode("utf-8")) > MAX_SSH_COMMAND_BYTES:
@@ -2027,25 +2116,53 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     command = ["ssh", *ssh_opts, host, remote]
     try:
         completed = subprocess.run(
-            command, input=source, encoding="utf-8", capture_output=True, timeout=120
+            command, input=source.encode("utf-8"), capture_output=True, timeout=120
         )
     except FileNotFoundError as exc:
         raise ssh_failure_error(host, ssh_info, "transport_failed", "ssh not found on PATH") from exc
     except subprocess.TimeoutExpired as exc:
-        raise ssh_failure_error(host, ssh_info, "timeout") from exc
+        stdout, _, _, valid = parse_ssh_response(exc.output, argv)
+        if valid:
+            stderr = exc.stderr
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
+            # A timeout after the complete application response is a transport
+            # shutdown problem, not evidence that its result was never received.
+            completed = subprocess.CompletedProcess(command, 255, stdout,
+                                                    stderr if isinstance(stderr, str) else "")
+        else:
+            if argv and argv[0] == "send":
+                raise CcPeerError(
+                    f"SSH send to {host} timed out; submission outcome unknown. "
+                    "Do not automatically retry; check the target before retrying.",
+                    {**ssh_info, "sshFailure": "timeout", "status": "unknown",
+                     "reason": "outcome_unknown", "retryAllowed": False},
+                ) from exc
+            raise ssh_failure_error(host, ssh_info, "timeout") from exc
     except OSError as exc:
         raise ssh_failure_error(host, ssh_info, "transport_failed", str(exc)) from exc
 
-    stdout = completed.stdout.strip()
-    detail = completed.stderr.strip() or f"ssh exited {completed.returncode}"
+    stdout, result, parsed_result, valid_result = parse_ssh_response(completed.stdout, argv)
+    # Keep diagnostic decoding independent of protocol decoding. A locale's
+    # stderr bytes must not prevent a complete stdout response reaching its
+    # strict parser. Only diagnostic text may use replacement characters.
+    stderr = completed.stderr
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode("utf-8", errors="replace")
+    stderr = stderr if isinstance(stderr, str) else ""
+    detail = stderr.strip() or f"ssh exited {completed.returncode}"
+    # A complete response proves the remote command ran, even if the SSH
+    # process later exits 255. Login-shell stderr must not hide submission
+    # evidence or turn a remote partial failure into an invitation to resend.
     failure = (
         classify_ssh_failure(detail, completed.returncode)
-        if completed.returncode != 0 else None
+        if (not valid_result and completed.returncode != 0
+            and (completed.returncode == 255 or not stdout)) else None
     )
     if failure:
         raise ssh_failure_error(host, ssh_info, failure, detail)
-    runtime_output = (completed.stdout + "\n" + completed.stderr).strip().lower()
-    if (runtime_output == "python"
+    runtime_output = (stdout + "\n" + stderr).strip().lower()
+    if not valid_result and (runtime_output == "python"
             or "python was not found" in runtime_output
             or ("python3" in runtime_output and any(marker in runtime_output for marker in (
                 "command not found", "not recognized as", "no such file", "python3: not found",
@@ -2060,10 +2177,9 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
         )
     if not stdout:
         raise CcPeerError(f"{host}: {detail}", ssh_info)
-    try:
-        result = json.loads(stdout)
-    except ValueError as exc:
-        raise CcPeerError(f"{host}: unexpected output: {stdout[:200]}", ssh_info) from exc
+    if not parsed_result or (isinstance(result, dict)
+                             and "schemaVersion" in result and not valid_result):
+        raise CcPeerError(f"{host}: unexpected output: {stdout[:200]}", ssh_info)
     if isinstance(result, dict):
         result.update(ssh_info)
 
@@ -2103,16 +2219,78 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     return result
 
 
+def installed_update_receipt(output: str | bytes | None, expected: str) -> bool:
+    """Accept only the publisher's complete single installed-version line."""
+    if isinstance(output, bytes):
+        try:
+            output = output.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            return False
+    return isinstance(output, str) and output in (expected + "\n", expected + "\r\n")
+
+
+def update_diagnostic_text(output: str | bytes | None) -> str:
+    """Decode diagnostic bytes without repairing protocol stdout."""
+    return output.decode("utf-8", errors="replace") if isinstance(output, bytes) else (output or "")
+
+
+def installed_update_rejection(output: str | bytes | None, expected: str) -> dict | None:
+    """Recognize only a complete publisher rejection before any publication."""
+    if isinstance(output, bytes):
+        try:
+            output = output.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            return None
+    if (not isinstance(output, str) or not output.startswith("{")
+            or not output.endswith(("}\n", "}\r\n")) or output.count("\n") != 1):
+        return None
+
+    def unique_fields(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate update rejection field")
+            result[key] = value
+        return result
+
+    def invalid_constant(value):
+        raise ValueError("non-JSON update rejection constant")
+
+    try:
+        result = json.loads(output, object_pairs_hook=unique_fields,
+                            parse_constant=invalid_constant)
+    except (ValueError, RecursionError):
+        return None
+    if (not isinstance(result, dict) or set(result) != {
+            "schemaVersion", "command", "status", "reason", "remoteVersion"}
+            or type(result["schemaVersion"]) is not int or result["schemaVersion"] != 1
+            or result["command"] != "update" or result["status"] != "rejected"):
+        return None
+    reason, remote = result["reason"], result["remoteVersion"]
+    if reason in ("installed_version_unusable", "local_version_unusable") and remote is None:
+        return result
+    try:
+        current, wanted = release_version(remote), release_version(expected)
+    except ValueError:
+        return None
+    if reason == "remote_not_older" and current is not None and wanted is not None and current >= wanted:
+        return result
+    return None
+
+
 def push_to_remote(host: str, ssh_opts: list[str], ssh_info: dict | None = None) -> str:
     """Push this script to a remote machine's skill dir over SSH.
 
     Returns the version string reported by the newly installed copy.
     The remote machine needs only python3 and ssh access — no internet,
-    no install.sh.
+    no install.sh. In-process publication/verification exceptions attempt
+    rollback. Signals, rollback failure, or loss of SSH at publication can
+    leave the commit outcome unknown; never automatically retry such a transfer.
+    A complete rejection reports publication as not_started even though the
+    SSH transfer ran; it never permits automatic resubmission.
     """
     check_ssh_argument(host, "--host")
-    for opt in ssh_opts:
-        check_ssh_argument(opt, "--ssh-opt")
+    check_ssh_options(ssh_opts)
 
     try:
         source = Path(__file__).resolve().read_bytes()
@@ -2121,40 +2299,208 @@ def push_to_remote(host: str, ssh_opts: list[str], ssh_info: dict | None = None)
 
     ssh_info = ssh_user_metadata(host, ssh_opts) if ssh_info is None else ssh_info
 
-    source_b64 = base64.b64encode(source).decode("ascii")
+    import hashlib
 
+    source_b64 = base64.b64encode(source)
+    # Python is already required on the destination. Strict, bounded decoding
+    # avoids platform-specific base64 flags and detects even clean truncation.
+    decoder = """import base64, hashlib, sys
+digest = hashlib.sha256()
+size = 0
+with open(sys.argv[1], 'xb') as staged:
+    while True:
+        chunk = sys.stdin.buffer.read(65536)
+        if not chunk:
+            break
+        decoded = base64.b64decode(chunk, validate=True)
+        size += len(decoded)
+        if size > int(sys.argv[3]):
+            raise SystemExit('remote update: transfer exceeds expected size')
+        digest.update(decoded)
+        staged.write(decoded)
+if size != int(sys.argv[3]) or digest.hexdigest() != sys.argv[2]:
+    raise SystemExit('remote update: transfer digest or size mismatch')
+"""
+    publisher = """import fcntl, hashlib, json, os, re, stat, subprocess, sys, time
+staged, target, launcher, expected = sys.argv[1:]
+def comparable_update_release(text):
+    match = re.fullmatch(
+        r'[vV]?(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)'
+        r'(?:(?:-)?(a|alpha|b|beta|rc|pre|preview)[.-]?(0|[1-9]\\d*))?',
+        text.strip(), re.IGNORECASE)
+    if match is None:
+        return None
+    major, minor, patch = (int(part) for part in match.groups()[:3])
+    if any(value > sys.maxsize for value in (major, minor, patch)):
+        return None
+    label, serial = match.groups()[3:]
+    if label is None:
+        return major, minor, patch, 3, 0
+    stage = {'a': 0, 'alpha': 0, 'b': 1, 'beta': 1,
+             'rc': 2, 'pre': 2, 'preview': 2}[label.lower()]
+    return major, minor, patch, stage, int(serial)
+def reject_update(reason, remote_version=None):
+    print(json.dumps({'schemaVersion': 1, 'command': 'update', 'status': 'rejected',
+                      'reason': reason, 'remoteVersion': remote_version}), flush=True)
+    raise SystemExit(1)
+lock_path = os.path.join(os.path.dirname(target), '.session-peer-install.lock')
+lock = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+try:
+    lock_stat = os.fstat(lock)
+    if not stat.S_ISREG(lock_stat.st_mode) or lock_stat.st_nlink != 1:
+        raise SystemExit('remote update: installation lock is not a regular private file')
+    deadline = time.monotonic() + 30
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise SystemExit('remote update: installation lock is busy')
+            time.sleep(0.05)
+    current_lock = os.lstat(lock_path)
+    if (current_lock.st_dev, current_lock.st_ino) != (lock_stat.st_dev, lock_stat.st_ino):
+        raise SystemExit('remote update: installation lock changed')
+    backup = os.path.join(os.path.dirname(staged), 'previous.py')
+    previous = os.path.lexists(target)
+    wanted = comparable_update_release(expected.removeprefix('session-peer '))
+    if wanted is None:
+        reject_update('local_version_unusable')
+    if previous:
+        if not stat.S_ISREG(os.lstat(target).st_mode):
+            raise SystemExit('remote update: installed program is not a regular file')
+        try:
+            observed = subprocess.run([sys.executable, target, '--version'],
+                                      capture_output=True, timeout=30)
+            reported = observed.stdout.decode('utf-8', errors='strict').strip()
+            match = re.fullmatch(r'session-peer ([^\\s]+)', reported)
+            current = comparable_update_release(match.group(1)) if match else None
+        except (OSError, subprocess.TimeoutExpired, UnicodeError, ValueError):
+            reject_update('installed_version_unusable')
+        if observed.returncode != 0 or current is None:
+            reject_update('installed_version_unusable')
+        if current >= wanted:
+            reject_update('remote_not_older', match.group(1))
+        os.link(target, backup)
+    created = None
+    if os.path.lexists(launcher):
+        if not os.path.islink(launcher) or os.path.realpath(launcher) != os.path.realpath(target):
+            raise SystemExit('remote update: launcher belongs to another installation')
+    else:
+        os.symlink(target, launcher)
+        created = os.lstat(launcher)
+    staged_stat = os.stat(staged)
+    with open(staged, 'rb') as source:
+        published_digest = hashlib.sha256(source.read()).digest()
+    def owns_publication():
+        try:
+            fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, 'rb') as installed:
+                current = os.fstat(installed.fileno())
+                if (not stat.S_ISREG(current.st_mode) or
+                        (current.st_dev, current.st_ino) !=
+                        (staged_stat.st_dev, staged_stat.st_ino) or
+                        hashlib.sha256(installed.read()).digest() != published_digest):
+                    return False
+                bound = os.lstat(target)
+                return (bound.st_dev, bound.st_ino) == (current.st_dev, current.st_ino)
+        except OSError:
+            return False
+    published = False
+    try:
+        os.replace(staged, target)
+        published = True
+        result = subprocess.run([sys.executable, target, '--version'],
+                                capture_output=True, timeout=30)
+        if result.returncode != 0 or result.stdout.strip() != expected.encode('utf-8'):
+            raise RuntimeError('remote update: installed version mismatch')
+    except BaseException:
+        owned = not published or owns_publication()
+        if published and owned:
+            if previous:
+                os.replace(backup, target)
+            else:
+                os.unlink(target)
+        if created is not None and owned:
+            try:
+                current = os.lstat(launcher)
+            except FileNotFoundError:
+                current = None
+            if current is not None and (current.st_dev, current.st_ino) == (created.st_dev, created.st_ino):
+                os.unlink(launcher)
+        raise
+    print(expected, flush=True)
+finally:
+    # Keep the lock inode: unlinking it lets a waiter and a new opener lock
+    # different files. Kernel locks expire on close/termination, without PID
+    # guesses, stale-file deletion, or touching another updater's staging.
+    os.close(lock)
+"""
+    expected_line = f"session-peer {__version__}"
     remote_script = (
-        "set -eu; "
-        'D="$HOME/.local/share/session-peer"; '
-        'mkdir -p "$D" "$HOME/.local/bin"; '
-        'base64 -d > "$D/session_peer.py"; '
-        'chmod +x "$D/session_peer.py"; '
-        'ln -sf "$D/session_peer.py" "$HOME/.local/bin/session-peer"; '
-        'python3 "$D/session_peer.py" --version 2>/dev/null || echo "session-peer unknown"'
+        "set -eu; umask 077; "
+        'D="$HOME/.local/share/session-peer"; B="$HOME/.local/bin"; '
+        'for P in "$HOME/.local" "$HOME/.local/share" "$D" "$B"; do '
+        '[ ! -L "$P" ] || '
+        "{ echo 'remote update: installation directory is a symlink' >&2; exit 1; }; done; "
+        'mkdir -p "$D" "$B"; '
+        'T=$(mktemp -d "$D/.session-peer-update.XXXXXXXX"); '
+        "trap 'rm -rf \"$T\"' EXIT; trap 'exit 1' HUP INT TERM; "
+        f'python3 -c {shlex.quote(decoder)} "$T/session_peer.py" '
+        f"{hashlib.sha256(source).hexdigest()} {len(source)}; "
+        'V=$(python3 "$T/session_peer.py" --version); '
+        f'[ "$V" = {shlex.quote(expected_line)} ] || '
+        "{ echo 'remote update: staged version mismatch' >&2; exit 1; }; "
+        'chmod 755 "$T/session_peer.py"; '
+        f'python3 -c {shlex.quote(publisher)} "$T/session_peer.py" '
+        f'"$D/session_peer.py" "$B/session-peer" {shlex.quote(expected_line)}'
     )
     command = ["ssh", *ssh_opts, host, remote_script]
+    uncertain = {**ssh_info, "commitStatus": "unknown", "retryAllowed": False}
+
+    def push_failure(failure: str, detail: str | None = None,
+                     started: bool = True) -> CcPeerError:
+        error = ssh_failure_error(host, ssh_info, failure, detail)
+        error.details.update({
+            "commitStatus": "unknown" if started else "not_started",
+            "retryAllowed": not started,
+        })
+        return error
+
+    def reject_receipt(output: str | bytes | None) -> None:
+        rejection = installed_update_rejection(output, __version__)
+        if rejection is not None:
+            raise CcPeerError(f"{host}: remote update rejected: {rejection['reason']}", {
+                **ssh_info, "commitStatus": "not_started", "retryAllowed": False,
+                "reason": rejection["reason"], "remoteVersion": rejection["remoteVersion"],
+            })
+
     try:
         completed = subprocess.run(
-            command, input=source_b64, encoding="utf-8",
+            command, input=source_b64,
             capture_output=True, timeout=120,
         )
     except FileNotFoundError as exc:
-        raise ssh_failure_error(host, ssh_info, "transport_failed", "ssh not found on PATH") from exc
+        raise push_failure("transport_failed", "ssh not found on PATH", started=False) from exc
     except subprocess.TimeoutExpired as exc:
-        raise ssh_failure_error(host, ssh_info, "timeout") from exc
+        if installed_update_receipt(exc.stdout, expected_line):
+            return __version__
+        reject_receipt(exc.stdout)
+        raise push_failure("timeout") from exc
     except OSError as exc:
-        raise ssh_failure_error(host, ssh_info, "transport_failed", str(exc)) from exc
+        raise push_failure("transport_failed", str(exc)) from exc
 
+    if installed_update_receipt(completed.stdout, expected_line):
+        return __version__
+    reject_receipt(completed.stdout)
     if completed.returncode != 0:
-        detail = completed.stderr.strip() or f"ssh exited {completed.returncode}"
+        detail = update_diagnostic_text(completed.stderr).strip() or f"ssh exited {completed.returncode}"
         failure = classify_ssh_failure(detail, completed.returncode)
         if failure:
-            raise ssh_failure_error(host, ssh_info, failure, detail)
-        raise CcPeerError(f"{host}: {detail}", ssh_info)
+            raise push_failure(failure, detail)
+        raise CcPeerError(f"{host}: {detail}", uncertain)
 
-    version_line = completed.stdout.strip()
-    parts = version_line.split()
-    return parts[-1] if parts else "unknown"
+    raise CcPeerError(f"{host}: installed version did not match {__version__}", uncertain)
 
 
 # --------------------------------------------------------------------------
@@ -2162,7 +2508,28 @@ def push_to_remote(host: str, ssh_opts: list[str], ssh_info: dict | None = None)
 # --------------------------------------------------------------------------
 
 
+def human_text(value):
+    """Escape terminal controls in display-only values, retaining Unicode.
+
+    Copy containers so rendering cannot alter JSON results or message bodies.
+    Apply this before assembling lines (and measuring table widths): newlines
+    in external fields are escaped, while renderer-owned newlines stay intact.
+    Escaping is idempotent because printable backslashes are left unchanged.
+    """
+    if isinstance(value, str):
+        return "".join(
+            f"\\x{ord(char):02x}" if ord(char) < 0x20 or 0x7f <= ord(char) <= 0x9f else char
+            for char in value
+        )
+    if isinstance(value, dict):
+        return {key: human_text(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return type(value)(human_text(item) for item in value)
+    return value
+
+
 def render_sessions(sessions: list[dict], where: str) -> str:
+    sessions, where = human_text(sessions), human_text(where)
     if not sessions:
         return f"No reachable Claude Code sessions on {where}."
 
@@ -2239,13 +2606,14 @@ def emit_json_results(results: list[dict]) -> None:
 
 def emit_human_update_notice() -> None:
     if _CLIENT_UPDATE_NOTICE is not None:
+        notice = human_text(_CLIENT_UPDATE_NOTICE)
         print(
-            f"Update available: {_CLIENT_UPDATE_NOTICE['current']} → "
-            f"{_CLIENT_UPDATE_NOTICE['latest']}. "
-            f"Run: {_CLIENT_UPDATE_NOTICE['command']}",
+            f"Update available: {notice['current']} → "
+            f"{notice['latest']}. "
+            f"Run: {notice['command']}",
             file=sys.stderr,
         )
-    for notice in _SKILL_UPDATE_NOTICES:
+    for notice in human_text(_SKILL_UPDATE_NOTICES):
         command = notice.get("command") or "check the skill's installation manager"
         print(f"Skill update available ({notice['location']}): "
               f"{notice['current']} → {notice['latest']}. Run: {command}", file=sys.stderr)
@@ -2259,6 +2627,7 @@ def host_metadata(ssh_host: str, canonical_host: str) -> dict:
 
 
 def display_host(ssh_host: str, canonical_host: str) -> str:
+    ssh_host, canonical_host = human_text(ssh_host), human_text(canonical_host)
     if ssh_host == canonical_host:
         return canonical_host
     return f"{canonical_host} (via SSH {ssh_host})"
@@ -2625,6 +2994,7 @@ def doctor_payload(args: argparse.Namespace) -> dict:
 
 
 def render_doctor(payload: dict, where: str) -> str:
+    payload, where = human_text(payload), human_text(where)
     lines = [
         f"Diagnostics on {where}:",
         *("  " + AGENTS.get(name).diagnostic_text(payload[name]) for name in AGENTS.names() if name in payload),
@@ -2732,6 +3102,7 @@ class AgentAdapter:
         return {"status": "unavailable", "checks": []}
 
     def diagnostic_text(self, result: dict) -> str:
+        result = human_text(result)
         return f"{self.name}: {result['status']}"
 
     def remote_options(self, args: argparse.Namespace) -> list[str]:
@@ -2741,6 +3112,7 @@ class AgentAdapter:
         return str(session["id"]), str(session.get("status", "unknown"))
 
     def render(self, sessions: list[dict], where: str) -> str:
+        sessions, where = human_text(sessions), human_text(where)
         return f"Sessions on {where}:\n" + "\n".join(
             f"{self.name}  {self.display_row(row)[0]}  {self.display_row(row)[1]}"
             for row in sessions)
@@ -2749,6 +3121,7 @@ class AgentAdapter:
         return []
 
     def submission_text(self, result: dict, where: str) -> str:
+        result, where = human_text(result), human_text(where)
         return f"{self.name} submission on {where}: {result.get('status', 'unknown')}"
 
     def remote_submission(self, result: dict, args: argparse.Namespace, text: str) -> dict:
@@ -2783,6 +3156,7 @@ class ClaudeAdapter(AgentAdapter):
         return diagnose_claude()
 
     def diagnostic_text(self, result: dict) -> str:
+        result = human_text(result)
         return f"Claude inbox: {result['status']}"
 
     def display_row(self, session: dict) -> tuple[str, str]:
@@ -2795,6 +3169,7 @@ class ClaudeAdapter(AgentAdapter):
         return render_sessions(sessions, where)
 
     def submission_text(self, result: dict, where: str) -> str:
+        result, where = human_text(result), human_text(where)
         target = result.get("target", {})
         name = target.get("name") or target.get("pid")
         verb = "Would post to" if result["dryRun"] else "Posted to"
@@ -2828,6 +3203,7 @@ class CodexAdapter(AgentAdapter):
         return diagnose_codex(context.options)
 
     def diagnostic_text(self, result: dict) -> str:
+        result = human_text(result)
         return f"Codex: {result['status']} ({result.get('selectedHome', 'unknown')})"
 
     def remote_options(self, args: argparse.Namespace) -> list[str]:
@@ -2841,6 +3217,7 @@ class CodexAdapter(AgentAdapter):
         return render_codex(sessions, where)
 
     def listing_notes(self, payload: dict) -> list[str]:
+        payload = human_text(payload)
         notes = []
         if "codexHome" in payload:
             notes.append(f"Codex home: {payload['codexHome']} (single candidate home).")
@@ -3089,7 +3466,7 @@ class AgyBridge:
         try:
             # No shell; native stdout/stderr may contain credentials and are discarded.
             done = subprocess.run([str(self.api), 'send-message', '--title=session-peer',
-                                   self.info['id'], text], stdout=subprocess.DEVNULL,
+                                   '--', self.info['id'], text], stdout=subprocess.DEVNULL,
                                   stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, timeout=15)
             result = {**result, 'nativeExitCode': done.returncode}
             if done.returncode == 0:
@@ -3404,6 +3781,7 @@ def collect_listing(args: argparse.Namespace) -> dict:
 
 
 def render_listing(payload: dict, where: str, selected: str | None) -> str:
+    payload, where = human_text(payload), human_text(where)
     sessions = payload["sessions"]
     if selected:
         human = AGENTS.get(selected).render(sessions, where)
@@ -3419,7 +3797,7 @@ def render_listing(payload: dict, where: str, selected: str | None) -> str:
             human += "\n" + note
     for agent, info in payload.get("discovery", {}).items():
         if info["status"] == "error":
-            human += f"\n{agent} discovery failed: {info['error']}"
+            human += f"\n{human_text(agent)} discovery failed: {info['error']}"
     return human
 
 
@@ -3454,8 +3832,8 @@ def cmd_list(args: argparse.Namespace) -> int:
                 exit_code = EXIT_ERROR
             if remote_version and remote_version != __version__:
                 human = (
-                    f"{shown_host} runs session-peer {remote_version}; this machine has {__version__}."
-                    f"\nUpdate it with:  session-peer update --host {requested_host}\n\n{human}"
+                    f"{shown_host} runs session-peer {human_text(remote_version)}; this machine has {__version__}."
+                    f"\nUpdate it with:  session-peer update --host {human_text(requested_host)}\n\n{human}"
                 )
             host_result = json_result("list", {
                 **host_metadata(requested_host, host),
@@ -3479,7 +3857,7 @@ def cmd_list(args: argparse.Namespace) -> int:
                 ok=False,
             ))
             if not args.json:
-                print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
+                print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
 
     if args.json:
         emit_json_results(all_results)
@@ -3549,7 +3927,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 ok=False,
             ))
             if not args.json:
-                print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
+                print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
     if args.json:
         emit_json_results(all_results)
     return exit_code
@@ -3578,6 +3956,195 @@ def read_message(args: argparse.Namespace) -> str:
     return message
 
 
+"""Verify release bytes before compiling, running, or installing downloaded code."""
+
+import ast
+import hashlib
+import json
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import urllib.request
+
+
+RELEASE_REPOSITORY = "abruption/session-peer"
+RELEASE_BUILDER = RELEASE_REPOSITORY + "/.github/workflows/prepare-release.yml"
+RELEASE_SOURCE_LIMIT = 8 * 1024 * 1024
+RELEASE_METADATA_LIMIT = 1024 * 1024
+RELEASE_SUPPORT_LIMIT = 256 * 1024
+
+
+class ReleaseVerificationError(RuntimeError):
+    pass
+
+
+def release_read(url, limit):
+    request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json",
+                                                 "User-Agent": "session-peer-release-verifier"})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        length = response.headers.get("Content-Length")
+        if length is not None and (not length.isdigit() or int(length) > limit):
+            raise ReleaseVerificationError("release download exceeds its size limit")
+        data = response.read(limit + 1)
+    if len(data) > limit:
+        raise ReleaseVerificationError("release download exceeds its size limit")
+    return data
+
+
+def release_json(path):
+    value = json.loads(release_read("https://api.github.com/repos/" + RELEASE_REPOSITORY + path,
+                                    RELEASE_METADATA_LIMIT))
+    if not isinstance(value, dict):
+        raise ReleaseVerificationError("invalid GitHub release metadata")
+    return value
+
+
+def release_commit(tag):
+    obj = release_json("/git/ref/tags/" + tag).get("object", {})
+    for _ in range(4):
+        if not isinstance(obj, dict) or not re.fullmatch(r"[0-9a-f]{40}", obj.get("sha", "")):
+            break
+        if obj.get("type") == "commit":
+            return obj["sha"]
+        if obj.get("type") != "tag":
+            break
+        obj = release_json("/git/tags/" + obj["sha"]).get("object", {})
+    raise ReleaseVerificationError("release tag does not resolve to a full commit SHA")
+
+
+def release_attest(path, commit):
+    if shutil.which("gh") is None:
+        raise ReleaseVerificationError("verified standalone installation needs GitHub CLI (gh) with "
+                                       "attestation policy flags; use gh 2.102.0 or later, authenticate with "
+                                       "gh auth login / GH_TOKEN, or install via pip/uv/pipx")
+    command = ["gh", "attestation", "verify", str(path), "--repo", RELEASE_REPOSITORY,
+               "--signer-workflow", RELEASE_BUILDER, "--source-ref", "refs/heads/main",
+               "--source-digest", commit, "--cert-oidc-issuer", "https://token.actions.githubusercontent.com",
+               "--deny-self-hosted-runners", "--format", "json"]
+    try:
+        done = subprocess.run(command, capture_output=True, text=True, timeout=120)
+        result = json.loads(done.stdout) if done.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError) as error:
+        raise ReleaseVerificationError("could not verify release build attestation; use gh 2.102.0 or later "
+                                       "and authenticate with gh auth login / GH_TOKEN") from error
+    if done.returncode or not isinstance(result, list) or not result:
+        raise ReleaseVerificationError("release build attestation did not verify against protected main; "
+                                       "check gh policy flag support (tested with 2.102.0) and gh auth login / GH_TOKEN: "
+                                       + done.stderr.strip()[:1000])
+
+
+def release_validate_runtime(path, version):
+    source = path.read_bytes()
+    if len(source) > RELEASE_SOURCE_LIMIT:
+        raise ReleaseVerificationError("standalone artifact exceeds its size limit")
+    try:
+        tree = ast.parse(source, filename=str(path))
+        versions = [node.value.value for node in tree.body
+                    if isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "__version__"
+                    and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)]
+        if versions != [version]:
+            raise ReleaseVerificationError("standalone literal __version__ does not match release tag")
+        compile(tree, str(path), "exec")
+        done = subprocess.run([sys.executable, "-I", str(path), "--version"],
+                              capture_output=True, text=True, timeout=15)
+    except (SyntaxError, UnicodeError, OSError, subprocess.TimeoutExpired) as error:
+        raise ReleaseVerificationError("standalone artifact does not compile/run") from error
+    if done.returncode or done.stdout.strip() != "session-peer " + version:
+        raise ReleaseVerificationError("staged standalone --version does not match release tag")
+
+
+def release_tag_version(tag, allow_prerelease=False):
+    if not isinstance(tag, str):
+        raise ReleaseVerificationError("release has no canonical version tag")
+    match = re.fullmatch(r"v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))"
+                         r"(?:(a|b|rc)(0|[1-9]\d*)|-(alpha|beta|rc)\.(0|[1-9]\d*))?", tag)
+    if match is None or (not allow_prerelease and any(match.groups()[1:])):
+        raise ReleaseVerificationError("release has no canonical version tag allowed for this operation")
+    version, label, serial, long_label, long_serial = match.groups()
+    if long_label:
+        label, serial = {"alpha": "a", "beta": "b", "rc": "rc"}[long_label], long_serial
+    return version + (label + serial if label else "")
+
+
+def verified_release_download(directory, tag=None, include_support=False, event_release=False,
+                              expected_commit=None):
+    """Return the verified version; directory must be private and initially empty."""
+    directory = Path(directory)
+    try:
+        if event_release:
+            release_tag_version(tag, allow_prerelease=True)
+        release = release_json("/releases/tags/" + tag if event_release else "/releases/latest")
+        found = release.get("tag_name", "")
+        version = release_tag_version(found, allow_prerelease=event_release)
+        if tag is not None and found != tag:
+            raise ReleaseVerificationError("latest release changed while preparing the update; retry")
+        prerelease = release.get("prerelease")
+        if (release.get("immutable") is not True or release.get("draft") is not False
+                or type(prerelease) is not bool or (prerelease and not event_release)):
+            raise ReleaseVerificationError("release is not immutable or allowed for this operation; use package-manager installation "
+                                           "until a verified release is published")
+        commit = release_commit(found)
+        if expected_commit is not None and commit != expected_commit:
+            raise ReleaseVerificationError("release tag differs from event commit")
+        assets = release.get("assets")
+        if not isinstance(assets, list):
+            raise ReleaseVerificationError("release assets are missing")
+        by_name = {}
+        prefix = "https://github.com/" + RELEASE_REPOSITORY + "/releases/download/" + found + "/"
+        for asset in assets:
+            if not isinstance(asset, dict) or not isinstance(asset.get("name"), str) or asset["name"] in by_name:
+                raise ReleaseVerificationError("invalid or duplicate release asset")
+            by_name[asset["name"]] = asset
+        names = ["SHA256SUMS", "release-provenance.json", "session_peer.py"]
+        if include_support:
+            names += ["install.sh", "SKILL.md"]
+        for name in names:
+            asset = by_name.get(name, {})
+            limit = RELEASE_SOURCE_LIMIT if name == "session_peer.py" else RELEASE_SUPPORT_LIMIT
+            size = asset.get("size")
+            if (type(size) is not int or not 0 < size <= limit
+                    or asset.get("browser_download_url") != prefix + name):
+                raise ReleaseVerificationError("missing, oversized, or invalid release asset: " + name)
+            data = release_read(prefix + name, limit)
+            if len(data) != size:
+                raise ReleaseVerificationError("release asset size does not match metadata: " + name)
+            (directory / name).write_bytes(data)
+        # Authenticate the manifest before trusting any digest or running code.
+        release_attest(directory / "SHA256SUMS", commit)
+        entries = {}
+        for line in (directory / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
+            match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9_.-]+)", line)
+            if not match or match[2] in entries:
+                raise ReleaseVerificationError("invalid or duplicate release manifest entry")
+            entries[match[2]] = match[1]
+        expected = {"session_peer-" + version + "-py3-none-any.whl", "session_peer-" + version + ".tar.gz",
+                    "session_peer.py", "install.sh", "SKILL.md"}
+        if set(entries) != expected or set(by_name) != expected | {"SHA256SUMS", "release-provenance.json"}:
+            raise ReleaseVerificationError("release asset/manifest file set does not match the release contract")
+        release_attest(directory / "release-provenance.json", commit)
+        provenance = json.loads((directory / "release-provenance.json").read_bytes())
+        if (not isinstance(provenance, dict) or provenance.get("repository") != RELEASE_REPOSITORY
+                or provenance.get("commit") != commit or provenance.get("tag") != found
+                or provenance.get("version") != version
+                or provenance.get("workflow_ref") != RELEASE_BUILDER + "@refs/heads/main"
+                or provenance.get("artifacts") != [{"filename": name, "sha256": digest}
+                                                   for name, digest in sorted(entries.items())]):
+            raise ReleaseVerificationError("release provenance does not match the tag/source/manifest")
+        for name in names[2:]:
+            if hashlib.sha256((directory / name).read_bytes()).hexdigest() != entries.get(name):
+                raise ReleaseVerificationError("release checksum mismatch: " + name)
+            release_attest(directory / name, commit)
+        release_validate_runtime(directory / "session_peer.py", version)
+        return version
+    except ReleaseVerificationError:
+        raise
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        raise ReleaseVerificationError("could not download/verify the release: " + str(error)) from error
+
+
 def remote_installed_version(host: str, ssh_opts: list[str],
                              ssh_info: dict | None = None) -> str | None:
     """Version of the copy *installed* on that machine.
@@ -3588,14 +4155,17 @@ def remote_installed_version(host: str, ssh_opts: list[str],
     actually use, and it is what can fall behind.
     """
     check_ssh_argument(host, "--host")
-    for opt in ssh_opts:
-        check_ssh_argument(opt, "--ssh-opt")
+    check_ssh_options(ssh_opts)
     ssh_info = ssh_user_metadata(host, ssh_opts) if ssh_info is None else ssh_info
-    probe = 'python3 "$HOME/.local/share/session-peer/session_peer.py" --version 2>/dev/null'
+    probe = (
+        'P="$HOME/.local/share/session-peer/session_peer.py"; '
+        'if [ -e "$P" ] || [ -L "$P" ]; then python3 "$P" --version; '
+        "else printf '%s\\n' 'session-peer: not installed'; exit 3; fi"
+    )
     try:
         done = subprocess.run(
             ["ssh", *ssh_opts, host, probe],
-            capture_output=True, encoding="utf-8", errors="replace", timeout=30,
+            capture_output=True, timeout=30,
         )
     except FileNotFoundError as exc:
         raise ssh_failure_error(host, ssh_info, "transport_failed", "ssh not found on PATH") from exc
@@ -3603,12 +4173,21 @@ def remote_installed_version(host: str, ssh_opts: list[str],
         raise ssh_failure_error(host, ssh_info, "timeout") from exc
     except OSError as exc:
         raise ssh_failure_error(host, ssh_info, "transport_failed", str(exc)) from exc
-    out = done.stdout.strip()
-    detail = done.stderr.strip() or f"ssh exited {done.returncode}"
+    try:
+        out = (done.stdout.decode("utf-8", errors="strict")
+               if isinstance(done.stdout, bytes) else done.stdout).strip()
+    except UnicodeError as exc:
+        raise CcPeerError(f"{host}: installed program did not report a usable version", ssh_info) from exc
+    if done.returncode == 3 and out == "session-peer: not installed":
+        return None
+    detail = update_diagnostic_text(done.stderr).strip() or f"ssh exited {done.returncode}"
     failure = classify_ssh_failure(detail, done.returncode) if done.returncode != 0 else None
     if failure:
         raise ssh_failure_error(host, ssh_info, failure, detail)
-    return out.split()[-1] if out.startswith("session-peer") else None
+    match = re.fullmatch(r"session-peer ([^\s]+)", out)
+    if done.returncode != 0 or match is None:
+        raise CcPeerError(f"{host}: installed program did not report a usable version", ssh_info)
+    return match.group(1)
 
 
 def parse_version(text: str) -> tuple[int, ...]:
@@ -3991,7 +4570,10 @@ def latest_release() -> tuple[str, str]:
     request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
     try:
         with urllib.request.urlopen(request, timeout=DETECT_TIMEOUT * 4) as response:
-            release = json.load(response)
+            payload = response.read(RELEASE_METADATA_LIMIT + 1)
+            if len(payload) > RELEASE_METADATA_LIMIT:
+                raise ValueError("release metadata exceeds its size limit")
+            release = json.loads(payload)
             if not isinstance(release, dict):
                 raise ValueError("unexpected release response")
             tag = release.get("tag_name", "")
@@ -4005,7 +4587,7 @@ def latest_release() -> tuple[str, str]:
         raise CcPeerError("GitHub returned no release tag")
     if stable_version(tag) is None:
         raise CcPeerError(f"GitHub returned a non-stable release tag: {tag!r}")
-    return tag, f"https://raw.githubusercontent.com/{GITHUB_REPO}/{tag}/session_peer.py"
+    return tag, f"https://github.com/{GITHUB_REPO}/releases/download/{tag}/session_peer.py"
 
 
 def installed_as_distribution() -> bool:
@@ -4034,7 +4616,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                 args.json,
                 {"current": __version__, "latest": tag, "outdated": outdated,
                  "managedBy": "package-manager", "updateCommand": command},
-                f"session-peer {__version__} — {state}. Upgrade with: {command}",
+                human_text(f"session-peer {__version__} — {state}. Upgrade with: {command}"),
                 command="update",
             )
             return 0
@@ -4042,7 +4624,7 @@ def cmd_update(args: argparse.Namespace) -> int:
             args.json,
             {"current": __version__, "updated": False,
              "managedBy": "package-manager", "updateCommand": command},
-            f"This installation is package-managed. Upgrade with: {command}",
+            human_text(f"This installation is package-managed. Upgrade with: {command}"),
             command="update",
         )
         return 0
@@ -4058,41 +4640,67 @@ def cmd_update(args: argparse.Namespace) -> int:
                 shown_host = display_host(requested_host, host)
                 ssh_info = ssh_user_metadata(requested_host, ssh_opts)
                 there = remote_installed_version(requested_host, ssh_opts, ssh_info)
+                current = release_version(__version__)
+                installed = release_version(there) if there is not None else None
+                if current is None or (there is not None and installed is None):
+                    raise CcPeerError("could not compare the local and remote release versions", ssh_info)
+                outdated = installed is None or installed < current
 
                 if args.check:
                     if there is None:
                         state = "not installed"
-                    elif there == __version__:
+                    elif installed == current:
                         state = "up to date"
+                    elif installed > current:
+                        state = "newer than local client; no downgrade available"
                     else:
                         state = f"{there} → {__version__} available"
                     all_results.append(json_result("update", {
                         **host_metadata(requested_host, host), **ssh_info,
                         "remoteVersion": there, "current": __version__,
-                        "outdated": there != __version__,
+                        "outdated": outdated,
                     }))
                     if not args.json:
-                        print(f"{shown_host}: session-peer {there or '(none)'} — {state}")
+                        print(human_text(f"{shown_host}: session-peer {there or '(none)'} — {state}"))
                     continue
 
-                if there == __version__:
+                if not outdated:
                     all_results.append(json_result("update", {
                         **host_metadata(requested_host, host), **ssh_info,
                         "remoteVersion": there, "current": __version__,
                         "updated": False,
                     }))
                     if not args.json:
-                        print(f"{shown_host} runs session-peer {there} — already current.")
+                        print(human_text(f"{shown_host} runs session-peer {there} — already current or newer."))
                     continue
 
                 new_version = push_to_remote(requested_host, ssh_opts, ssh_info)
+                if new_version != __version__:
+                    raise CcPeerError(
+                        f"installed remote version did not match {__version__}", ssh_info
+                    )
+                committed = {**ssh_info, "committed": True,
+                             "commitStatus": "committed", "retryAllowed": False,
+                             "installedVersionVerified": new_version}
+                try:
+                    verified = remote_installed_version(requested_host, ssh_opts, ssh_info)
+                except CcPeerError as exc:
+                    raise CcPeerError(str(exc), {
+                        **exc.details, **committed, "verificationStatus": "unknown",
+                    }) from exc
+                if verified != __version__:
+                    raise CcPeerError(
+                        f"installed remote version did not match {__version__}",
+                        {**committed, "verificationStatus": "mismatch", "remoteVersion": verified},
+                    )
                 all_results.append(json_result("update", {
                     **host_metadata(requested_host, host), **ssh_info,
-                    "previous": there, "current": __version__, "updated": True,
+                    "previous": there, "current": __version__,
+                    "remoteVersion": verified, "updated": True,
                 }))
                 if not args.json:
                     prev = there or "(none)"
-                    print(f"{shown_host}: session-peer {prev} → {new_version}")
+                    print(human_text(f"{shown_host}: session-peer {prev} → {new_version}"))
 
             except CcPeerError as exc:
                 exit_code = EXIT_ERROR
@@ -4102,7 +4710,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                     ok=False,
                 ))
                 if not args.json:
-                    print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
+                    print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
         if args.json:
             emit_json_results(all_results)
         return exit_code
@@ -4121,7 +4729,7 @@ def cmd_update(args: argparse.Namespace) -> int:
         emit(
             args.json,
             {"current": __version__, "latest": tag, "outdated": current < latest},
-            f"session-peer {__version__} — {state}",
+            human_text(f"session-peer {__version__} — {state}"),
             command="update",
         )
         return 0
@@ -4130,35 +4738,25 @@ def cmd_update(args: argparse.Namespace) -> int:
         emit(
             args.json,
             {"current": __version__, "latest": tag, "updated": False},
-            f"session-peer {__version__} is already current ({tag}).",
+            human_text(f"session-peer {__version__} is already current ({tag})."),
             command="update",
         )
         return 0
 
     target = Path(__file__).resolve()
     try:
-        with urllib.request.urlopen(url, timeout=DETECT_TIMEOUT * 4) as response:
-            source = response.read()
-    except (urllib.error.URLError, OSError) as exc:
-        raise CcPeerError(f"could not download {tag}: {exc}") from exc
-    if b"__version__" not in source:
-        raise CcPeerError(f"what came back from {url} does not look like session_peer.py")
-
-    # We are running from the file being replaced. Write beside it and rename,
-    # so a failed download can't leave a half-written script behind.
-    staged = target.with_suffix(".py.new")
-    try:
-        staged.write_bytes(source)
-        staged.chmod(target.stat().st_mode & 0o777)
-        staged.replace(target)
-    except OSError as exc:
-        staged.unlink(missing_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".session-peer-update-", dir=target.parent) as temporary:
+            verified_release_download(Path(temporary), tag=tag)
+            staged = Path(temporary) / "session_peer.py"
+            staged.chmod(target.stat().st_mode & 0o777)
+            staged.replace(target)
+    except (OSError, ReleaseVerificationError) as exc:
         raise CcPeerError(f"could not replace {target}: {exc}") from exc
 
     emit(
         args.json,
         {"current": __version__, "latest": tag, "updated": True, "path": str(target)},
-        f"session-peer {__version__} → {tag}  ({target})",
+        human_text(f"session-peer {__version__} → {tag}  ({target})"),
         command="update",
     )
     return 0
@@ -4276,7 +4874,7 @@ def cmd_send(args: argparse.Namespace) -> int:
                 ok=False,
             ))
             if not args.json:
-                print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
+                print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
 
     if args.json:
         emit_json_results(all_results)
@@ -4330,8 +4928,27 @@ def cmd_optional_relay(args):
     return optional_relay().main(args.command, ["--help"] if args.relay_help else args.relay_args)
 
 
+class MessageArgumentParser(argparse.ArgumentParser):
+    def _get_values(self, action, arg_strings):
+        # Python 3.9 strips '--' even from an already recognized option value.
+        # Preserve only this declared single message value; option recognition
+        # still rejects the ambiguous separated form '--message --'.
+        if (action.dest == "message_option" and "--message" in action.option_strings
+                and action.nargs is None and arg_strings == ["--"]):
+            value = self._get_value(action, arg_strings[0])
+            self._check_value(action, value)
+            return value
+        return super()._get_values(action, arg_strings)
+
+
+class HumanArgumentParser(MessageArgumentParser):
+    def error(self, message):
+        # Preserve both the message-value and display-only escaping contracts.
+        super().error(human_text(message))
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = HumanArgumentParser(
         prog="session-peer",
         description="Message Claude Code and Codex sessions locally or over SSH.",
     )
@@ -4349,7 +4966,7 @@ def build_parser() -> argparse.ArgumentParser:
             action="append",
             default=[],
             metavar="OPT",
-            help="extra ssh argument, repeatable (e.g. --ssh-opt -p --ssh-opt 2222)",
+            help="allowlisted SSH connection option, repeatable (e.g. --ssh-opt=-p --ssh-opt=2222; see CLI reference)",
         )
         sub.add_argument("--output-format", choices=("text", "json"),
                          help="command result format (default: text); does not change message input")
@@ -4510,7 +5127,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = json_error_result(args, {"error": message, **exc.details})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
-            print(f"session-peer: {message}", file=sys.stderr)
+            print(human_text(f"session-peer: {message}"), file=sys.stderr)
         exit_code = (
             EXIT_NO_TARGET
             if isinstance(exc, NoTargetError) or "no reachable session" in message
@@ -4525,7 +5142,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = json_error_result(args, {"error": message})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
-            print(f"session-peer: {message}", file=sys.stderr)
+            print(human_text(f"session-peer: {message}"), file=sys.stderr)
         exit_code = EXIT_ERROR
     if show_human_notice and not args.json:
         emit_human_update_notice()

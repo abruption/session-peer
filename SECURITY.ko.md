@@ -17,3 +17,9 @@
 메인테이너는 제보자와 함께 조사 및 공개를 조율합니다. 비공개 보고서 및 이메일은 공개 이슈로 자동 전환되지 않습니다. 영어 및 한국어 보고서를 환영합니다.
 
 일반적인 버그 및 기능 요청은 [공개 이슈 템플릿](https://github.com/abruption/session-peer/issues/new/choose)을 이용하십시오.
+
+## 의존성 취약점 모니터링
+
+Dependabot 취약점 알림은 버전 업데이트 풀 리퀘스트와 별개로 활성화되어 있습니다. Dependabot의 자동 보안 업데이트 풀 리퀘스트는 비활성화되어 있으며, Dependabot 버전 업데이트 설정도 없습니다. 메인테이너가 알림을 검토하고 의존성 및 빌드 도구의 고정 버전을 수동으로 업데이트합니다.
+
+별도의 [예약된 의존성 감사](.github/workflows/dependency-audit.yml)는 매주 월요일 06:23 UTC에 실행되며 `workflow_dispatch`로 수동 실행할 수 있습니다. 격리된 환경의 Python `relay,mcp` 런타임 의존성을 `pip-audit`로, `control/`의 Node 런타임 의존성을 `npm audit --omit=dev`로 감사합니다. 취약점 발견과 감사 오류는 해당 감사 실행을 실패 처리하며, 작업 요약과 30일간 보관되는 다운로드 가능한 JSON/로그 아티팩트에 표시됩니다. 이 워크플로는 풀 리퀘스트에서 실행되거나 CI의 `release-gate`에 참여하지 않습니다. 기존 CI 및 릴리스 감사는 계속 적용됩니다.

@@ -778,7 +778,8 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
     process_home = getattr(args, "codex_native_home", None) or str(root)
     env = dict(os.environ, CODEX_HOME=process_home)
     try:
-        done = subprocess.run([executable, "queue", "--thread", thread_id, "--message", text],
+        # Keep leading dashes inside the option value, including with --no-from.
+        done = subprocess.run([executable, "queue", "--thread", thread_id, "--message=" + text],
                               env=env, capture_output=True, encoding="utf-8", errors="replace",
                               timeout=CODEX_QUEUE_TIMEOUT)
     except subprocess.TimeoutExpired as exc:
@@ -851,7 +852,16 @@ def codex_wake_guard(root: Path, thread_id: str):
         os.close(fd)
 
 
-def stop_codex_wake(process, grace: float = 0.2) -> None:
+CODEX_WAKE_CLEANUP_GRACE = 0.2
+CODEX_WAKE_CLEANUP_WAIT = 3
+CODEX_WAKE_CLEANUP_PS_TIMEOUT = 1
+# A containing CLI must remain alive through TERM, both Darwin zombie probes,
+# escalation and wait(). Its app-server runs in a separate owned session.
+CODEX_WAKE_CLEANUP_BUDGET = (CODEX_WAKE_CLEANUP_GRACE + CODEX_WAKE_CLEANUP_WAIT
+                           + 2 * CODEX_WAKE_CLEANUP_PS_TIMEOUT)
+
+
+def stop_codex_wake(process, grace: float = CODEX_WAKE_CLEANUP_GRACE) -> None:
     # This Popen was started in a new session and has not been polled/reaped.
     # Keep its PID reserved through escalation, even when the leader exits
     # promptly on TERM. Never reuse a saved group ID after wait() has run.
@@ -868,7 +878,7 @@ def stop_codex_wake(process, grace: float = 0.2) -> None:
             if sys.platform != 'darwin':
                 raise
             members = subprocess.run(['ps', '-o', 'stat=', '-g', str(process.pid)],
-                                     capture_output=True, text=True, timeout=1)
+                                     capture_output=True, text=True, timeout=CODEX_WAKE_CLEANUP_PS_TIMEOUT)
             if members.returncode not in (0, 1) or any(
                     not line.strip().startswith('Z') for line in members.stdout.splitlines() if line.strip()):
                 raise
@@ -882,7 +892,7 @@ def stop_codex_wake(process, grace: float = 0.2) -> None:
         try:
             signal_group(signal.SIGKILL)
         finally:
-            process.wait(timeout=3)
+            process.wait(timeout=CODEX_WAKE_CLEANUP_WAIT)
 
 
 def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeout: float) -> dict:
@@ -1034,12 +1044,14 @@ def codex_remote_options(args: argparse.Namespace) -> list[str]:
 
 
 def render_codex(sessions: list[dict], where: str) -> str:
+    sessions, where = human_text(sessions), human_text(where)
     rows = [f"Saved Codex sessions on {where} (execution state unknown):", "THREAD  NAME  ARCHIVED  CWD  CODEX HOME"]
     rows.extend(f"{s['id']}  {s['name']}  {s['archived']}  {s['cwd']}  {s.get('codexHome', '-')}" for s in sessions)
     return "\n".join(rows) if sessions else f"No saved Codex sessions on {where}."
 
 
 def codex_submission_text(result: dict, where: str) -> str:
+    result, where = human_text(result), human_text(where)
     home = f" (Codex home: {result['codexHome']})" if "codexHome" in result else ""
     if result.get("submitted") is False and result.get("ok") is False and "wake" in result:
         reason = result.get("error") or result["wake"].get("reason", "refused")

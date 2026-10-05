@@ -1,57 +1,87 @@
-# session-peer のリリース
+# session-peerのリリース
 
-GitHub Release を公開すると `.github/workflows/publish.yml` が対象タグの wheel と sdist をビルドし、Trusted Publishing で PyPI にアップロードします。ドラフトは公開しません。準備、最終承認、公開、検証を分けてください。保護された `main` には最新の PR と、全プラットフォームの Python、ドキュメント、シェル、パッケージ、MCP、Relay、control、統合、依存関係監査を含む `release gate` が必要です。ライブ OAuth、エージェント ACK、運用 Relay の状態は別の運用証拠です。
+1.0.3は1.0.2に続く安定版のセキュリティ・安定性メンテナンスリリースです。準備、不変なGitHub公開、人によるPyPI環境レビュー、公開後検証を区別します。保護されたmainはレビュー済みの最新PRと、Pythonプラットフォーム行列、文書、シェル、パッケージ/単独ファイル/MCP/Relay/Control、統合試験、Python/Node依存監査を含むリリースゲートを要求します。
 
-## v1.0.0 の証拠と v1.0.2 メンテナンス条件
+## 過去の証拠と現在の境界
 
-レビュー済み RC4 ランタイムは 5 ホストの `rc4-rerun-02` で 14,436.65 秒の `complete`、公開 health 241/241、probe 147/147、送信 21/21、Relay 再起動から 3.182 秒で復旧しました。独立 ACK は 20/21 です。元の T120 Windows native Claude ACK は TUI 終了のため未確認ですが、同じ経路の別の単発検査では正確な ACK を確認しました。ユーザーは #164 でこの運用上の例外を明示的に受け入れました。元の結果を 21/21 に書き換えないでください。#161 の外部停滞箇所は未確定で、緩和は根本原因の修復ではありません。これは v1.0.0 の履歴上の証拠であり、v1.0.2 の変更を検証した結果ではありません。
+5ホストのv1.0.0 RC4 rc4-rerun-02試験は14,436.65秒実行されました。complete記録、公開ヘルス241/241、プローブ147/147、送信21/21、Relay再起動復旧3.182秒でした。独立ACKは20/21です。T120 WindowsネイティブClaudeの元のACKはTUI終了で未確認で、別の単発確認では正確なACKを受信しました。所有者は#164で例外を受け入れました。20/21を維持してください。この過去の証拠はv1.0.3を検証しません。#161の外部停滞の根本原因は未確認です。
 
-Python/PyPI 版は `1.0.2`、Git タグと GitHub Release は `v1.0.2` です。プレリリースにせず Latest にします。通常のアップグレードと standalone の更新通知は v1.0.1 ではなく v1.0.2 を選択し得ます。プラグイン版は独立です。コアは Python 3.9+ で依存関係なし、MCP は 3.10+、Relay 受信側/サーバーは Unix または WSL の 3.11+ が必要です。パッケージ公開はホスト型 Relay/OAuth の可用性を保証しません。サービス起動の macOS・Linux 受信側 PATH に対象 TUI の `codex` ディレクトリを追加するか、運用者管理の絶対 `codexBin` パスを設定してください。Relay ログインは期限切れになり、再承認が必要な場合があります。#161 は原因未確定のまま開きます。
+Python/PyPI版は1.0.3、タグとGitHubリリースはv1.0.3です。安定版・Latestにします。プラグイン版は独立です。コアはPython 3.9+、MCPは3.10+、Relay受信側/サーバーはUnixまたはWSLとPython 3.11+が必要です。サービス受信側はサービスPATHのCodexまたは運用者所有のcodexBin設定が必要です。パッケージ公開はホスト対策の配備、機器群導入、本番再起動、実時間OAuthヘルスやACKを証明しません。不明な結果は自動再送を許可しません。
 
-レガシー URL 用のルート `cc_peer.py` は残し、wheel と sdist から除外します。4 言語の README、セキュリティポリシー、安定版ノート、Relay 文書、任意のランタイムは含めます。資格情報、デバイス鍵、認証 DB、replay 状態、ブラウザプロファイル、ローカル証拠、会話は含めません。
+## ソースと設定のゲート
 
-## Trusted Publisher
+1. v1.0.3の変更を1.0.2と4言語のリリースノートに照合します。5件の勧告修正を統合してから詳細を公開します。CVE割り当ては公開の前提条件ではありません。パッケージ/生成版、4つのREADMEの版とアーカイブ内ノートを確認します。cc_peer.pyは凍結して配布から除外し、資格情報、鍵、DB、リプレイ状態、ブラウザープロファイル、ローカル証拠と会話を除外します。
+2. 全ローカル試験とPRリリースゲートを実行します。マージ後の統合済み公開mainの正確なコミットでCI成功を要求します。非公開勧告フォークの検査はその公開リリースゲートを代替しません。クリーンなwheel/sdist導入、隔離された導入済みimport、正確なCLI版、初期化済みホームのJSON list、extrasとpip checkを検証します。明示的な空Codexホームはstate_db_missingで安全に失敗すべきです。実時間メッセージは送信しません。
+3. PyPIに1.0.3ファイルがないことを確認します。GitHub Immutable Releasesとv*タグ規則で作成のみ許可し、迂回なしの更新/削除禁止を確認します。所有者は2026-10-03に有効化しました (規則24408525)。2026-10-05の確認でImmutable Releases有効、規則24408525有効、厳格なmainリリースゲート必須を確認しました。過去のv1.0.2は非不変・資産なしで、検証済み単独ファイルリリースではありません。現状を再確認します。
+4. Trusted Publisherがsession-peerをabruption/session-peer、publish.yml、pypiに対応させることを確認します。2026-10-05にログイン済みPyPIブラウザーで所有者/リポジトリabruption/session-peer、ワークフローpublish.yml、環境pypiの対応を検証しました。同日のGitHub設定確認でレビュー担当`abruption`必須、自己レビュー許可 (`prevent_self_review: false`)、`v*`タグ許可を確認し、管理者迂回は引き続き有効です (`can_admins_bypass: true`)。所有者の以前の[2026-09-29対応確認](https://github.com/abruption/session-peer/issues/235#issuecomment-5882178667)は過去の証拠で、現在の確認日は2026-10-05です。設定を再確認し、通常の人のレビューを経て、黙って迂回しません。
 
-PyPI プロジェクト `session-peer` は GitHub `abruption/session-peer` の `publish.yml` と環境 `pypi` に対応します。長期 PyPI 資格情報はリポジトリに置きません。過去の成功だけに頼らず、公開前に現在の設定を確認してください。
+## 不変ドラフトの準備
 
-## 準備と検証
-
-1. v1.0.2 マイルストーンで完了した修正を確認し、#161 は原因未確定の監視として開いたままにします。v1.0.1 との差分と v1.0.2 ノートを確認します。`release/0.9.x` を `main` にマージしません。
-2. `session_peer.__version__ == "1.0.2"`、生成した `session_peer.py`、4 言語 README のインストールコマンド、sdist 内の 4 言語安定版ノートを確認します。ローカル一式、PR の `release gate`、マージ後の正確な `main` CI を通します。
-3. 正確な候補から `python3 -m build` で wheel と sdist を作り、内容を検査します。各アーカイブを別のクリーン環境にインストールし、`session-peer --version`、初期化済みエージェントホームの JSON `list`、`pip check`、Relay/MCP 拡張と help を確認します。明示的に空の Codex ホームは `state_db_missing` で失敗する必要があり、インストール失敗ではありません。ライブモデルへの送信は含みません。
-4. CI 成功後のみマージし、`main` の正確なコミット、版、ノートを再確認します。PyPI にまだ `1.0.2` ファイルがないことも確認します。
-
-## ドラフトと公開
-
-準備 PR をマージした後にドラフトを作ります。squash/merge でリリースコミットは変わります。公開済みタグは移動しません。
+準備PRのマージ後、正確なmainコミットを記録し、そのコミットに軽量タグを作ります。既存タグを移動しません。所有者が保護されたmainのそのコミットで準備を実行します。実行要求と検証の間にmainが進むと安全に失敗します。
 
 ```bash
 git fetch origin main --tags
+release_tag=v1.0.3
 release_commit=$(git rev-parse origin/main)
-gh release create v1.0.2 \
-  --repo abruption/session-peer \
-  --target "$release_commit" \
-  --title "session-peer v1.0.2" \
-  --notes-file docs/releases/v1.0.2.md \
-  --draft --latest
+git tag "$release_tag" "$release_commit"
+git push origin "$release_tag"
+gh release create "$release_tag" --repo abruption/session-peer \
+  --target "$release_commit" --title "session-peer $release_tag" \
+  --notes-file "docs/releases/$release_tag.md" --draft --latest
+gh workflow run prepare-release.yml --repo abruption/session-peer \
+  --ref main -f tag="$release_tag"
 ```
 
-タグ、対象、タイトル、ノート、ドラフト、安定版、Latest の意図を確認します。ドラフトは公開の承認ではありません。
+prepare-release.ymlはソース/ref/版/系譜を検証し、2回の再現ビルド、アーカイブ検査、隔離導入試験、依存監査を実行します。空ドラフトにwheel、sdist、session_peer.py、install.sh、SKILL.md、SHA256SUMS、release-provenance.jsonの正確に7資産を証明して添付します。manifestは5payload、署名された来歴はmanifestと証拠も含みます。既存資産は上書きしません。成功した準備実行、正確なコミット、7ファイル、ハッシュと証明を公開前にレビューします。ドラフト添付は公開ではありません。
 
-## 公開
+## 固定されたGitHubリリースの公開
 
-**公開直前にユーザーの最終承認が必要です。** 公開コマンド:
+この版の所有者の明示的な承認で公開します。既にリリース完了を指示していれば手続きの承認要件を満たすので、この文書だけを理由に二度目の確認を要求しません。必須の人によるpypi環境レビューは代替しません。公開はタグと資産を固定しpublish.ymlを開始します。
 
 ```bash
-gh release edit v1.0.2 \
-  --repo abruption/session-peer \
+gh release edit v1.0.3 --repo abruption/session-peer \
   --draft=false --prerelease=false --latest
 ```
 
-ワークフローはタグ/版/保護された main、再現可能な wheel・sdist、アーカイブ・インストール・監査、SHA256SUMS と provenance を確認してから OIDC でアップロードします。既存 PyPI ファイルはエラーです。失敗後に変更した成果物を再アップロードしません。`1.0.2` の部分公開やハッシュ不一致なら昇格を止め、証拠を保存し、レビューした新しい版（通常 `1.0.3`）で修正します。yank しても版は再利用できません。
+publish.ymlは所有者、正確なタグ/ソース/main系譜を確認し、固定された不変資産を取得して認証された来歴とmanifestを検証します。再ビルドや資産追加は行いません。PyPIジョブ前に導入検査と現在の依存監査を再度通過する必要があります。準備時の監査成功は現在の監査証拠ではありません。
 
-## 公開後の検証
+## 保留中のPyPI配備の人によるレビュー
 
-1. 正確なタグとコミットの `publish.yml` 成功を確認します。PyPI の wheel と sdist のハッシュをワークフローの候補・provenance と照合し、各々を新しい環境にインストールします。
-2. 版、初期化済みエージェントホームの JSON `list`、Relay/MCP、`pip check`、GitHub の安定版/Latest、通常の更新選択を確認します。ホスト型 Relay は別途検証し、queued を ACK と見なしません。
-3. 公開の証拠を記録してから v1.0.2 マイルストーンを閉じます。#161 は既存の監視マイルストーンで開いたままにし、根本原因の修復を主張しません。全機器への導入や運用サービスの再起動は別の運用判断です。
+1. アップロード前に正確なActions実行がpypiレビュー待ちであることを観測します。実行URL/ID、試行番号、タグ、コミット、SHA256SUMS、release-provenance.json、保留時刻を記録します。ソース試験や設定だけでは停止を証明できません。次のリリースでの観測が#235受け入れ検査です。
+2. 必須の人のレビュー担当が候補証拠と現状のTrusted Publisher/環境設定を確認します。**Review deployments**で**pypi**を選び、承認時のみ明示的に**Approve and deploy**を選択します。GitHub公開承認はこのレビューを代替しません。配備が保留状態になったら必須の人によるレビューを依頼し、環境ゲートを維持します。
+3. 拒否するには**pypi**を選択し理由を添えて**Reject**を選びます。期待した停止や制御がなければアップロード前に中止・キャンセルします。拒否/キャンセル実行を保持して原因を解決します。拒否回避のためタグを移動したり版を再利用しません。
+4. 担当、判断、コメント、時刻と結果を記録し、アップロード/検証証拠を保持します。拒否は公開成功や承認停止検証成功ではありません。管理者迂回は例外で別途明示的な所有者承認が必要で、理由、実行者、時刻、実行、タグ、コミットを記録します。
+
+## 公開の検証または復旧
+
+正確なタグ/コミットでpublish.ymlとPyPI検証が成功したことを確認します。PyPIの2ファイルを取得し、正確な一覧とハッシュを固定候補/来歴と比較して、クリーン環境でそれぞれ導入します。隔離版、初期化済みホームのJSON list、extrasとpip checkを再確認します。安定版/Latestと通常の更新によるv1.0.3選択を確認します。マイルストーン終了前に証拠を記録し、#161を監視として維持します。
+
+GitHubとPyPI公開は別々の不可逆な段階です。GitHub公開後の監査失敗で、PyPIファイルのない固定リリースが残る場合があります。両実行と正確な資産を保持します。監査迂回、変更済み資産の再アップロード、既存ファイルの無視、版の再利用は禁止です。部分的な1.0.3アップロードや不一致は昇格を停止します。最初の失敗ゲートを診断し、レビュー済み変更と新しい版、通常1.0.4で修正します。yankしても再利用はできません。
+
+## 検証済み単独ファイルの導入
+
+新しい認証済みGitHub CLIがgh attestation verify、署名ワークフロー、ソースref/digest、OIDC issuer、ホストランナーポリシーをサポートする必要があります。試験基準は2.102.0で、全フラグ対応の最初の版は未確定です。リポジトリ/証明の読み取り権限で十分で、公開権限は不要です。[GitHub CLI検証ソース](https://github.com/cli/cli/blob/v2.102.0/pkg/cmd/attestation/verify/verify.go)にポリシーフラグがあります。ローカルfixtureはポリシー/順序/エラーを確認し、実際の署名受け入れを証明しません。
+
+インストーラーは検証済みLatest不変資産を既定とします。--local-sourceは隣接ソースを明示的に信頼し、--mainは未検証開発ソースを選択します。証明欠如や古い未署名版は安全に失敗します。検証できなければpipx/uv/pipを使います。実行前にinstall.shを認証します:
+
+```bash
+set -eu
+repo=abruption/session-peer
+tag=$(gh api "repos/$repo/releases/latest" --jq \
+  'if .immutable == true and .draft == false and .prerelease == false then .tag_name else error("no immutable stable release") end')
+commit=$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object | select(.type == "commit") | .sha')
+case "$commit" in ????????* ) ;; * ) echo "expected a lightweight release tag" >&2; exit 1 ;; esac
+staging=$(mktemp -d)
+trap 'rm -f "$staging/install.sh"; rmdir "$staging"' EXIT
+curl --fail --location --proto '=https' --proto-redir '=https' \
+  --max-filesize 262144 --max-time 30 \
+  "https://github.com/$repo/releases/download/$tag/install.sh" -o "$staging/install.sh"
+gh attestation verify "$staging/install.sh" --repo "$repo" \
+  --signer-workflow "$repo/.github/workflows/prepare-release.yml" \
+  --source-ref refs/heads/main --source-digest "$commit" \
+  --cert-oidc-issuer https://token.actions.githubusercontent.com \
+  --deny-self-hosted-runners --format json
+sh "$staging/install.sh"
+```
+
+取得上限は単独ファイル8 MiB、補助ファイル256 KiB、メタデータ1 MiBです。認証されたmanifest/来歴、正確なタグ/版と候補の--version確認が置換に先行します。送信側がSSH配備前に検証し、オフライン宛先はPythonのみ必要です。検証失敗で既存ファイルは変わりません。SSH許可リスト、既存ペアリングバインディングのレビュー、Controlログイン移行はリリースノートを参照してください。

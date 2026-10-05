@@ -172,13 +172,21 @@ def invoke_windows_codex(binding, operation, text=None):
     else:
         if not isinstance(text, str) or not text.strip() or len(text.encode()) > 32768 or '\0' in text:
             raise Rejected('invalid_message')
-        args += ['--to', binding['target'], '--message', text, '--no-from', '--no-reply-to']
+        args += ['--to', binding['target'], '--message=' + text, '--no-from', '--no-reply-to']
         if operation == 'resolve':
             args += ['--dry-run']
+    argv = [binding['codexPython'], '-', *args]
+    # CreateProcessW permits 32,767 UTF-16 units including its terminating NUL.
+    # Account for every option/path and Windows quoting before starting a send.
+    command_units = len(subprocess.list2cmdline(argv).encode('utf-16-le')) // 2 + 1
+    if command_units > 32767:
+        return {'ok': False, 'status': 'refused', 'submitted': False,
+                'reason': 'native_windows_command_too_long', 'retryAllowed': False,
+                'consumptionConfirmed': False}
     try:
         source = Path(core.__file__).resolve().read_bytes()
         done = subprocess.run(
-            [binding['codexPython'], '-', *args], input=source,
+            argv, input=source,
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             timeout=32 if operation == 'send' else 8,
         )

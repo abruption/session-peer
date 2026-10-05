@@ -38,6 +38,13 @@ class Tcp:
         except (OSError, asyncio.TimeoutError):
             pass
 
+    def abort(self):
+        try:
+            self.writer.transport.abort()
+        except Exception:
+            self.writer.close()
+            raise
+
 
 class Ws:
     def __init__(self, ws, attempt_id=None):
@@ -56,6 +63,13 @@ class Ws:
 
     async def close(self):
         await self.ws.close()
+
+    def abort(self):
+        try:
+            self.ws.transport.abort()
+        except Exception:
+            self.ws.transport.close()
+            raise
 
 
 class PinnedConnect(connect):

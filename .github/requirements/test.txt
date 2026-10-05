@@ -1,0 +1,3 @@
+# Test-only source verification dependency; keep its pin equal to build.txt.
+# Do not install build tooling into the Python 3.9 core test matrix.
+packaging==26.3

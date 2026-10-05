@@ -1,5 +1,24 @@
+class MessageArgumentParser(argparse.ArgumentParser):
+    def _get_values(self, action, arg_strings):
+        # Python 3.9 strips '--' even from an already recognized option value.
+        # Preserve only this declared single message value; option recognition
+        # still rejects the ambiguous separated form '--message --'.
+        if (action.dest == "message_option" and "--message" in action.option_strings
+                and action.nargs is None and arg_strings == ["--"]):
+            value = self._get_value(action, arg_strings[0])
+            self._check_value(action, value)
+            return value
+        return super()._get_values(action, arg_strings)
+
+
+class HumanArgumentParser(MessageArgumentParser):
+    def error(self, message):
+        # Preserve both the message-value and display-only escaping contracts.
+        super().error(human_text(message))
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = HumanArgumentParser(
         prog="session-peer",
         description="Message Claude Code and Codex sessions locally or over SSH.",
     )
@@ -17,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
             action="append",
             default=[],
             metavar="OPT",
-            help="extra ssh argument, repeatable (e.g. --ssh-opt -p --ssh-opt 2222)",
+            help="allowlisted SSH connection option, repeatable (e.g. --ssh-opt=-p --ssh-opt=2222; see CLI reference)",
         )
         sub.add_argument("--output-format", choices=("text", "json"),
                          help="command result format (default: text); does not change message input")
@@ -178,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = json_error_result(args, {"error": message, **exc.details})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
-            print(f"session-peer: {message}", file=sys.stderr)
+            print(human_text(f"session-peer: {message}"), file=sys.stderr)
         exit_code = (
             EXIT_NO_TARGET
             if isinstance(exc, NoTargetError) or "no reachable session" in message
@@ -193,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = json_error_result(args, {"error": message})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
-            print(f"session-peer: {message}", file=sys.stderr)
+            print(human_text(f"session-peer: {message}"), file=sys.stderr)
         exit_code = EXIT_ERROR
     if show_human_notice and not args.json:
         emit_human_update_notice()

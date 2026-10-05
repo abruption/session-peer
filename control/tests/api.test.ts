@@ -111,6 +111,8 @@ it("issues first-party device session only after code verification and explicit 
   f.db.prepare("UPDATE deviceCode SET lastPolledAt=NULL").run();
   const tokenResponse = await f.request("/api/auth/device/token", poll, {});
   expect(tokenResponse.status).toBe(200);
+  expect(tokenResponse.headers.getSetCookie()).toEqual([]);
+  expect(tokenResponse.headers.has("set-auth-token")).toBe(false);
   const token = await tokenResponse.json();
   expect(Object.keys(token).sort()).toEqual([
     "access_token",
@@ -121,6 +123,10 @@ it("issues first-party device session only after code verification and explicit 
   expect(token.token_type).toBe("Bearer");
   expect(Number.isSafeInteger(token.expires_in)).toBe(true);
   expect(token.access_token).toBeTruthy();
+  expect(token.expires_in).toBeLessThanOrEqual(86400);
+  const loginSession = f.db.prepare("SELECT createdAt,expiresAt FROM session WHERE token=?")
+    .get(token.access_token) as { createdAt: string; expiresAt: string };
+  expect(Date.parse(loginSession.expiresAt) - Date.parse(loginSession.createdAt)).toBeLessThanOrEqual(86400_000);
   expect(
     (
       await f.request("/api/relay/devices", undefined, {

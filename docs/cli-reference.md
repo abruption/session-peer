@@ -135,6 +135,8 @@ npx -y skills@latest add abruption/session-peer-skill \
 
 ### install.sh
 
+Verified standalone installation needs a recent GitHub CLI with attestation verification. Until a verified immutable release is published, use pipx/uv/pip; historical v1.0.2 has no verified standalone assets. Authenticate the installer before executing downloaded code using the [bootstrap procedure](../RELEASING.md). The commands below assume an already trusted installer checkout; its default still downloads the verified latest release. Local files require explicit `--local-source`; unverified development main requires explicit `--main`.
+
 Installs both the command and the skill in one step. Use this for air-gapped
 hosts or remote deployment over SSH:
 
@@ -153,7 +155,7 @@ including symlinks, and existing cc-peer files are preserved. Remove installer-o
 files with `./install.sh --uninstall [--host ...]`; unmarked legacy skills remain.
 
 `session-peer update` refreshes a standalone program from the latest GitHub release.
-`./install.sh --host <host>` pushes this checkout's program and skill over SSH.
+`./install.sh --host <host>` verifies the latest release and pushes its program and skill over SSH.
 `session-peer update --host <host>` pushes only the program when the installed
 version differs or is absent; add `--check` to report without changing anything.
 See [Updating](#updating) for package-managed installs and remote limitations.
@@ -163,11 +165,11 @@ no internet access. Installing the standalone files requires `python3` and SSH
 access. Messaging also requires the selected agent's native inbox or queue on
 the destination.
 
-Or skip the installer entirely and copy the one file:
+For explicitly trusted local development source:
 
 ```bash
-curl -O https://raw.githubusercontent.com/abruption/session-peer/main/session_peer.py
-chmod +x session_peer.py
+# Explicitly trust reviewed local source for development only.
+./install.sh --local-source
 ```
 
 ### The skill
@@ -674,7 +676,7 @@ not as the user typing approval.
   and home. A `known_hosts` entry does not store that account. A caller's sandbox
   may still deny access; session-peer does not bypass either agent's permissions
   or quota.
-- **`--host` and `--ssh-opt` are as trusted as your ssh config.** They are handed to `ssh`, so whoever controls them controls where you connect. Values that would make ssh run a local command (`ProxyCommand` and friends) are refused, and a `--host` starting with `-` is rejected outright — but if you allowlist `session-peer` for an agent, treat it as granting SSH, not just messaging. Message bodies and session names carry no such risk: they are quoted before they reach any shell.
+- **`--host` and `--ssh-opt` grant SSH access, not just messaging.** Destinations must be single host aliases or addresses without whitespace or shell syntax. Options are allowlisted before any `ssh` invocation, including configuration inspection. Accepted flags are `-4`, `-6`, `-p`, `-l`, `-i`, `-J` (split or attached values), and `-oKEY=value` or `-o` followed by `KEY=value`. Allowed keys are Port, User, IdentityFile, HostName, HostKeyAlias, ConnectTimeout, BatchMode, ServerAliveInterval, ServerAliveCountMax, StrictHostKeyChecking, ProxyJump and IdentitiesOnly. Other options, including alternate config files, control sockets, providers and command hooks, are rejected. Your existing user/system SSH configuration remains trusted and can itself execute commands; this filter is not a sandbox for that configuration. Message bodies and session names are shell-quoted. Explicit `StrictHostKeyChecking` accepts only `yes`, `ask` or `accept-new`; `no` and `off` are rejected. Redirecting `UserKnownHostsFile` is not allowed. The stricter syntax rejects SSH URI jump targets, usernames containing a plus sign and space-separated option assignments; use host-style jump targets and equals-sign assignments.
 - **Windows support.** Claude's named pipe transport is supported.
   `install.sh` and the standalone remote installer/updater use POSIX shell;
   use a Python package manager on native Windows. Live Codex verification

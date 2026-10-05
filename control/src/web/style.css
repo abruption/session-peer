@@ -226,6 +226,13 @@ dt {
 .devices li:last-child {
   border: 0;
 }
+.sessions li > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sessions button {
+  flex-shrink: 0;
+}
 .devices p {
   margin: 8px 0 0;
   font-size: 13px;

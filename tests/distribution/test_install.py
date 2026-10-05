@@ -9,6 +9,57 @@ import unittest
 
 @unittest.skipIf(os.name == "nt", "POSIX installer; Windows uses pip")
 class Install(unittest.TestCase):
+    def test_remote_main_fetch_failure_stops_before_skill_or_ssh_and_cleans_every_stage(self):
+        repo = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            program = home / ".local/share/session-peer/session_peer.py"
+            program.parent.mkdir(parents=True)
+            program.write_bytes(b"existing program")
+            staging = root / "staging"
+            staging.mkdir()
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            curl = fake_bin / "curl"
+            curl.write_text('#!/bin/sh\ncase "$2" in\n'
+                            '*/session_peer.py) printf "partial" > "$4"; exit 18 ;;\n'
+                            '*) touch "$SKILL_FETCHED"; exit 0 ;;\nesac\n')
+            curl.chmod(0o755)
+            ssh = fake_bin / "ssh"
+            ssh.write_text('#!/bin/sh\ntouch "$SSH_CALLED"\nexit 0\n')
+            ssh.chmod(0o755)
+            env = {**os.environ, "HOME": str(home), "TMPDIR": str(staging),
+                   "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"],
+                   "SKILL_FETCHED": str(root / "skill-fetched"), "SSH_CALLED": str(root / "ssh-called")}
+            done = subprocess.run(["sh", str(repo / "install.sh"), "--main", "--host", "a", "--host", "b"],
+                                  env=env, capture_output=True, text=True)
+            self.assertNotEqual(done.returncode, 0)
+            self.assertFalse((root / "skill-fetched").exists())
+            self.assertFalse((root / "ssh-called").exists())
+            self.assertEqual(program.read_bytes(), b"existing program")
+            self.assertEqual(list(staging.iterdir()), [])
+
+    def test_host_is_validated_before_splitting_or_running_ssh(self):
+        repo = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fake_bin = root / 'bin'
+            fake_bin.mkdir()
+            marker = root / 'ssh-ran'
+            fake_ssh = fake_bin / 'ssh'
+            fake_ssh.write_text('#!/bin/sh\ntouch "$FIXTURE_MARKER"\nexit 0\n')
+            fake_ssh.chmod(0o755)
+            env = {**os.environ, 'HOME': str(root), 'FIXTURE_MARKER': str(marker),
+                   'PATH': str(fake_bin)+os.pathsep+os.environ['PATH']}
+            for host in ('', '-Fconfig', 'fixture other', 'fixture\nother', 'fixture;true'):
+                for args in (['--host', host], ['--host='+host]):
+                    with self.subTest(args=args):
+                        result = subprocess.run(['sh', str(repo/'install.sh'), '--uninstall', *args],
+                                                env=env, capture_output=True, text=True)
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertFalse(marker.exists())
+
     def test_failed_network_install_preserves_program_launcher_and_skills(self):
         self._check_failed_network_install(symlink_root=False)
 
@@ -30,7 +81,7 @@ class Install(unittest.TestCase):
             env = {**os.environ, 'HOME': str(home)}
             env.pop('CLAUDE_CONFIG_DIR', None)
             env.pop('ANTHROPIC_CONFIG_DIR', None)
-            subprocess.run(['sh', str(repo / 'install.sh')], env=env, check=True, capture_output=True)
+            subprocess.run(['sh', str(repo / 'install.sh'), '--local-source'], env=env, check=True, capture_output=True)
             program = home / '.local/share/session-peer/session_peer.py'
             launcher = home / '.local/bin/session-peer'
             skills = [home / '.claude/skills/session-peer/SKILL.md', home / '.agents/skills/session-peer/SKILL.md']
@@ -58,7 +109,7 @@ esac
                        FIXTURE_SKILL=str(repo / 'skills/session-peer/SKILL.md'))
             for mode in ('partial', 'http', 'invalid', 'valid'):
                 with self.subTest(mode=mode):
-                    result = subprocess.run(['sh', str(source / 'install.sh')],
+                    result = subprocess.run(['sh', str(source / 'install.sh'), '--main'],
                         env={**env, 'FIXTURE_MODE': mode}, capture_output=True)
                     self.assertEqual(result.returncode == 0, mode == 'valid', result.stderr)
                     self.assertEqual([p.read_bytes() for p in [program, *skills]], previous)
@@ -73,7 +124,7 @@ esac
             env = {**os.environ, 'HOME': str(root)}
             env.pop('CLAUDE_CONFIG_DIR', None)
             env.pop('ANTHROPIC_CONFIG_DIR', None)
-            subprocess.run(['sh', str(repo / 'install.sh')], env=env, check=True, capture_output=True)
+            subprocess.run(['sh', str(repo / 'install.sh'), '--local-source'], env=env, check=True, capture_output=True)
             program = root / '.local/share/session-peer/session_peer.py'
             before = program.read_bytes()
             source = root / 'source'
@@ -85,7 +136,7 @@ esac
             ssh.write_text('#!/bin/sh\nshift\nexec "$@"\n')
             ssh.chmod(0o755)
             env['PATH'] = str(source)+os.pathsep+os.environ['PATH']
-            for args in ([], ['--host', 'fixture']):
+            for args in (['--local-source'], ['--local-source', '--host', 'fixture']):
                 result = subprocess.run(['sh', str(source / 'install.sh'), *args], env=env, capture_output=True)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(program.read_bytes(), before)
@@ -100,7 +151,7 @@ esac
             env = dict(os.environ, HOME=str(root), CLAUDE_CONFIG_DIR=str(root / "custom claude"))
             script = str(Path(__file__).parents[2] / "install.sh")
             for _ in range(2):
-                result = subprocess.run(["sh", script], env=env, capture_output=True, text=True)
+                result = subprocess.run(["sh", script, "--local-source"], env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertTrue((root / ".local/bin/session-peer").is_symlink())
                 self.assertTrue((root / ".local/share/session-peer/session_peer.py").is_file())
@@ -128,7 +179,7 @@ esac
             env.pop("ANTHROPIC_CONFIG_DIR", None)
             script = str(Path(__file__).parents[2] / "install.sh")
 
-            for args in ([], ["--uninstall"]):
+            for args in (["--local-source"], ["--uninstall"]):
                 result = subprocess.run(["sh", script, *args], env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual((codex_skill / "SKILL.md").read_text(encoding="utf-8"), "independent skill")
@@ -154,7 +205,7 @@ esac
             env.pop("ANTHROPIC_CONFIG_DIR", None)
             script = str(Path(__file__).parents[2] / "install.sh")
 
-            for args in (["--host", "fixture"], ["--uninstall", "--host", "fixture"]):
+            for args in (["--local-source", "--host", "fixture"], ["--uninstall", "--host", "fixture"]):
                 result = subprocess.run(["sh", script, *args], env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual((codex_skill / "SKILL.md").read_text(encoding="utf-8"), "independent skill")

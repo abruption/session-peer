@@ -1,6 +1,8 @@
 import { it, expect, afterEach, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
 import { SignJWT } from "jose";
+import { betterAuth } from "better-auth";
+import { supportsIdTokenSignIn } from "@better-auth/core/oauth2";
 import { fixture } from "./fixtures.js";
 import { allowedUser, authorizeAccount } from "../src/server/auth.js";
 let fixtureIdToken: string;
@@ -77,6 +79,7 @@ async function setup(
     else if (url === "https://oauth2.googleapis.com/token")
       body = {
         access_token: "fixture-provider-token",
+        refresh_token: "fixture-provider-refresh-token",
         token_type: "bearer",
         expires_in: 300,
         id_token: idToken,
@@ -219,6 +222,21 @@ it("rejects tampered OAuth state before token exchange", async () => {
   expect(callback.status).toBe(302);
   expect(callback.headers.get("location")).toContain("error=");
   expect(fetchMock).not.toHaveBeenCalled();
+  const landingURL = new URL(callback.headers.get("location")!, f!.config.origin);
+  expect(landingURL.pathname).toBe("/api/auth/error");
+  const upstreamLanding = await f!.auth.handler(new Request(landingURL, {
+    headers: { cookie: started.cookie },
+  }));
+  expect(upstreamLanding.status).toBe(200);
+  const landingHeaders: Record<string, string>[] = [{}, { cookie: started.cookie }];
+  for (const headers of landingHeaders) {
+    const landing = await f!.request(landingURL.pathname + landingURL.search, undefined, headers);
+    expect(landing.status).toBe(200);
+    expect(landing.headers.get("content-type")).toContain("text/html");
+    expect(landing.headers.getSetCookie()).toEqual([]);
+    expect(landing.headers.has("set-auth-token")).toBe(false);
+    expect(await landing.text()).toContain("state_mismatch");
+  }
   expect(
     (
       await f!.request("/api/relay/devices", undefined, {
@@ -277,7 +295,7 @@ it("does not link an allowlisted Google identity to an existing GitHub owner by 
   ).toBe(401);
 });
 
-it("rejects a forged client-submitted Google ID token", async () => {
+it("disables the unused client-submitted Google ID-token branch even for forged input", async () => {
   await setup();
   const forged = fixtureIdToken.slice(0, -10) + "tamperedXX";
   const response = await f!.request(
@@ -285,10 +303,102 @@ it("rejects a forged client-submitted Google ID token", async () => {
     { provider: "google", idToken: { token: forged }, callbackURL: "/devices" },
     { origin: f!.config.origin },
   );
-  expect(response.status).toBe(401);
+  expect(response.status).toBe(404);
+  expect(await response.json()).toMatchObject({ code: "ID_TOKEN_NOT_SUPPORTED" });
   expect(
     f!.db
       .prepare("SELECT * FROM account WHERE accountId='allowed-oauth'")
       .get(),
   ).toBeUndefined();
+});
+
+it("pins the synthetic Google credential-to-session baseline and closes both JSON entrypoints", async () => {
+  const network = await setup();
+  const started = await authorize("google");
+  const callback = await f!.request("/api/auth/callback/google?code=fixture-code&state=" +
+    encodeURIComponent(started.state), undefined, { cookie: started.cookie });
+  expect(callback.headers.get("location")).toBe("/devices");
+  const account = f!.db.prepare("SELECT userId FROM account WHERE providerId='google' AND accountId='allowed-oauth'")
+    .get() as { userId: string };
+  const copiedSession = f!.db.prepare("SELECT id,token FROM session WHERE userId=?").get(account.userId) as
+    { id: string; token: string };
+  // Deliberate conditional fixture: the original CLI session is 23 hours old,
+  // while mocked Google supplies a currently valid 5-minute ID token and a
+  // usable refresh grant. This does not assert that Google always provides a
+  // refresh token or that an ID token remains valid for the CLI's 24 hours.
+  // The pinned verifier still enforces its 1-hour maximum ID-token age.
+  f!.db.prepare("UPDATE session SET createdAt=?,updatedAt=?,expiresAt=? WHERE id=?").run(
+    new Date(Date.now() - 23 * 3600_000).toISOString(),
+    new Date(Date.now() - 23 * 3600_000).toISOString(),
+    new Date(Date.now() + 3600_000).toISOString(), copiedSession.id,
+  );
+  const bearerHeaders = { authorization: "Bearer " + copiedSession.token, origin: f!.config.origin };
+  // Reproduce the pre-patch direct-ID-token configuration with the pinned
+  // library, the real configured verifier and exclusively mocked transport.
+  const baseline = betterAuth({ ...f!.auth.options, socialProviders: {
+    ...f!.auth.options.socialProviders,
+    google: { ...providers.google, ...f!.auth.options.socialProviders!.google as object, disableIdTokenSignIn: false },
+  } });
+  const upstream = (path: string, body: unknown, headers: Record<string, string>) => baseline.handler(
+    new Request(f!.config.origin + path, { method: "POST",
+      headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(body) }),
+  );
+  const accounts = await baseline.handler(new Request(f!.config.origin + "/api/auth/list-accounts", {
+    headers: bearerHeaders,
+  }));
+  expect(accounts.status).toBe(200);
+  const selectedAccount = (await accounts.json()).find((value: { providerId: string }) => value.providerId === "google");
+  expect(selectedAccount.id).toBeTruthy();
+  const credentials = await upstream("/api/auth/get-access-token", { accountId: selectedAccount.id }, bearerHeaders);
+  expect(credentials.status).toBe(200);
+  const leaked = await credentials.json();
+  expect(leaked).toMatchObject({ accessToken: "fixture-provider-token", idToken: fixtureIdToken });
+  const refreshed = await upstream("/api/auth/refresh-token", { accountId: selectedAccount.id }, bearerHeaders);
+  expect(refreshed.status).toBe(200);
+  expect(await refreshed.json()).toMatchObject({ accessToken: "fixture-provider-token",
+    refreshToken: "fixture-provider-refresh-token", idToken: fixtureIdToken });
+  const mintBody = { provider: "google", idToken: { token: leaked.idToken }, callbackURL: "/devices" };
+  const minted = await upstream("/api/auth/sign-in/social", mintBody, { origin: f!.config.origin });
+  expect(minted.status).toBe(200);
+  const fresh = await minted.json();
+  expect(fresh.token).toBeTruthy();
+  expect(fresh.token).not.toBe(copiedSession.token);
+  expect(minted.headers.getSetCookie().length).toBeGreaterThan(0);
+  const freshRow = f!.db.prepare("SELECT createdAt,expiresAt FROM session WHERE token=?").get(fresh.token) as
+    { createdAt: string; expiresAt: string };
+  expect(Date.parse(freshRow.expiresAt) - Date.now()).toBeGreaterThan(23.9 * 3600_000);
+
+  const sessionsBefore = f!.db.prepare("SELECT id,token,createdAt,expiresAt FROM session ORDER BY id").all();
+  network.mockClear();
+  for (const path of ["/api/auth/get-access-token", "/api/auth/refresh-token"])
+    for (const headers of [bearerHeaders, { cookie: cookies(callback), origin: f!.config.origin }]) {
+      const denied = await f!.request(path, { accountId: selectedAccount.id }, headers);
+      expect(denied.status).toBe(404);
+      expect(await denied.json()).toEqual({ error: "not_found" });
+      expect(denied.headers.getSetCookie()).toEqual([]);
+      expect(denied.headers.has("set-auth-token")).toBe(false);
+    }
+  const deniedMint = await f!.request("/api/auth/sign-in/social", mintBody, { origin: f!.config.origin });
+  expect(deniedMint.status).toBe(404);
+  expect(await deniedMint.json()).toMatchObject({ code: "ID_TOKEN_NOT_SUPPORTED" });
+  expect(deniedMint.headers.getSetCookie()).toEqual([]);
+  expect(deniedMint.headers.has("set-auth-token")).toBe(false);
+  expect(network).not.toHaveBeenCalled();
+  expect(f!.db.prepare("SELECT id,token,createdAt,expiresAt FROM session ORDER BY id").all()).toEqual(sessionsBefore);
+  expect((await f!.request("/api/relay/devices", undefined, bearerHeaders)).status).toBe(200);
+});
+
+it("keeps direct ID-token sign-in disabled after runtime provider overrides are merged", async () => {
+  const injectedProviders = { google: { ...providers.google, disableIdTokenSignIn: false,
+    verifyIdToken: async () => true } };
+  f = await fixture({ providers: injectedProviders });
+  const google = f.context.socialProviders.find(provider => provider.id === "google")!;
+  expect(google.options?.disableIdTokenSignIn).toBe(true);
+  expect(supportsIdTokenSignIn(google)).toBe(false);
+  const response = await f.auth.handler(new Request(f.config.origin + "/api/auth/sign-in/social", {
+    method: "POST", headers: { origin: f.config.origin, "content-type": "application/json" },
+    body: JSON.stringify({ provider: "google", idToken: { token: "synthetic-id-token" } }),
+  }));
+  expect(response.status).toBe(404);
+  expect(await response.json()).toMatchObject({ code: "ID_TOKEN_NOT_SUPPORTED" });
 });

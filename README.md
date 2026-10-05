@@ -30,7 +30,7 @@ in this ~22-second animation, not a screen recording; send success alone is not 
 ### Install
 
 Python 3.9+. The core local/SSH CLI has no third-party Python dependencies.
-Current stable release: **1.0.2**.
+Current stable release: **1.0.3**.
 
 ```bash
 pipx install session-peer

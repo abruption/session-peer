@@ -83,6 +83,7 @@ class AgentAdapter:
         return {"status": "unavailable", "checks": []}
 
     def diagnostic_text(self, result: dict) -> str:
+        result = human_text(result)
         return f"{self.name}: {result['status']}"
 
     def remote_options(self, args: argparse.Namespace) -> list[str]:
@@ -92,6 +93,7 @@ class AgentAdapter:
         return str(session["id"]), str(session.get("status", "unknown"))
 
     def render(self, sessions: list[dict], where: str) -> str:
+        sessions, where = human_text(sessions), human_text(where)
         return f"Sessions on {where}:\n" + "\n".join(
             f"{self.name}  {self.display_row(row)[0]}  {self.display_row(row)[1]}"
             for row in sessions)
@@ -100,6 +102,7 @@ class AgentAdapter:
         return []
 
     def submission_text(self, result: dict, where: str) -> str:
+        result, where = human_text(result), human_text(where)
         return f"{self.name} submission on {where}: {result.get('status', 'unknown')}"
 
     def remote_submission(self, result: dict, args: argparse.Namespace, text: str) -> dict:
@@ -134,6 +137,7 @@ class ClaudeAdapter(AgentAdapter):
         return diagnose_claude()
 
     def diagnostic_text(self, result: dict) -> str:
+        result = human_text(result)
         return f"Claude inbox: {result['status']}"
 
     def display_row(self, session: dict) -> tuple[str, str]:
@@ -146,6 +150,7 @@ class ClaudeAdapter(AgentAdapter):
         return render_sessions(sessions, where)
 
     def submission_text(self, result: dict, where: str) -> str:
+        result, where = human_text(result), human_text(where)
         target = result.get("target", {})
         name = target.get("name") or target.get("pid")
         verb = "Would post to" if result["dryRun"] else "Posted to"
@@ -179,6 +184,7 @@ class CodexAdapter(AgentAdapter):
         return diagnose_codex(context.options)
 
     def diagnostic_text(self, result: dict) -> str:
+        result = human_text(result)
         return f"Codex: {result['status']} ({result.get('selectedHome', 'unknown')})"
 
     def remote_options(self, args: argparse.Namespace) -> list[str]:
@@ -192,6 +198,7 @@ class CodexAdapter(AgentAdapter):
         return render_codex(sessions, where)
 
     def listing_notes(self, payload: dict) -> list[str]:
+        payload = human_text(payload)
         notes = []
         if "codexHome" in payload:
             notes.append(f"Codex home: {payload['codexHome']} (single candidate home).")

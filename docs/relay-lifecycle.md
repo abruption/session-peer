@@ -10,6 +10,15 @@ versions have separate fingerprints and generations. Policies, routes and reques
 receipts stay attached to the logical ID, including across receiver key changes.
 The additive SQLite migration preserves existing v0.9 identities and receipts.
 
+New pairing binds generation zero to its certificate fingerprint. A rotated
+client cannot assert its stable ID to a receiver that has no trusted binding for
+that exact active key and generation; it fails with `unproven_principal` before
+reserving the invitation. For a first pairing after rotation, have the rotated
+device issue the invitation and serve as receiver, and verify that invitation
+out of band. The other device pins the supplied identity through that explicit
+invitation. Existing authenticated rotation and paired routes remain supported.
+This check does not audit or repair bindings saved by older versions.
+
 Stop the device receiver and other commands using its state before rotating:
 
 ```sh
@@ -157,6 +166,20 @@ or connection capacity returns 503 without consuming a fresh admission proof or
 discarding an already issued one-use session. The defaults are safety bounds,
 not a supported-user-count guarantee, and must remain below measured systemd
 memory, task and file-descriptor limits.
+
+Only `/v1/session` admission attempts spend the handshake window. Unknown paths
+return 404, and `/v1/connect` without a valid one-use session returns 401, without
+spending it. Each source is limited to `--client-handshake-rate` (default 5, never
+above `--handshake-rate`), so one source cannot exhaust the global window. A direct
+peer address identifies its source. Behind a loopback reverse proxy, sources are
+distinguished only when `--trusted-proxy-secret-file` is configured and the proxy
+overwrites both `X-Session-Peer-Proxy-Token` and `X-Session-Peer-Client-IP`;
+`X-Forwarded-For` is never trusted. Without that secret, proxied requests share the
+global window, so keep an edge rate rule for `/v1/session`. IPv6 sources are grouped
+by /64. Many distinct sources, or a source limit equal to the global limit, can still
+exhaust the global window; clients behind one shared NAT or non-loopback proxy share
+one source limit. Metrics report the source limit under `sourceCapacity`, leaving the
+schema version 1 `capacity` keys unchanged.
 
 The optional metrics listener binds only to `127.0.0.1` on a separate port. Do
 not reverse-proxy it. The control service reads its fixed, non-identifying schema

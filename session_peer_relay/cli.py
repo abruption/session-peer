@@ -123,6 +123,7 @@ async def manage(kind, args):
         try:
             limits = RelayLimits(
                 handshake_rate=args.handshake_rate,
+                client_handshake_rate=args.client_handshake_rate,
                 pending_sessions=args.pending_sessions,
                 global_connections=args.global_connections,
                 user_connections=args.user_connections,
@@ -137,8 +138,20 @@ async def manage(kind, args):
             if control:
                 control.close()
             raise Rejected('invalid_relay_metrics_port')
+        proxy_secret = None
+        if args.trusted_proxy_secret_file:
+            try:
+                proxy_secret = private_read(args.trusted_proxy_secret_file, 4096,
+                                            systemd_credentials=True).strip()
+            except (OSError, ValueError, UnicodeDecodeError):
+                proxy_secret = None
+            if not proxy_secret or len(proxy_secret) < 32:
+                if control:
+                    control.close()
+                raise Rejected('invalid_trusted_proxy_secret')
         relay = Relay(accounts, control=control, limits=limits,
-                      diagnostic_events=getattr(args, 'diagnostic_events', False))
+                      diagnostic_events=getattr(args, 'diagnostic_events', False),
+                      proxy_secret=proxy_secret)
         try:
             server = await relay.start(args.bind, args.port)
         except BaseException:
@@ -308,7 +321,7 @@ async def manage(kind, args):
 
 
 def parser(kind):
-    p = argparse.ArgumentParser(prog='session-peer '+kind)
+    p = core.HumanArgumentParser(prog='session-peer '+kind)
     sub = p.add_subparsers(dest='action', required=True)
     def command(name, state=True):
         item = sub.add_parser(name)
@@ -328,6 +341,8 @@ def parser(kind):
         source.add_argument('--accounts'); source.add_argument('--auth-state')
         item.add_argument('--auth-issuer'); item.add_argument('--auth-replay-state'); server_options(item)
         item.add_argument('--handshake-rate', type=int, default=20)
+        item.add_argument('--client-handshake-rate', type=int, default=5)
+        item.add_argument('--trusted-proxy-secret-file', metavar='PATH')
         item.add_argument('--pending-sessions', type=int, default=100)
         item.add_argument('--global-connections', type=int, default=10)
         item.add_argument('--user-connections', type=int, default=8)
@@ -433,12 +448,13 @@ def invoke_core(args):
                   'retryAllowed': False, 'consumptionConfirmed': False, **connection_diagnostics(exc)}
     result = with_guidance(result)
     result.update(device=args.device, host='device:'+args.device, transport='paired_device')
-    human = 'Device result: '+str(result.get('status', 'ok' if result.get('ok') else result.get('reason')))
-    if result.get('guidance'):
-        human += '\n' + result['guidance']['nextAction']
+    display = core.human_text(result)
+    human = 'Device result: '+str(display.get('status', 'ok' if display.get('ok') else display.get('reason')))
+    if display.get('guidance'):
+        human += '\n' + display['guidance']['nextAction']
     if args.command == 'list':
         human += '\nTARGET  AGENT  ID  STATUS\n' + '\n'.join(
             str(row.get('target', ''))+'  '+str(row.get('agent', ''))+'  '+str(row.get('id', row.get('pid', '')))+'  '+str(row.get('status', 'unknown'))
-            for row in result.get('sessions', []))
+            for row in display.get('sessions', []))
     core.emit(args.json, result, human, command=args.command)
     return 0 if result.get('ok') else 1

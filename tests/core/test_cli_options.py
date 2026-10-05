@@ -65,6 +65,38 @@ class CliOptions(unittest.TestCase):
         self.assertEqual(json.loads(out)['queueId'],'test-queue')
         self.assertFalse(json.loads(out)['consumptionConfirmed'])
 
+    def test_attached_dash_message_values_preserve_text_and_option_boundaries(self):
+        for text in ('-x', '--help', '- item', '--', '- first\n-- second\n한국어'):
+            for prefix in ('--message=', '-m=', '-m'):
+                with self.subTest(text=text, prefix=prefix):
+                    args = peer.build_parser().parse_args([
+                        'send', '--to', 'worker', prefix + text, '--json', '--dry-run',
+                        '--no-from', '--no-reply-to'])
+                    self.assertEqual(args.message_option, text)
+                    self.assertIsInstance(args.message_option, str)
+                    self.assertEqual(peer.read_message(args), text)
+                    self.assertTrue(args.json)
+                    self.assertTrue(args.dry_run)
+                    self.assertTrue(args.no_from)
+                    self.assertTrue(args.no_reply_to)
+
+    def test_separated_dash_message_still_requires_an_option_value(self):
+        for option in ('--message', '-m'):
+            with self.subTest(option=option), contextlib.redirect_stderr(io.StringIO()), \
+                 self.assertRaises(SystemExit) as error:
+                peer.build_parser().parse_args(['send', '--to', 'worker', option, '--'])
+            self.assertEqual(error.exception.code, 2)
+
+    def test_literal_separator_for_unrelated_options_retains_argparse_behavior(self):
+        for option in ('--codex-home', '--codex-bin'):
+            with self.subTest(option=option):
+                baseline = argparse.ArgumentParser()
+                baseline.add_argument(option)
+                expected = vars(baseline.parse_args([option + '=--']))
+                args = peer.build_parser().parse_args(['send', '--to', 'worker', option + '=--'])
+                dest = option[2:].replace('-', '_')
+                self.assertEqual(getattr(args, dest), expected[dest])
+
     def test_stdin_modes_preserve_body(self):
         for message,named in ((None,None),('-',None),(None,'-')):
             with self.subTest(message=message,named=named), mock.patch.object(peer.sys,'stdin',io.StringIO('다중\nline\n')):

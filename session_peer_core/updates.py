@@ -8,14 +8,17 @@ def remote_installed_version(host: str, ssh_opts: list[str],
     actually use, and it is what can fall behind.
     """
     check_ssh_argument(host, "--host")
-    for opt in ssh_opts:
-        check_ssh_argument(opt, "--ssh-opt")
+    check_ssh_options(ssh_opts)
     ssh_info = ssh_user_metadata(host, ssh_opts) if ssh_info is None else ssh_info
-    probe = 'python3 "$HOME/.local/share/session-peer/session_peer.py" --version 2>/dev/null'
+    probe = (
+        'P="$HOME/.local/share/session-peer/session_peer.py"; '
+        'if [ -e "$P" ] || [ -L "$P" ]; then python3 "$P" --version; '
+        "else printf '%s\\n' 'session-peer: not installed'; exit 3; fi"
+    )
     try:
         done = subprocess.run(
             ["ssh", *ssh_opts, host, probe],
-            capture_output=True, encoding="utf-8", errors="replace", timeout=30,
+            capture_output=True, timeout=30,
         )
     except FileNotFoundError as exc:
         raise ssh_failure_error(host, ssh_info, "transport_failed", "ssh not found on PATH") from exc
@@ -23,12 +26,21 @@ def remote_installed_version(host: str, ssh_opts: list[str],
         raise ssh_failure_error(host, ssh_info, "timeout") from exc
     except OSError as exc:
         raise ssh_failure_error(host, ssh_info, "transport_failed", str(exc)) from exc
-    out = done.stdout.strip()
-    detail = done.stderr.strip() or f"ssh exited {done.returncode}"
+    try:
+        out = (done.stdout.decode("utf-8", errors="strict")
+               if isinstance(done.stdout, bytes) else done.stdout).strip()
+    except UnicodeError as exc:
+        raise CcPeerError(f"{host}: installed program did not report a usable version", ssh_info) from exc
+    if done.returncode == 3 and out == "session-peer: not installed":
+        return None
+    detail = update_diagnostic_text(done.stderr).strip() or f"ssh exited {done.returncode}"
     failure = classify_ssh_failure(detail, done.returncode) if done.returncode != 0 else None
     if failure:
         raise ssh_failure_error(host, ssh_info, failure, detail)
-    return out.split()[-1] if out.startswith("session-peer") else None
+    match = re.fullmatch(r"session-peer ([^\s]+)", out)
+    if done.returncode != 0 or match is None:
+        raise CcPeerError(f"{host}: installed program did not report a usable version", ssh_info)
+    return match.group(1)
 
 
 def parse_version(text: str) -> tuple[int, ...]:
@@ -411,7 +423,10 @@ def latest_release() -> tuple[str, str]:
     request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
     try:
         with urllib.request.urlopen(request, timeout=DETECT_TIMEOUT * 4) as response:
-            release = json.load(response)
+            payload = response.read(RELEASE_METADATA_LIMIT + 1)
+            if len(payload) > RELEASE_METADATA_LIMIT:
+                raise ValueError("release metadata exceeds its size limit")
+            release = json.loads(payload)
             if not isinstance(release, dict):
                 raise ValueError("unexpected release response")
             tag = release.get("tag_name", "")
@@ -425,7 +440,7 @@ def latest_release() -> tuple[str, str]:
         raise CcPeerError("GitHub returned no release tag")
     if stable_version(tag) is None:
         raise CcPeerError(f"GitHub returned a non-stable release tag: {tag!r}")
-    return tag, f"https://raw.githubusercontent.com/{GITHUB_REPO}/{tag}/session_peer.py"
+    return tag, f"https://github.com/{GITHUB_REPO}/releases/download/{tag}/session_peer.py"
 
 
 def installed_as_distribution() -> bool:
@@ -454,7 +469,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                 args.json,
                 {"current": __version__, "latest": tag, "outdated": outdated,
                  "managedBy": "package-manager", "updateCommand": command},
-                f"session-peer {__version__} — {state}. Upgrade with: {command}",
+                human_text(f"session-peer {__version__} — {state}. Upgrade with: {command}"),
                 command="update",
             )
             return 0
@@ -462,7 +477,7 @@ def cmd_update(args: argparse.Namespace) -> int:
             args.json,
             {"current": __version__, "updated": False,
              "managedBy": "package-manager", "updateCommand": command},
-            f"This installation is package-managed. Upgrade with: {command}",
+            human_text(f"This installation is package-managed. Upgrade with: {command}"),
             command="update",
         )
         return 0
@@ -478,41 +493,67 @@ def cmd_update(args: argparse.Namespace) -> int:
                 shown_host = display_host(requested_host, host)
                 ssh_info = ssh_user_metadata(requested_host, ssh_opts)
                 there = remote_installed_version(requested_host, ssh_opts, ssh_info)
+                current = release_version(__version__)
+                installed = release_version(there) if there is not None else None
+                if current is None or (there is not None and installed is None):
+                    raise CcPeerError("could not compare the local and remote release versions", ssh_info)
+                outdated = installed is None or installed < current
 
                 if args.check:
                     if there is None:
                         state = "not installed"
-                    elif there == __version__:
+                    elif installed == current:
                         state = "up to date"
+                    elif installed > current:
+                        state = "newer than local client; no downgrade available"
                     else:
                         state = f"{there} → {__version__} available"
                     all_results.append(json_result("update", {
                         **host_metadata(requested_host, host), **ssh_info,
                         "remoteVersion": there, "current": __version__,
-                        "outdated": there != __version__,
+                        "outdated": outdated,
                     }))
                     if not args.json:
-                        print(f"{shown_host}: session-peer {there or '(none)'} — {state}")
+                        print(human_text(f"{shown_host}: session-peer {there or '(none)'} — {state}"))
                     continue
 
-                if there == __version__:
+                if not outdated:
                     all_results.append(json_result("update", {
                         **host_metadata(requested_host, host), **ssh_info,
                         "remoteVersion": there, "current": __version__,
                         "updated": False,
                     }))
                     if not args.json:
-                        print(f"{shown_host} runs session-peer {there} — already current.")
+                        print(human_text(f"{shown_host} runs session-peer {there} — already current or newer."))
                     continue
 
                 new_version = push_to_remote(requested_host, ssh_opts, ssh_info)
+                if new_version != __version__:
+                    raise CcPeerError(
+                        f"installed remote version did not match {__version__}", ssh_info
+                    )
+                committed = {**ssh_info, "committed": True,
+                             "commitStatus": "committed", "retryAllowed": False,
+                             "installedVersionVerified": new_version}
+                try:
+                    verified = remote_installed_version(requested_host, ssh_opts, ssh_info)
+                except CcPeerError as exc:
+                    raise CcPeerError(str(exc), {
+                        **exc.details, **committed, "verificationStatus": "unknown",
+                    }) from exc
+                if verified != __version__:
+                    raise CcPeerError(
+                        f"installed remote version did not match {__version__}",
+                        {**committed, "verificationStatus": "mismatch", "remoteVersion": verified},
+                    )
                 all_results.append(json_result("update", {
                     **host_metadata(requested_host, host), **ssh_info,
-                    "previous": there, "current": __version__, "updated": True,
+                    "previous": there, "current": __version__,
+                    "remoteVersion": verified, "updated": True,
                 }))
                 if not args.json:
                     prev = there or "(none)"
-                    print(f"{shown_host}: session-peer {prev} → {new_version}")
+                    print(human_text(f"{shown_host}: session-peer {prev} → {new_version}"))
 
             except CcPeerError as exc:
                 exit_code = EXIT_ERROR
@@ -522,7 +563,7 @@ def cmd_update(args: argparse.Namespace) -> int:
                     ok=False,
                 ))
                 if not args.json:
-                    print(f"session-peer: {requested_host}: {exc}", file=sys.stderr)
+                    print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
         if args.json:
             emit_json_results(all_results)
         return exit_code
@@ -541,7 +582,7 @@ def cmd_update(args: argparse.Namespace) -> int:
         emit(
             args.json,
             {"current": __version__, "latest": tag, "outdated": current < latest},
-            f"session-peer {__version__} — {state}",
+            human_text(f"session-peer {__version__} — {state}"),
             command="update",
         )
         return 0
@@ -550,35 +591,25 @@ def cmd_update(args: argparse.Namespace) -> int:
         emit(
             args.json,
             {"current": __version__, "latest": tag, "updated": False},
-            f"session-peer {__version__} is already current ({tag}).",
+            human_text(f"session-peer {__version__} is already current ({tag})."),
             command="update",
         )
         return 0
 
     target = Path(__file__).resolve()
     try:
-        with urllib.request.urlopen(url, timeout=DETECT_TIMEOUT * 4) as response:
-            source = response.read()
-    except (urllib.error.URLError, OSError) as exc:
-        raise CcPeerError(f"could not download {tag}: {exc}") from exc
-    if b"__version__" not in source:
-        raise CcPeerError(f"what came back from {url} does not look like session_peer.py")
-
-    # We are running from the file being replaced. Write beside it and rename,
-    # so a failed download can't leave a half-written script behind.
-    staged = target.with_suffix(".py.new")
-    try:
-        staged.write_bytes(source)
-        staged.chmod(target.stat().st_mode & 0o777)
-        staged.replace(target)
-    except OSError as exc:
-        staged.unlink(missing_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".session-peer-update-", dir=target.parent) as temporary:
+            verified_release_download(Path(temporary), tag=tag)
+            staged = Path(temporary) / "session_peer.py"
+            staged.chmod(target.stat().st_mode & 0o777)
+            staged.replace(target)
+    except (OSError, ReleaseVerificationError) as exc:
         raise CcPeerError(f"could not replace {target}: {exc}") from exc
 
     emit(
         args.json,
         {"current": __version__, "latest": tag, "updated": True, "path": str(target)},
-        f"session-peer {__version__} → {tag}  ({target})",
+        human_text(f"session-peer {__version__} → {tag}  ({target})"),
         command="update",
     )
     return 0

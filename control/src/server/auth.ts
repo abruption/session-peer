@@ -4,6 +4,21 @@ import { github } from "@better-auth/core/social-providers";
 import { bearer, deviceAuthorization } from "better-auth/plugins";
 import type { Config } from "./config.js";
 import { verifiedGoogleUserInfo } from "./google-discovery.js";
+export const SESSION_LIFETIME_SECONDS = 86400;
+
+/** Upgrade already-sliding sessions using their original creation time.
+ * Better Auth's SQLite adapter stores dates as ISO strings. Never increase an
+ * earlier expiry; malformed dates fail closed. Run before accepting requests.
+ */
+export function capExistingSessions(db: Database.Database) {
+  db.transaction(() => {
+    db.prepare(`DELETE FROM session
+      WHERE julianday(createdAt) IS NULL OR julianday(expiresAt) IS NULL`).run();
+    db.prepare(`UPDATE session
+      SET expiresAt=strftime('%Y-%m-%dT%H:%M:%fZ', createdAt, '+${SESSION_LIFETIME_SECONDS} seconds')
+      WHERE julianday(expiresAt)>julianday(createdAt, '+${SESSION_LIFETIME_SECONDS} seconds')`).run();
+  }).immediate();
+}
 export function allowedAccount(
   config: Config,
   provider: string,
@@ -118,14 +133,17 @@ export function createAuth(db: Database.Database, config: Config) {
     trustedOrigins: [config.origin],
     emailAndPassword: { enabled: false },
     socialProviders: { ...config.providers, ...(githubProvider ? {
-      github: { ...config.providers.github!, getUserInfo: async (tokens: Parameters<typeof githubProvider.getUserInfo>[0]) => {
+      github: { ...config.providers.github!, disableIdTokenSignIn: true, getUserInfo: async (tokens: Parameters<typeof githubProvider.getUserInfo>[0]) => {
         const profile = await githubProvider.getUserInfo(tokens);
         // Reject before Better Auth creates a user. A denied account-create hook
         // alone can leave an orphan user (and consume its unique email address).
         return profile && authorizeAccount(db, config, "github", String(profile.data.id)) ? profile : null;
       } },
     } : {}), ...(config.providers.google ? {
-      google: { ...config.providers.google, getUserInfo: verifiedGoogleUserInfo(
+      // The browser uses authorization codes only. A provider ID token must
+      // never be a second way to mint a first-party session from JSON input.
+      // Apply this after provider configuration so runtime extras cannot undo it.
+      google: { ...config.providers.google, disableIdTokenSignIn: true, getUserInfo: verifiedGoogleUserInfo(
         config,
         (accountId) => authorizeAccount(db, config, "google", accountId),
       ) },
@@ -135,8 +153,11 @@ export function createAuth(db: Database.Database, config: Config) {
       encryptOAuthTokens: true,
     },
     session: {
-      expiresIn: 86400,
+      expiresIn: SESSION_LIFETIME_SECONDS,
       updateAge: 3600,
+      // Account-level bearer tokens can also be used on /api/auth routes.
+      // Disable refresh globally, including cookie use of a copied token.
+      disableSessionRefresh: true,
       cookieCache: { enabled: false },
     },
     advanced: {
@@ -167,7 +188,18 @@ export function createAuth(db: Database.Database, config: Config) {
       },
       session: {
         create: {
-          before: async (session) => allowedUser(db, config, session.userId),
+          before: async (session) => {
+            if (!allowedUser(db, config, session.userId)) return false;
+            return { data: { ...session, expiresAt: new Date(Math.min(
+              session.expiresAt.getTime(),
+              session.createdAt.getTime() + SESSION_LIFETIME_SECONDS * 1000,
+            )) } };
+          },
+        },
+        update: {
+          // No Better Auth endpoint may move the creation/expiry boundary.
+          before: async (session) =>
+            session.createdAt === undefined && session.expiresAt === undefined,
         },
       },
     },

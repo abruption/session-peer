@@ -164,9 +164,22 @@ class Store:
         pem = request.get('certificate', '')
         if not isinstance(pem, str) or len(pem) > 8192:
             raise Rejected('invalid_certificate')
-        peer = request.get('principal', fingerprint(pem))
-        if not isinstance(peer, str) or not re.fullmatch(r'[a-f0-9]{64}', peer):
+        key = fingerprint(pem)
+        peer = request.get('principal', key)
+        generation = request.get('generation', 0)
+        if (not isinstance(peer, str) or not re.fullmatch(r'[a-f0-9]{64}', peer)
+                or type(generation) is not int or generation < 0):
             raise Rejected('invalid_principal')
+        # An invitation permits a new key, not impersonation of a policy principal.
+        # TLS commit proves possession of `pem`, not ownership of a caller-chosen
+        # stable identity. Rotated keys require an already trusted local binding
+        # (authenticated rotation or a receiver invitation pinned by the operator).
+        if peer != key or generation != 0:
+            anchor = self.db.execute(
+                'SELECT principal,cert,generation,status FROM peer_keys WHERE fingerprint=?',
+                (key,)).fetchone()
+            if anchor != (peer, pem, generation, 'active'):
+                raise Rejected('unproven_principal')
         if row[2] and row[2] != peer:
             raise Rejected('invitation_already_reserved')
         existing = self.peer(peer)
@@ -179,7 +192,7 @@ class Store:
         self.db.execute('BEGIN IMMEDIATE')
         try:
             self.db.execute('UPDATE invites SET peer=? WHERE id=?', (peer, request['invitation']))
-            self.register_key(peer, pem, request.get('generation', 0))
+            self.register_key(peer, pem, generation)
             self.db.execute('INSERT INTO peers VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET '
                             'status=excluded.status,expires=excluded.expires',
                             (peer, pem, 'pending', row[1], '{}', '["list","send"]'))
