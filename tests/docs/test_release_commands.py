@@ -19,7 +19,7 @@ class ReleaseCommands(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             log = Path(temporary) / "calls.jsonl"
             staging = str(Path(temporary) / "staging with spaces")
-            # Functions intercept every external command in these two examples.
+            # Functions intercept every external command in all three examples.
             # A minimal environment supplies neither credentials nor user shell startup files.
             harness = r'''
 set -eu
@@ -59,19 +59,23 @@ rmdir() { capture rmdir "$@"; }
     def test_release_preparation_commands_preserve_argument_boundaries(self):
         for name in ("RELEASING.md", "RELEASING.ko.md", "RELEASING.ja.md", "RELEASING.zh-CN.md"):
             with self.subTest(document=name):
-                block = re.findall(r"```bash\n(.*?)```", (ROOT / name).read_text(), re.DOTALL)[0]
-                calls, _ = self.shell_calls(block)
+                blocks = re.findall(r"```bash\n(.*?)```", (ROOT / name).read_text(), re.DOTALL)
+                self.assertEqual(len(blocks), 3, "preparation, owner publication and installer authentication remain distinct")
+                calls, _ = self.shell_calls(blocks[0])
                 self.assertEqual(calls, [
                     ["git", "fetch", "origin", "main", "--tags"],
                     ["git", "rev-parse", "origin/main"],
-                    ["git", "tag", "vX.Y.Z", COMMIT],
-                    ["git", "push", "origin", "vX.Y.Z"],
-                    ["gh", "release", "create", "vX.Y.Z", "--repo", "abruption/session-peer",
-                     "--target", COMMIT, "--title", "session-peer vX.Y.Z",
-                     "--notes-file", "docs/releases/vX.Y.Z.md", "--draft", "--latest"],
+                    ["git", "tag", "v1.0.3", COMMIT],
+                    ["git", "push", "origin", "v1.0.3"],
+                    ["gh", "release", "create", "v1.0.3", "--repo", "abruption/session-peer",
+                     "--target", COMMIT, "--title", "session-peer v1.0.3",
+                     "--notes-file", "docs/releases/v1.0.3.md", "--draft", "--latest"],
                     ["gh", "workflow", "run", "prepare-release.yml", "--repo", "abruption/session-peer",
-                     "--ref", "main", "-f", "tag=vX.Y.Z"],
-                    ["gh", "release", "edit", "vX.Y.Z", "--repo", "abruption/session-peer",
+                     "--ref", "main", "-f", "tag=v1.0.3"],
+                ])
+                publication_calls, _ = self.shell_calls(blocks[1])
+                self.assertEqual(publication_calls, [
+                    ["gh", "release", "edit", "v1.0.3", "--repo", "abruption/session-peer",
                      "--draft=false", "--prerelease=false", "--latest"],
                 ])
 
@@ -80,7 +84,7 @@ rmdir() { capture rmdir "$@"; }
                  'then .tag_name else error("no immutable stable release") end')
         for name in ("RELEASING.md", "RELEASING.ko.md", "RELEASING.ja.md", "RELEASING.zh-CN.md"):
             with self.subTest(document=name):
-                block = re.findall(r"```bash\n(.*?)```", (ROOT / name).read_text(), re.DOTALL)[1]
+                block = re.findall(r"```bash\n(.*?)```", (ROOT / name).read_text(), re.DOTALL)[2]
                 calls, staging = self.shell_calls(block)
                 installer = staging + "/install.sh"
                 self.assertEqual(calls, [

@@ -13,7 +13,7 @@ Python/PyPI版本为1.0.3，标签和GitHub发布为v1.0.3。设为稳定版及L
 1. 将v1.0.3变更与1.0.2及四种语言的说明对照。整合五项公告修复后才能公开详情。CVE分配不是发布前提。确认包/生成版本、四份README版本和归档说明；冻结cc_peer.py并从发行包排除。排除凭据、密钥、数据库、重放状态、浏览器配置、本地证据及聊天。
 2. 运行完整本地测试和PR门禁。合并后要求整合后的公开main准确提交通过CI；私有公告分支检查不能替代该公开发布门禁。验证干净wheel/sdist安装、隔离环境安装import、准确CLI版本、初始化home的JSON list、extras及pip check。显式空Codex home必须以state_db_missing安全失败。不要发送实时消息。
 3. 确认PyPI尚无1.0.3文件。检查GitHub Immutable Releases及v*标签规则：允许创建，禁止无绕过的标签修改/删除。所有者于2026-10-03启用 (规则24408525)。2026-10-05验证确认Immutable Releases已启用、规则24408525有效，并要求严格main发布门禁。历史v1.0.2为非不可变且无资产，不是已验证单文件发布；重新检查当前配置。
-4. 确认Trusted Publisher将session-peer映射到abruption/session-peer、publish.yml和pypi。2026-10-05通过已登录PyPI浏览器确认所有者/仓库abruption/session-peer、工作流publish.yml及环境pypi映射。同日GitHub配置检查确认要求审核者abruption、允许自审及v*标签；管理员绕过仍启用。重新检查配置，使用正常人工审核，不得静默绕过。
+4. 确认Trusted Publisher将session-peer映射到abruption/session-peer、publish.yml和pypi。2026-10-05通过已登录PyPI浏览器确认所有者/仓库abruption/session-peer、工作流publish.yml及环境pypi映射。同日GitHub配置检查确认要求审核者`abruption`、允许自审 (`prevent_self_review: false`) 及`v*`标签；管理员绕过仍启用 (`can_admins_bypass: true`)。所有者此前的[2026-09-29映射检查](https://github.com/abruption/session-peer/issues/235#issuecomment-5882178667)是历史证据；当前验证日期为2026-10-05。重新检查配置，使用正常人工审核，不得静默绕过。
 
 ## 准备不可变草稿
 
@@ -48,8 +48,8 @@ publish.yml要求仓库所有者，验证准确标签/源码/main祖先关系，
 ## 人工审核待处理的PyPI部署
 
 1. 上传前观察准确Actions运行正等待pypi审核。记录运行URL/ID与尝试次数、标签、提交、SHA256SUMS、release-provenance.json和待处理时间。源码测试和配置不能证明暂停；下一次发布的实际观察仍是#235验收检查。
-2. 必需的人工审核者检查候选证据及当前Trusted Publisher/环境配置。在Review deployments选择pypi，仅获授权时明确选择Approve and deploy。GitHub发布授权不替代此审核。部署进入待处理状态时请求所需人工审核，并保留环境门禁。
-3. 拒绝上传时选择pypi，说明原因并选择Reject。若预期暂停或控件缺失，在上传前停止并取消运行。保留被拒绝/取消运行并解决原因，不得移动标签或重复使用版本以规避拒绝。
+2. 必需的人工审核者检查候选证据及当前Trusted Publisher/环境配置。在**Review deployments**选择**pypi**，仅获授权时明确选择**Approve and deploy**。GitHub发布授权不替代此审核。部署进入待处理状态时请求所需人工审核，并保留环境门禁。
+3. 拒绝上传时选择**pypi**，说明原因并选择**Reject**。若预期暂停或控件缺失，在上传前停止并取消运行。保留被拒绝/取消运行并解决原因，不得移动标签或重复使用版本以规避拒绝。
 4. 记录审核者、决定、评论、时间及结果，保留上传和验证证据。拒绝既不是成功发布，也不是成功验证批准暂停。管理员绕过属例外，需另获所有者明确授权，记录原因、操作者、时间、运行、标签和提交。
 
 ## 验证发布或恢复
