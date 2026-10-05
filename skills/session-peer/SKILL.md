@@ -3,7 +3,7 @@ name: session-peer
 description: Send user-requested messages to Claude Code, Codex, or a live registered Antigravity TUI on this machine, an SSH host, or a paired device using session-peer. Use for cross-session handoffs and notifications when the available native tools do not cover the requested target.
 allowed-tools: Bash, Read
 metadata:
-  version: "0.3.1"
+  version: "0.3.2"
   runtime-min-version: "0.9.1"
   runtime-full-version: "1.0.1"
 ---
@@ -18,7 +18,9 @@ with pipx, uv tool, or pip. Do not assume it lives in a Claude configuration dir
 Before discovery or delivery, run `session-peer --version`. This skill expects
 session-peer 0.9.1 or newer. `--allow-inactive-codex-home` and `--relay-login`
 exist only in 1.0.0 and newer; confirm them with `session-peer send --help`
-before use. If the command is missing, explain that installing the
+before use. For security fixes, recommend Python runtime 1.0.3 or newer;
+`runtime-min-version` and `runtime-full-version` describe CLI compatibility,
+not security currency. If the command is missing, explain that installing the
 skill did not install the runtime and recommend one of the supported installation
 paths in the [repository README](https://github.com/abruption/session-peer#installation-options).
 Prefer `pipx install session-peer` for an isolated
@@ -29,6 +31,15 @@ is on the user's PATH. Do not silently replace an existing pipx, uv, pip, or sta
 installation with another manager. If the installed version is older, use that
 manager's upgrade command; only standalone installations use `session-peer update`.
 Run `session-peer --version` again before continuing.
+Release-backed standalone installation and local updates require verified
+immutable release assets, provenance, and a recent authenticated GitHub CLI
+(`gh`); a failed verification
+must not fall back to an unsigned older release or development `main`. An
+operator may instead use their existing pipx, uv, or pip manager. The verified
+`install.sh` installs the program and its compatibility skill copy locally or
+over SSH; local `session-peer update` refreshes only the program from the latest
+release, while `update --host` pushes the local standalone program when the
+remote copy is older or absent. See the [v1.0.3 installation and update reference](https://github.com/abruption/session-peer/blob/v1.0.3/docs/cli-reference.md#installsh).
 In 1.0.1 and newer, cached `skillUpdates` notices and `session-peer doctor` can
 report an outdated or incompatible separately installed skill. Update it with
 its own manager (Skills CLI: `npx -y skills@latest update session-peer --global --yes`).
@@ -105,8 +116,15 @@ Omit `--host` for local delivery. `--dry-run` resolves without sending.
 Use `--codex-home` and `--codex-bin` when the destination's default environment
 does not identify its installation; remote paths are interpreted on that host.
 Pass extra SSH arguments as `--ssh-opt=-p --ssh-opt=2222` (note the `=`); treat
-`--host` and `--ssh-opt` as SSH access, and never pass `ProxyCommand`-style
-options. `--no-from` omits the `From:` header, and `--no-update-notice` suppresses
+`--host` and `--ssh-opt` as SSH access. In 1.0.3 and newer, the entire supplied
+option list is checked before SSH runs: use only documented connection options,
+`KEY=value` for `-o`, host-style jump targets, and `yes`, `ask`, or `accept-new`
+for `StrictHostKeyChecking`. SSH URI jumps, `+` in usernames, and spaced
+`-o 'Key value'` assignments are rejected. Command hooks, alternate config or
+control socket paths, and known-hosts file overrides are rejected. Existing
+user/system SSH config remains an operator trust boundary, not a sandbox; see
+the [v1.0.3 SSH rules](https://github.com/abruption/session-peer/blob/v1.0.3/docs/cli-reference.md#limits).
+`--no-from` omits the `From:` header, and `--no-update-notice` suppresses
 cached update notices.
 
 `--wake` explicitly resumes an inactive Codex thread after queueing. Use it only
@@ -141,6 +159,16 @@ submission. Keep an `unknown` post-submission result distinct and do not resend
 it automatically. In 1.0.1 and newer, `device login` backs off on HTTP 429 and
 `slow_down`; let the pending authorization poll continue instead of starting a
 second login.
+
+In hosted Node Control 1.0.3, account login sessions expire at creation time
+plus 24 hours. An upgrade caps earlier sliding sessions too, so sign-in may be
+needed. Device revocation and account login-session revocation are separate.
+Updating a Python wheel does not deploy Node Control; operators must assess and
+apply hosted service updates separately. Existing pairing bindings are not
+retroactively audited or removed. If trust is in doubt, ask the operator to
+review and revoke or re-pair the affected binding and separately review login
+sessions. Do not deploy services, reset state, revoke sessions, or re-pair devices
+without an operator request. See the [v1.0.3 release notes](https://github.com/abruption/session-peer/blob/v1.0.3/docs/releases/v1.0.3.md).
 
 For recurring Relay stalls, ask the operator for opt-in `--diagnostic-events`
 from the receiver and Relay. In 1.0.1 and newer, compare `eventTimeUtcMs` and
