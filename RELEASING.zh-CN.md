@@ -1,25 +1,27 @@
-# 发布 session-peer
+# 发布session-peer
 
-公开 GitHub Release 会触发 `.github/workflows/publish.yml`，验证锁定资产，并在环境批准后将 wheel 和 sdist 通过 Trusted Publishing 上传 PyPI。草稿不会发布。请分开准备、最终批准、公开和验证。受保护的 `main` 需要最新 PR 以及覆盖各平台 Python、文档、Shell、软件包、MCP、Relay、control、集成测试和依赖审计的 `release gate`。实际 OAuth、代理 ACK 和生产 Relay 状态是独立的运维证据。
+1.0.3是继1.0.2之后的稳定版安全与稳定性维护发布。区分准备、不可变GitHub发布、人工PyPI环境审核与发布后验证。受保护的main要求经过审核、保持最新的PR及汇总发布门禁，包括Python平台矩阵、文档、shell、包/单文件/MCP/Relay/Control、集成测试与Python/Node依赖审计。
 
-## 不可变发行准备（下一个获批发行）
+## 历史证据与当前边界
 
-2026-10-03所有者启用了GitHub Immutable Releases和针对 `refs/tags/v*` 的活动标签规则
-24408525，禁止更新和删除且无绕过，允许创建。历史 `v1.0.2` 仍无资产且为
-`immutable: false`，不是经过验证的独立发行。每次发行前重新检查设置。
-本变更仅准备未来发布，不授权发布。
+五主机v1.0.0 RC4 rc4-rerun-02测试运行14,436.65秒：complete记录、公开健康241/241、探测147/147、提交21/21及Relay重启恢复3.182秒。独立ACK为20/21。T120 Windows原生Claude因TUI关闭未确认原始ACK，另一次单独测试收到准确ACK。所有者在#164接受此例外。保留20/21；历史证据不验证v1.0.3。#161的外部停滞根因仍未确认。
 
-所有者在受保护 `main` 的准确标签提交上手动运行 `prepare-release.yml`。
-检查源码、引用、版本、祖先、可重现构建和包安装后，在空稳定草稿中证明并附加七个资产：
-wheel、sdist、`session_peer.py`、`install.sh`、`SKILL.md`、`SHA256SUMS` 和
-`release-provenance.json`。清单覆盖五个载荷，签名证明也覆盖清单和证据。
-附加不会发布。发布会锁定文件；`publish.yml` 验证并上传准确锁定的包到PyPI，
-不重新构建或添加资产。保留PyPI工作流和环境映射。
+Python/PyPI版本为1.0.3，标签和GitHub发布为v1.0.3。设为稳定版及Latest。插件版本独立。核心需要Python 3.9+、MCP需要3.10+、Relay接收端/服务端需要Unix或WSL与Python 3.11+。服务接收端需要服务PATH中的Codex或运营人员拥有的codexBin绑定。包发布不能证明托管补救部署、设备群安装、生产重启、实时OAuth健康或ACK。未知结果不能授权自动重发。
+
+## 源码与配置门禁
+
+1. 将v1.0.3变更与1.0.2及四种语言的说明对照。整合五项公告修复后才能公开详情。CVE分配不是发布前提。确认包/生成版本、四份README版本和归档说明；冻结cc_peer.py并从发行包排除。排除凭据、密钥、数据库、重放状态、浏览器配置、本地证据及聊天。
+2. 运行完整本地测试和PR门禁。合并后要求整合后的公开main准确提交通过CI；私有公告分支检查不能替代该公开发布门禁。验证干净wheel/sdist安装、隔离环境安装import、准确CLI版本、初始化home的JSON list、extras及pip check。显式空Codex home必须以state_db_missing安全失败。不要发送实时消息。
+3. 确认PyPI尚无1.0.3文件。检查GitHub Immutable Releases及v*标签规则：允许创建，禁止无绕过的标签修改/删除。所有者于2026-10-03启用 (规则24408525)。2026-10-05验证确认Immutable Releases已启用、规则24408525有效，并要求严格main发布门禁。历史v1.0.2为非不可变且无资产，不是已验证单文件发布；重新检查当前配置。
+4. 确认Trusted Publisher将session-peer映射到abruption/session-peer、publish.yml和pypi。2026-10-05通过已登录PyPI浏览器确认所有者/仓库abruption/session-peer、工作流publish.yml及环境pypi映射。同日GitHub配置检查确认要求审核者abruption、允许自审及v*标签；管理员绕过仍启用。重新检查配置，使用正常人工审核，不得静默绕过。
+
+## 准备不可变草稿
+
+准备PR合并后记录准确main提交并在其上创建轻量标签。不得移动已有标签。由仓库所有者在受保护main的准确提交上执行准备；调度与验证间main推进将安全失败。
 
 ```bash
-# Set the next approved version; no tag/version is changed by this document.
-release_tag=vX.Y.Z
 git fetch origin main --tags
+release_tag=v1.0.3
 release_commit=$(git rev-parse origin/main)
 git tag "$release_tag" "$release_commit"
 git push origin "$release_tag"
@@ -28,17 +30,39 @@ gh release create "$release_tag" --repo abruption/session-peer \
   --notes-file "docs/releases/$release_tag.md" --draft --latest
 gh workflow run prepare-release.yml --repo abruption/session-peer \
   --ref main -f tag="$release_tag"
-# Review successful preparation, the seven draft assets, and their attestations.
-# Obtain final approval before the separate publication command:
-gh release edit "$release_tag" --repo abruption/session-peer \
+```
+
+prepare-release.yml验证源码/ref/版本/祖先关系，执行两次可复现构建、归档检查、隔离安装测试与依赖审计。向空草稿证明并附加恰好七项资产：wheel、sdist、session_peer.py、install.sh、SKILL.md、SHA256SUMS及release-provenance.json。manifest覆盖五项payload；签名来源证明也覆盖manifest及证据。不覆盖已有资产。发布前审核成功准备运行、准确提交、七个文件、哈希及证明。附加草稿不等于发布。
+
+## 发布锁定的GitHub版本
+
+只有获得所有者对该版本的明确授权才发布。已有完成此次发布的指令满足流程批准要求，不要仅因本手册再次要求确认。它不替代所需的人工pypi环境审核。发布锁定标签与资产，并启动publish.yml。
+
+```bash
+gh release edit v1.0.3 --repo abruption/session-peer \
   --draft=false --prerelease=false --latest
 ```
 
-验证独立安装和更新需要近期GitHub CLI的 `gh attestation verify`，支持签名工作流、
-源码引用和摘要以及托管运行器策略。默认安装经过验证的最新不可变发行。
-`--local-source` 明确信任相邻源码，`--main` 明确选择未经验证的开发代码。
-旧发行或缺少证明时不会自动回退。验证发行发布前请用pipx/uv/pip。
-执行安装程序前使用以下命令认证（需要轻量版本标签）。
+publish.yml要求仓库所有者，验证准确标签/源码/main祖先关系，下载已锁定不可变资产并验证认证来源证明与manifest。不会重新构建或增加资产。PyPI任务前必须再次通过安装检查与当前依赖审计。准备时审计成功不是当前审计证据。
+
+## 人工审核待处理的PyPI部署
+
+1. 上传前观察准确Actions运行正等待pypi审核。记录运行URL/ID与尝试次数、标签、提交、SHA256SUMS、release-provenance.json和待处理时间。源码测试和配置不能证明暂停；下一次发布的实际观察仍是#235验收检查。
+2. 必需的人工审核者检查候选证据及当前Trusted Publisher/环境配置。在Review deployments选择pypi，仅获授权时明确选择Approve and deploy。GitHub发布授权不替代此审核。部署进入待处理状态时请求所需人工审核，并保留环境门禁。
+3. 拒绝上传时选择pypi，说明原因并选择Reject。若预期暂停或控件缺失，在上传前停止并取消运行。保留被拒绝/取消运行并解决原因，不得移动标签或重复使用版本以规避拒绝。
+4. 记录审核者、决定、评论、时间及结果，保留上传和验证证据。拒绝既不是成功发布，也不是成功验证批准暂停。管理员绕过属例外，需另获所有者明确授权，记录原因、操作者、时间、运行、标签和提交。
+
+## 验证发布或恢复
+
+验证publish.yml及其PyPI验证对准确标签/提交成功。下载两个PyPI文件，将准确文件列表和哈希与锁定候选/来源证明比较，并在新环境分别安装。再次检查隔离版本、初始化home的JSON list、extras及pip check。确认稳定版/Latest及正常更新选择v1.0.3。关闭里程碑前记录证据；保留#161监控。
+
+GitHub和PyPI发布是独立不可逆步骤。GitHub发布后审计失败可能留下没有PyPI文件的锁定版本；保留两次运行和准确资产。不得绕过审计、用修改资产重新上传、跳过已有文件或重用版本。部分1.0.3上传或不匹配会停止推广。诊断首个失败门禁，通过已审核变更和新版本 (通常1.0.4) 前进修复。yank不会允许重用。
+
+## 已验证单文件安装
+
+较新的已认证GitHub CLI必须支持gh attestation verify及签名工作流、源码ref/digest、OIDC issuer和托管runner策略。测试基线为2.102.0；支持所有标志的最早版本未确定。仓库/证明读取权限足够，无需发布权限。[GitHub CLI验证源码](https://github.com/cli/cli/blob/v2.102.0/pkg/cmd/attestation/verify/verify.go)记录策略标志。本地fixture验证策略/顺序/错误行为，不证明真实签名接受。
+
+安装器默认使用已验证Latest不可变资产。--local-source明确信任邻近源码；--main选择未经验证的开发源码。缺少证明或旧的未签名发布会安全失败；无法验证时使用pipx/uv/pip。执行前认证install.sh：
 
 ```bash
 set -eu
@@ -60,85 +84,4 @@ gh attestation verify "$staging/install.sh" --repo "$repo" \
 sh "$staging/install.sh"
 ```
 
-已确认的GitHub CLI基准版本为2.102.0，尚未确定支持所有策略参数的最早版本。
-在线证明查询需要已认证的gh（`gh auth login` 或 `GH_TOKEN`）；安装程序仅需仓库和
-证明读取权限，不需要发布权限。参见[GitHub CLI验证器源码](https://github.com/cli/cli/blob/v2.102.0/pkg/cmd/attestation/verify/verify.go)。
-本地fixture仅验证策略、顺序和错误行为，不证明实际签名接受。
-
-GitHub与PyPI发布是分别不可逆的两个步骤。准备阶段与PyPI上传前均保留强制依赖审计。
-两次审计之间披露的新CVE可能导致仅有锁定的公开GitHub发行，而没有对应PyPI版本。
-准备时的审计成功不是当前审计证据。发布工作流和PyPI验证成功之前应视为未完成，
-保留两次执行记录和准确资产，诊断失败条件，必要时通过已审查的新版本向前修复。
-本流程不授权绕过审计；修改审计策略需要所有者另行决定。
-
-上限为独立程序8 MiB、支持资产256 KiB、元数据1 MiB。替换前必须通过认证的清单和证明、
-准确标签和版本、暂存文件的 `--version` 检查。SSH部署前在发送端验证，离线目标仅需Python。
-验证失败保留已有文件。下面v1.0.2步骤为历史记录；未来发行使用上述准备工作流。
-
-
-## v1.0.0 证据与 v1.0.2 维护条件
-
-经过审查的 RC4 运行时在五主机 `rc4-rerun-02` 中获得 14,436.65 秒的 `complete`、公开 health 241/241、probe 147/147、提交 21/21、Relay 重启后 3.182 秒恢复。独立 ACK 为 20/21。原始 T120 Windows native Claude ACK 因 TUI 关闭未能确认；同一路径后续单独的一次检查得到准确 ACK。用户已在 #164 明确接受这一运维例外。不得把原始结果改写成 21/21。#161 的外部停滞位置仍未确定，缓解措施不等于修复根因。这是 v1.0.0 的历史证据，并非 v1.0.2 变更的验证结果。
-
-Python/PyPI 版本是 `1.0.2`，Git 标签和 GitHub Release 是 `v1.0.2`。不标记为预发布，并设置为 Latest。普通升级和独立版更新提示可能选择 v1.0.2 而非 v1.0.1。插件版本独立。核心在 Python 3.9+ 上无依赖；MCP 要求 3.10+，Relay 接收端/服务器要求 Unix 或 WSL 上的 3.11+。软件包发布不保证托管 Relay/OAuth 可用。由服务管理器启动的 macOS、Linux 接收端，应在 PATH 中包含目标 TUI 的 `codex` 可执行文件目录，或设置运维人员管理的绝对 `codexBin` 路径。Relay 登录会过期，可能需要重新授权。#161 的根因仍未确定，应保持开启。
-
-根目录 `cc_peer.py` 为旧版 URL 保留，但必须排除在 wheel 和 sdist 外。应包含四种语言的 README、安全策略、稳定版说明、Relay 文档和可选运行时。不得包含凭据、设备密钥、认证数据库、replay 状态、浏览器配置、局部证据或对话。
-
-## Trusted Publisher
-
-PyPI 项目 `session-peer` 对应 GitHub `abruption/session-peer` 的 `publish.yml` 和环境 `pypi`。仓库不保存长期 PyPI 凭据。过去成功不证明配置未变，发布前需要确认。
-
-所有者[已于 2026-09-29 验证 PyPI 对应关系](https://github.com/abruption/session-peer/issues/235#issuecomment-5882178667)。这是所有者的检查记录，不是新的 PyPI UI 检查。2026-10-03 的 GitHub API 检查确认，`pypi` 的必需审核人为 `abruption`，允许自我审核（`prevent_self_review: false`），并有仅允许匹配 `v*` 标签的自定义部署策略。这些是仓库设置，而非工作流源代码设置，发布前需重新确认。
-
-管理员绕过仍处于启用状态（`can_admins_bypass: true`）。请使用正常环境审核。例外绕过需要所有者明确授权，并记录原因、执行者、时间、工作流运行、标签与提交；绕过不证明批准等待已生效。不要悄悄绕过审核，也不要声称绕过已禁用。
-
-## 准备与验证
-
-1. 确认 v1.0.2 里程碑中已完成的修复，并将 #161 保留为根因未明的监控事项。审查相对 v1.0.1 的运行时差异及 v1.0.2 说明。不要把 `release/0.9.x` 合并到 `main`。
-2. 确认 `session_peer.__version__ == "1.0.2"`、生成的 `session_peer.py` 一致、四种语言 README 安装命令一致、sdist 包含四种语言的稳定版说明。运行本地全部测试、PR 的 `release gate` 和合并后准确 `main` 的 CI。
-3. 从准确候选以 `python3 -m build` 构建 wheel 与 sdist 并检查内容。分别在全新环境安装，检查 `session-peer --version`、已初始化代理主目录的 JSON `list`、`pip check`、Relay/MCP 扩展与 help。显式指定的空 Codex 主目录应以 `state_db_missing` 失败，这并非安装失败。不把实际模型消息纳入此关卡。
-4. 检查通过后才合并，重新确认 `main` 的准确提交、版本与说明。确认 PyPI 尚无 `1.0.2` 文件。
-
-## 草稿与公开
-
-准备 PR 合并后才建立草稿；squash/merge 会改变发布提交。不要移动已发布的标签。
-
-```bash
-git fetch origin main --tags
-release_commit=$(git rev-parse origin/main)
-gh release create v1.0.2 \
-  --repo abruption/session-peer \
-  --target "$release_commit" \
-  --title "session-peer v1.0.2" \
-  --notes-file docs/releases/v1.0.2.md \
-  --draft --latest
-```
-
-检查标签、目标、标题、说明、草稿、稳定版和 Latest 意图。草稿不构成发布授权。
-
-## 公开
-
-公开 GitHub 草稿前必须立即获得所有者最终批准。未经批准，应保持草稿。公开会使 GitHub Release 对外可见并启动工作流，但 PyPI 上传必须等待对待处理的 `pypi` 部署进行单独的明确审核。
-
-```bash
-gh release edit v1.0.2 \
-  --repo abruption/session-peer \
-  --draft=false --prerelease=false --latest
-```
-
-工作流必须检查标签/版本/受保护 main、可复现的 wheel 与 sdist、归档/安装/审计、SHA256SUMS 和 provenance，然后才通过 OIDC 上传。已有 PyPI 文件属于硬错误。
-
-## 审核待处理的 PyPI 部署
-
-1. 构建、wheel/sdist 安装检查与依赖审计成功后，在 GitHub Actions 中打开准确的工作流运行。确认上传前发布作业正在等待 `pypi` 审核。记录运行 URL/ID、尝试编号、标签、提交、SHA256SUMS 和 release-provenance.json 中的候选哈希，以及待处理状态与时间。源代码测试和 API 设置本身不能证明这一等待；在下一次发布中观察它仍是 #235 未完成的验收项。
-2. 必需审核人检查候选证据及当前 Trusted Publisher/环境设置。在 **Review deployments** 中选择 `pypi`，仅在发布已获授权时明确选择 **Approve and deploy**。公开 GitHub 草稿的批准不能代替此审核。
-3. 如需拒绝发布，在 **Review deployments** 中选择 `pypi`，输入原因并选择 **Reject**。如果预期的审核控件或等待状态缺失，停止并在上传前取消运行。保留拒绝或取消的运行；不要移动标签或重复使用版本来规避拒绝。通过经过审查的准备工作解决原因并取得新的批准。
-4. 连同运行与候选证据，记录审核人、批准或拒绝、评论、时间戳与部署结果。批准后，保留首次上传和发布后验证结果。被拒绝的部署不得记为成功发布或批准等待验证成功。
-
-失败后不能用修改过的产物重传。如果 `1.0.2` 部分发布或哈希不符，停止升级、保存证据，通过审查后的新版本（通常是 `1.0.3`）修复。撤回版本也不能重复使用。
-
-## 发布后验证
-
-1. 确认准确标签与提交的 `publish.yml` 成功。下载 PyPI wheel 和 sdist，与工作流候选及 provenance 比对哈希，并分别在新环境安装。
-2. 检查版本、已初始化代理主目录的 JSON `list`、Relay/MCP、`pip check`、GitHub 稳定版/Latest、普通升级选择。托管 Relay 另行验证；queued 不是 ACK。
-3. 记录发布证据后再关闭 v1.0.2 里程碑。#161 继续在原监控里程碑中保持开启，不声称根因已修复。整个设备群部署或生产服务重启是单独的运维决定。
+下载上限为单文件8 MiB、支持文件256 KiB、元数据1 MiB。认证manifest/来源证明、准确标签/版本与暂存--version检查在替换前完成。发送端在SSH部署前验证，离线目标仅需Python。验证失败保留已有文件。SSH允许列表、既有配对绑定审核及Control登录迁移见发布说明。
