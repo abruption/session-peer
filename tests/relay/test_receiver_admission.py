@@ -376,7 +376,10 @@ class ReceiverAdmission(unittest.IsolatedAsyncioTestCase):
         self.receiver.diagnostic_events = True
         async def blocked(raw):
             await asyncio.Future()
-        with self.assertLogs('session_peer_relay.app', level='WARNING') as logs:
+        # Keep exact boundary arithmetic independent of real uptime: adding 60
+        # to a fractional clock (e.g. 60.01) can subtract to 59.99999999999999.
+        with patch.object(app, 'time', SimpleNamespace(monotonic=lambda: 0., time=time.time)), \
+                self.assertLogs('session_peer_relay.app', level='WARNING') as logs:
             for relay, limit in ((False, app.DIRECT_PREAUTH_LIMIT), (True, app.RELAY_PREAUTH_LIMIT)):
                 with patch.object(self.receiver, 'handle', new=blocked):
                     for _ in range(limit):
@@ -401,7 +404,11 @@ class ReceiverAdmission(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(event), {'event', 'eventTimeUtcMs', 'reason', 'counters'})
         self.assertNotIn('SECRET', logs.output[0])
         self.assert_empty()
-        next_minute = self.receiver.admission_last_logged+60
+        self.assertEqual(self.receiver.admission_last_logged, 0.)
+        with patch.object(app, 'time', SimpleNamespace(monotonic=lambda: 59.999, time=time.time)), \
+                self.assertNoLogs('session_peer_relay.app', level='WARNING'):
+            self.receiver.spawn(self.fake_raw())
+        next_minute = 60.
         with patch.object(app, 'time', SimpleNamespace(monotonic=lambda: next_minute, time=time.time)), \
                 self.assertLogs('session_peer_relay.app', level='WARNING') as renewed:
             self.receiver.spawn(self.fake_raw())
