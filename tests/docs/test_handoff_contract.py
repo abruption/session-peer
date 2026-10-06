@@ -66,7 +66,7 @@ def enum(value, name):
     require(type(value) is str and value in ENUMS[name])
 
 
-def strict_object(raw, limit):
+def strict_object(raw, limit, preserve_float_tokens=False):
     """Reject token ambiguity BEFORE converting any JSON number to a value."""
     if type(raw) is str:
         try:
@@ -88,6 +88,8 @@ def strict_object(raw, limit):
         return obj
 
     def float_token(token):
+        if preserve_float_tokens:
+            return Decimal(token)
         raise ProposalError("integer_token")
 
     def constant(token):
@@ -108,7 +110,21 @@ def validate_handoff(handoff):
     Channel liveness, history integrity, exact native binding and authentication
     are external evidence; this function cannot validate those acceptance gates.
     """
+    def integer_tokens(value):
+        require(not isinstance(value, (float, Decimal)), "integer_token")
+        if type(value) is dict:
+            for child in value.values():
+                integer_tokens(child)
+        elif type(value) is list:
+            for child in value:
+                integer_tokens(child)
+    integer_tokens(handoff)
     closed(handoff, ("schemaVersion", "correlationId", "ledgerEpoch", "state", "submission", "observation", "ack", "wait", "targetGeneration", "decisionOwner", "retry", "nextActions"))
+    try:
+        encoded = json.dumps(handoff, ensure_ascii=False, separators=(",", ":")).encode("utf-8", errors="strict")
+    except UnicodeEncodeError as error:
+        raise ProposalError("invalid_utf8") from error
+    require(len(encoded) <= 8192, "handoff_size")
     integer(handoff["schemaVersion"])
     require(handoff["schemaVersion"] == 1)
     uuid4(handoff["correlationId"])
@@ -139,6 +155,8 @@ def validate_handoff(handoff):
     ack = handoff["ack"]
     closed(ack, ("status",), ("assurance", "receivedAtUtcMs", "late"))
     enum(ack["status"], "ack")
+    if ack["status"] == "pending":
+        require(generation is not None)
     if ack["status"] == "acknowledged":
         require(handoff["state"] == "acknowledged")
         require({"assurance", "receivedAtUtcMs", "late"} <= ack.keys())
@@ -191,9 +209,82 @@ def validate_handoff(handoff):
 
 
 def validate_public_wire(raw):
-    value = strict_object(raw, 8192)
+    # A standalone example of the handoff subtree still has a bounded input
+    # frame, but its subtree quota counts compact UTF-8, not pretty whitespace.
+    value = strict_object(raw, 1048576)
     validate_handoff(value)
     return value
+
+
+def validate_query_error(result):
+    """Static schema for absent context; no fabricated epoch/native fields."""
+    closed(result, ("schemaVersion", "ok", "host", "command", "reason", "handoffQuery"))
+    integer(result["schemaVersion"])
+    require(result["schemaVersion"] == 1 and result["ok"] is False)
+    identifier(result["host"], 256)
+    require(result["command"] == "handoff")
+    require(result["reason"] == "handoff_history_unavailable")
+    query = result["handoffQuery"]
+    closed(query, ("schemaVersion", "correlationId", "status", "context", "retry"))
+    integer(query["schemaVersion"])
+    require(query["schemaVersion"] == 1)
+    uuid4(query["correlationId"])
+    require(query["status"] == "unknown")
+    require(type(query["context"]) is str and query["context"] in {"ledger_missing", "ledger_corrupt", "id_unknown"})
+    closed(query["retry"], ("allowed", "reason"))
+    require(query["retry"]["allowed"] is False and query["retry"]["reason"] == "history_unavailable")
+
+
+def synthetic_wire_guard(raw, request, exit_code):
+    """Request-aware SYNTHETIC guard, not the runtime SSH/adapter parser.
+
+    A matching native snapshot is assessed independently of optional handoff.
+    The tuple exception additionally requires the original explicit-wait mode.
+    This does not authenticate target ownership, capabilities or channel liveness.
+    """
+    result = strict_object(raw, 1048576, preserve_float_tokens=True)
+    require(type(exit_code) is int)
+    require(type(result.get("schemaVersion")) is int and result["schemaVersion"] == 1)
+    require(type(result.get("ok")) is bool and result.get("command") == "send")
+    target_valid = result.get("target") == request["target"]
+    native = {key: value for key, value in result.items() if key != "handoff"}
+    known_submission = target_valid and result.get("status") in {"queued", "posted"} and result.get("submitted") is True
+    try:
+        if "queueId" in result:
+            identifier(result["queueId"])
+        if "consumptionConfirmed" in result:
+            require(type(result["consumptionConfirmed"]) is bool)
+    except ProposalError:
+        known_submission = False
+    handoff_valid = False
+    if request["optIn"] and "handoff" in result:
+        try:
+            validate_handoff(result["handoff"])
+            handoff_valid = (
+                target_valid
+                and all(result["handoff"][key] == request[key] for key in ("correlationId", "ledgerEpoch", "targetGeneration"))
+                and result["handoff"]["wait"]["for"] == request["waitFor"]
+            )
+        except (ProposalError, UnicodeEncodeError):
+            pass
+    explicit_exception = (
+        request["explicitWait"] and request["optIn"] and handoff_valid
+        and known_submission and result["ok"] is False and exit_code == 1
+        and result["handoff"]["wait"]["for"] == request["waitFor"]
+        and result["handoff"]["wait"]["status"] in {"timed_out_unknown", "failed", "stopped"}
+        and result["handoff"]["submission"]["status"] == "submitted"
+    )
+    ordinary_tuple = target_valid and result["ok"] is True and exit_code == 0
+    if request["explicitWait"]:
+        ordinary_tuple = ordinary_tuple and handoff_valid and result["handoff"]["wait"]["for"] == request["waitFor"] and result["handoff"]["wait"]["status"] == "satisfied"
+    return {
+        "wireAccepted": bool(ordinary_tuple or explicit_exception),
+        "nativeEvidencePreserved": bool(known_submission),
+        "handoffValidated": bool(handoff_valid),
+        "ackPromoted": bool(target_valid and handoff_valid and result["handoff"]["ack"]["status"] == "acknowledged"),
+        "resubmit": False,
+        "nativeSnapshot": native if known_submission else None,
+    }
 
 
 def validate_private_wire(raw, confirmation=False):
@@ -267,9 +358,11 @@ class HandoffProposalContract(unittest.TestCase):
             "defaultBudgetS": 30, "cleanupReserveS": 5, "ledgerIntentQuota": 10000,
             "ledgerByteQuota": 33554432, "detailRetentionDays": 30,
             "capabilityTtlHours": 24, "maxWaitsPerIntent": 64, "capabilityEntropyBytes": 32,
+            "optInOuterFrameBytes": 1048576, "optInFanoutDestinations": 32,
+            "optInFanoutStdoutBytes": 34603008,
         })
         document = CONTRACT.read_text(encoding="utf-8")
-        for marker in ("unimplemented design", "synthetic examples", "numeric token validation", "No local-only design", "strict parser"):
+        for marker in ("unimplemented design", "synthetic examples", "numeric token validation", "No local-only design", "ORIGINAL-request-aware parser"):
             self.assertIn(marker, document)
         self.assertEqual(len(self.accepted), len(fixture["accepted"]))
 
@@ -418,12 +511,117 @@ class HandoffProposalContract(unittest.TestCase):
         for mutations in ({"confirmed": 1}, {"confirmed": False}, {"capability": "A" * 43}, {"body": "synthetic"}):
             with self.subTest(confirmation=mutations), self.assertRaises(ProposalError):
                 validate_private_wire(json.dumps(changed(confirmation, mutations)), confirmation=True)
-        for value, limit, validator in ((sample, 8192, validate_public_wire), (receipt, 4096, validate_private_wire)):
+        for value, limit, validator in ((receipt, 4096, validate_private_wire), (confirmation, 4096, lambda raw: validate_private_wire(raw, confirmation=True))):
             raw = json.dumps(value, ensure_ascii=False).encode("utf-8")
-            padded = raw + b" " * (limit - len(raw))
+            padded = raw + b" " * (limit - len(raw) - 1) + b"\n"
             validator(padded)
             with self.assertRaisesRegex(ProposalError, "frame_size"):
                 validator(padded + b" ")
+
+    def test_subtree_framing_and_scoped_numeric_lexemes(self):
+        # Whitespace counts toward outer bytes, not compact subtree bytes.
+        raw = json.dumps(self.sample(), ensure_ascii=False).encode("utf-8")
+        validate_public_wire(raw + b" " * (8193 - len(raw)))
+        validate_public_wire(raw + b" " * (1048576 - len(raw) - 1) + b"\n")
+        with self.assertRaisesRegex(ProposalError, "frame_size"):
+            validate_public_wire(raw + b" " * (1048577 - len(raw)))
+        request = self.request()
+        outer = copy.deepcopy(self.accepted["queued_explicit_ack_timeout"]["result"])
+        # A legacy sibling is not retroactively constrained to integer tokens.
+        outer["legacyDiagnosticFraction"] = 1.5
+        wire = json.dumps(outer, ensure_ascii=False, separators=(",", ":"))
+        guarded = synthetic_wire_guard(wire, request, 1)
+        self.assertTrue(guarded["wireAccepted"])
+        self.assertEqual(guarded["nativeSnapshot"]["legacyDiagnosticFraction"], Decimal("1.5"))
+        for token in ("1.0", "1e0", "1E+0"):
+            invalid = wire.replace('"handoff":{"schemaVersion":1,', '"handoff":{"schemaVersion":' + token + ',', 1)
+            guarded = synthetic_wire_guard(invalid, request, 1)
+            self.assertFalse(guarded["wireAccepted"])
+            self.assertFalse(guarded["handoffValidated"])
+            self.assertFalse(guarded["ackPromoted"])
+            self.assertTrue(guarded["nativeEvidencePreserved"])
+        # Oversized optional subtree must not erase the matching native receipt.
+        outer["handoff"]["observation"]["extra"] = "x" * 8192
+        guarded = synthetic_wire_guard(json.dumps(outer), request, 1)
+        self.assertFalse(guarded["handoffValidated"])
+        self.assertTrue(guarded["nativeEvidencePreserved"])
+        self.assertFalse(guarded["ackPromoted"])
+        self.assertFalse(guarded["resubmit"])
+
+    def request(self):
+        return {"optIn": True, "explicitWait": True, "waitFor": "acknowledged", "target": {"agent": "codex", "id": "fixture"}, "correlationId": "22222222-2222-4222-8222-222222222222", "ledgerEpoch": "11111111-1111-4111-8111-111111111111", "targetGeneration": "fixture-generation"}
+
+    def test_request_aware_synthetic_wire_guard(self):
+        for case in self.fixture["requestAwareWireCases"]:
+            with self.subTest(case=case["name"]):
+                result = changed(self.accepted[case["sample"]]["result"], case.get("set", {}))
+                request = self.request()
+                request.update({key: case[key] for key in ("optIn", "explicitWait", "waitFor")})
+                guarded = synthetic_wire_guard(json.dumps(result, ensure_ascii=False), request, case["exit"])
+                self.assertEqual({key: guarded[key] for key in case["expected"]}, case["expected"])
+                if guarded["nativeEvidencePreserved"]:
+                    self.assertEqual(guarded["nativeSnapshot"], {key: value for key, value in result.items() if key != "handoff"})
+        self.assertIn("request_opt_out_forged_handoff", {case["name"] for case in self.fixture["requestAwareWireCases"]})
+        self.assertIn("wrong_native_target", {case["name"] for case in self.fixture["requestAwareWireCases"]})
+
+    def test_missing_context_query_schema_and_closed_fields(self):
+        for case in self.fixture["queryErrors"]:
+            with self.subTest(case=case["name"]):
+                self.assertEqual(case["exit"], 1)
+                validate_query_error(case["result"])
+                for key in ("handoff", "ledgerEpoch", "status", "submitted", "consumptionConfirmed"):
+                    self.assertNotIn(key, case["result"])
+                    with self.assertRaises(ProposalError):
+                        validate_query_error(changed(case["result"], {key: "invented"}))
+                for path in ("handoffQuery.ledgerEpoch", "handoffQuery.extra", "handoffQuery.retry.extra"):
+                    with self.assertRaises(ProposalError):
+                        validate_query_error(changed(case["result"], {path: "invented"}))
+                for path, value in (("handoffQuery.schemaVersion", True), ("handoffQuery.schemaVersion", Decimal("1e0")), ("handoffQuery.retry.allowed", True), ("handoffQuery.context", "detail_expired"), ("handoffQuery.context", []), ("handoffQuery.correlationId", "bad")):
+                    with self.assertRaises(ProposalError):
+                        validate_query_error(changed(case["result"], {path: value}))
+        self.assertEqual({case["result"]["handoffQuery"]["context"] for case in self.fixture["queryErrors"]}, {"ledger_missing", "ledger_corrupt", "id_unknown"})
+        tombstone = self.fixture["knownTombstone"]
+        self.assertEqual(tombstone["exit"], 0)
+        self.assertIs(tombstone["result"]["ok"], True)
+        self.assertNotIn("handoffQuery", tombstone["result"])
+        validate_handoff(tombstone["result"]["handoff"])
+        self.assertEqual(tombstone["result"]["handoff"]["state"], "unknown")
+        self.assertEqual(tombstone["result"]["handoff"]["ledgerEpoch"], self.request()["ledgerEpoch"])
+        self.assertNotIn("keep_waiting", tombstone["result"]["handoff"]["nextActions"])
+
+    def test_fanout_bounds_are_opt_in_vector_arithmetic_only(self):
+        # Does not exercise stream allocation, fanout execution or preflight.
+        for count in (1, 31, 32, 33):
+            allowed = count <= self.fixture["bounds"]["optInFanoutDestinations"]
+            self.assertEqual(allowed, count <= 32)
+        for measured in (34603007, 34603008, 34603009):
+            allowed = measured <= self.fixture["bounds"]["optInFanoutStdoutBytes"]
+            self.assertEqual(allowed, measured <= 33 * 1024 * 1024)
+        self.assertIn("raw complete per-destination stdout frame including whitespace and LF", self.fixture["framing"]["optInOuter"])
+        self.assertIn("no normalization of ordinary legacy mode", self.fixture["framing"]["optInFanout"])
+
+    def test_generation_and_secret_static_constraints_only(self):
+        # This validates schemas only, NOT original-generation ownership proof.
+        with self.assertRaises(ProposalError):
+            validate_handoff(changed(self.sample("queued_explicit_ack_timeout"), {"targetGeneration": None}))
+        null_unsupported = changed(self.sample("required_ack_channel_unsupported"), {"targetGeneration": None})
+        validate_handoff(null_unsupported)
+        self.assertEqual(null_unsupported["submission"]["status"], "refused")
+        for case in self.fixture["accepted"] + self.fixture["queryErrors"]:
+            result = case["result"]
+            def fields(value):
+                if type(value) is dict:
+                    for key, child in value.items():
+                        self.assertNotIn(key, {"capability", "capabilityHash", "payloadDigest"})
+                        fields(child)
+                elif type(value) is list:
+                    for child in value:
+                        fields(child)
+            fields(result)
+        receipt = self.fixture["receiptSchema"]
+        self.assertEqual(receipt["commitClassificationAtomically"], ["assurance", "late", "originatingWaitOrdering"])
+        self.assertIs(receipt["recipientNativeStorageMayPersistCapability"], True)
+        self.assertIs(receipt["independentAgentAuthentication"], False)
 
     def test_cli_timeout_lexemes_and_synthetic_budget_arithmetic(self):
         for lexeme in self.fixture["timeoutLexemes"]["accepted"]:
@@ -512,6 +710,21 @@ class HandoffProposalContract(unittest.TestCase):
             "fanout_reconcile": {"newIdsAllocated": False, "newSubmissions": 0},
             "malformed_flags_without_id": {"exit": 2, "handoffPresent": False, "synthesizeSubmitted": False},
             "opt_out_shape": {"handoffPresent": False, "legacyExitUnchanged": True},
+            "duplicate_wrong_token": {"storedReceiptReturned": False, "stateAdvances": False, "receiptCommitCount": 1},
+            "duplicate_expired_capability": {"storedReceiptReturned": True, "stateAdvances": False, "receiptCommitCount": 1},
+            "duplicate_expired_receipt_detail": {"storedReceiptReturned": False, "stateAdvances": False, "fenceRetained": True},
+            "duplicate_revoked_or_quarantined": {"storedReceiptReturned": False, "stateAdvances": False},
+            "committed_ack_restart": {"state": "acknowledged", "classificationPreserved": True, "originalWaitRewritten": False},
+            "receipt_precommit_crash": {"ackPromoted": False, "inventLate": False, "originalWaitRewritten": False},
+            "receipt_unknown_ordering": {"ackPromoted": False, "inventLate": False, "originalWaitRewritten": False},
+            "manual_confirmation_unproven_order": {"exit": 1, "reason": "receipt_order_unprovable", "ackPromoted": False, "originalWaitRewritten": False},
+            "original_generation_late_receipt": {"state": "acknowledged", "ackLate": True, "generationRebound": False, "modelIdentityProven": False, "copiedTokenExcluded": False},
+            "successor_generation_receipt": {"ackPromoted": False, "generationRebound": False},
+            "missing_generation_required_wait": {"submission": "refused", "wait": "unsupported", "mintCapability": False, "exit": 1},
+            "recipient_native_storage_retention": {"recipientStorageMayRetainCapability": True, "sameUserReadersMayAcquireAuthority": True, "observerReadsTranscript": False, "independentAgentAuthentication": False},
+            "secret_not_reflected_in_errors_or_ack": {"secretReflected": False, "rawCapabilityPersisted": False, "authority": "receipt_only"},
+            "first_receipt_restriction": {"newReceiptCommitted": False, "stateAdvances": False},
+            "copied_original_authority_indistinguishable": {"distinguishableFromOriginalProducer": False, "assurance": "token_possession", "modelIdentityProven": False},
         }
         cases = self.fixture["behaviorCases"]
         self.assertEqual({case["name"] for case in cases}, set(expected))

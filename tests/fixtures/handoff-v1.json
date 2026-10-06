@@ -33,7 +33,10 @@
     "detailRetentionDays": 30,
     "capabilityTtlHours": 24,
     "maxWaitsPerIntent": 64,
-    "capabilityEntropyBytes": 32
+    "capabilityEntropyBytes": 32,
+    "optInOuterFrameBytes": 1048576,
+    "optInFanoutDestinations": 32,
+    "optInFanoutStdoutBytes": 34603008
   },
   "enums": {
     "state": [
@@ -865,7 +868,17 @@
       }
     }
   ],
+  "knownTombstone": {
+    "name": "known_tombstone_retains_original_epoch", "exit": 0,
+    "result": {"schemaVersion": 1, "ok": true, "host": "fixture", "command": "handoff", "handoff": {"schemaVersion": 1, "correlationId": "22222222-2222-4222-8222-222222222222", "ledgerEpoch": "11111111-1111-4111-8111-111111111111", "state": "unknown", "submission": {"status": "unknown"}, "observation": {"status": "not_requested", "injectionObserved": false}, "ack": {"status": "not_requested"}, "wait": {"for": "none", "status": "not_requested"}, "targetGeneration": "fixture-generation", "decisionOwner": "sender_operator", "retry": {"allowed": false, "reason": "receiver_dedup_unavailable"}, "nextActions": ["reconcile"]}}
+  },
   "rejected": [
+    {
+      "name": "null_original_generation_pending_ack",
+      "base": "queued_explicit_ack_timeout",
+      "set": {"targetGeneration": null},
+      "valid": false
+    },
     {
       "name": "boolean_schema_version",
       "base": "queued_best_effort_observer_failed",
@@ -1229,7 +1242,7 @@
     },
     {
       "name": "duplicate_valid_receipt",
-      "given": "same committed receipt ID and binding",
+      "given": "same committed receipt ID, original epoch/correlation/generation, constant-time proof of original capability hash, retained receipt detail, no revocation/quarantine",
       "expected": {
         "receiptCommitCount": 1,
         "state": "acknowledged"
@@ -1351,6 +1364,81 @@
         "handoffPresent": false,
         "legacyExitUnchanged": true
       }
+    },
+    {
+      "name": "duplicate_wrong_token",
+      "given": "committed receipt with correct IDs but failed constant-time capability hash proof",
+      "expected": {"storedReceiptReturned": false, "stateAdvances": false, "receiptCommitCount": 1}
+    },
+    {
+      "name": "duplicate_expired_capability",
+      "given": "original capability expired or spent by first receipt; valid original hash proof and retained committed receipt detail; not revoked/quarantined",
+      "expected": {"storedReceiptReturned": true, "stateAdvances": false, "receiptCommitCount": 1}
+    },
+    {
+      "name": "duplicate_expired_receipt_detail",
+      "given": "original binding and token proof valid but receipt detail retention expired",
+      "expected": {"storedReceiptReturned": false, "stateAdvances": false, "fenceRetained": true}
+    },
+    {
+      "name": "duplicate_revoked_or_quarantined",
+      "given": "correct original binding and token proof but authority revoked or epoch quarantined",
+      "expected": {"storedReceiptReturned": false, "stateAdvances": false}
+    },
+    {
+      "name": "committed_ack_restart",
+      "given": "atomic durable receipt includes proven assurance/late and originating wait ordering; collector monotonic clock restarts",
+      "expected": {"state": "acknowledged", "classificationPreserved": true, "originalWaitRewritten": false}
+    },
+    {
+      "name": "receipt_precommit_crash",
+      "given": "collector crashes before classification and atomic durable receipt commit",
+      "expected": {"ackPromoted": false, "inventLate": false, "originalWaitRewritten": false}
+    },
+    {
+      "name": "receipt_unknown_ordering",
+      "given": "receipt proof is valid but original wait monotonic ordering cannot be proven and no committed classification exists",
+      "expected": {"ackPromoted": false, "inventLate": false, "originalWaitRewritten": false}
+    },
+    {
+      "name": "manual_confirmation_unproven_order",
+      "given": "operator now confirms a prior receipt, but ordering against the originating wait cannot be proven",
+      "expected": {"exit": 1, "reason": "receipt_order_unprovable", "ackPromoted": false, "originalWaitRewritten": false}
+    },
+    {
+      "name": "original_generation_late_receipt",
+      "given": "valid hash proof plus immutable original epoch/correlation/generation; original receipt delayed until current owner has restarted; ordered late classification proven",
+      "expected": {"state": "acknowledged", "ackLate": true, "generationRebound": false, "modelIdentityProven": false, "copiedTokenExcluded": false}
+    },
+    {
+      "name": "successor_generation_receipt",
+      "given": "receipt explicitly claims current successor generation instead of immutable original generation",
+      "expected": {"ackPromoted": false, "generationRebound": false}
+    },
+    {
+      "name": "missing_generation_required_wait",
+      "given": "original generation is null and required delivered or acknowledged wait requested",
+      "expected": {"submission": "refused", "wait": "unsupported", "mintCapability": false, "exit": 1}
+    },
+    {
+      "name": "recipient_native_storage_retention",
+      "given": "authorized capability is delegated through native effect input that the recipient may store in its own history",
+      "expected": {"recipientStorageMayRetainCapability": true, "sameUserReadersMayAcquireAuthority": true, "observerReadsTranscript": false, "independentAgentAuthentication": false}
+    },
+    {
+      "name": "secret_not_reflected_in_errors_or_ack",
+      "given": "private capability submitted with malformed frame or valid ACK; sender/collector ordinary outputs and own raw journal inspected",
+      "expected": {"secretReflected": false, "rawCapabilityPersisted": false, "authority": "receipt_only"}
+    },
+    {
+      "name": "first_receipt_restriction",
+      "given": "already committed first receipt; later receipt uses a different receiptId even with valid token",
+      "expected": {"newReceiptCommitted": false, "stateAdvances": false}
+    },
+    {
+      "name": "copied_original_authority_indistinguishable",
+      "given": "successor or same-user reader possesses the complete immutable original tuple AND copied original capability",
+      "expected": {"distinguishableFromOriginalProducer": false, "assurance": "token_possession", "modelIdentityProven": false}
     }
   ],
   "sshCases": [
@@ -1400,6 +1488,44 @@
       }
     }
   ],
+  "queryErrors": [
+    {
+      "name": "missing_ledger_no_invented_epoch", "exit": 1,
+      "result": {"schemaVersion": 1, "ok": false, "host": "fixture", "command": "handoff", "reason": "handoff_history_unavailable", "handoffQuery": {"schemaVersion": 1, "correlationId": "22222222-2222-4222-8222-222222222222", "status": "unknown", "context": "ledger_missing", "retry": {"allowed": false, "reason": "history_unavailable"}}}
+    },
+    {
+      "name": "corrupt_ledger_no_invented_epoch", "exit": 1,
+      "result": {"schemaVersion": 1, "ok": false, "host": "fixture", "command": "handoff", "reason": "handoff_history_unavailable", "handoffQuery": {"schemaVersion": 1, "correlationId": "22222222-2222-4222-8222-222222222222", "status": "unknown", "context": "ledger_corrupt", "retry": {"allowed": false, "reason": "history_unavailable"}}}
+    },
+    {
+      "name": "unknown_id_no_invented_epoch", "exit": 1,
+      "result": {"schemaVersion": 1, "ok": false, "host": "fixture", "command": "handoff", "reason": "handoff_history_unavailable", "handoffQuery": {"schemaVersion": 1, "correlationId": "22222222-2222-4222-8222-222222222222", "status": "unknown", "context": "id_unknown", "retry": {"allowed": false, "reason": "history_unavailable"}}}
+    }
+  ],
+  "requestAwareWireCases": [
+    {"name": "explicit_wait_matching_target", "sample": "queued_explicit_ack_timeout", "optIn": true, "explicitWait": true, "waitFor": "acknowledged", "exit": 1, "expected": {"wireAccepted": true, "nativeEvidencePreserved": true, "handoffValidated": true, "ackPromoted": false, "resubmit": false}},
+    {"name": "request_opt_out_forged_handoff", "sample": "queued_explicit_ack_timeout", "optIn": false, "explicitWait": false, "waitFor": "none", "exit": 1, "expected": {"wireAccepted": false, "nativeEvidencePreserved": true, "handoffValidated": false, "ackPromoted": false, "resubmit": false}},
+    {"name": "best_effort_cannot_enable_wait_exception", "sample": "queued_explicit_ack_timeout", "optIn": true, "explicitWait": false, "waitFor": "none", "exit": 1, "expected": {"wireAccepted": false, "nativeEvidencePreserved": true, "handoffValidated": false, "ackPromoted": false, "resubmit": false}},
+    {"name": "wrong_native_target", "sample": "queued_explicit_ack_timeout", "optIn": true, "explicitWait": true, "waitFor": "acknowledged", "exit": 1, "set": {"target.id": "wrong-target"}, "expected": {"wireAccepted": false, "nativeEvidencePreserved": false, "handoffValidated": false, "ackPromoted": false, "resubmit": false}},
+    {"name": "malformed_handoff_preserves_native", "sample": "queued_explicit_ack_timeout", "optIn": true, "explicitWait": true, "waitFor": "acknowledged", "exit": 1, "set": {"handoff.ack.status": "acknowledged"}, "expected": {"wireAccepted": false, "nativeEvidencePreserved": true, "handoffValidated": false, "ackPromoted": false, "resubmit": false}},
+    {"name": "wrong_wait_goal", "sample": "queued_explicit_ack_timeout", "optIn": true, "explicitWait": true, "waitFor": "delivered", "exit": 1, "expected": {"wireAccepted": false, "nativeEvidencePreserved": true, "handoffValidated": false, "ackPromoted": false, "resubmit": false}},
+    {"name": "wrong_correlation", "sample": "queued_explicit_ack_timeout", "optIn": true, "explicitWait": true, "waitFor": "acknowledged", "exit": 1, "set": {"handoff.correlationId": "33333333-3333-4333-8333-333333333333"}, "expected": {"wireAccepted": false, "nativeEvidencePreserved": true, "handoffValidated": false, "ackPromoted": false, "resubmit": false}},
+    {"name": "posted_explicit_wait_timeout", "sample": "queued_explicit_ack_timeout", "optIn": true, "explicitWait": true, "waitFor": "acknowledged", "exit": 1, "set": {"status": "posted"}, "expected": {"wireAccepted": true, "nativeEvidencePreserved": true, "handoffValidated": true, "ackPromoted": false, "resubmit": false}},
+    {"name": "posted_opt_out_forged_handoff", "sample": "queued_explicit_ack_timeout", "optIn": false, "explicitWait": false, "waitFor": "none", "exit": 1, "set": {"status": "posted"}, "expected": {"wireAccepted": false, "nativeEvidencePreserved": true, "handoffValidated": false, "ackPromoted": false, "resubmit": false}},
+    {"name": "posted_wrong_native_target", "sample": "queued_explicit_ack_timeout", "optIn": true, "explicitWait": true, "waitFor": "acknowledged", "exit": 1, "set": {"status": "posted", "target.id": "wrong-target"}, "expected": {"wireAccepted": false, "nativeEvidencePreserved": false, "handoffValidated": false, "ackPromoted": false, "resubmit": false}},
+    {"name": "malformed_handoff_ok_true_cannot_satisfy_wait", "sample": "queued_explicit_ack_timeout", "optIn": true, "explicitWait": true, "waitFor": "acknowledged", "exit": 0, "set": {"ok": true, "handoff.ack.status": "acknowledged"}, "expected": {"wireAccepted": false, "nativeEvidencePreserved": true, "handoffValidated": false, "ackPromoted": false, "resubmit": false}},
+    {"name":"ack_wrong_wait_goal","sample":"receipt_satisfies_wait_without_injection_claim","optIn":true,"explicitWait":true,"waitFor":"delivered","exit":0,"expected":{"wireAccepted":false,"nativeEvidencePreserved":true,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"ack_forged_opt_out","sample":"receipt_satisfies_wait_without_injection_claim","optIn":false,"explicitWait":false,"waitFor":"none","exit":0,"expected":{"wireAccepted":true,"nativeEvidencePreserved":true,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"ack_wrong_native_target","sample":"receipt_satisfies_wait_without_injection_claim","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":0,"set":{"target.id":"wrong-target"},"expected":{"wireAccepted":false,"nativeEvidencePreserved":false,"handoffValidated":false,"ackPromoted":false,"resubmit":false}}
+  ],
+  "framing": {
+    "privateInput": "raw UTF-8 bytes including all whitespace and LF; <=4096",
+    "handoffSubtree": "compact ensure_ascii=false UTF-8 encoding of handoff object only; <=8192",
+    "optInOuter": "raw complete per-destination stdout frame including whitespace and LF; <=1048576",
+    "optInFanout": "at most32 destinations before effect and aggregate stdout <=34603008 bytes; no normalization of ordinary legacy mode",
+    "lexicalScope": "new-schema subtrees only; legacy native sibling numeric tokens follow their existing rules",
+    "oversizedHandoff": "preserve independently valid matching native snapshot; no ACK promotion and no resubmission"
+  },
   "receiptSchema": {
     "schemaVersion": 1,
     "kind": "receipt",
@@ -1417,7 +1543,12 @@
     "capabilityEncoding": "base64url_unpadded_43_chars",
     "persistRawCapability": false,
     "issuer": "compatible_receipt_only_handler",
-    "assurance": "token_possession"
+    "assurance": "token_possession",
+    "duplicateProof": "original epoch/correlation/generation/receiptId plus constant-time original capability hash proof",
+    "duplicateExpiryException": "only return retained already committed receipt; deny revoked/quarantined/detail-expired authority",
+    "commitClassificationAtomically": ["assurance", "late", "originatingWaitOrdering"],
+    "recipientNativeStorageMayPersistCapability": true,
+    "independentAgentAuthentication": false
   },
   "operatorConfirmationSchema": {
     "required": [
@@ -1430,7 +1561,9 @@
     "confirmed": true,
     "unknownKeysAllowed": false,
     "input": "private_metadata_stdin_only",
-    "assurance": "operator_confirmed"
+    "assurance": "operator_confirmed",
+    "eventSemantics": "new current attestation, not retroactive receipt timing proof",
+    "unprovableOriginatingWaitOrdering": {"exit": 1, "reason": "receipt_order_unprovable", "ackPromoted": false}
   },
   "freezeGates": [
     "TS exact commit review",
