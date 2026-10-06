@@ -1,0 +1,1445 @@
+{
+  "schemaVersion": 1,
+  "proposalVersion": "0.2",
+  "status": "draft_unimplemented",
+  "provenance": {
+    "pythonRuntimeVersion": "1.0.3",
+    "pythonRuntimeCommit": "0d252550ab40c26d1ac4a19193df6ca2f84d830b",
+    "designBaseCommit": "817d92ab780f657ec754d40fcf86087b5b01a883",
+    "issue": 181,
+    "correlation": "STS-040-COMMON-CONTRACT-20261006-A",
+    "exampleKind": "synthetic_normalized_not_live",
+    "legacySources": [
+      "session_peer_core/adapters.py",
+      "session_peer_core/codex.py",
+      "session_peer_core/antigravity.py",
+      "session_peer_core/ssh.py",
+      "session_peer_core/output.py"
+    ],
+    "legacyExampleScope": "normalized projections; not exhaustive responses or live captures"
+  },
+  "bounds": {
+    "safeIntegerMax": 9007199254740991,
+    "nativeIdUtf8Bytes": 128,
+    "generationUtf8Bytes": 256,
+    "receiptFrameBytes": 4096,
+    "handoffFrameBytes": 8192,
+    "timeoutMinS": 1,
+    "timeoutMaxS": 60,
+    "defaultBudgetS": 30,
+    "cleanupReserveS": 5,
+    "ledgerIntentQuota": 10000,
+    "ledgerByteQuota": 33554432,
+    "detailRetentionDays": 30,
+    "capabilityTtlHours": 24,
+    "maxWaitsPerIntent": 64,
+    "capabilityEntropyBytes": 32
+  },
+  "enums": {
+    "state": [
+      "validated",
+      "refused",
+      "submitted",
+      "delivered",
+      "acknowledged",
+      "unknown",
+      "timed_out_unknown"
+    ],
+    "submission": [
+      "not_attempted",
+      "submitted",
+      "refused",
+      "unknown"
+    ],
+    "observation": [
+      "not_requested",
+      "pending",
+      "observed",
+      "unsupported",
+      "failed"
+    ],
+    "ack": [
+      "not_requested",
+      "pending",
+      "acknowledged",
+      "unsupported"
+    ],
+    "assurance": [
+      "token_possession",
+      "operator_confirmed"
+    ],
+    "waitFor": [
+      "none",
+      "delivered",
+      "acknowledged"
+    ],
+    "waitStatus": [
+      "not_requested",
+      "pending",
+      "satisfied",
+      "timed_out_unknown",
+      "stopped",
+      "unsupported",
+      "failed"
+    ],
+    "turn": [
+      "running",
+      "completed",
+      "failed",
+      "interrupted",
+      "unknown"
+    ],
+    "waitReason": [
+      "insufficient_budget",
+      "deadline_before_effect",
+      "evidence_unsupported",
+      "evidence_failed",
+      "history_unavailable",
+      "stopped_by_operator",
+      "invalid_handoff"
+    ],
+    "nextActions": [
+      "keep_waiting",
+      "reconcile",
+      "stop_waiting"
+    ]
+  },
+  "legacySnapshots": [
+    {
+      "name": "python_claude_success",
+      "exit": 0,
+      "source": "session_peer_core/adapters.py:ClaudeAdapter.submit",
+      "result": {
+        "schemaVersion": 1,
+        "ok": true,
+        "host": "local",
+        "command": "send",
+        "target": {
+          "pid": 1,
+          "name": "fixture"
+        },
+        "chars": 7,
+        "dryRun": false
+      },
+      "mustRemainAbsent": [
+        "status",
+        "submitted",
+        "consumptionConfirmed",
+        "handoff"
+      ]
+    },
+    {
+      "name": "python_codex_queued",
+      "exit": 0,
+      "source": "session_peer_core/codex.py:queue_codex",
+      "result": {
+        "schemaVersion": 1,
+        "ok": true,
+        "host": "local",
+        "command": "send",
+        "status": "queued",
+        "submitted": true,
+        "consumptionConfirmed": false,
+        "queueId": "queue-fixture",
+        "target": {
+          "agent": "codex",
+          "id": "fixture"
+        }
+      },
+      "mustRemainAbsent": [
+        "handoff"
+      ]
+    },
+    {
+      "name": "python_codex_validated",
+      "exit": 0,
+      "source": "session_peer_core/codex.py:queue_codex",
+      "result": {
+        "schemaVersion": 1,
+        "ok": true,
+        "host": "local",
+        "command": "send",
+        "status": "validated",
+        "submitted": false,
+        "consumptionConfirmed": false,
+        "target": {
+          "agent": "codex",
+          "id": "fixture"
+        }
+      },
+      "mustRemainAbsent": [
+        "handoff"
+      ]
+    },
+    {
+      "name": "legacy_unknown_false_not_no_effect",
+      "exit": 1,
+      "source": "session_peer_core/antigravity.py",
+      "result": {
+        "schemaVersion": 1,
+        "ok": false,
+        "host": "local",
+        "command": "send",
+        "status": "unknown",
+        "submitted": false,
+        "consumptionConfirmed": false,
+        "agent": "antigravity",
+        "retryAllowed": false,
+        "requestId": "22222222-2222-4222-8222-222222222222",
+        "generation": "fixture-generation"
+      },
+      "mustRemainAbsent": [
+        "handoff"
+      ],
+      "noEffectProof": false
+    }
+  ],
+  "accepted": [
+    {
+      "name": "queued_best_effort_observer_failed",
+      "mode": "opt_in",
+      "valid": true,
+      "exit": 0,
+      "result": {
+        "schemaVersion": 1,
+        "ok": true,
+        "host": "fixture",
+        "command": "send",
+        "status": "queued",
+        "submitted": true,
+        "consumptionConfirmed": false,
+        "queueId": "queue-fixture",
+        "target": {
+          "agent": "codex",
+          "id": "fixture"
+        },
+        "handoff": {
+          "schemaVersion": 1,
+          "correlationId": "22222222-2222-4222-8222-222222222222",
+          "ledgerEpoch": "11111111-1111-4111-8111-111111111111",
+          "state": "submitted",
+          "submission": {
+            "status": "submitted"
+          },
+          "observation": {
+            "status": "failed",
+            "injectionObserved": false
+          },
+          "ack": {
+            "status": "not_requested"
+          },
+          "wait": {
+            "for": "none",
+            "status": "not_requested"
+          },
+          "targetGeneration": "fixture-generation",
+          "decisionOwner": "sender_operator",
+          "retry": {
+            "allowed": false,
+            "reason": "receiver_dedup_unavailable"
+          },
+          "nextActions": [
+            "reconcile"
+          ]
+        }
+      }
+    },
+    {
+      "name": "queued_explicit_ack_timeout",
+      "mode": "opt_in",
+      "valid": true,
+      "exit": 1,
+      "result": {
+        "schemaVersion": 1,
+        "ok": false,
+        "host": "fixture",
+        "command": "send",
+        "status": "queued",
+        "submitted": true,
+        "consumptionConfirmed": false,
+        "queueId": "queue-fixture",
+        "target": {
+          "agent": "codex",
+          "id": "fixture"
+        },
+        "handoff": {
+          "schemaVersion": 1,
+          "correlationId": "22222222-2222-4222-8222-222222222222",
+          "ledgerEpoch": "11111111-1111-4111-8111-111111111111",
+          "state": "timed_out_unknown",
+          "submission": {
+            "status": "submitted"
+          },
+          "observation": {
+            "status": "not_requested",
+            "injectionObserved": false
+          },
+          "ack": {
+            "status": "pending"
+          },
+          "wait": {
+            "for": "acknowledged",
+            "status": "timed_out_unknown",
+            "operationId": "33333333-3333-4333-8333-333333333333",
+            "deadlineAtUtcMs": 1000
+          },
+          "targetGeneration": "fixture-generation",
+          "decisionOwner": "sender_operator",
+          "retry": {
+            "allowed": false,
+            "reason": "receiver_dedup_unavailable"
+          },
+          "nextActions": [
+            "keep_waiting",
+            "reconcile"
+          ]
+        }
+      }
+    },
+    {
+      "name": "delivered_ack_timeout",
+      "mode": "opt_in",
+      "valid": true,
+      "exit": 1,
+      "result": {
+        "schemaVersion": 1,
+        "ok": false,
+        "host": "fixture",
+        "command": "send",
+        "status": "queued",
+        "submitted": true,
+        "consumptionConfirmed": false,
+        "queueId": "queue-fixture",
+        "target": {
+          "agent": "codex",
+          "id": "fixture"
+        },
+        "handoff": {
+          "schemaVersion": 1,
+          "correlationId": "22222222-2222-4222-8222-222222222222",
+          "ledgerEpoch": "11111111-1111-4111-8111-111111111111",
+          "state": "timed_out_unknown",
+          "submission": {
+            "status": "submitted"
+          },
+          "observation": {
+            "status": "observed",
+            "injectionObserved": true,
+            "clientUserMessageId": "message-fixture",
+            "turn": {
+              "id": "turn-fixture",
+              "status": "completed"
+            }
+          },
+          "ack": {
+            "status": "pending"
+          },
+          "wait": {
+            "for": "acknowledged",
+            "status": "timed_out_unknown",
+            "operationId": "33333333-3333-4333-8333-333333333333",
+            "deadlineAtUtcMs": 1000
+          },
+          "targetGeneration": "fixture-generation",
+          "decisionOwner": "sender_operator",
+          "retry": {
+            "allowed": false,
+            "reason": "receiver_dedup_unavailable"
+          },
+          "nextActions": [
+            "reconcile"
+          ]
+        }
+      }
+    },
+    {
+      "name": "delivered_wait_satisfied",
+      "mode": "opt_in",
+      "valid": true,
+      "exit": 0,
+      "result": {
+        "schemaVersion": 1,
+        "ok": true,
+        "host": "fixture",
+        "command": "send",
+        "status": "queued",
+        "submitted": true,
+        "consumptionConfirmed": false,
+        "queueId": "queue-fixture",
+        "target": {
+          "agent": "codex",
+          "id": "fixture"
+        },
+        "handoff": {
+          "schemaVersion": 1,
+          "correlationId": "22222222-2222-4222-8222-222222222222",
+          "ledgerEpoch": "11111111-1111-4111-8111-111111111111",
+          "state": "delivered",
+          "submission": {
+            "status": "submitted"
+          },
+          "observation": {
+            "status": "observed",
+            "injectionObserved": true,
+            "clientUserMessageId": "message-fixture"
+          },
+          "ack": {
+            "status": "not_requested"
+          },
+          "wait": {
+            "for": "delivered",
+            "status": "satisfied",
+            "operationId": "33333333-3333-4333-8333-333333333333",
+            "deadlineAtUtcMs": 1000
+          },
+          "targetGeneration": "fixture-generation",
+          "decisionOwner": "sender_operator",
+          "retry": {
+            "allowed": false,
+            "reason": "receiver_dedup_unavailable"
+          },
+          "nextActions": [
+            "reconcile"
+          ]
+        }
+      }
+    },
+    {
+      "name": "receipt_satisfies_wait_without_injection_claim",
+      "mode": "opt_in",
+      "valid": true,
+      "exit": 0,
+      "result": {
+        "schemaVersion": 1,
+        "ok": true,
+        "host": "fixture",
+        "command": "send",
+        "status": "queued",
+        "submitted": true,
+        "consumptionConfirmed": false,
+        "queueId": "queue-fixture",
+        "target": {
+          "agent": "codex",
+          "id": "fixture"
+        },
+        "handoff": {
+          "schemaVersion": 1,
+          "correlationId": "22222222-2222-4222-8222-222222222222",
+          "ledgerEpoch": "11111111-1111-4111-8111-111111111111",
+          "state": "acknowledged",
+          "submission": {
+            "status": "submitted"
+          },
+          "observation": {
+            "status": "not_requested",
+            "injectionObserved": false
+          },
+          "ack": {
+            "status": "acknowledged",
+            "assurance": "token_possession",
+            "receivedAtUtcMs": 999,
+            "late": false
+          },
+          "wait": {
+            "for": "acknowledged",
+            "status": "satisfied",
+            "operationId": "33333333-3333-4333-8333-333333333333",
+            "deadlineAtUtcMs": 1000
+          },
+          "targetGeneration": "fixture-generation",
+          "decisionOwner": "sender_operator",
+          "retry": {
+            "allowed": false,
+            "reason": "receiver_dedup_unavailable"
+          },
+          "nextActions": [
+            "reconcile"
+          ]
+        }
+      }
+    },
+    {
+      "name": "late_receipt_preserves_timeout_history",
+      "mode": "status",
+      "valid": true,
+      "exit": 0,
+      "result": {
+        "schemaVersion": 1,
+        "ok": true,
+        "host": "fixture",
+        "command": "handoff",
+        "handoff": {
+          "schemaVersion": 1,
+          "correlationId": "22222222-2222-4222-8222-222222222222",
+          "ledgerEpoch": "11111111-1111-4111-8111-111111111111",
+          "state": "acknowledged",
+          "submission": {
+            "status": "submitted"
+          },
+          "observation": {
+            "status": "not_requested",
+            "injectionObserved": false
+          },
+          "ack": {
+            "status": "acknowledged",
+            "assurance": "token_possession",
+            "receivedAtUtcMs": 1001,
+            "late": true
+          },
+          "wait": {
+            "for": "acknowledged",
+            "status": "timed_out_unknown",
+            "operationId": "33333333-3333-4333-8333-333333333333",
+            "deadlineAtUtcMs": 1000
+          },
+          "targetGeneration": "fixture-generation",
+          "decisionOwner": "sender_operator",
+          "retry": {
+            "allowed": false,
+            "reason": "receiver_dedup_unavailable"
+          },
+          "nextActions": [
+            "reconcile"
+          ]
+        }
+      }
+    },
+    {
+      "name": "manual_operator_receipt",
+      "mode": "status",
+      "valid": true,
+      "exit": 0,
+      "result": {
+        "schemaVersion": 1,
+        "ok": true,
+        "host": "fixture",
+        "command": "handoff",
+        "handoff": {
+          "schemaVersion": 1,
+          "correlationId": "22222222-2222-4222-8222-222222222222",
+          "ledgerEpoch": "11111111-1111-4111-8111-111111111111",
+          "state": "acknowledged",
+          "submission": {
+            "status": "submitted"
+          },
+          "observation": {
+            "status": "not_requested",
+            "injectionObserved": false
+          },
+          "ack": {
+            "status": "acknowledged",
+            "assurance": "operator_confirmed",
+            "receivedAtUtcMs": 1001,
+            "late": false
+          },
+          "wait": {
+            "for": "none",
+            "status": "not_requested"
+          },
+          "targetGeneration": "fixture-generation",
+          "decisionOwner": "sender_operator",
+          "retry": {
+            "allowed": false,
+            "reason": "receiver_dedup_unavailable"
+          },
+          "nextActions": [
+            "reconcile"
+          ]
+        }
+      }
+    },
+    {
+      "name": "status_query_of_timeout_is_not_ack",
+      "mode": "status",
+      "valid": true,
+      "exit": 0,
+      "result": {
+        "schemaVersion": 1,
+        "ok": true,
+        "host": "fixture",
+        "command": "handoff",
+        "handoff": {
+          "schemaVersion": 1,
+          "correlationId": "22222222-2222-4222-8222-222222222222",
+          "ledgerEpoch": "11111111-1111-4111-8111-111111111111",
+          "state": "timed_out_unknown",
+          "submission": {
+            "status": "submitted"
+          },
+          "observation": {
+            "status": "not_requested",
+            "injectionObserved": false
+          },
+          "ack": {
+            "status": "pending"
+          },
+          "wait": {
+            "for": "acknowledged",
+            "status": "timed_out_unknown",
+            "operationId": "33333333-3333-4333-8333-333333333333",
+            "deadlineAtUtcMs": 1000
+          },
+          "targetGeneration": "fixture-generation",
+          "decisionOwner": "sender_operator",
+          "retry": {
+            "allowed": false,
+            "reason": "receiver_dedup_unavailable"
+          },
+          "nextActions": [
+            "reconcile"
+          ]
+        }
+      }
+    },
+    {
+      "name": "required_ack_channel_unsupported",
+      "mode": "opt_in",
+      "valid": true,
+      "exit": 1,
+      "result": {
+        "schemaVersion": 1,
+        "ok": false,
+        "host": "fixture",
+        "command": "send",
+        "handoff": {
+          "schemaVersion": 1,
+          "correlationId": "22222222-2222-4222-8222-222222222222",
+          "ledgerEpoch": "11111111-1111-4111-8111-111111111111",
+          "state": "refused",
+          "submission": {
+            "status": "refused"
+          },
+          "observation": {
+            "status": "not_requested",
+            "injectionObserved": false
+          },
+          "ack": {
+            "status": "unsupported"
+          },
+          "wait": {
+            "for": "acknowledged",
+            "status": "unsupported",
+            "reason": "evidence_unsupported",
+            "operationId": "33333333-3333-4333-8333-333333333333",
+            "deadlineAtUtcMs": 1000
+          },
+          "targetGeneration": "fixture-generation",
+          "decisionOwner": "sender_operator",
+          "retry": {
+            "allowed": false,
+            "reason": "receiver_dedup_unavailable"
+          },
+          "nextActions": []
+        }
+      }
+    },
+    {
+      "name": "deadline_before_effect",
+      "mode": "opt_in",
+      "valid": true,
+      "exit": 1,
+      "result": {
+        "schemaVersion": 1,
+        "ok": false,
+        "host": "fixture",
+        "command": "send",
+        "handoff": {
+          "schemaVersion": 1,
+          "correlationId": "22222222-2222-4222-8222-222222222222",
+          "ledgerEpoch": "11111111-1111-4111-8111-111111111111",
+          "state": "refused",
+          "submission": {
+            "status": "refused"
+          },
+          "observation": {
+            "status": "not_requested",
+            "injectionObserved": false
+          },
+          "ack": {
+            "status": "not_requested"
+          },
+          "wait": {
+            "for": "delivered",
+            "status": "failed",
+            "reason": "deadline_before_effect",
+            "operationId": "33333333-3333-4333-8333-333333333333",
+            "deadlineAtUtcMs": 1000
+          },
+          "targetGeneration": "fixture-generation",
+          "decisionOwner": "sender_operator",
+          "retry": {
+            "allowed": false,
+            "reason": "receiver_dedup_unavailable"
+          },
+          "nextActions": []
+        }
+      }
+    },
+    {
+      "name": "dry_run_preserves_codex_false",
+      "mode": "opt_in",
+      "valid": true,
+      "exit": 0,
+      "result": {
+        "schemaVersion": 1,
+        "ok": true,
+        "host": "fixture",
+        "command": "send",
+        "status": "validated",
+        "submitted": false,
+        "consumptionConfirmed": false,
+        "target": {
+          "agent": "codex",
+          "id": "fixture"
+        },
+        "handoff": {
+          "schemaVersion": 1,
+          "correlationId": "22222222-2222-4222-8222-222222222222",
+          "ledgerEpoch": "11111111-1111-4111-8111-111111111111",
+          "state": "validated",
+          "submission": {
+            "status": "not_attempted"
+          },
+          "observation": {
+            "status": "not_requested",
+            "injectionObserved": false
+          },
+          "ack": {
+            "status": "not_requested"
+          },
+          "wait": {
+            "for": "none",
+            "status": "not_requested"
+          },
+          "targetGeneration": "fixture-generation",
+          "decisionOwner": "sender_operator",
+          "retry": {
+            "allowed": false,
+            "reason": "receiver_dedup_unavailable"
+          },
+          "nextActions": []
+        }
+      }
+    },
+    {
+      "name": "unknown_preserves_legacy_unknown_false",
+      "mode": "opt_in",
+      "valid": true,
+      "exit": 1,
+      "result": {
+        "schemaVersion": 1,
+        "ok": false,
+        "host": "fixture",
+        "command": "send",
+        "status": "unknown",
+        "submitted": false,
+        "consumptionConfirmed": false,
+        "handoff": {
+          "schemaVersion": 1,
+          "correlationId": "22222222-2222-4222-8222-222222222222",
+          "ledgerEpoch": "11111111-1111-4111-8111-111111111111",
+          "state": "unknown",
+          "submission": {
+            "status": "unknown"
+          },
+          "observation": {
+            "status": "not_requested",
+            "injectionObserved": false
+          },
+          "ack": {
+            "status": "not_requested"
+          },
+          "wait": {
+            "for": "none",
+            "status": "not_requested"
+          },
+          "targetGeneration": null,
+          "decisionOwner": "sender_operator",
+          "retry": {
+            "allowed": false,
+            "reason": "receiver_dedup_unavailable"
+          },
+          "nextActions": [
+            "reconcile"
+          ]
+        }
+      }
+    },
+    {
+      "name": "claude_success_preserves_optional_absence",
+      "mode": "opt_in",
+      "valid": true,
+      "exit": 0,
+      "result": {
+        "schemaVersion": 1,
+        "ok": true,
+        "host": "fixture",
+        "command": "send",
+        "target": {
+          "pid": 1,
+          "name": "fixture"
+        },
+        "chars": 7,
+        "dryRun": false,
+        "handoff": {
+          "schemaVersion": 1,
+          "correlationId": "22222222-2222-4222-8222-222222222222",
+          "ledgerEpoch": "11111111-1111-4111-8111-111111111111",
+          "state": "submitted",
+          "submission": {
+            "status": "submitted"
+          },
+          "observation": {
+            "status": "not_requested",
+            "injectionObserved": false
+          },
+          "ack": {
+            "status": "not_requested"
+          },
+          "wait": {
+            "for": "none",
+            "status": "not_requested"
+          },
+          "targetGeneration": "fixture-generation",
+          "decisionOwner": "sender_operator",
+          "retry": {
+            "allowed": false,
+            "reason": "receiver_dedup_unavailable"
+          },
+          "nextActions": [
+            "reconcile"
+          ]
+        }
+      }
+    },
+    {
+      "name": "new_wait_insufficient_budget_preserves_submission",
+      "mode": "wait",
+      "valid": true,
+      "exit": 1,
+      "result": {
+        "schemaVersion": 1,
+        "ok": false,
+        "host": "fixture",
+        "command": "handoff",
+        "status": "queued",
+        "submitted": true,
+        "consumptionConfirmed": false,
+        "queueId": "queue-fixture",
+        "target": {
+          "agent": "codex",
+          "id": "fixture"
+        },
+        "handoff": {
+          "schemaVersion": 1,
+          "correlationId": "22222222-2222-4222-8222-222222222222",
+          "ledgerEpoch": "11111111-1111-4111-8111-111111111111",
+          "state": "submitted",
+          "submission": {
+            "status": "submitted"
+          },
+          "observation": {
+            "status": "failed",
+            "injectionObserved": false
+          },
+          "ack": {
+            "status": "not_requested"
+          },
+          "wait": {
+            "for": "acknowledged",
+            "status": "failed",
+            "reason": "insufficient_budget",
+            "operationId": "44444444-4444-4444-8444-444444444444",
+            "deadlineAtUtcMs": 1000
+          },
+          "targetGeneration": "fixture-generation",
+          "decisionOwner": "sender_operator",
+          "retry": {
+            "allowed": false,
+            "reason": "receiver_dedup_unavailable"
+          },
+          "nextActions": [
+            "reconcile"
+          ]
+        }
+      }
+    }
+  ],
+  "rejected": [
+    {
+      "name": "boolean_schema_version",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "schemaVersion": true
+      },
+      "valid": false
+    },
+    {
+      "name": "fraction_schema_version",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "schemaVersion": 1.5
+      },
+      "valid": false
+    },
+    {
+      "name": "wrong_schema_version",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "schemaVersion": 2
+      },
+      "valid": false
+    },
+    {
+      "name": "noncanonical_uuid",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "correlationId": "22222222-2222-4222-8222-22222222222A"
+      },
+      "valid": false
+    },
+    {
+      "name": "invalid_epoch",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "ledgerEpoch": "not-an-epoch"
+      },
+      "valid": false
+    },
+    {
+      "name": "unknown_state",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "state": "completed"
+      },
+      "valid": false
+    },
+    {
+      "name": "resend_action",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "nextActions": [
+          "resend_same_id"
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "duplicate_action",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "nextActions": [
+          "reconcile",
+          "reconcile"
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "native_retry_allowed",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "retry.allowed": true
+      },
+      "valid": false
+    },
+    {
+      "name": "future_dedup_claim",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "retry.reason": "verified_receiver_dedup"
+      },
+      "valid": false
+    },
+    {
+      "name": "boolean_injection",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "observation.injectionObserved": 1
+      },
+      "valid": false
+    },
+    {
+      "name": "injection_without_id",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "observation.injectionObserved": true
+      },
+      "valid": false
+    },
+    {
+      "name": "native_id_control",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "observation.clientUserMessageId": "id\u001b[31m"
+      },
+      "valid": false
+    },
+    {
+      "name": "native_id_too_long",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "observation.clientUserMessageId": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "valid": false
+    },
+    {
+      "name": "generation_too_long",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "targetGeneration": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "valid": false
+    },
+    {
+      "name": "generation_control",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "targetGeneration": "x"
+      },
+      "valid": false
+    },
+    {
+      "name": "unpaired_surrogate",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "targetGeneration": "\ud800"
+      },
+      "valid": false
+    },
+    {
+      "name": "ack_without_receipt",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "state": "acknowledged"
+      },
+      "valid": false
+    },
+    {
+      "name": "secret_extra_field",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "capability": "placeholder"
+      },
+      "valid": false
+    },
+    {
+      "name": "unknown_nested_field",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "submission.extra": true
+      },
+      "valid": false
+    },
+    {
+      "name": "integer_boolean_utc",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "wait.deadlineAtUtcMs": true
+      },
+      "valid": false
+    },
+    {
+      "name": "negative_utc",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "wait.deadlineAtUtcMs": -1
+      },
+      "valid": false
+    },
+    {
+      "name": "unsafe_utc",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "wait.deadlineAtUtcMs": 9007199254740992
+      },
+      "valid": false
+    },
+    {
+      "name": "turn_without_observation",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "observation.turn": {
+          "id": "turn",
+          "status": "completed"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "completed_as_ack",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "ack.status": "completed"
+      },
+      "valid": false
+    },
+    {
+      "name": "refused_with_submitted",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "state": "refused"
+      },
+      "valid": false
+    },
+    {
+      "name": "accepted_receipt_wrong_current_state",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "ack": {
+          "status": "acknowledged",
+          "assurance": "token_possession",
+          "receivedAtUtcMs": 999,
+          "late": false
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "observed_injection_with_unknown_submission",
+      "base": "queued_best_effort_observer_failed",
+      "set": {
+        "state": "unknown",
+        "submission.status": "unknown",
+        "observation": {
+          "status": "observed",
+          "injectionObserved": true,
+          "clientUserMessageId": "message-fixture"
+        }
+      },
+      "valid": false
+    }
+  ],
+  "wireRejected": [
+    {
+      "name": "duplicate_key",
+      "raw": "{\"schemaVersion\":1,\"schemaVersion\":1}",
+      "reason": "duplicate_key"
+    },
+    {
+      "name": "fraction_integer_token",
+      "raw": "{\"schemaVersion\":1.0}",
+      "reason": "integer_token"
+    },
+    {
+      "name": "exponent_integer_token",
+      "raw": "{\"schemaVersion\":1e0}",
+      "reason": "integer_token"
+    },
+    {
+      "name": "nonfinite_number",
+      "raw": "{\"schemaVersion\":NaN}",
+      "reason": "nonfinite"
+    },
+    {
+      "name": "trailing_data",
+      "raw": "{} {}",
+      "reason": "trailing_data"
+    },
+    {
+      "name": "invalid_utf8",
+      "bytesHex": "ff",
+      "reason": "invalid_utf8"
+    }
+  ],
+  "timeoutLexemes": {
+    "accepted": [
+      "1",
+      "6",
+      "30",
+      "60"
+    ],
+    "rejected": [
+      "0",
+      "61",
+      "01",
+      " 1",
+      "1 ",
+      "+1",
+      "-1",
+      "1.0",
+      "1e0",
+      "true",
+      "１"
+    ]
+  },
+  "budgets": [
+    {
+      "name": "minimum_budget_valid_but_no_effect",
+      "totalS": 1,
+      "elapsedS": 0,
+      "effectAllowed": false,
+      "submission": "refused",
+      "reason": "insufficient_budget",
+      "exit": 1
+    },
+    {
+      "name": "cleanup_only_budget_no_effect",
+      "totalS": 5,
+      "elapsedS": 0,
+      "effectAllowed": false,
+      "submission": "refused",
+      "reason": "insufficient_budget",
+      "exit": 1
+    },
+    {
+      "name": "strictly_before_cutoff",
+      "totalS": 30,
+      "elapsedS": 24.999,
+      "effectAllowed": true
+    },
+    {
+      "name": "at_cutoff",
+      "totalS": 30,
+      "elapsedS": 25,
+      "effectAllowed": false,
+      "submission": "refused",
+      "reason": "deadline_before_effect",
+      "exit": 1
+    },
+    {
+      "name": "remote_remaining_not_reset",
+      "totalS": 30,
+      "elapsedS": 26,
+      "effectAllowed": false,
+      "remainingS": 4,
+      "submission": "refused",
+      "reason": "deadline_before_effect",
+      "exit": 1
+    }
+  ],
+  "behaviorCases": [
+    {
+      "name": "unknown_custom_uuid",
+      "given": "supplied ID absent from intact ledger",
+      "expected": {
+        "nativeSubmissions": 0,
+        "submission": "refused",
+        "freshIdAllocated": false
+      }
+    },
+    {
+      "name": "intent_crash_before_effect",
+      "given": "effect intent synced, no native outcome recorded",
+      "expected": {
+        "nativeSubmissionsOnRecovery": 0,
+        "submission": "unknown",
+        "retryAllowed": false
+      }
+    },
+    {
+      "name": "duplicate_valid_receipt",
+      "given": "same committed receipt ID and binding",
+      "expected": {
+        "receiptCommitCount": 1,
+        "state": "acknowledged"
+      }
+    },
+    {
+      "name": "wrong_receipt_id_or_binding",
+      "given": "invalid epoch/correlation/generation/capability",
+      "expected": {
+        "stateAdvances": false,
+        "nativeSubmissions": 0
+      }
+    },
+    {
+      "name": "target_restart",
+      "given": "original generation changes",
+      "expected": {
+        "newGenerationBound": false,
+        "resubmit": false
+      }
+    },
+    {
+      "name": "ledger_missing",
+      "given": "previous ledger unavailable",
+      "expected": {
+        "state": "unknown",
+        "resubmit": false,
+        "autoInit": false
+      }
+    },
+    {
+      "name": "ledger_restored",
+      "given": "operator marks known restore",
+      "expected": {
+        "quarantined": true,
+        "resubmit": false,
+        "receiptAccept": false
+      }
+    },
+    {
+      "name": "detail_expired",
+      "given": "30 day detail pruning; fence retained",
+      "expected": {
+        "state": "unknown",
+        "resubmit": false,
+        "fenceRetained": true
+      }
+    },
+    {
+      "name": "ledger_capacity_full",
+      "given": "intent or byte quota exhausted",
+      "expected": {
+        "newEffect": false,
+        "evictFence": false
+      }
+    },
+    {
+      "name": "wait_quota_full",
+      "given": "64 committed wait records",
+      "expected": {
+        "newWait": false,
+        "submissionFactsPreserved": true
+      }
+    },
+    {
+      "name": "late_receipt_new_wait",
+      "given": "originating wait timed out; receipt late; second wait starts",
+      "expected": {
+        "originalWait": "timed_out_unknown",
+        "newWait": "satisfied",
+        "ackLate": true,
+        "nativeSubmissions": 0
+      }
+    },
+    {
+      "name": "unsupported_no_keep_waiting",
+      "given": "permanently unsupported ACK producer",
+      "expected": {
+        "keepWaiting": false,
+        "mintCapability": false
+      }
+    },
+    {
+      "name": "utc_clock_jump",
+      "given": "UTC diagnostic clock moves",
+      "expected": {
+        "monotonicBudgetUnchanged": true
+      }
+    },
+    {
+      "name": "collector_restart_without_raw_capability",
+      "given": "only credential hash and original receipt binding retained",
+      "expected": {
+        "capabilityRegenerated": false,
+        "nativeSubmissions": 0
+      }
+    },
+    {
+      "name": "fanout_reconcile",
+      "given": "original per-destination intents stored",
+      "expected": {
+        "newIdsAllocated": false,
+        "newSubmissions": 0
+      }
+    },
+    {
+      "name": "malformed_flags_without_id",
+      "given": "invalid CLI before canonical intent",
+      "expected": {
+        "exit": 2,
+        "handoffPresent": false,
+        "synthesizeSubmitted": false
+      }
+    },
+    {
+      "name": "opt_out_shape",
+      "given": "no opt-in flags",
+      "expected": {
+        "handoffPresent": false,
+        "legacyExitUnchanged": true
+      }
+    }
+  ],
+  "sshCases": [
+    {
+      "name": "complete_queued_wait_timeout",
+      "sample": "queued_explicit_ack_timeout",
+      "transport": "nonzero_or_timeout",
+      "expected": {
+        "preserveNativeSnapshot": true,
+        "explicitWaitExit": 1,
+        "additionalSubmission": false
+      }
+    },
+    {
+      "name": "claude_reconstruction",
+      "sample": "claude_success_preserves_optional_absence",
+      "expected": {
+        "preserveHandoff": true,
+        "preserveLegacyAbsence": true
+      }
+    },
+    {
+      "name": "malformed_handoff_valid_native",
+      "given": "valid native queued receipt plus invalid new object",
+      "expected": {
+        "nativeEvidencePreserved": true,
+        "ackPromoted": false,
+        "explicitWaitExit": 1,
+        "additionalSubmission": false
+      }
+    },
+    {
+      "name": "incomplete_stdout",
+      "given": "truncated single JSON frame",
+      "expected": {
+        "submission": "unknown",
+        "additionalSubmission": false
+      }
+    },
+    {
+      "name": "stderr_non_utf8",
+      "given": "valid stdout frame and ff diagnostic stderr",
+      "expected": {
+        "stdoutStrict": true,
+        "stderrReplacement": true,
+        "preserveNativeSnapshot": true
+      }
+    }
+  ],
+  "receiptSchema": {
+    "schemaVersion": 1,
+    "kind": "receipt",
+    "required": [
+      "schemaVersion",
+      "kind",
+      "ledgerEpoch",
+      "correlationId",
+      "targetGeneration",
+      "receiptId",
+      "capability"
+    ],
+    "unknownKeysAllowed": false,
+    "capabilityInput": "private_stdin_only",
+    "capabilityEncoding": "base64url_unpadded_43_chars",
+    "persistRawCapability": false,
+    "issuer": "compatible_receipt_only_handler",
+    "assurance": "token_possession"
+  },
+  "operatorConfirmationSchema": {
+    "required": [
+      "schemaVersion",
+      "ledgerEpoch",
+      "correlationId",
+      "targetGeneration",
+      "confirmed"
+    ],
+    "confirmed": true,
+    "unknownKeysAllowed": false,
+    "input": "private_metadata_stdin_only",
+    "assurance": "operator_confirmed"
+  },
+  "freezeGates": [
+    "TS exact commit review",
+    "prepare/confirm/epoch/wait identity amendments",
+    "collector bootstrap and restart continuity",
+    "intact-history restoration limitation",
+    "bounded resource cleanup platform validation",
+    "strict opt-in SSH preservation",
+    "token-aware JSON numeric validation",
+    "no live/runtime claims"
+  ]
+}

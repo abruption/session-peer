@@ -17,6 +17,7 @@
     "docs/architecture/agent-transports.md": "01a4e3942e87acb476595859f2e37f9653ea1e3bc19ebc68dced1adf20a6966f",
     "docs/cli-reference.md": "2d4f9c720da96bbcaf11d34f2604b64b4376d351c669cea8950cf7bc5916525b",
     "docs/compatibility-v1.md": "7e551aad37a369faff7e370728376763efb54c2c9e9cfd8556a0c19aabc3d103",
+    "docs/contracts/handoff-v1.md": "e401979d6f8694ce096cdf6fde4c22fbfcf11e23667fa9183844aa085bf26f91",
     "docs/diagnostics.md": "e7c757655a08c3a0180e375a7bdd67c034f6916e800968054aa1cc98ec1ca4aa",
     "docs/download-metrics.md": "ded60e7b84d14ce779f8d639516b4e390358a06ef76b677dc9c1f997fb626a9f",
     "docs/mcp.md": "d8db1c66a5a2f500c8916d7a739616a5fe36af3a89ef8de631af4e427c8334de",
