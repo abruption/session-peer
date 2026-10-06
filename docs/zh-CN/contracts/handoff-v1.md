@@ -12,7 +12,18 @@
 
 常规 send 输出继续保留各运行时的格式。Python Claude 成功时省略 status、submitted 和 consumptionConfirmed；Codex 的 queued 成功包含 submitted true 和 consumptionConfirmed false。submitted false 的旧版 unknown 不是未发生任何效果的普遍证明。不要添加缺失的 false/null 字段、重新解释可选字段的缺失、覆盖 consumptionConfirmed 或更改常规退出码。规范化的夹具值只隐藏身份信息；每个示例都记录来源，但不构成完整的输出模式。
 
-显式启用会在现有外层 schemaVersion 1 下，向每个目标结果添加一个 handoff 对象。不存在 fanout 层级的 handoff。显式等待只能更改外层 ok 和退出码：它保留原生 status、target、queueId、submitted、consumptionConfirmed，以及所有独立有效的提交证据。结果接收方必须使用自己的原始请求上下文来选择这一验证模式，不能使用不可信的返回字段。只有原始请求是显式等待，且 handoff 经过完整验证、具有原生提交证据并匹配原始原生目标时，才允许将 queued/posted、submitted true、ok false 和退出码 1 的组合视为等待失败。仅收到 handoff 绝不会在未启用请求中允许这一组合。此等待失败路径也执行 target/home 验证。尽力而为的观测失败不能改变原生提交成功。无效或超限的 handoff 不能抹除单独验证且目标正确的原生快照，也不能将其提升为 ACK；显式等待会验证失败，且不会重新提交。错误的原生目标不构成独立有效的提交证据。
+显式启用会在现有外层 schemaVersion 1 下，向每个目标结果添加一个 handoff 对象。不存在 fanout 层级的 handoff。显式等待只能更改外层 ok 和退出码：它保留原生 status、target、queueId、submitted、consumptionConfirmed，以及所有独立有效的提交证据。结果接收方必须使用自己的原始请求上下文来选择验证模式和运行时/代理原生配置，不能使用不可信的返回字段。只有原始请求是显式等待、handoff 经过完整验证、具有肯定的原生配置且匹配原始 target/home/context 时，才允许等待失败例外。超时、失败和提交后不支持使用 ok false/退出码 1；中断待处理的等待使用 ok false/退出码 130。仅收到 handoff 绝不会在未启用请求中允许任一种例外。尽力而为的观测失败不能改变原生提交成功。无效或超限的 handoff 不能抹除单独验证且目标正确的原生快照，也不能将其提升为 ACK；显式等待会验证失败，且不会重新提交。错误的原生 target/home 或被修改的消费事实不构成独立有效的原生证据。有效的常规未启用成功在忽略未请求的 handoff 后仍然有效。
+
+肯定的原生配置与共用的 handoff submission 枚举相互独立。不要从原生成功不输出的外层 status/submitted 字段推断 Python Claude 的肯定提交，也不要仅为满足守卫而添加这些字段。显式启用适配器必须保留经过验证的等待前原生成功快照；消费方验证该配置和准确的原始上下文，而非只信任 handoff.submission。
+
+| 原始运行时 / 代理 | 肯定的原生快照 | 目标/上下文匹配 |
+| --- | --- | --- |
+| Python / Claude | status、submitted 和 consumptionConfirmed 缺失；保留现有肯定套接字写入的 target 字段 | 依据 Python 现有规则的原始已解析目标 pid/name |
+| TypeScript / Claude | status posted、submitted true、consumptionConfirmed false；queueId 缺失 | 已解析的 pid；依据现有 TS 模式，agent 可缺失，name 可为 null |
+| Python / Codex | status queued、submitted true、consumptionConfirmed false；保留原生 queueId 和 codexHome | 依据 Python 现有规则的原始 thread 和规范化 home/context |
+| TypeScript / Codex | status queued、submitted true、consumptionConfirmed false；保留原生 queueId 和 codexHome | UUID 比较保持不区分大小写；agent 可缺失；规范化 home/context 必须匹配 |
+
+此表定义合成的肯定配置夹具，不是完整的运行时封装，也不授权放宽各运行时现有验证器。status 为 posted 或 consumptionConfirmed true 的 Codex 快照无效。目标比较须考虑配置，不能直接比较整个字典：允许的可选字段缺失和 null 仍然允许，但错误的 agent、id/pid 或规范化 home 必须失败。对于当前 SSH 验证器尚未强制要求的运行时，规范化 home 匹配是新增的提议 handoff 条件，不是已发布保护的声明。原生快照验证独立于 handoff 是否存在或有效。
 
 ## 公开模式
 
@@ -59,12 +70,15 @@ handoff.nextActions = unique subset of [keep_waiting, reconcile, stop_waiting]
 | 确定在效果发生前耗尽预算 | refused | refused | failed | 存在时为原生 / 无合成字段 | false / 1 |
 | 已知入队，尽力而为的观测器失败 | submitted | submitted | not_requested | queued / true | true / 0 |
 | 已知入队，显式 ACK 截止时间到期 | timed_out_unknown | submitted | timed_out_unknown | queued / true | false / 1 |
+| 肯定的原生配置，提交后通道变为不支持 | submitted 或 delivered | submitted | unsupported | 原生 / 原生或缺失 | false / 1 |
+| 操作员中断待处理的显式等待 | submitted、delivered 或 unknown | submitted 或 unknown | stopped | 原生 / 原生或缺失 | false / 130 |
 | 已知注入，ACK 截止时间到期 | timed_out_unknown | submitted | timed_out_unknown | 原生 / 原生或缺失 | false / 1 |
 | 可能已发生效果，无回执 | unknown | unknown | not_requested | 原生 / 原生或缺失 | false / 1 |
 | 有效回执满足显式等待 | acknowledged | submitted | satisfied | 原生 / 原生或缺失 | true / 0 |
 | 成功查询先前超时的状态 | timed_out_unknown | submitted | timed_out_unknown | 缺失 / 缺失 | true / 0 |
+| 成功查询已停止等待的状态 | 保留的状态 | 保留的提交 | stopped | 缺失 / 缺失 | true / 0 |
 
-无效标志、无效超时词法形式、缺失目标和格式错误的 ID 保留用法/无目标退出码 2，也可能完全没有 JSON/handoff。不会为这些失败编造合成的关联 ID 或旧版 false/null。中断使用退出码 130，且不取消/重发。成功的状态查询报告查询成功，而非确认应答。
+无效标志、无效超时词法形式、缺失目标和格式错误的 ID 保留用法/无目标退出码 2，也可能完全没有 JSON/handoff。不会为这些失败编造合成的关联 ID 或旧版 false/null。中断待处理的显式 send/wait 操作（包括 SIGINT）会终态记录 wait stopped 和 reason stopped_by_operator，且不取消/重发。如果有完整的结构化输出，该操作返回 ok false/退出码 130，并保留已知原生/提交/注入事实；SSH 仅对原始显式等待请求、经过验证的 stopped 等待以及匹配的 target/home/绑定接受这一例外。操作员有意停止待处理的等待也遵循同一规则，不新增 API 拼写。已进入终态的等待不可变：中断不能将已提交的超时、满足或其他终态结果改写为 stopped。成功查询该停止记录的状态使用 ok true/退出码 0。部分/无中断输出保留独立已知的证据，其余保持不确定，绝不编造 false 字段、回退或重发。成功的状态查询报告查询成功，而非确认应答。
 
 ## 能力与引导
 

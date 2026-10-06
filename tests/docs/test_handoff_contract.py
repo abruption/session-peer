@@ -195,6 +195,8 @@ def validate_handoff(handoff):
         require(wait["status"] != "not_requested")
     if wait["status"] == "satisfied":
         require(injection if wait["for"] == "delivered" else ack["status"] == "acknowledged")
+    if wait["status"] == "stopped":
+        require(wait.get("reason") == "stopped_by_operator")
     require(handoff["decisionOwner"] == "sender_operator")
     closed(handoff["retry"], ("allowed", "reason"))
     require(handoff["retry"]["allowed"] is False)
@@ -235,6 +237,55 @@ def validate_query_error(result):
     require(query["retry"]["allowed"] is False and query["retry"]["reason"] == "history_unavailable")
 
 
+def synthetic_positive_native_profile(result, request):
+    """Only a static positive-profile check; never reconstruct native fields.
+
+    The original adapter chooses this profile and resolves canonical context
+    before effect. This is a proposed opt-in gate, not today's SSH validator.
+    queueId is optional in both Codex runtimes, and does not prove consumption.
+    """
+    profile = request["nativeProfile"]
+    target = result.get("target")
+    expected = request["target"]
+    require(type(target) is dict)
+    require(result.get("host") == request["host"])
+    require(result.get("dryRun") is False)
+    if profile in {"python_codex", "typescript_codex"}:
+        target_id = target.get("id")
+        expected_id = expected["id"]
+        require(type(target_id) is str and type(expected_id) is str)
+        # Native UUID normalization is distinct from lowercase-only handoff IDs.
+        native_uuid = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+        require(re.fullmatch(native_uuid, target_id.lower()) is not None)
+        require(re.fullmatch(native_uuid, expected_id.lower()) is not None)
+        require(target_id.lower() == expected_id.lower())
+        require(target.get("agent") == "codex" if profile == "python_codex"
+                else "agent" not in target or target["agent"] == "codex")
+        require(type(request["codexHome"]) is str and bool(request["codexHome"]))
+        require(result.get("codexHome") == request["codexHome"])
+        require(result.get("status") == "queued")
+        require(result.get("submitted") is True)
+        require(result.get("consumptionConfirmed") is False)
+        if "queueId" in result:
+            identifier(result["queueId"])
+    elif profile in {"python_claude", "typescript_claude"}:
+        require(type(target.get("pid")) is int and 0 < target["pid"] <= SAFE_INTEGER_MAX)
+        require(target["pid"] == expected["pid"])
+        require("queueId" not in result and "codexHome" not in result)
+        if profile == "python_claude":
+            require("agent" not in target)
+            require(type(target.get("name")) is str and target["name"] == expected["name"])
+            require(all(key not in result for key in ("status", "submitted", "consumptionConfirmed")))
+        else:
+            require("agent" not in target or target["agent"] == "claude")
+            require("name" in target and (type(target["name"]) is str or target["name"] is None))
+            require(result.get("status") == "posted")
+            require(result.get("submitted") is True)
+            require(result.get("consumptionConfirmed") is False)
+    else:
+        raise ProposalError("native_profile")
+
+
 def synthetic_wire_guard(raw, request, exit_code):
     """Request-aware SYNTHETIC guard, not the runtime SSH/adapter parser.
 
@@ -246,42 +297,48 @@ def synthetic_wire_guard(raw, request, exit_code):
     require(type(exit_code) is int)
     require(type(result.get("schemaVersion")) is int and result["schemaVersion"] == 1)
     require(type(result.get("ok")) is bool and result.get("command") == "send")
-    target_valid = result.get("target") == request["target"]
     native = {key: value for key, value in result.items() if key != "handoff"}
-    known_submission = target_valid and result.get("status") in {"queued", "posted"} and result.get("submitted") is True
+    known_submission = False
     try:
-        if "queueId" in result:
-            identifier(result["queueId"])
-        if "consumptionConfirmed" in result:
-            require(type(result["consumptionConfirmed"]) is bool)
+        synthetic_positive_native_profile(result, request)
+        known_submission = True
     except ProposalError:
-        known_submission = False
+        pass
     handoff_valid = False
     if request["optIn"] and "handoff" in result:
         try:
             validate_handoff(result["handoff"])
             handoff_valid = (
-                target_valid
+                known_submission
                 and all(result["handoff"][key] == request[key] for key in ("correlationId", "ledgerEpoch", "targetGeneration"))
                 and result["handoff"]["wait"]["for"] == request["waitFor"]
             )
         except (ProposalError, UnicodeEncodeError):
             pass
+    failed_wait = (
+        handoff_valid and exit_code == 1
+        and result["handoff"]["wait"]["status"] in {"timed_out_unknown", "failed", "unsupported"}
+    )
+    interrupted_wait = (
+        handoff_valid and exit_code == 130
+        and result["handoff"]["wait"]["status"] == "stopped"
+        and result["handoff"]["wait"].get("reason") == "stopped_by_operator"
+    )
     explicit_exception = (
         request["explicitWait"] and request["optIn"] and handoff_valid
-        and known_submission and result["ok"] is False and exit_code == 1
+        and known_submission and result["ok"] is False and (failed_wait or interrupted_wait)
         and result["handoff"]["wait"]["for"] == request["waitFor"]
-        and result["handoff"]["wait"]["status"] in {"timed_out_unknown", "failed", "stopped"}
         and result["handoff"]["submission"]["status"] == "submitted"
     )
-    ordinary_tuple = target_valid and result["ok"] is True and exit_code == 0
+    ordinary_tuple = known_submission and result["ok"] is True and exit_code == 0
     if request["explicitWait"]:
         ordinary_tuple = ordinary_tuple and handoff_valid and result["handoff"]["wait"]["for"] == request["waitFor"] and result["handoff"]["wait"]["status"] == "satisfied"
+    wire_accepted = bool(ordinary_tuple or explicit_exception)
     return {
-        "wireAccepted": bool(ordinary_tuple or explicit_exception),
+        "wireAccepted": wire_accepted,
         "nativeEvidencePreserved": bool(known_submission),
         "handoffValidated": bool(handoff_valid),
-        "ackPromoted": bool(target_valid and handoff_valid and result["handoff"]["ack"]["status"] == "acknowledged"),
+        "ackPromoted": bool(wire_accepted and handoff_valid and result["handoff"]["ack"]["status"] == "acknowledged"),
         "resubmit": False,
         "nativeSnapshot": native if known_submission else None,
     }
@@ -461,7 +518,10 @@ class HandoffProposalContract(unittest.TestCase):
             with self.subTest(no_wait=path), self.assertRaises(ProposalError):
                 validate_handoff(changed(self.sample(), {path: value}))
         for status in ("stopped", "failed", "unsupported"):
-            value = changed(self.sample("delivered_ack_timeout"), {"wait.status": status})
+            mutations = {"wait.status": status}
+            if status == "stopped":
+                mutations["wait.reason"] = "stopped_by_operator"
+            value = changed(self.sample("delivered_ack_timeout"), mutations)
             validate_handoff(value)
             self.assertIs(value["observation"]["injectionObserved"], True)
         with self.assertRaises(ProposalError):
@@ -549,14 +609,15 @@ class HandoffProposalContract(unittest.TestCase):
         self.assertFalse(guarded["resubmit"])
 
     def request(self):
-        return {"optIn": True, "explicitWait": True, "waitFor": "acknowledged", "target": {"agent": "codex", "id": "fixture"}, "correlationId": "22222222-2222-4222-8222-222222222222", "ledgerEpoch": "11111111-1111-4111-8111-111111111111", "targetGeneration": "fixture-generation"}
+        return {"nativeProfile": "python_codex", "host": "fixture", "codexHome": "/fixture/codex-home", "optIn": True, "explicitWait": True, "waitFor": "acknowledged", "target": {"agent": "codex", "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}, "correlationId": "22222222-2222-4222-8222-222222222222", "ledgerEpoch": "11111111-1111-4111-8111-111111111111", "targetGeneration": "fixture-generation"}
 
     def test_request_aware_synthetic_wire_guard(self):
         for case in self.fixture["requestAwareWireCases"]:
             with self.subTest(case=case["name"]):
-                result = changed(self.accepted[case["sample"]]["result"], case.get("set", {}))
+                result = changed(self.accepted[case["sample"]]["result"], case.get("set", {}), case.get("remove", ()))
                 request = self.request()
                 request.update({key: case[key] for key in ("optIn", "explicitWait", "waitFor")})
+                request.update(case.get("request", {}))
                 guarded = synthetic_wire_guard(json.dumps(result, ensure_ascii=False), request, case["exit"])
                 self.assertEqual({key: guarded[key] for key in case["expected"]}, case["expected"])
                 if guarded["nativeEvidencePreserved"]:
@@ -681,6 +742,10 @@ class HandoffProposalContract(unittest.TestCase):
                 if case["mode"] == "status":
                     self.assertEqual(case["exit"], 0)
                     self.assertIs(case["result"]["ok"], True)
+                elif handoff["wait"]["status"] == "stopped":
+                    self.assertEqual(case["exit"], 130)
+                    self.assertIs(case["result"]["ok"], False)
+                    self.assertEqual(handoff["wait"].get("reason"), "stopped_by_operator")
                 elif handoff["wait"]["status"] in {"timed_out_unknown", "unsupported", "failed"} or handoff["state"] == "unknown":
                     self.assertEqual(case["exit"], 1)
                     self.assertIs(case["result"]["ok"], False)

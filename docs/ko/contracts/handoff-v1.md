@@ -12,7 +12,18 @@
 
 일반 send 출력은 런타임별 형식을 유지합니다. Python Claude 성공은 status, submitted, consumptionConfirmed를 생략합니다. Codex의 queued 성공에는 submitted true와 consumptionConfirmed false가 포함됩니다. submitted false인 레거시 unknown은 아무 효과도 없었다는 보편적인 증거가 아닙니다. 빠진 false/null 필드를 추가하거나, 선택적 필드의 부재를 재해석하거나, consumptionConfirmed를 덮어쓰거나, 일반 종료 코드를 바꾸지 마세요. 정규화된 픽스처 값은 식별 정보만 숨깁니다. 각 예제는 출처를 기록하며 완전한 출력 스키마는 아닙니다.
 
-옵트인은 기존 외부 schemaVersion 1 아래에서 각 대상 결과에 handoff 객체 하나를 추가합니다. fanout 수준의 handoff는 없습니다. 명시적인 대기는 외부 ok와 종료 코드만 바꿀 수 있습니다. 네이티브 status, target, queueId, submitted, consumptionConfirmed와 독립적으로 유효한 모든 제출 증거를 보존합니다. 결과를 받는 쪽은 이 검증 모드를 선택할 때 신뢰할 수 없는 반환 필드가 아니라 자신의 원래 요청 맥락을 사용해야 합니다. 원래 요청이 명시적 대기이고 handoff가 완전히 검증되었으며, 네이티브 제출 증거와 원래 네이티브 대상의 일치가 확인된 경우에만 queued/posted, submitted true, ok false, 종료 코드 1의 조합을 대기 실패로 허용합니다. handoff를 받았다는 사실만으로 옵트아웃 요청에서 이 조합을 허용하지 않습니다. 이 대기 실패 경로에서도 target/home 검증을 수행합니다. 최선 노력 관찰 실패는 네이티브 제출 성공을 바꿀 수 없습니다. 잘못되거나 크기 한도를 초과한 handoff는 별도로 검증되고 올바른 대상을 가리키는 네이티브 스냅샷을 지우거나 ACK로 승격할 수 없습니다. 명시적 대기는 재제출 없이 검증에 실패합니다. 잘못된 네이티브 대상은 독립적으로 유효한 제출 증거가 아닙니다.
+옵트인은 기존 외부 schemaVersion 1 아래에서 각 대상 결과에 handoff 객체 하나를 추가합니다. fanout 수준의 handoff는 없습니다. 명시적인 대기는 외부 ok와 종료 코드만 바꿀 수 있습니다. 네이티브 status, target, queueId, submitted, consumptionConfirmed와 독립적으로 유효한 모든 제출 증거를 보존합니다. 결과를 받는 쪽은 검증 모드와 런타임/에이전트 네이티브 프로필을 선택할 때 신뢰할 수 없는 반환 필드가 아니라 자신의 원래 요청 맥락을 사용해야 합니다. 원래 요청이 명시적 대기이고 handoff가 완전히 검증되었으며, 긍정적인 네이티브 프로필과 원래 target/home/context의 일치가 확인된 경우에만 대기 실패 예외를 허용합니다. 시간 초과, 실패, 제출 후 지원 불가는 ok false/종료 코드 1을 사용합니다. 진행 중인 대기의 인터럽트는 ok false/종료 코드 130을 사용합니다. handoff를 받았다는 사실만으로 옵트아웃 요청에서 어느 예외도 허용하지 않습니다. 최선 노력 관찰 실패는 네이티브 제출 성공을 바꿀 수 없습니다. 잘못되거나 크기 한도를 초과한 handoff는 별도로 검증되고 올바른 대상을 가리키는 네이티브 스냅샷을 지우거나 ACK로 승격할 수 없습니다. 명시적 대기는 재제출 없이 검증에 실패합니다. 잘못된 네이티브 target/home 또는 변경된 소비 사실은 독립적으로 유효한 네이티브 증거가 아닙니다. 유효한 일반 옵트아웃 성공은 요청하지 않은 handoff를 무시해도 계속 유효합니다.
+
+긍정적인 네이티브 프로필은 공통 handoff submission 열거형과 별개입니다. 네이티브 성공이 출력하지 않는 외부 status/submitted 필드로 Python Claude의 긍정적인 제출을 추론하지 말고, 가드를 충족하려고 그 필드를 추가하지 마세요. 옵트인 어댑터는 검증된 대기 전 네이티브 성공 스냅샷을 보존해야 합니다. 소비자는 handoff.submission만 신뢰하지 않고 해당 프로필과 정확한 원래 맥락을 검증합니다.
+
+| 원래 런타임 / 에이전트 | 긍정적인 네이티브 스냅샷 | 대상/맥락 일치 |
+| --- | --- | --- |
+| Python / Claude | status, submitted, consumptionConfirmed 부재; 기존의 긍정적인 소켓 쓰기 target 필드 보존 | 기존 Python 규칙에 따른 원래 해석된 대상 pid/name |
+| TypeScript / Claude | status posted, submitted true, consumptionConfirmed false; queueId 부재 | 해석된 pid; 기존 TS 스키마에 따라 agent는 생략되고 name은 null일 수 있음 |
+| Python / Codex | status queued, submitted true, consumptionConfirmed false; 네이티브 queueId와 codexHome 보존 | 기존 Python 규칙에 따른 원래 thread와 정규화된 home/context |
+| TypeScript / Codex | status queued, submitted true, consumptionConfirmed false; 네이티브 queueId와 codexHome 보존 | UUID 비교는 대소문자를 구분하지 않음; agent는 생략될 수 있으며 정규화된 home/context가 일치해야 함 |
+
+이 표는 합성 긍정 프로필 픽스처를 정의하며 완전한 런타임 봉투나 각 런타임의 기존 검증기를 완화할 권한이 아닙니다. posted status 또는 consumptionConfirmed true인 Codex 스냅샷은 무효입니다. 대상 비교는 원시 사전 전체의 동등 비교가 아니라 프로필을 고려합니다. 허용된 선택적 부재와 null은 계속 허용하되, 잘못된 agent, id/pid 또는 정규화된 home은 실패합니다. 정규화된 home의 일치는 현재 SSH 검증기가 아직 강제하지 않는 런타임에서 추가로 제안된 handoff 관문이며, 출시된 보호를 주장하는 것이 아닙니다. 네이티브 스냅샷 검증은 handoff의 존재나 유효성과 독립적입니다.
 
 ## 공개 스키마
 
@@ -59,12 +70,15 @@ handoff.nextActions = unique subset of [keep_waiting, reconcile, stop_waiting]
 | 확실히 효과 발생 전에 예산 소진 | refused | refused | failed | 있으면 네이티브 / 합성 필드 없음 | false / 1 |
 | 큐 등록 확인, 최선 노력 관찰자 실패 | submitted | submitted | not_requested | queued / true | true / 0 |
 | 큐 등록 확인, 명시적 ACK 기한 만료 | timed_out_unknown | submitted | timed_out_unknown | queued / true | false / 1 |
+| 긍정적인 네이티브 프로필, 제출 후 채널 지원 불가 | submitted 또는 delivered | submitted | unsupported | 네이티브 / 네이티브 또는 부재 | false / 1 |
+| 운영자가 진행 중인 명시적 대기를 중단 | submitted, delivered 또는 unknown | submitted 또는 unknown | stopped | 네이티브 / 네이티브 또는 부재 | false / 130 |
 | 주입 확인, ACK 기한 만료 | timed_out_unknown | submitted | timed_out_unknown | 네이티브 / 네이티브 또는 부재 | false / 1 |
 | 효과 발생 가능, 수신 확인 없음 | unknown | unknown | not_requested | 네이티브 / 네이티브 또는 부재 | false / 1 |
 | 유효한 수신 확인으로 명시적 대기 충족 | acknowledged | submitted | satisfied | 네이티브 / 네이티브 또는 부재 | true / 0 |
 | 이전 시간 초과의 상태 조회 성공 | timed_out_unknown | submitted | timed_out_unknown | 부재 / 부재 | true / 0 |
+| 중단된 대기의 상태 조회 성공 | 보존된 상태 | 보존된 제출 | stopped | 부재 / 부재 | true / 0 |
 
-잘못된 플래그, 잘못된 시간 초과 표기, 누락된 대상, 잘못된 ID는 사용법/대상 없음 종료 코드 2를 유지하며 JSON/handoff가 전혀 없을 수도 있습니다. 이러한 실패에 합성 상관관계 ID나 레거시 false/null을 만들어 넣지 않습니다. 인터럽트는 취소/재전송 없이 종료 코드 130을 사용합니다. 성공한 상태 조회는 조회 성공을 보고하며 확인 응답을 뜻하지 않습니다.
+잘못된 플래그, 잘못된 시간 초과 표기, 누락된 대상, 잘못된 ID는 사용법/대상 없음 종료 코드 2를 유지하며 JSON/handoff가 전혀 없을 수도 있습니다. 이러한 실패에 합성 상관관계 ID나 레거시 false/null을 만들어 넣지 않습니다. SIGINT를 포함하여 진행 중인 명시적 send/wait 작업을 중단하면 취소/재전송 없이 wait stopped와 reason stopped_by_operator를 종결 기록합니다. 완전한 구조화 출력이 있으면 해당 작업은 알려진 네이티브/제출/주입 사실을 보존하면서 ok false/종료 코드 130을 반환합니다. SSH는 원래의 명시적 대기 요청이고 target/home/결합이 일치하는 검증된 stopped 대기인 경우에만 이 예외를 수락합니다. 운영자가 의도적으로 진행 중인 대기를 멈추는 경우도 새 API 표기 없이 같은 규칙을 따릅니다. 이미 종결된 대기는 불변입니다. 인터럽트는 커밋된 시간 초과, 충족 또는 다른 종결 결과를 stopped로 다시 쓸 수 없습니다. 그 중단 기록의 성공한 상태 조회는 ok true/종료 코드 0을 사용합니다. 부분 출력이나 출력 없는 인터럽트는 독립적으로 알려진 증거를 보존하고 나머지는 불확실성으로 유지하며, 합성 false 필드, 폴백 또는 재전송을 만들지 않습니다. 성공한 상태 조회는 조회 성공을 보고하며 확인 응답을 뜻하지 않습니다.
 
 ## 기능과 부트스트랩
 

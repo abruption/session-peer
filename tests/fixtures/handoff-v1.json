@@ -16,7 +16,10 @@
       "session_peer_core/ssh.py",
       "session_peer_core/output.py"
     ],
-    "legacyExampleScope": "normalized projections; not exhaustive responses or live captures"
+    "legacyExampleScope": "normalized projections; not exhaustive responses or live captures",
+    "typescriptNativeProfileCommit": "6b48092a0e42992d2d970dd2ff5cf457f62d3ff2",
+    "typescriptNativeProfileSources": ["src/send.ts:send", "src/cli.ts:remote target validation", "src/writer.ts:uuid"],
+    "typescriptSourceScope": "published v0.3.1 positive profile evidence only; no TS parity/reference marker repin"
   },
   "bounds": {
     "safeIntegerMax": 9007199254740991,
@@ -146,8 +149,10 @@
         "queueId": "queue-fixture",
         "target": {
           "agent": "codex",
-          "id": "fixture"
-        }
+          "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        },
+        "codexHome": "/fixture/codex-home",
+        "dryRun": false
       },
       "mustRemainAbsent": [
         "handoff"
@@ -167,8 +172,10 @@
         "consumptionConfirmed": false,
         "target": {
           "agent": "codex",
-          "id": "fixture"
-        }
+          "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        },
+        "codexHome": "/fixture/codex-home",
+        "dryRun": true
       },
       "mustRemainAbsent": [
         "handoff"
@@ -214,7 +221,7 @@
         "queueId": "queue-fixture",
         "target": {
           "agent": "codex",
-          "id": "fixture"
+          "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
         },
         "handoff": {
           "schemaVersion": 1,
@@ -244,7 +251,9 @@
           "nextActions": [
             "reconcile"
           ]
-        }
+        },
+        "codexHome": "/fixture/codex-home",
+        "dryRun": false
       }
     },
     {
@@ -263,7 +272,7 @@
         "queueId": "queue-fixture",
         "target": {
           "agent": "codex",
-          "id": "fixture"
+          "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
         },
         "handoff": {
           "schemaVersion": 1,
@@ -296,7 +305,9 @@
             "keep_waiting",
             "reconcile"
           ]
-        }
+        },
+        "codexHome": "/fixture/codex-home",
+        "dryRun": false
       }
     },
     {
@@ -315,7 +326,7 @@
         "queueId": "queue-fixture",
         "target": {
           "agent": "codex",
-          "id": "fixture"
+          "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
         },
         "handoff": {
           "schemaVersion": 1,
@@ -352,7 +363,9 @@
           "nextActions": [
             "reconcile"
           ]
-        }
+        },
+        "codexHome": "/fixture/codex-home",
+        "dryRun": false
       }
     },
     {
@@ -371,7 +384,7 @@
         "queueId": "queue-fixture",
         "target": {
           "agent": "codex",
-          "id": "fixture"
+          "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
         },
         "handoff": {
           "schemaVersion": 1,
@@ -404,7 +417,9 @@
           "nextActions": [
             "reconcile"
           ]
-        }
+        },
+        "codexHome": "/fixture/codex-home",
+        "dryRun": false
       }
     },
     {
@@ -423,7 +438,7 @@
         "queueId": "queue-fixture",
         "target": {
           "agent": "codex",
-          "id": "fixture"
+          "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
         },
         "handoff": {
           "schemaVersion": 1,
@@ -458,7 +473,9 @@
           "nextActions": [
             "reconcile"
           ]
-        }
+        },
+        "codexHome": "/fixture/codex-home",
+        "dryRun": false
       }
     },
     {
@@ -693,7 +710,7 @@
         "consumptionConfirmed": false,
         "target": {
           "agent": "codex",
-          "id": "fixture"
+          "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
         },
         "handoff": {
           "schemaVersion": 1,
@@ -721,7 +738,9 @@
             "reason": "receiver_dedup_unavailable"
           },
           "nextActions": []
-        }
+        },
+        "codexHome": "/fixture/codex-home",
+        "dryRun": true
       }
     },
     {
@@ -831,7 +850,7 @@
         "queueId": "queue-fixture",
         "target": {
           "agent": "codex",
-          "id": "fixture"
+          "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
         },
         "handoff": {
           "schemaVersion": 1,
@@ -862,6 +881,266 @@
             "reason": "receiver_dedup_unavailable"
           },
           "nextActions": [
+            "reconcile"
+          ]
+        },
+        "codexHome": "/fixture/codex-home",
+        "dryRun": false
+      }
+    },
+    {
+      "name": "python_claude_explicit_ack_timeout",
+      "mode": "opt_in",
+      "valid": true,
+      "exit": 1,
+      "result": {
+        "schemaVersion": 1,
+        "ok": false,
+        "host": "fixture",
+        "command": "send",
+        "target": {
+          "pid": 1,
+          "name": "fixture"
+        },
+        "handoff": {
+          "schemaVersion": 1,
+          "correlationId": "22222222-2222-4222-8222-222222222222",
+          "ledgerEpoch": "11111111-1111-4111-8111-111111111111",
+          "state": "timed_out_unknown",
+          "submission": {
+            "status": "submitted"
+          },
+          "observation": {
+            "status": "not_requested",
+            "injectionObserved": false
+          },
+          "ack": {
+            "status": "pending"
+          },
+          "wait": {
+            "for": "acknowledged",
+            "status": "timed_out_unknown",
+            "operationId": "33333333-3333-4333-8333-333333333333",
+            "deadlineAtUtcMs": 1000
+          },
+          "targetGeneration": "fixture-generation",
+          "decisionOwner": "sender_operator",
+          "retry": {
+            "allowed": false,
+            "reason": "receiver_dedup_unavailable"
+          },
+          "nextActions": [
+            "keep_waiting",
+            "reconcile"
+          ]
+        },
+        "dryRun": false,
+        "chars": 7
+      }
+    },
+    {
+      "name": "typescript_claude_explicit_ack_timeout",
+      "mode": "opt_in",
+      "valid": true,
+      "exit": 1,
+      "result": {
+        "schemaVersion": 1,
+        "ok": false,
+        "host": "fixture",
+        "command": "send",
+        "status": "posted",
+        "submitted": true,
+        "consumptionConfirmed": false,
+        "target": {
+          "agent": "claude",
+          "pid": 1,
+          "name": "fixture"
+        },
+        "handoff": {
+          "schemaVersion": 1,
+          "correlationId": "22222222-2222-4222-8222-222222222222",
+          "ledgerEpoch": "11111111-1111-4111-8111-111111111111",
+          "state": "timed_out_unknown",
+          "submission": {
+            "status": "submitted"
+          },
+          "observation": {
+            "status": "not_requested",
+            "injectionObserved": false
+          },
+          "ack": {
+            "status": "pending"
+          },
+          "wait": {
+            "for": "acknowledged",
+            "status": "timed_out_unknown",
+            "operationId": "33333333-3333-4333-8333-333333333333",
+            "deadlineAtUtcMs": 1000
+          },
+          "targetGeneration": "fixture-generation",
+          "decisionOwner": "sender_operator",
+          "retry": {
+            "allowed": false,
+            "reason": "receiver_dedup_unavailable"
+          },
+          "nextActions": [
+            "keep_waiting",
+            "reconcile"
+          ]
+        },
+        "dryRun": false,
+        "chars": 7
+      }
+    },
+    {
+      "name": "queued_post_submission_unsupported",
+      "mode": "opt_in",
+      "valid": true,
+      "exit": 1,
+      "result": {
+        "schemaVersion": 1,
+        "ok": false,
+        "host": "fixture",
+        "command": "send",
+        "status": "queued",
+        "submitted": true,
+        "consumptionConfirmed": false,
+        "queueId": "queue-fixture",
+        "target": {
+          "agent": "codex",
+          "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        },
+        "handoff": {
+          "schemaVersion": 1,
+          "correlationId": "22222222-2222-4222-8222-222222222222",
+          "ledgerEpoch": "11111111-1111-4111-8111-111111111111",
+          "state": "submitted",
+          "submission": {
+            "status": "submitted"
+          },
+          "observation": {
+            "status": "not_requested",
+            "injectionObserved": false
+          },
+          "ack": {
+            "status": "unsupported"
+          },
+          "wait": {
+            "for": "acknowledged",
+            "status": "unsupported",
+            "operationId": "33333333-3333-4333-8333-333333333333",
+            "deadlineAtUtcMs": 1000,
+            "reason": "evidence_unsupported"
+          },
+          "targetGeneration": "fixture-generation",
+          "decisionOwner": "sender_operator",
+          "retry": {
+            "allowed": false,
+            "reason": "receiver_dedup_unavailable"
+          },
+          "nextActions": [
+            "reconcile"
+          ]
+        },
+        "codexHome": "/fixture/codex-home",
+        "dryRun": false
+      }
+    },
+    {
+      "name": "queued_interrupted_pending_wait",
+      "mode": "opt_in",
+      "valid": true,
+      "exit": 130,
+      "result": {
+        "schemaVersion": 1,
+        "ok": false,
+        "host": "fixture",
+        "command": "send",
+        "status": "queued",
+        "submitted": true,
+        "consumptionConfirmed": false,
+        "queueId": "queue-fixture",
+        "target": {
+          "agent": "codex",
+          "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        },
+        "handoff": {
+          "schemaVersion": 1,
+          "correlationId": "22222222-2222-4222-8222-222222222222",
+          "ledgerEpoch": "11111111-1111-4111-8111-111111111111",
+          "state": "submitted",
+          "submission": {
+            "status": "submitted"
+          },
+          "observation": {
+            "status": "not_requested",
+            "injectionObserved": false
+          },
+          "ack": {
+            "status": "pending"
+          },
+          "wait": {
+            "for": "acknowledged",
+            "status": "stopped",
+            "operationId": "33333333-3333-4333-8333-333333333333",
+            "deadlineAtUtcMs": 1000,
+            "reason": "stopped_by_operator"
+          },
+          "targetGeneration": "fixture-generation",
+          "decisionOwner": "sender_operator",
+          "retry": {
+            "allowed": false,
+            "reason": "receiver_dedup_unavailable"
+          },
+          "nextActions": [
+            "keep_waiting",
+            "reconcile"
+          ]
+        },
+        "codexHome": "/fixture/codex-home",
+        "dryRun": false
+      }
+    },
+    {
+      "name": "stopped_status_query",
+      "mode": "status",
+      "valid": true,
+      "exit": 0,
+      "result": {
+        "schemaVersion": 1,
+        "ok": true,
+        "host": "fixture",
+        "command": "handoff",
+        "handoff": {
+          "schemaVersion": 1,
+          "correlationId": "22222222-2222-4222-8222-222222222222",
+          "ledgerEpoch": "11111111-1111-4111-8111-111111111111",
+          "state": "submitted",
+          "submission": {
+            "status": "submitted"
+          },
+          "observation": {
+            "status": "not_requested",
+            "injectionObserved": false
+          },
+          "ack": {
+            "status": "pending"
+          },
+          "wait": {
+            "for": "acknowledged",
+            "status": "stopped",
+            "operationId": "33333333-3333-4333-8333-333333333333",
+            "deadlineAtUtcMs": 1000,
+            "reason": "stopped_by_operator"
+          },
+          "targetGeneration": "fixture-generation",
+          "decisionOwner": "sender_operator",
+          "retry": {
+            "allowed": false,
+            "reason": "receiver_dedup_unavailable"
+          },
+          "nextActions": [
+            "keep_waiting",
             "reconcile"
           ]
         }
@@ -1503,20 +1782,45 @@
     }
   ],
   "requestAwareWireCases": [
-    {"name": "explicit_wait_matching_target", "sample": "queued_explicit_ack_timeout", "optIn": true, "explicitWait": true, "waitFor": "acknowledged", "exit": 1, "expected": {"wireAccepted": true, "nativeEvidencePreserved": true, "handoffValidated": true, "ackPromoted": false, "resubmit": false}},
-    {"name": "request_opt_out_forged_handoff", "sample": "queued_explicit_ack_timeout", "optIn": false, "explicitWait": false, "waitFor": "none", "exit": 1, "expected": {"wireAccepted": false, "nativeEvidencePreserved": true, "handoffValidated": false, "ackPromoted": false, "resubmit": false}},
-    {"name": "best_effort_cannot_enable_wait_exception", "sample": "queued_explicit_ack_timeout", "optIn": true, "explicitWait": false, "waitFor": "none", "exit": 1, "expected": {"wireAccepted": false, "nativeEvidencePreserved": true, "handoffValidated": false, "ackPromoted": false, "resubmit": false}},
-    {"name": "wrong_native_target", "sample": "queued_explicit_ack_timeout", "optIn": true, "explicitWait": true, "waitFor": "acknowledged", "exit": 1, "set": {"target.id": "wrong-target"}, "expected": {"wireAccepted": false, "nativeEvidencePreserved": false, "handoffValidated": false, "ackPromoted": false, "resubmit": false}},
-    {"name": "malformed_handoff_preserves_native", "sample": "queued_explicit_ack_timeout", "optIn": true, "explicitWait": true, "waitFor": "acknowledged", "exit": 1, "set": {"handoff.ack.status": "acknowledged"}, "expected": {"wireAccepted": false, "nativeEvidencePreserved": true, "handoffValidated": false, "ackPromoted": false, "resubmit": false}},
-    {"name": "wrong_wait_goal", "sample": "queued_explicit_ack_timeout", "optIn": true, "explicitWait": true, "waitFor": "delivered", "exit": 1, "expected": {"wireAccepted": false, "nativeEvidencePreserved": true, "handoffValidated": false, "ackPromoted": false, "resubmit": false}},
-    {"name": "wrong_correlation", "sample": "queued_explicit_ack_timeout", "optIn": true, "explicitWait": true, "waitFor": "acknowledged", "exit": 1, "set": {"handoff.correlationId": "33333333-3333-4333-8333-333333333333"}, "expected": {"wireAccepted": false, "nativeEvidencePreserved": true, "handoffValidated": false, "ackPromoted": false, "resubmit": false}},
-    {"name": "posted_explicit_wait_timeout", "sample": "queued_explicit_ack_timeout", "optIn": true, "explicitWait": true, "waitFor": "acknowledged", "exit": 1, "set": {"status": "posted"}, "expected": {"wireAccepted": true, "nativeEvidencePreserved": true, "handoffValidated": true, "ackPromoted": false, "resubmit": false}},
-    {"name": "posted_opt_out_forged_handoff", "sample": "queued_explicit_ack_timeout", "optIn": false, "explicitWait": false, "waitFor": "none", "exit": 1, "set": {"status": "posted"}, "expected": {"wireAccepted": false, "nativeEvidencePreserved": true, "handoffValidated": false, "ackPromoted": false, "resubmit": false}},
-    {"name": "posted_wrong_native_target", "sample": "queued_explicit_ack_timeout", "optIn": true, "explicitWait": true, "waitFor": "acknowledged", "exit": 1, "set": {"status": "posted", "target.id": "wrong-target"}, "expected": {"wireAccepted": false, "nativeEvidencePreserved": false, "handoffValidated": false, "ackPromoted": false, "resubmit": false}},
-    {"name": "malformed_handoff_ok_true_cannot_satisfy_wait", "sample": "queued_explicit_ack_timeout", "optIn": true, "explicitWait": true, "waitFor": "acknowledged", "exit": 0, "set": {"ok": true, "handoff.ack.status": "acknowledged"}, "expected": {"wireAccepted": false, "nativeEvidencePreserved": true, "handoffValidated": false, "ackPromoted": false, "resubmit": false}},
+    {"name":"explicit_wait_matching_target","sample":"queued_explicit_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"expected":{"wireAccepted":true,"nativeEvidencePreserved":true,"handoffValidated":true,"ackPromoted":false,"resubmit":false}},
+    {"name":"request_opt_out_forged_handoff","sample":"queued_explicit_ack_timeout","optIn":false,"explicitWait":false,"waitFor":"none","exit":1,"expected":{"wireAccepted":false,"nativeEvidencePreserved":true,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"best_effort_cannot_enable_wait_exception","sample":"queued_explicit_ack_timeout","optIn":true,"explicitWait":false,"waitFor":"none","exit":1,"expected":{"wireAccepted":false,"nativeEvidencePreserved":true,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"wrong_native_target","sample":"queued_explicit_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"set":{"target.id":"wrong-target"},"expected":{"wireAccepted":false,"nativeEvidencePreserved":false,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"malformed_handoff_preserves_native","sample":"queued_explicit_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"set":{"handoff.ack.status":"acknowledged"},"expected":{"wireAccepted":false,"nativeEvidencePreserved":true,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"wrong_wait_goal","sample":"queued_explicit_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"delivered","exit":1,"expected":{"wireAccepted":false,"nativeEvidencePreserved":true,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"wrong_correlation","sample":"queued_explicit_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"set":{"handoff.correlationId":"33333333-3333-4333-8333-333333333333"},"expected":{"wireAccepted":false,"nativeEvidencePreserved":true,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"posted_explicit_wait_timeout","sample":"typescript_claude_explicit_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"set":{},"expected":{"wireAccepted":true,"nativeEvidencePreserved":true,"handoffValidated":true,"ackPromoted":false,"resubmit":false},"request":{"nativeProfile":"typescript_claude","target":{"agent":"claude","pid":1,"name":"fixture"}}},
+    {"name":"posted_opt_out_forged_handoff","sample":"typescript_claude_explicit_ack_timeout","optIn":false,"explicitWait":false,"waitFor":"none","exit":1,"set":{},"expected":{"wireAccepted":false,"nativeEvidencePreserved":true,"handoffValidated":false,"ackPromoted":false,"resubmit":false},"request":{"nativeProfile":"typescript_claude","target":{"agent":"claude","pid":1,"name":"fixture"}}},
+    {"name":"posted_wrong_native_target","sample":"typescript_claude_explicit_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"set":{"target.pid":2},"expected":{"wireAccepted":false,"nativeEvidencePreserved":false,"handoffValidated":false,"ackPromoted":false,"resubmit":false},"request":{"nativeProfile":"typescript_claude","target":{"agent":"claude","pid":1,"name":"fixture"}}},
+    {"name":"malformed_handoff_ok_true_cannot_satisfy_wait","sample":"queued_explicit_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":0,"set":{"ok":true,"handoff.ack.status":"acknowledged"},"expected":{"wireAccepted":false,"nativeEvidencePreserved":true,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
     {"name":"ack_wrong_wait_goal","sample":"receipt_satisfies_wait_without_injection_claim","optIn":true,"explicitWait":true,"waitFor":"delivered","exit":0,"expected":{"wireAccepted":false,"nativeEvidencePreserved":true,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
     {"name":"ack_forged_opt_out","sample":"receipt_satisfies_wait_without_injection_claim","optIn":false,"explicitWait":false,"waitFor":"none","exit":0,"expected":{"wireAccepted":true,"nativeEvidencePreserved":true,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
-    {"name":"ack_wrong_native_target","sample":"receipt_satisfies_wait_without_injection_claim","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":0,"set":{"target.id":"wrong-target"},"expected":{"wireAccepted":false,"nativeEvidencePreserved":false,"handoffValidated":false,"ackPromoted":false,"resubmit":false}}
+    {"name":"ack_wrong_native_target","sample":"receipt_satisfies_wait_without_injection_claim","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":0,"set":{"target.id":"wrong-target"},"expected":{"wireAccepted":false,"nativeEvidencePreserved":false,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"codex_posted_is_invalid","sample":"queued_explicit_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"set":{"status":"posted"},"expected":{"wireAccepted":false,"nativeEvidencePreserved":false,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"codex_consumption_overwrite","sample":"queued_explicit_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"set":{"consumptionConfirmed":true},"expected":{"wireAccepted":false,"nativeEvidencePreserved":false,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"wrong_codex_home","sample":"queued_explicit_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"set":{"codexHome":"/fixture/other-home"},"expected":{"wireAccepted":false,"nativeEvidencePreserved":false,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"wrong_native_host","sample":"queued_explicit_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"set":{"host":"other-fixture"},"expected":{"wireAccepted":false,"nativeEvidencePreserved":false,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"python_claude_absent_fields_timeout","sample":"python_claude_explicit_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"request":{"nativeProfile":"python_claude","target":{"pid":1,"name":"fixture"}},"expected":{"wireAccepted":true,"nativeEvidencePreserved":true,"handoffValidated":true,"ackPromoted":false,"resubmit":false}},
+    {"name":"python_claude_invented_submitted","sample":"python_claude_explicit_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"set":{"submitted":true},"request":{"nativeProfile":"python_claude","target":{"pid":1,"name":"fixture"}},"expected":{"wireAccepted":false,"nativeEvidencePreserved":false,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"typescript_claude_omitted_agent_null_name","sample":"typescript_claude_explicit_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"set":{"target.name":null},"request":{"nativeProfile":"typescript_claude","target":{"agent":"claude","pid":1,"name":"fixture"}},"expected":{"wireAccepted":true,"nativeEvidencePreserved":true,"handoffValidated":true,"ackPromoted":false,"resubmit":false},"remove":["target.agent"]},
+    {"name":"typescript_codex_case_insensitive_agent_absent","sample":"queued_explicit_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"set":{"target.id":"AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"},"request":{"nativeProfile":"typescript_codex"},"expected":{"wireAccepted":true,"nativeEvidencePreserved":true,"handoffValidated":true,"ackPromoted":false,"resubmit":false},"remove":["target.agent"]},
+    {"name":"typescript_codex_native_non_v4_uuid","sample":"queued_explicit_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"set":{"target.id":"AAAAAAAA-AAAA-7AAA-8AAA-AAAAAAAAAAAA"},"request":{"nativeProfile":"typescript_codex","target":{"agent":"codex","id":"aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa"}},"expected":{"wireAccepted":true,"nativeEvidencePreserved":true,"handoffValidated":true,"ackPromoted":false,"resubmit":false}},
+    {"name":"optional_codex_queue_id","sample":"queued_explicit_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"expected":{"wireAccepted":true,"nativeEvidencePreserved":true,"handoffValidated":true,"ackPromoted":false,"resubmit":false},"remove":["queueId"]},
+    {"name":"post_submission_channel_unsupported","sample":"queued_post_submission_unsupported","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"expected":{"wireAccepted":true,"nativeEvidencePreserved":true,"handoffValidated":true,"ackPromoted":false,"resubmit":false}},
+    {"name":"post_submission_unsupported_opt_out","sample":"queued_post_submission_unsupported","optIn":false,"explicitWait":false,"waitFor":"none","exit":1,"expected":{"wireAccepted":false,"nativeEvidencePreserved":true,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"post_submission_unsupported_wrong_binding","sample":"queued_post_submission_unsupported","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"set":{"handoff.targetGeneration":"other-generation"},"expected":{"wireAccepted":false,"nativeEvidencePreserved":true,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"interrupted_queued_success_snapshot","sample":"queued_interrupted_pending_wait","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":130,"expected":{"wireAccepted":true,"nativeEvidencePreserved":true,"handoffValidated":true,"ackPromoted":false,"resubmit":false}},
+    {"name":"interrupted_opt_out_forgery","sample":"queued_interrupted_pending_wait","optIn":false,"explicitWait":false,"waitFor":"none","exit":130,"expected":{"wireAccepted":false,"nativeEvidencePreserved":true,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"interrupted_not_explicitly_requested","sample":"queued_interrupted_pending_wait","optIn":true,"explicitWait":false,"waitFor":"none","exit":130,"expected":{"wireAccepted":false,"nativeEvidencePreserved":true,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"interrupted_wrong_exit_one","sample":"queued_interrupted_pending_wait","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"expected":{"wireAccepted":false,"nativeEvidencePreserved":true,"handoffValidated":true,"ackPromoted":false,"resubmit":false}},
+    {"name":"interrupted_wrong_exit_zero","sample":"queued_interrupted_pending_wait","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":0,"set":{"ok":true},"expected":{"wireAccepted":false,"nativeEvidencePreserved":true,"handoffValidated":true,"ackPromoted":false,"resubmit":false}},
+    {"name":"interrupted_wrong_native_target","sample":"queued_interrupted_pending_wait","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":130,"set":{"target.id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"},"expected":{"wireAccepted":false,"nativeEvidencePreserved":false,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"interrupted_wrong_wait_reason","sample":"queued_interrupted_pending_wait","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":130,"set":{"handoff.wait.reason":"evidence_failed"},"expected":{"wireAccepted":false,"nativeEvidencePreserved":true,"handoffValidated":false,"ackPromoted":false,"resubmit":false}},
+    {"name":"valid_ack_profile","sample":"receipt_satisfies_wait_without_injection_claim","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":0,"expected":{"wireAccepted":true,"nativeEvidencePreserved":true,"handoffValidated":true,"ackPromoted":true,"resubmit":false}},
+    {"name":"ack_wrong_exit","sample":"receipt_satisfies_wait_without_injection_claim","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"set":{"ok":false},"expected":{"wireAccepted":false,"nativeEvidencePreserved":true,"handoffValidated":true,"ackPromoted":false,"resubmit":false}},
+    {"name":"unsupported_preserves_injection","sample":"delivered_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"set":{"handoff.state":"delivered","handoff.wait.status":"unsupported","handoff.wait.reason":"evidence_unsupported","handoff.ack.status":"unsupported"},"expected":{"wireAccepted":true,"nativeEvidencePreserved":true,"handoffValidated":true,"ackPromoted":false,"resubmit":false}},
+    {"name":"interrupted_preserves_injection","sample":"delivered_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":130,"set":{"handoff.state":"delivered","handoff.wait.status":"stopped","handoff.wait.reason":"stopped_by_operator"},"expected":{"wireAccepted":true,"nativeEvidencePreserved":true,"handoffValidated":true,"ackPromoted":false,"resubmit":false}},
+    {"name":"wrong_runtime_agent_profile","sample":"queued_explicit_ack_timeout","optIn":true,"explicitWait":true,"waitFor":"acknowledged","exit":1,"set":{"target.agent":"claude"},"expected":{"wireAccepted":false,"nativeEvidencePreserved":false,"handoffValidated":false,"ackPromoted":false,"resubmit":false}}
   ],
   "framing": {
     "privateInput": "raw UTF-8 bytes including all whitespace and LF; <=4096",

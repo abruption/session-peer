@@ -12,7 +12,18 @@
 
 通常の send 出力はランタイム固有のままです。Python Claude の成功時は status、submitted、consumptionConfirmed を省略します。Codex の queued 成功時は submitted true と consumptionConfirmed false を含みます。submitted false のレガシー unknown は、作用がなかったことの普遍的な証拠ではありません。欠けている false/null フィールドの追加、任意フィールドの不在の再解釈、consumptionConfirmed の上書き、通常の終了コードの変更を行わないでください。正規化されたフィクスチャ値は識別情報だけを隠します。各例は出典を記録しており、網羅的な出力スキーマではありません。
 
-オプトインは、既存の外側の schemaVersion 1 の下で、各宛先の結果に handoff オブジェクトを 1 つ追加します。fanout 全体の handoff はありません。明示的な待機が変更できるのは外側の ok と終了コードだけです。ネイティブの status、target、queueId、submitted、consumptionConfirmed と、独立して有効なすべての送信証拠を保持します。結果の受信側は、この検証モードの選択に信頼できない返却フィールドではなく、自身の元の要求コンテキストを使う必要があります。元の要求が明示的な待機で、handoff が完全に検証され、ネイティブ送信の証拠と元のネイティブ対象の一致が確認された場合にだけ、queued/posted、submitted true、ok false、終了コード 1 の組み合わせを待機失敗として許可します。handoff の受信だけでは、オプトアウト要求でこの組み合わせを許可しません。この待機失敗の経路でも target/home を検証します。ベストエフォートの観測失敗はネイティブ送信の成功を変更できません。不正またはサイズ超過の handoff は、別途検証された正しい対象のネイティブスナップショットを消去したり ACK に昇格させたりできません。明示的な待機は再送信せずに検証に失敗します。不正なネイティブ対象は、独立して有効な送信証拠ではありません。
+オプトインは、既存の外側の schemaVersion 1 の下で、各宛先の結果に handoff オブジェクトを 1 つ追加します。fanout 全体の handoff はありません。明示的な待機が変更できるのは外側の ok と終了コードだけです。ネイティブの status、target、queueId、submitted、consumptionConfirmed と、独立して有効なすべての送信証拠を保持します。結果の受信側は、検証モードとランタイム/エージェントのネイティブプロファイルの選択に、信頼できない返却フィールドではなく自身の元の要求コンテキストを使う必要があります。元の要求が明示的な待機で、handoff が完全に検証され、肯定的なネイティブプロファイルと元の target/home/context の一致が確認された場合にだけ、待機失敗の例外を許可します。タイムアウト、失敗、送信後の非対応には ok false/終了コード 1 を使い、保留中の待機の割り込みには ok false/終了コード 130 を使います。handoff の受信だけでは、オプトアウト要求でいずれの例外も許可しません。ベストエフォートの観測失敗はネイティブ送信の成功を変更できません。不正またはサイズ超過の handoff は、別途検証された正しい対象のネイティブスナップショットを消去したり ACK に昇格させたりできません。明示的な待機は再送信せずに検証に失敗します。不正なネイティブ target/home または変更された消費の事実は、独立して有効なネイティブ証拠ではありません。有効な通常のオプトアウト成功は、要求していない handoff を無視しても有効なままです。
+
+肯定的なネイティブプロファイルは、共通の handoff submission 列挙型とは別です。ネイティブの成功時に出力しない外側の status/submitted フィールドから Python Claude の肯定的な送信を推論せず、ガードを満たすためにそれらを追加しないでください。オプトインアダプターは、検証済みの待機前のネイティブ成功スナップショットを保持する必要があります。消費側は handoff.submission だけを信頼せず、そのプロファイルと正確な元のコンテキストを検証します。
+
+| 元のランタイム / エージェント | 肯定的なネイティブスナップショット | 対象/コンテキストの一致 |
+| --- | --- | --- |
+| Python / Claude | status、submitted、consumptionConfirmed は不在; 既存の肯定的なソケット書き込み target フィールドを保持 | Python の既存規則に従う元の解決済み対象 pid/name |
+| TypeScript / Claude | status posted、submitted true、consumptionConfirmed false; queueId は不在 | 解決済み pid; 既存 TS スキーマでは agent は不在、name は null になり得る |
+| Python / Codex | status queued、submitted true、consumptionConfirmed false; ネイティブ queueId と codexHome を保持 | Python の既存規則に従う元の thread と正規化した home/context |
+| TypeScript / Codex | status queued、submitted true、consumptionConfirmed false; ネイティブ queueId と codexHome を保持 | UUID 比較は引き続き大文字小文字を区別しない; agent は不在になり得る; 正規化した home/context は一致が必要 |
+
+この表は合成の肯定プロファイルフィクスチャを定義し、網羅的なランタイムのエンベロープや各ランタイムの既存バリデーターを緩和する許可ではありません。posted status または consumptionConfirmed true の Codex スナップショットは無効です。対象比較は生の辞書全体の一致ではなく、プロファイルを考慮します。許可された任意フィールドの不在と null は引き続き許可し、不正な agent、id/pid または正規化した home は失敗します。正規化した home の一致は、現行の SSH バリデーターがまだ強制しないランタイムでは追加の提案 handoff 条件であり、出荷済みの保護を主張するものではありません。ネイティブスナップショットの検証は handoff の有無や有効性と独立しています。
 
 ## 公開スキーマ
 
@@ -59,12 +70,15 @@ handoff.nextActions = unique subset of [keep_waiting, reconcile, stop_waiting]
 | 確実に作用前に予算が尽きた | refused | refused | failed | 存在すればネイティブ / 合成フィールドなし | false / 1 |
 | キュー登録が既知、ベストエフォート観測者が失敗 | submitted | submitted | not_requested | queued / true | true / 0 |
 | キュー登録が既知、明示的 ACK 期限が切れた | timed_out_unknown | submitted | timed_out_unknown | queued / true | false / 1 |
+| 肯定的なネイティブプロファイル、送信後にチャネルが非対応になる | submitted または delivered | submitted | unsupported | ネイティブ / ネイティブまたは不在 | false / 1 |
+| オペレーターが保留中の明示的待機を中断 | submitted、delivered または unknown | submitted または unknown | stopped | ネイティブ / ネイティブまたは不在 | false / 130 |
 | 注入が既知、ACK 期限が切れた | timed_out_unknown | submitted | timed_out_unknown | ネイティブ / ネイティブまたは不在 | false / 1 |
 | 作用が起きた可能性があり、受領確認なし | unknown | unknown | not_requested | ネイティブ / ネイティブまたは不在 | false / 1 |
 | 有効な受領確認が明示的待機を満たす | acknowledged | submitted | satisfied | ネイティブ / ネイティブまたは不在 | true / 0 |
 | 以前のタイムアウトの状態照会が成功 | timed_out_unknown | submitted | timed_out_unknown | 不在 / 不在 | true / 0 |
+| 停止した待機の状態照会が成功 | 保持された状態 | 保持された送信 | stopped | 不在 / 不在 | true / 0 |
 
-不正なフラグ、不正なタイムアウトの字句、対象の欠落、不正な ID は、使用法/対象なしの終了コード 2 を維持し、JSON/handoff がまったくない場合もあります。こうした失敗に合成の相関 ID やレガシーの false/null を作りません。割り込みは取り消し/再送なしで終了コード 130 を使います。成功した状態照会が報告するのは照会の成功であり、確認応答ではありません。
+不正なフラグ、不正なタイムアウトの字句、対象の欠落、不正な ID は、使用法/対象なしの終了コード 2 を維持し、JSON/handoff がまったくない場合もあります。こうした失敗に合成の相関 ID やレガシーの false/null を作りません。SIGINT を含む保留中の明示的な send/wait 操作への割り込みは、取り消し/再送なしで wait stopped と reason stopped_by_operator を終端記録します。完全な構造化出力が利用できれば、その操作は既知のネイティブ/送信/注入の事実を保持し、ok false/終了コード 130 を返します。SSH は元の明示的待機要求で、target/home/結合が一致する検証済み stopped 待機の場合だけ、この例外を受け付けます。オペレーターが意図的に保留中の待機を停止する場合も、新しい API 表記を追加せず同じ規則に従います。すでに終端となった待機は不変です。割り込みはコミット済みのタイムアウト、充足、その他の終端結果を stopped に書き換えられません。その停止記録の成功した状態照会は ok true/終了コード 0 を使います。部分出力/出力なしの割り込みでは、独立して既知の証拠を保持し、それ以外は不確実なままとし、合成 false フィールド、フォールバック、再送を作りません。成功した状態照会が報告するのは照会の成功であり、確認応答ではありません。
 
 ## 機能とブートストラップ
 
