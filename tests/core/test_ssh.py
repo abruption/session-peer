@@ -368,6 +368,78 @@ class SshRemoteOutcomes(unittest.TestCase):
         self.assertEqual(self.remote("list", json.dumps(payload), "", 0),
                          {**payload, **self.SSH_INFO})
 
+    def legacy_send_cli(self, outcome):
+        output = io.StringIO()
+        with mock.patch.object(session_peer, "tailscale_status", return_value={}), \
+             mock.patch.object(session_peer.Path, "read_text", return_value="fixture source"), \
+             mock.patch.object(session_peer.subprocess, "run", side_effect=[outcome]) as run, \
+             contextlib.redirect_stdout(output):
+            code = session_peer.main(["send", "--host", "user@fixture", "--to", "worker", "hello",
+                                      "--no-from", "--no-reply-to", "--no-update-notice", "--json"])
+        run.assert_called_once()
+        return code, json.loads(output.getvalue())
+
+    def test_malformed_legacy_send_objects_are_unknown_through_public_cli(self):
+        payloads = ({}, {"submitted": True}, {"ok": "false"}, {"command": "send"},
+                    {"ok": True, "command": "list"}, {"ok": False, "command": None},
+                    {"ok": 1}, {"ok": 0})
+        for payload in payloads:
+            for returncode in (0, 1, 2):
+                with self.subTest(payload=payload, returncode=returncode):
+                    code, result = self.legacy_send_cli(subprocess.CompletedProcess(
+                        [], returncode, json.dumps(payload).encode(), b'\xff diagnostic'))
+                    self.assertEqual(code, session_peer.EXIT_ERROR)
+                    self.assertFalse(result["ok"])
+                    self.assertEqual({key: result[key] for key in self.UNKNOWN}, self.UNKNOWN)
+                    self.assertNotIn("submitted", result)
+                    self.assertNotIn("consumptionConfirmed", result)
+
+    def test_legacy_boolean_send_outcomes_preserve_ordinary_exit_compatibility(self):
+        for ok in (True, False):
+            for has_command in (True, False):
+                payload = {"ok": ok, "target": {"pid": 7, "name": "worker"}}
+                if has_command:
+                    payload["command"] = "send"
+                if not ok:
+                    payload["error"] = "fixture legacy refusal"
+                for returncode in (0, 1, 2):
+                    with self.subTest(ok=ok, command=has_command, returncode=returncode):
+                        code, result = self.legacy_send_cli(subprocess.CompletedProcess(
+                            [], returncode, json.dumps(payload).encode(),
+                            b'\xffpython3: command not found; Permission denied'))
+                        self.assertEqual(code, 0 if ok else session_peer.EXIT_ERROR)
+                        self.assertEqual(result["ok"], ok)
+                        self.assertEqual(result["host"], "user@fixture")
+                        self.assertEqual(result["command"], "send")
+                        if ok:
+                            self.assertEqual(result["target"], payload["target"])
+                        else:
+                            self.assertIn(payload["error"], result["error"])
+                        for field in ("status", "reason", "retryAllowed", "submitted", "consumptionConfirmed"):
+                            self.assertNotIn(field, result)
+
+    def test_legacy_send_response_on_abnormal_exit_remains_unknown(self):
+        for ok in (True, False):
+            payload = {"ok": ok, "command": "send", "target": {"pid": 7},
+                       "error": "fixture legacy refusal"}
+            for returncode in (137, 255, -9):
+                with self.subTest(ok=ok, returncode=returncode):
+                    code, result = self.legacy_send_cli(subprocess.CompletedProcess(
+                        [], returncode, json.dumps(payload).encode(), b'\xff diagnostic'))
+                    self.assertEqual(code, session_peer.EXIT_ERROR)
+                    self.assertFalse(result["ok"])
+                    self.assertEqual({key: result[key] for key in self.UNKNOWN}, self.UNKNOWN)
+                    self.assertNotIn("submitted", result)
+
+    def test_legacy_send_response_on_shutdown_timeout_remains_unknown(self):
+        for ok in (True, False):
+            with self.subTest(ok=ok):
+                code, result = self.legacy_send_cli(subprocess.TimeoutExpired(
+                    ["ssh"], 120, output=json.dumps({"ok": ok}).encode(), stderr=b'\xff diagnostic'))
+                self.assertEqual(code, session_peer.EXIT_ERROR)
+                self.assertEqual({key: result[key] for key in self.UNKNOWN}, self.UNKNOWN)
+                self.assertNotIn("submitted", result)
+
     def test_antigravity_unknown_result_keeps_retry_and_request_evidence(self):
         payload = {"schemaVersion": 1, "command": "send", "ok": False,
                    "agent": "antigravity", "status": "unknown", "retryAllowed": False,

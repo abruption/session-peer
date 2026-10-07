@@ -2155,6 +2155,15 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
         raise ssh_failure_error(host, ssh_info, "transport_failed", str(exc)) from exc
 
     stdout, result, parsed_result, valid_result = parse_ssh_response(completed.stdout, argv)
+    # Legacy send objects retain their normal-exit compatibility, but an
+    # arbitrary JSON object is not an outcome. Only versioned responses can
+    # establish completion across abnormal transport exit/shutdown timeout.
+    legacy_send_result = (
+        argv and argv[0] == "send" and isinstance(result, dict)
+        and "schemaVersion" not in result and type(result.get("ok")) is bool
+        and result.get("command", "send") == "send"
+        and completed.returncode in (0, 1, 2)
+    )
     # Keep diagnostic decoding independent of protocol decoding. A locale's
     # stderr bytes must not prevent a complete stdout response reaching its
     # strict parser. Only diagnostic text may use replacement characters.
@@ -2175,7 +2184,7 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
         error = ssh_failure_error(host, ssh_info, failure, detail)
         raise incomplete_response_error(str(error), error.details)
     runtime_output = (stdout + "\n" + stderr).strip().lower()
-    if not valid_result and (runtime_output == "python"
+    if not valid_result and not legacy_send_result and (runtime_output == "python"
             or "python was not found" in runtime_output
             or ("python3" in runtime_output and any(marker in runtime_output for marker in (
                 "command not found", "not recognized as", "no such file", "python3: not found",
@@ -2192,8 +2201,7 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
         raise incomplete_response_error(f"{host}: {detail}")
     if not parsed_result or (isinstance(result, dict)
                              and "schemaVersion" in result and not valid_result) or (
-            argv and argv[0] == "send" and not valid_result
-            and not isinstance(result, dict)):
+            argv and argv[0] == "send" and not valid_result and not legacy_send_result):
         raise incomplete_response_error(f"{host}: unexpected output: {stdout[:200]}")
     if isinstance(result, dict):
         result.update(ssh_info)
