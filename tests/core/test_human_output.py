@@ -232,8 +232,14 @@ class HumanOutput(unittest.TestCase):
                     self.assertIn(peer.human_text(EXTERNAL), stderr)
                     _, json_stdout, json_stderr = self.invoke(*command, "--host", "fixture", "--json")
                     error = peer.ssh_failure_error("fixture", {}, "transport_failed", EXTERNAL)
+                    message, details = str(error), error.details
+                    if command[0] == "send":
+                        message += ("; submission outcome unknown. Do not automatically retry; "
+                                    "check the target before retrying.")
+                        details = {**details, "status": "unknown", "reason": "outcome_unknown",
+                                   "retryAllowed": False}
                     expected = json.dumps(peer.json_result(command[0], {
-                        "host": "fixture", "error": str(error), **error.details}, ok=False),
+                        "host": "fixture", "error": message, **details}, ok=False),
                         ensure_ascii=False) + "\n"
                     self.assertEqual(json_stdout.encode(), expected.encode())
                     self.assertEqual(json_stderr, "")
