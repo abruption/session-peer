@@ -1,3 +1,5 @@
+<div align="center">
+
 # session-peer
 
 [![PyPI](https://img.shields.io/pypi/v/session-peer)](https://pypi.org/project/session-peer/)
@@ -12,6 +14,8 @@
 
 可以请另一个会话审查改动、汇报进度或接手任务。
 session-peer使用各智能体自身的收件箱和队列；接收方智能体自行决定如何响应。
+
+</div>
 
 <a id="see-it-in-action"></a>
 

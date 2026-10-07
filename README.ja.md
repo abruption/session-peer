@@ -1,3 +1,5 @@
+<div align="center">
+
 # session-peer
 
 [![PyPI](https://img.shields.io/pypi/v/session-peer)](https://pypi.org/project/session-peer/)
@@ -12,6 +14,8 @@
 
 別のセッションに変更のレビュー、進捗報告、作業の引き継ぎを依頼できます。
 各エージェント固有の受信箱やキューを利用し、応答方法は受信側のエージェントが決定します。
+
+</div>
 
 <a id="see-it-in-action"></a>
 
