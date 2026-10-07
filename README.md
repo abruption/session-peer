@@ -30,9 +30,9 @@ in this ~22-second animation, not a screen recording; send success alone is not 
 ### Install
 
 Python 3.9+. The core local/SSH CLI has no third-party Python dependencies.
-Current stable release: **1.0.3**.
+Current stable release: **1.0.4**.
 
-As of 2026-10-07, maintenance version **1.0.4** is prepared, not published; see the [preparation notes](docs/releases/v1.0.4.md).
+Maintenance release dated 2026-10-07; see the [release notes](docs/releases/v1.0.4.md). Package publication and operational deployment are separate.
 
 ```bash
 pipx install session-peer
