@@ -166,6 +166,14 @@ Codex 报告 `ok`、`not_installed` 或 `error`，以及每个主目录的诊断
 每一行都有一个 `agent` 鉴别器。有关候选发现、
 元数据和权限边界，请参见[多主目录列出](multi-home-list.md)。
 
+Claude 注册表读取在列表、doctor、dry-run 目标选择和发送者发现中共用 1 MiB（1,048,576 字节）限制。
+记录仅包含较小的身份和收件箱元数据，因此该限制为扩展保留空间，同时避免无限读取。
+符号链接、非普通文件、超大记录、无效 UTF-8/JSON、非对象 JSON，以及无效的 PID 或收件箱/显示字段类型会被跳过，健康记录仍然保留。
+Doctor 在 `invalidRecords` 中统计被拒绝的条目，并保留记录权限诊断。POSIX 在可用时使用
+`O_NONBLOCK` 和 `O_NOFOLLOW`，检查打开文件的类型和身份，并在文件增长时仍限制读取量。
+Windows 使用有界二进制读取和身份检查，但没有这些 POSIX 标志的保护。文件系统操作仍可能阻塞，
+因此这不提供通用的文件系统超时保证。现有 PID/启动时间检查和收件箱权限保持不变。
+
 ## CLI 输入与输出选择
 
 在 list/send/doctor/update 上使用 `--output-format json` 获取结果信封；
