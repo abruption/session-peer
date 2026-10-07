@@ -322,6 +322,8 @@ Codex 消息限制为 32 KiB 的 UTF-8 文本（包括发送者/回复头），�
 
 本地 Codex 列表 JSON 使用通用响应信封，并在 `discovery.codex.homes` 中包含 `sessions`、`version` 以及针对各个目录的诊断信息。每个会话条目包含 `agent`、`id`、`name`（第一行，最多 120 个字符）、`cwd`、`updatedAt`（Unix 秒）、`archived`、规范的 `codexHome` 和 `stateDb`。顶层 `codexHome` 仅在单个候选目录且无清单错误时保留。每个成功的远程结果包含相同的字段，以及针对已安装独立副本的可选 `remoteVersion`。单个远程主机会返回一个对象；重复指定主机则返回一个数组。
 
+已安装版本探测属于补充信息：探测失败时保留发现结果及主操作的退出状态。此时省略 `remoteVersion`，并包含 `remoteVersionProbe: {status: "unknown", reason: ...}`，原因仅限于 `timeout`、`transport_failed`、`authentication_failed`、`host_key_failed`、`invalid_response` 或 `probe_failed`，不包含原始探测诊断。人类可读输出会显示版本未知提示。已确认未安装的远程仍省略这两个版本字段。远程更新的版本验证仍为必需步骤。
+
 在通用信封内，Codex 发送 JSON 包含 `target: {agent, id}`、`status: queued`（或预检运行下的 `validated`）、`chars`、`dryRun` 以及可选的 `queueId`。它还包括：
 
 - `codexHome`：解析后的绝对目标目录，而非发送端的推测。
@@ -330,6 +332,10 @@ Codex 消息限制为 32 KiB 的 UTF-8 文本（包括发送者/回复头），�
 - `consumptionConfirmed`：始终为 `false`；无论是入队还是验证都不能证明已被消费。
 
 错误会将通用信封的 `ok` 设置为 `false`，添加 `error`，并在目录证据导致失败时包含 `codexHomeResolution`。超时具有未知的提交结果；错误发生时缺少 `submitted` 绝不能被解释为没有任何内容入队的证据。列表结果不描述提交，且没有提交/消费字段。
+
+本地 Codex 队列超时或未收到可信完整响应的 SSH 发送会公开 `status: unknown`、`reason: outcome_unknown` 和 `retryAllowed: false`。SSH 退出码 255 或 137、缺失或格式错误的 stdout，以及认证、主机密钥或解释器诊断本身都不能证明没有提交。即使 SSH 随后失败或超时，带有版本的完整响应仍保留成功、拒绝和原生提交事实；诊断 stderr 中无效的 UTF-8 不会使有效的协议 stdout 失效。执行前失败和已完成的拒绝保留现有字段。不会自动重试或尝试回退，结果未知时绝不添加 `submitted: false`。缺少重试元数据并不代表允许重新发送。
+
+没有模式的旧版发送对象仍可在普通退出码 0/1/2 下接受，但 `ok` 必须为布尔值，且如果存在 `command` 字段，其值必须为 `send`。发生异常退出或关闭阶段超时时，这些对象不能证明操作已完成。
 
 对于每个命令，单个远程主机会返回扁平对象，多个主机会返回数组。当存在 `CODEX_THREAD_ID`（或兼容性回退项 `CODEX_SESSION_ID`）时，消息信封和回复命令会标识发起的 Codex 线程。
 

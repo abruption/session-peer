@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -194,9 +195,44 @@ class Codex(unittest.TestCase):
     def test_timeout_is_unknown_and_never_retried(self):
         with mock.patch.object(peer, "codex_executable", return_value="codex"), \
              mock.patch.object(peer.subprocess, "run", side_effect=subprocess.TimeoutExpired("codex", 30)) as run:
-            with self.assertRaisesRegex(peer.CcPeerError, "outcome unknown"):
+            with self.assertRaisesRegex(peer.CcPeerError, "outcome unknown") as caught:
                 peer.queue_codex(self.args, "test")
         self.assertEqual(run.call_count, 1)
+        self.assertEqual(caught.exception.details, {
+            "status": "unknown", "reason": "outcome_unknown", "retryAllowed": False})
+        self.assertNotIn("submitted", caught.exception.details)
+
+    def test_queue_timeout_retains_json_exit_contract_without_native_claims(self):
+        with mock.patch.object(peer, "codex_executable", return_value="codex"), \
+             mock.patch.object(peer.subprocess, "run", side_effect=subprocess.TimeoutExpired("codex", 30)) as run:
+            code, result = self.invoke("send", "--to", "codex:" + THREAD,
+                                       "--codex-home", str(self.root), "--allow-inactive-codex-home",
+                                       "--no-from", "--no-reply-to", "--no-update-notice", "--json", "test")
+        self.assertEqual(code, peer.EXIT_ERROR)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "unknown")
+        self.assertEqual(result["reason"], "outcome_unknown")
+        self.assertIs(result["retryAllowed"], False)
+        self.assertNotIn("submitted", result)
+        self.assertNotIn("consumptionConfirmed", result)
+        self.assertIn("Do not automatically retry", result["error"])
+        run.assert_called_once()
+
+    def test_real_fake_native_queue_timeout_is_unknown_without_retry(self):
+        real_run = subprocess.run
+        script = "import threading; threading.Event().wait(30)"
+
+        def fake_codex(command, **options):
+            self.assertEqual(command[1], "queue")
+            return real_run([sys.executable, "-c", script], **{**options, "timeout": 0.1})
+
+        with mock.patch.object(peer, "codex_executable", return_value="fixture-codex"), \
+             mock.patch.object(peer.subprocess, "run", side_effect=fake_codex) as run, \
+             self.assertRaisesRegex(peer.CcPeerError, "outcome unknown") as caught:
+            peer.queue_codex(self.args, "test")
+        self.assertEqual(caught.exception.details, {
+            "status": "unknown", "reason": "outcome_unknown", "retryAllowed": False})
+        run.assert_called_once()
 
     def test_failure_is_not_success(self):
         for error in ("no rollout found", "attempt to write a readonly database"):

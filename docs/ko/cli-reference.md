@@ -501,6 +501,14 @@ Codex 메시지는 측정된 Codex 서버 제한이 아닌 session-peer의 이�
 독립 실행형 복사본에 대한 선택적 `remoteVersion`이 포함됩니다. 단일 원격 호스트는
 객체를 반환하고, 반복된 호스트는 배열을 반환합니다.
 
+설치 버전 조회는 보조 정보입니다. 조회가 실패해도 검색 결과와 주 작업의 종료 상태를
+유지합니다. 이 경우 `remoteVersion`을 생략하고 원본 조회 진단 없이 제한된 이유
+(`timeout`, `transport_failed`, `authentication_failed`, `host_key_failed`,
+`invalid_response`, `probe_failed`)를 담은
+`remoteVersionProbe: {status: "unknown", reason: ...}`를 포함합니다. 사람용 출력에는
+버전을 알 수 없다는 안내가 표시됩니다. 미설치가 확인된 원격 대상은 기존처럼 두 버전
+필드를 모두 생략합니다. 원격 업데이트의 버전 검증은 계속 필수입니다.
+
 공통 봉투 내에서 Codex 전송 JSON은 `target: {agent, id}`, `status: queued`(또는
 dry-run 시 `validated`), `chars`, `dryRun` 및 선택적 `queueId`를 포함합니다. 또한
 다음 항목들도 포함됩니다:
@@ -519,6 +527,20 @@ dry-run 시 `validated`), `chars`, `dryRun` 및 선택적 `queueId`를 포함합
 알 수 없음을 의미하며, 오류 발생 시 `submitted`가 누락되었다고 해서 아무것도 큐에
 들어가지 않았다는 증거로 해석해서는 안 됩니다. 목록 조회 결과는 제출을 설명하지
 않으므로 제출/소비 필드가 없습니다.
+
+로컬 Codex 큐 시간 초과 또는 신뢰할 수 있는 완전한 응답이 없는 SSH 전송은
+`status: unknown`, `reason: outcome_unknown`, `retryAllowed: false`를 노출합니다.
+SSH 종료 코드 255 또는 137, 누락되거나 잘못된 stdout, 인증·호스트 키·인터프리터
+진단만으로는 아무것도 제출되지 않았음을 증명할 수 없습니다. 완전한 버전 명시 응답은 이후
+SSH 실패나 시간 초과가 발생해도 성공·거부 및 네이티브 제출 사실을 보존하며,
+진단 stderr의 잘못된 UTF-8은 유효한 프로토콜 stdout을 무효화하지 않습니다.
+실행 전 실패와 완료된 거부는 기존 필드를 유지합니다. 자동 재시도나 대체 경로를
+시도하지 않으며, 결과를 알 수 없을 때 `submitted: false`를 추가하지 않습니다.
+재시도 메타데이터가 없다고 해서 재전송이 허용되는 것은 아닙니다.
+
+스키마 없는 기존 전송 객체는 `ok`가 불리언이고 `command` 필드가 있다면 `send`인 경우
+일반 종료 코드 0/1/2에서 계속 허용됩니다. 비정상 종료나 종료 단계의 시간 초과가 발생하면
+이 객체만으로 완료를 증명할 수 없습니다.
 
 모든 명령어에서 단일 원격 호스트는 플랫 객체를 반환하고 여러 호스트는 배열을
 반환합니다. `CODEX_THREAD_ID`(또는 호환성 대체 수단인 `CODEX_SESSION_ID`)가

@@ -14,9 +14,10 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import InvalidStatus
 
 from .transport_errors import failure, TransportFailure
+from .framing import application_frame, MAX_APPLICATION_BYTES
 
 MAX_FRAME = 256 * 1024
-MAX_MESSAGE = 64 * 1024
+MAX_MESSAGE = MAX_APPLICATION_BYTES
 TIMEOUT = 8
 
 
@@ -226,9 +227,7 @@ class Secure:
         return self
 
     async def send(self, value):
-        data = json.dumps(value, separators=(',', ':'), ensure_ascii=False).encode()
-        if len(data) > MAX_MESSAGE:
-            raise ValueError('Message too large')
+        data = application_frame(value)
         pending = memoryview(struct.pack('!I', len(data)) + data)
         while pending:
             size = self.ssl.write(pending)

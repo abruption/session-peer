@@ -16,6 +16,7 @@ from .wire import Secure, Tcp, Ws, relay_stream, direct_address
 from .native import Policy, Native
 from .rotation import remote_prepare, remote_commit, remote_status
 from .transport_errors import failure, NoAuthenticatedRoute, TransportFailure
+from .framing import application_frame, worker_frame, FrameRejected, valid_text
 
 
 # Pre-authentication admission is bounded separately from paired connections.
@@ -143,9 +144,14 @@ class Receiver:
         if not isinstance(alias, str):
             raise Rejected('invalid_target')
         self.policy.authorize(peer, 'send', alias)
-        if not isinstance(text, str) or not text.strip() or len(text.encode()) > 32768 or '\0' in text:
+        if not valid_text(text):
             raise Rejected('invalid_message')
         binding = self.policy.targets[alias]
+        # Binding overhead must also fit, before resolve or journal begin.
+        try:
+            worker_frame(binding, 'resolve' if op == 'resolve' else 'send', text)
+        except FrameRejected as exc:
+            raise Rejected(str(exc)) from None
         if op == 'resolve':
             result = await self.native.invoke(binding, 'resolve', text)
             if result.get('reason') == 'codex_executable_not_found':
@@ -408,6 +414,17 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
     if not record or record['status'] != 'paired':
         raise Rejected('unpaired_device')
     routes = record['routes']
+    value = request(store, peer, op, body, ident)
+    try:
+        if op in ('send', 'resolve') and (
+                not isinstance(body, dict) or not valid_text(body.get('message'))):
+            raise FrameRejected('invalid_message')
+        # Includes sender/receiver IDs and escaped JSON, before connecting.
+        application_frame(value)
+    except FrameRejected as exc:
+        return {'ok': False, 'status': 'refused', 'submitted': False,
+                'reason': str(exc), 'requestId': value['id'],
+                'retryAllowed': False, 'consumptionConfirmed': False}
 
     async def ready_once(kind, attempt_id):
         channel = await open_channel(store, record['certificate'], routes, kind, credential,
@@ -489,14 +506,27 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
     kind, channel, selected_attempt_id = winner
     setup = ({'setupAttempts': setup_attempts[kind], 'setupDegraded': True,
               'setupFailureHistory': history[kind]} if setup_attempts[kind] > 1 else {})
-    value = request(store, peer, op, body, ident)
+    submitted = False
     try:
+        # Route admission/TLS/probe setup does not consume application lifetime.
+        # Preserve the preflighted request ID/body; Secure.send rechecks framing
+        # after refreshing the expiry, before any application bytes are written.
+        value['expires'] = time.time() + 60
         # Exactly one application submission, after path selection. No failover resend.
         await channel.send(value)
+        submitted = True
         result = await channel.recv()
         return {**result, 'route': kind, 'receiverAccepted': result.get('ok', False),
                 'relayAttached': kind == 'relay', 'requestId': value['id'],
                 'attemptId': selected_attempt_id, **setup}
+    except FrameRejected as exc:
+        if not submitted:
+            return {'ok': False, 'status': 'refused', 'submitted': False,
+                    'reason': str(exc), 'requestId': value['id'], 'route': kind,
+                    'retryAllowed': False, 'consumptionConfirmed': False, **setup}
+        return {'ok': False, 'status': 'unknown', 'requestId': value['id'],
+                'route': kind, 'attemptId': selected_attempt_id,
+                'retryAllowed': False, 'consumptionConfirmed': False, **setup}
     except Exception:
         return {'ok': False, 'status': 'unknown', 'requestId': value['id'],
                 'route': kind, 'attemptId': selected_attempt_id,
