@@ -15,7 +15,7 @@ class StableCandidate(unittest.TestCase):
         self.assertIn('__version__ = "1.0.4"',
                       (ROOT / "session_peer_core/common.py").read_text(encoding="utf-8"))
 
-    def test_all_current_readmes_and_runbooks_use_prepared_version(self):
+    def test_all_current_readmes_and_runbooks_use_stable_version(self):
         for suffix in ("", ".ko", ".ja", ".zh-CN"):
             for stem in ("README", "RELEASING"):
                 with self.subTest(stem=stem, suffix=suffix):
@@ -31,7 +31,7 @@ class StableCandidate(unittest.TestCase):
                                        "Approve and deploy", "Reject"):
                             self.assertIn(marker, text)
 
-    def test_prepared_notes_keep_scope_and_limits_visible(self):
+    def test_release_notes_keep_scope_and_limits_visible(self):
         for locale in ("", "ko/", "ja/", "zh-CN/"):
             text = (ROOT / ("docs/" + locale + "releases/v1.0.4.md")).read_text(encoding="utf-8")
             for marker in ("#262", "#263", "#264", "#265", "#266", "#267",
@@ -41,18 +41,22 @@ class StableCandidate(unittest.TestCase):
                 with self.subTest(locale=locale, marker=marker):
                     self.assertIn(marker, text)
 
-    def test_preparation_does_not_claim_publication(self):
-        self.assertIn("Current stable release: **1.0.3**.",
+    def test_stable_release_keeps_operational_deployment_separate(self):
+        self.assertIn("Current stable release: **1.0.4**.",
                       (ROOT / "README.md").read_text(encoding="utf-8"))
         for suffix in ("", ".ko", ".ja", ".zh-CN"):
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
-            self.assertIn("**1.0.3**", text)
             self.assertIn("**1.0.4**", text)
+            self.assertNotIn("**1.0.3**", text)
             self.assertIn("2026-10-07", text)
         for locale in ("", "ko/", "ja/", "zh-CN/"):
             text = (ROOT / ("docs/" + locale + "README.md")).read_text(encoding="utf-8")
             self.assertIn("releases/v1.0.3.md", text)
             self.assertIn("releases/v1.0.4.md", text)
+        self.assertIn("Package publication and operational deployment are separate.",
+                      (ROOT / "README.md").read_text(encoding="utf-8"))
+        self.assertIn("Package publication does not include operational deployment",
+                      (ROOT / "docs/releases/v1.0.4.md").read_text(encoding="utf-8"))
 
     def test_historical_security_notes_keep_validation_and_limits_visible(self):
         for locale in ("", "ko/", "ja/", "zh-CN/"):
