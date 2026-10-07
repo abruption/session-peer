@@ -9,6 +9,7 @@ import sys
 
 import session_peer as core
 from .store import Rejected
+from .framing import worker_frame, FrameRejected, valid_text
 
 
 _WSL_RELEASE = Path('/proc/sys/kernel/osrelease')
@@ -170,7 +171,7 @@ def invoke_windows_codex(binding, operation, text=None):
     if operation == 'list':
         args += ['--agent', 'codex', '--all']
     else:
-        if not isinstance(text, str) or not text.strip() or len(text.encode()) > 32768 or '\0' in text:
+        if not valid_text(text):
             raise Rejected('invalid_message')
         args += ['--to', binding['target'], '--message=' + text, '--no-from', '--no-reply-to']
         if operation == 'resolve':
@@ -212,6 +213,11 @@ class Native:
         self.slots = asyncio.Semaphore(2)
 
     async def invoke(self, binding, operation, text=None):
+        try:
+            payload = worker_frame(binding, operation, text)
+        except FrameRejected as exc:
+            return {'ok': False, 'status': 'refused', 'submitted': False,
+                    'reason': str(exc), 'retryAllowed': False, 'consumptionConfirmed': False}
         async with self.slots:
             process = await asyncio.create_subprocess_exec(
                 sys.executable, '-m', 'session_peer_relay.worker',
@@ -219,7 +225,6 @@ class Native:
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL)
             try:
-                payload = json.dumps({'binding': binding, 'operation': operation, 'text': text}).encode()
                 out, _ = await asyncio.wait_for(process.communicate(payload), 35 if operation == 'send' else 12)
                 if process.returncode or len(out) > 60*1024:
                     raise ValueError('worker_failed')
