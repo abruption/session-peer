@@ -501,6 +501,14 @@ Codex 메시지는 측정된 Codex 서버 제한이 아닌 session-peer의 이�
 독립 실행형 복사본에 대한 선택적 `remoteVersion`이 포함됩니다. 단일 원격 호스트는
 객체를 반환하고, 반복된 호스트는 배열을 반환합니다.
 
+설치 버전 조회는 보조 정보입니다. 조회가 실패해도 검색 결과와 주 작업의 종료 상태를
+유지합니다. 이 경우 `remoteVersion`을 생략하고 원본 조회 진단 없이 제한된 이유
+(`timeout`, `transport_failed`, `authentication_failed`, `host_key_failed`,
+`invalid_response`, `probe_failed`)를 담은
+`remoteVersionProbe: {status: "unknown", reason: ...}`를 포함합니다. 사람용 출력에는
+버전을 알 수 없다는 안내가 표시됩니다. 미설치가 확인된 원격 대상은 기존처럼 두 버전
+필드를 모두 생략합니다. 원격 업데이트의 버전 검증은 계속 필수입니다.
+
 공통 봉투 내에서 Codex 전송 JSON은 `target: {agent, id}`, `status: queued`(또는
 dry-run 시 `validated`), `chars`, `dryRun` 및 선택적 `queueId`를 포함합니다. 또한
 다음 항목들도 포함됩니다:

@@ -514,6 +514,14 @@ Each successful remote result includes the same fields and an optional `remoteVe
 installed standalone copy. One remote host returns an object; repeated hosts
 return an array.
 
+The installed-version probe is supplementary: its failure preserves discovery and
+the primary result's exit status. Such results omit `remoteVersion` and include
+`remoteVersionProbe: {status: "unknown", reason: ...}` with a bounded reason
+(`timeout`, `transport_failed`, `authentication_failed`, `host_key_failed`,
+`invalid_response`, or `probe_failed`), without raw probe diagnostics. Human
+output shows a version-unknown notice. A confirmed uninstalled remote continues
+to omit both version fields. Remote update verification remains mandatory.
+
 Within the common envelope, Codex send JSON includes `target: {agent, id}`,
 `status: queued` (or `validated` under dry-run), `chars`, `dryRun`, and optional
 `queueId`. It also includes:

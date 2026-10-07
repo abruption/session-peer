@@ -322,6 +322,8 @@ Codex 消息限制为 32 KiB 的 UTF-8 文本（包括发送者/回复头），�
 
 本地 Codex 列表 JSON 使用通用响应信封，并在 `discovery.codex.homes` 中包含 `sessions`、`version` 以及针对各个目录的诊断信息。每个会话条目包含 `agent`、`id`、`name`（第一行，最多 120 个字符）、`cwd`、`updatedAt`（Unix 秒）、`archived`、规范的 `codexHome` 和 `stateDb`。顶层 `codexHome` 仅在单个候选目录且无清单错误时保留。每个成功的远程结果包含相同的字段，以及针对已安装独立副本的可选 `remoteVersion`。单个远程主机会返回一个对象；重复指定主机则返回一个数组。
 
+已安装版本探测属于补充信息：探测失败时保留发现结果及主操作的退出状态。此时省略 `remoteVersion`，并包含 `remoteVersionProbe: {status: "unknown", reason: ...}`，原因仅限于 `timeout`、`transport_failed`、`authentication_failed`、`host_key_failed`、`invalid_response` 或 `probe_failed`，不包含原始探测诊断。人类可读输出会显示版本未知提示。已确认未安装的远程仍省略这两个版本字段。远程更新的版本验证仍为必需步骤。
+
 在通用信封内，Codex 发送 JSON 包含 `target: {agent, id}`、`status: queued`（或预检运行下的 `validated`）、`chars`、`dryRun` 以及可选的 `queueId`。它还包括：
 
 - `codexHome`：解析后的绝对目标目录，而非发送端的推测。

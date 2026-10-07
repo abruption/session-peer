@@ -504,6 +504,13 @@ Codex メッセージは、測定された Codex サーバーの制限ではな�
 成功した各リモート結果には同じフィールドが含まれ、インストールされたスタンドアロンコピーに対するオプションの `remoteVersion` も
 含まれます。1 つのリモートホストはオブジェクトを返し、複数のホストは配列を返します。
 
+インストール済みバージョンの照会は補助情報です。照会が失敗しても、検出結果と主処理の終了状態を保持します。
+この場合は `remoteVersion` を省略し、生の照会診断を含めず、限定された理由
+（`timeout`、`transport_failed`、`authentication_failed`、`host_key_failed`、
+`invalid_response`、`probe_failed`）を持つ `remoteVersionProbe: {status: "unknown", reason: ...}`
+を含めます。人間向けの出力にはバージョン不明の通知を表示します。未インストールが確認されたリモートでは、
+従来どおり両方のバージョンフィールドを省略します。リモート更新のバージョン検証は引き続き必須です。
+
 共通エンベロープ内で、Codex send JSON には `target: {agent, id}`、
 `status: queued`（dry-run の場合は `validated`）、`chars`、`dryRun`、およびオプションの
 `queueId` が含まれます。また、以下も含まれます:
