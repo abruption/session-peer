@@ -1,23 +1,23 @@
 # 发布session-peer
 
-1.0.4是继1.0.3之后的2026-10-07维护版本。仅获准备授权时，应在标签、草稿、工作流调度或发布前停止；明确要求完成此版本发布可授权这些发布步骤，但不能替代必需的人工PyPI环境审核或运营部署。区分准备、不可变GitHub发布、人工PyPI环境审核与发布后验证。受保护的main要求经过审核、保持最新的PR及汇总发布门禁，包括Python平台矩阵、文档、shell、包/单文件/MCP/Relay/Control、集成测试与Python/Node依赖审计。
+1.0.4是继1.0.3之后、日期为2026-10-07的维护版本。仅获得准备授权时，必须在创建标签、草稿、调度工作流或发布前停止。明确要求完成此版本发布，即表示授权执行这些发布步骤；但不能替代必需的人工PyPI环境审核或生产环境部署。请区分准备、不可变的GitHub发布、人工PyPI环境审核和发布后验证。受保护的main要求PR经过审核并与main保持最新，同时通过汇总发布门禁；门禁涵盖Python平台测试矩阵、文档、shell、包/单文件/MCP/Relay/Control、集成测试以及Python/Node依赖审计。
 
 ## 历史证据与当前边界
 
-五主机v1.0.0 RC4 rc4-rerun-02测试运行14,436.65秒：complete记录、公开健康241/241、探测147/147、提交21/21及Relay重启恢复3.182秒。独立ACK为20/21。T120 Windows原生Claude因TUI关闭未确认原始ACK，另一次单独测试收到准确ACK。所有者在#164接受此例外。保留20/21；历史证据不验证v1.0.4。#161的外部停滞根因仍未确认。
+在5台主机上进行的v1.0.0 RC4 rc4-rerun-02测试持续了14,436.65秒。记录状态为complete，公开健康检查为241/241，探测为147/147，提交为21/21，Relay重启后的恢复时间为3.182秒。独立确认的ACK为20/21。T120时Windows原生Claude的TUI已关闭，因此原始ACK未能确认；之后另一次单独测试收到了准确的ACK。所有者在#164中接受了这一例外。请保留20/21这一结果；这段历史记录不能证明v1.0.4已通过验证。#161仍未解决，外部停滞的根本原因也尚未确认。
 
-Python/PyPI版本为1.0.4，对应标签和GitHub发布为v1.0.4。仅在获得发布授权后设为稳定版及Latest。 插件版本独立。核心需要Python 3.9+、MCP需要3.10+、Relay接收端/服务端需要Unix或WSL与Python 3.11+。服务接收端需要服务PATH中的Codex或运营人员拥有的codexBin绑定。包发布不能证明托管补救部署、设备群安装、生产重启、实时OAuth健康或ACK。未知结果不能授权自动重发。
+Python/PyPI版本为1.0.4，对应标签和GitHub发布为v1.0.4。只有在获得发布授权后，才能将其设为稳定版和Latest。插件版本独立管理。核心CLI需要Python 3.9+，MCP需要3.10+，Relay接收端/服务器需要Unix或WSL及Python 3.11+。由服务管理器启动的接收端需要在服务PATH中找到Codex，或使用由运维人员管理的codexBin绑定。软件包发布不能证明托管服务的修复已部署、已安装到所有设备、生产服务已重启、线上OAuth运行正常或代理已发送ACK。未知结果不能作为自动重发的依据。
 
 ## 源码与配置门禁
 
-1. 将v1.0.4变更与1.0.3及四种语言的说明对照。要求整合后的main包含#262、#263、#264、#265、#266、#267六项维护修复。保留已发布的v1.0.3安全历史及独立技能的版本/最低/完整覆盖契约。确认包/生成版本、四份README稳定版提示和归档说明；冻结cc_peer.py并从发行包排除。排除凭据、密钥、数据库、重放状态、浏览器配置、本地证据及聊天。
-2. 运行完整本地测试和PR门禁。合并后要求整合后的公开main准确提交通过CI；私有公告分支检查不能替代该公开发布门禁。验证干净wheel/sdist安装、隔离环境安装import、准确CLI版本、初始化home的JSON list、extras及pip check。显式空Codex home必须以state_db_missing安全失败。不要发送实时消息。
-3. 确认PyPI尚无1.0.4文件。2026-10-07准备检查中，该版本JSON返回HTTP 404。检查GitHub Immutable Releases及v*标签规则：允许创建，禁止无绕过的标签修改/删除。所有者于2026-10-03启用 (规则24408525)，2026-10-05检查确认严格main发布门禁。2026-10-07 GitHub API检查再次确认Immutable Releases启用、规则24408525有效、范围refs/tags/v*、无绕过的更新/删除禁令。历史v1.0.2为非不可变且无资产，不是已验证单文件发布；发布前重新检查当前配置。
-4. 确认Trusted Publisher将session-peer映射到abruption/session-peer、publish.yml和pypi。2026-10-05通过已登录PyPI浏览器验证该映射；这是历史证据，不是新的PyPI浏览器复验。2026-10-07 GitHub API检查再次确认要求审核者`abruption`、允许自审 (`prevent_self_review: false`) 及`v*`标签。2026-10-05检查时管理员绕过启用 (`can_admins_bypass: true`)；不要把该历史观察当作新的绕过策略检查。所有者此前的[2026-09-29映射检查](https://github.com/abruption/session-peer/issues/235#issuecomment-5882178667)也是历史证据。重新检查配置，使用正常人工审核，不得静默绕过。
+1. 将v1.0.4的变更与v1.0.3及四种语言的发布说明对照。确保合并后的main包含#262、#263、#264、#265、#266、#267这6项维护修复。保留已发布的v1.0.3安全历史，以及独立技能的版本、最低运行时版本和完整功能覆盖版本契约。确认软件包和生成文件中的版本、四种语言README中的稳定版提示，以及归档内的发布说明。冻结cc_peer.py并将其排除在发行包之外；同时排除凭据、密钥、数据库、重放状态、浏览器配置文件、本地证据和聊天记录。
+2. 运行完整的本地测试和PR发布门禁。合并后，必须确认合并后的公开main在准确提交上通过CI。私有安全公告修复分支上的检查不能替代公开发布门禁。验证在干净环境中安装wheel/sdist、在隔离环境中导入已安装的软件包、CLI版本准确、在已初始化主目录中执行JSON list、extras以及pip check。显式指定的空Codex主目录必须以state_db_missing安全失败（fail closed）。此门禁不发送真实消息。
+3. 确认PyPI上尚无1.0.4文件。2026-10-07的准备检查中，该版本JSON返回了HTTP 404。检查GitHub Immutable Releases和v*标签规则：允许创建标签；禁止更新或删除标签，且不设置绕过权限。所有者于2026-10-03启用了该规则（规则编号24408525），2026-10-05的检查确认严格的main发布门禁。2026-10-07的GitHub API检查再次确认Immutable Releases已启用、规则24408525有效、适用于refs/tags/v*，并且禁止更新/删除且没有绕过权限。历史版本v1.0.2并非不可变，也没有发布资产，因此不是经过验证的单文件发布版本。发布前请重新检查当前设置。
+4. 确认Trusted Publisher将session-peer映射到abruption/session-peer、publish.yml和pypi。2026-10-05通过已登录的PyPI浏览器确认过该映射；这属于历史证据，并非新的PyPI浏览器复核。2026-10-07的GitHub API检查再次确认必须由审核者`abruption`审核、允许自审 (`prevent_self_review: false`)，并允许`v*`标签。2026-10-05检查时，管理员绕过权限已启用 (`can_admins_bypass: true`)；不要将这项历史观察当作对当前绕过策略的确认。所有者此前的[2026-09-29映射检查](https://github.com/abruption/session-peer/issues/235#issuecomment-5882178667)同样属于历史证据。请重新检查设置并按正常流程进行人工审核，不得擅自绕过。
 
 ## 准备不可变草稿
 
-准备PR合并后记录准确main提交并在其上创建轻量标签。不得移动已有标签。由仓库所有者在受保护main的准确提交上执行准备；调度与验证间main推进将安全失败。
+准备PR合并后，记录准确的main提交，并在该提交上创建轻量标签。不要移动已有标签。由仓库所有者在受保护main的这一准确提交上执行准备；如果main在调度与验证之间出现新提交，流程将fail closed（安全侧停止）。
 
 ```bash
 git fetch origin main --tags
@@ -32,11 +32,11 @@ gh workflow run prepare-release.yml --repo abruption/session-peer \
   --ref main -f tag="$release_tag"
 ```
 
-prepare-release.yml验证源码/ref/版本/祖先关系，执行两次可复现构建、归档检查、隔离安装测试与依赖审计。向空草稿证明并附加恰好七项资产：wheel、sdist、session_peer.py、install.sh、SKILL.md、SHA256SUMS及release-provenance.json。manifest覆盖五项payload；签名来源证明也覆盖manifest及证据。不覆盖已有资产。发布前审核成功准备运行、准确提交、七个文件、哈希及证明。附加草稿不等于发布。
+prepare-release.yml会验证源码/ref/版本/提交祖先关系，执行两次可复现构建、归档检查、隔离环境安装测试和依赖审计。它会向空草稿附加并证明恰好七个资产：wheel、sdist、session_peer.py、install.sh、SKILL.md、SHA256SUMS和release-provenance.json。manifest涵盖五个发布载荷（payload）；签名来源证明还涵盖manifest和证据。不会覆盖已有资产。发布前请检查成功的准备工作流、准确提交、七个文件、哈希和证明。将文件附加到草稿不等于发布。
 
 ## 发布锁定的GitHub版本
 
-只有获得所有者对该版本的明确授权才发布。已有完成此次发布的指令满足流程批准要求，不要仅因本手册再次要求确认。它不替代所需的人工pypi环境审核。发布锁定标签与资产，并启动publish.yml。
+只有获得所有者对该版本的明确授权后才能发布。若已有明确指令要求完成此次发布，该指令已满足流程审批要求，不要仅因本手册再次要求确认。但这不能替代必需的人工pypi环境审核。发布会锁定标签和资产，并启动publish.yml。
 
 ```bash
 gh release edit v1.0.4 --repo abruption/session-peer \
@@ -45,24 +45,24 @@ gh release edit v1.0.4 --repo abruption/session-peer \
 
 publish.yml要求仓库所有者，验证准确标签/源码/main祖先关系，下载已锁定不可变资产并验证认证来源证明与manifest。不会重新构建或增加资产。PyPI任务前必须再次通过安装检查与当前依赖审计。准备时审计成功不是当前审计证据。
 
-## 人工审核待处理的PyPI部署
+## 对待处理的PyPI部署进行人工审核
 
-1. 上传前观察准确Actions运行正等待pypi审核。记录运行URL/ID与尝试次数、标签、提交、SHA256SUMS、release-provenance.json和待处理时间。源码测试和配置不能证明暂停；下一次发布的实际观察仍是#235验收检查。
-2. 必需的人工审核者检查候选证据及当前Trusted Publisher/环境配置。在**Review deployments**选择**pypi**，仅获授权时明确选择**Approve and deploy**。GitHub发布授权不替代此审核。部署进入待处理状态时请求所需人工审核，并保留环境门禁。
-3. 拒绝上传时选择**pypi**，说明原因并选择**Reject**。若预期暂停或控件缺失，在上传前停止并取消运行。保留被拒绝/取消运行并解决原因，不得移动标签或重复使用版本以规避拒绝。
-4. 记录审核者、决定、评论、时间及结果，保留上传和验证证据。拒绝既不是成功发布，也不是成功验证批准暂停。管理员绕过属例外，需另获所有者明确授权，记录原因、操作者、时间、运行、标签和提交。
+1. 上传前确认准确的Actions运行正在等待pypi审核。记录运行URL/ID、尝试次数、标签、提交、SHA256SUMS、release-provenance.json和等待时间。源码测试和仓库设置都不能证明工作流确实暂停；下一次发布时实际观察暂停情况仍是#235的验收检查。
+2. 必需的人工审核者检查候选证据以及当前Trusted Publisher/环境设置。在**Review deployments**中选择**pypi**，仅在获得授权时才明确选择**Approve and deploy**。GitHub发布授权不能替代此项审核。部署进入待处理状态后，应请求必需的人工审核，并保持环境门禁。
+3. 如需拒绝上传，请选择**pypi**，说明原因并选择**Reject**。如果没有出现预期的暂停或控制选项，请在上传前停止并取消运行。保留被拒绝或取消的运行记录并查明原因；不得为规避拒绝而移动标签或重用版本。
+4. 记录审核者、决定、评论、时间和结果，并保留上传与验证证据。拒绝不表示发布成功，也不表示已成功验证审批门禁按预期暂停。管理员绕过属于例外，必须另行获得所有者的明确授权，并记录原因、操作者、时间、运行、标签和提交。
 
 ## 验证发布或恢复
 
-验证publish.yml及其PyPI验证对准确标签/提交成功。下载两个PyPI文件，将准确文件列表和哈希与锁定候选/来源证明比较，并在新环境分别安装。再次检查隔离版本、初始化home的JSON list、extras及pip check。确认稳定版/Latest及正常更新选择v1.0.4。关闭里程碑前记录证据；保留#161监控。
+确认publish.yml及PyPI验证在准确的标签/提交上成功。下载PyPI上的两个文件，比较文件清单及哈希与锁定候选/来源证明，并分别在干净环境中安装。再次检查隔离环境中的版本、已初始化主目录上的JSON list、extras和pip check。确认该版本已设为稳定版/Latest，且常规更新会选择v1.0.4。关闭里程碑前记录证据；将#161保留为监控事项。
 
-GitHub和PyPI发布是独立不可逆步骤。GitHub发布后审计失败可能留下没有PyPI文件的锁定版本；保留两次运行和准确资产。不得绕过审计、用修改资产重新上传、跳过已有文件或重用版本。部分1.0.4上传或不匹配会停止推广。诊断首个失败门禁，通过已审核变更和新版本 (通常1.0.5) 前进修复。yank不会允许重用。
+GitHub发布和PyPI发布是两个彼此独立且不可逆的步骤。GitHub发布后若审计失败，可能留下一个已锁定但没有PyPI文件的版本；请保留两次运行记录和准确的资产。不得绕过审计、修改资产后重新上传、跳过已存在的文件或重用版本。若1.0.4只上传了部分文件或文件不匹配，应停止发布升级。诊断第一个失败的门禁，并通过经过审核的变更和新版本（通常为1.0.5）进行前向修复（fix forward）。撤回（yank）也不能让版本重新用于发布。
 
 ## 已验证单文件安装
 
-较新的已认证GitHub CLI必须支持gh attestation verify及签名工作流、源码ref/digest、OIDC issuer和托管runner策略。测试基线为2.102.0；支持所有标志的最早版本未确定。仓库/证明读取权限足够，无需发布权限。[GitHub CLI验证源码](https://github.com/cli/cli/blob/v2.102.0/pkg/cmd/attestation/verify/verify.go)记录策略标志。本地fixture验证策略/顺序/错误行为，不证明真实签名接受。
+较新且已登录的GitHub CLI必须支持gh attestation verify，以及签名工作流、源码ref/digest、OIDC issuer和GitHub托管runner策略。测试基线为2.102.0；尚未确定最早支持全部标志的版本。拥有仓库/证明的读取权限即可，无需发布权限。[GitHub CLI验证源码](https://github.com/cli/cli/blob/v2.102.0/pkg/cmd/attestation/verify/verify.go)列出了策略标志。本地fixture验证策略、顺序和错误处理，不代表真实签名已通过验证。
 
-安装器默认使用已验证Latest不可变资产。--local-source明确信任邻近源码；--main选择未经验证的开发源码。缺少证明或旧的未签名发布会安全失败；无法验证时使用pipx/uv/pip。执行前认证install.sh：
+安装器默认使用已验证的Latest不可变资产。--local-source表示明确选择信任相邻源码；--main选择未经验证的开发源码。缺少证明或遇到旧的未签名发布时，安装器会fail closed（安全侧停止）；无法完成验证时请使用pipx/uv/pip。执行前请验证install.sh：
 
 ```bash
 set -eu
@@ -84,4 +84,4 @@ gh attestation verify "$staging/install.sh" --repo "$repo" \
 sh "$staging/install.sh"
 ```
 
-下载上限为单文件8 MiB、支持文件256 KiB、元数据1 MiB。认证manifest/来源证明、准确标签/版本与暂存--version检查在替换前完成。发送端在SSH部署前验证，离线目标仅需Python。验证失败保留已有文件。SSH允许列表、既有配对绑定审核及Control登录迁移见发布说明。
+下载上限为单文件8 MiB、辅助文件256 KiB、元数据1 MiB。替换文件前会验证认证过的manifest/来源证明、准确的标签/版本，以及暂存文件的--version。发送端会在SSH部署前完成验证；离线目标只需要Python。验证失败时不会改动已有文件。SSH选项允许列表、既有配对绑定检查及Control登录迁移请参阅发布说明。
