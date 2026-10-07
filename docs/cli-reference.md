@@ -514,6 +514,14 @@ Each successful remote result includes the same fields and an optional `remoteVe
 installed standalone copy. One remote host returns an object; repeated hosts
 return an array.
 
+The installed-version probe is supplementary: its failure preserves discovery and
+the primary result's exit status. Such results omit `remoteVersion` and include
+`remoteVersionProbe: {status: "unknown", reason: ...}` with a bounded reason
+(`timeout`, `transport_failed`, `authentication_failed`, `host_key_failed`,
+`invalid_response`, or `probe_failed`), without raw probe diagnostics. Human
+output shows a version-unknown notice. A confirmed uninstalled remote continues
+to omit both version fields. Remote update verification remains mandatory.
+
 Within the common envelope, Codex send JSON includes `target: {agent, id}`,
 `status: queued` (or `validated` under dry-run), `chars`, `dryRun`, and optional
 `queueId`. It also includes:
@@ -531,6 +539,21 @@ Errors set the common envelope's `ok` to `false`, add `error`, and include
 A timeout has an unknown submission outcome; missing `submitted` on an error
 must not be interpreted as proof that nothing was queued. Listing results do
 not describe a submission and have no submission/consumption fields.
+
+A local Codex queue timeout or an SSH send without a trustworthy complete
+response exposes `status: unknown`, `reason: outcome_unknown`, and
+`retryAllowed: false`. SSH exit 255 or 137, missing or malformed stdout, and
+authentication, host-key or interpreter diagnostics alone do not prove that
+nothing was submitted. A complete versioned response preserves its success, refusal and
+native submission facts even if SSH then fails or times out; invalid UTF-8 in
+diagnostic stderr cannot invalidate valid protocol stdout. Pre-execution
+failures and completed refusals retain their existing fields. No automatic
+retry or fallback is attempted, and unknown outcomes never add
+`submitted: false`. Missing retry metadata is not permission to resend.
+
+Legacy send objects without a schema remain accepted on ordinary exits 0/1/2
+when `ok` is a boolean and any `command` field equals `send`. They cannot prove
+completion after an abnormal exit or shutdown timeout.
 
 For every command, one remote host returns a flat object and multiple hosts
 return an array. When `CODEX_THREAD_ID` (or the compatibility

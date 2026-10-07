@@ -22,11 +22,23 @@ def cmd_list(args: argparse.Namespace) -> int:
             result = transport.execute(argv)
             sessions = result.get("sessions", [])
             ssh_info = ssh_metadata_from(result)
-            remote_version = remote_installed_version(requested_host, ssh_opts, ssh_info)
+            remote_version = None
+            version_probe = None
+            try:
+                remote_version = remote_installed_version(requested_host, ssh_opts, ssh_info)
+            except Exception as exc:
+                # This second connection is advisory. Keep discovery and its
+                # identity metadata; never copy probe process/host diagnostics.
+                reason = exc.details.get("sshFailure") if isinstance(exc, CcPeerError) else None
+                if reason not in ("timeout", "transport_failed", "authentication_failed", "host_key_failed"):
+                    reason = "invalid_response" if isinstance(exc, CcPeerError) else "probe_failed"
+                version_probe = {"status": "unknown", "reason": reason}
             shown_host = display_host(requested_host, host)
             human = render_listing(result, shown_host, selected)
             if result.get("ok") is False:
                 exit_code = EXIT_ERROR
+            if version_probe:
+                human = f"Installed session-peer version unknown ({version_probe['reason']}).\n\n{human}"
             if remote_version and remote_version != __version__:
                 human = (
                     f"{shown_host} runs session-peer {human_text(remote_version)}; this machine has {__version__}."
@@ -40,6 +52,7 @@ def cmd_list(args: argparse.Namespace) -> int:
                 "ok": result.get("ok", True),
                 "sessions": sessions, "version": __version__,
                 **({"remoteVersion": remote_version} if remote_version else {}),
+                **({"remoteVersionProbe": version_probe} if version_probe else {}),
             })
             all_results.append(host_result)
             if not args.json:

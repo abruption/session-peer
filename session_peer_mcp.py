@@ -98,7 +98,7 @@ def load_policy(path: str | None) -> dict:
         if host is not None:
             if not isinstance(host, str) or not host or any(c.isspace() for c in host):
                 raise PolicyError("host must be an SSH destination")
-            core.check_ssh_argument(host, "host")
+            core.check_ssh_argument(host, "--host")
         home = entry.get("codexHome")
         if "codex" in entry["agents"] and (not isinstance(home, str) or not home.startswith("/") or "\0" in home):
             raise PolicyError("Codex destinations require an absolute codexHome")
