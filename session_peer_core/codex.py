@@ -783,7 +783,11 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
                               env=env, capture_output=True, encoding="utf-8", errors="replace",
                               timeout=CODEX_QUEUE_TIMEOUT)
     except subprocess.TimeoutExpired as exc:
-        raise CcPeerError("Codex queue timed out; submission outcome unknown. Check the target queue before retrying.") from exc
+        raise CcPeerError(
+            "Codex queue timed out; submission outcome unknown. Do not automatically retry; "
+            "check the target queue before retrying.",
+            {"status": "unknown", "reason": "outcome_unknown", "retryAllowed": False},
+        ) from exc
     except OSError as exc:
         raise CcPeerError(f"Could not execute Codex queue: {exc}") from exc
     if done.returncode:

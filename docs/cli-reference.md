@@ -532,6 +532,17 @@ A timeout has an unknown submission outcome; missing `submitted` on an error
 must not be interpreted as proof that nothing was queued. Listing results do
 not describe a submission and have no submission/consumption fields.
 
+A local Codex queue timeout or an SSH send without a trustworthy complete
+response exposes `status: unknown`, `reason: outcome_unknown`, and
+`retryAllowed: false`. SSH exit 255 or 137, missing or malformed stdout, and
+authentication, host-key or interpreter diagnostics alone do not prove that
+nothing was submitted. A complete response preserves its success, refusal and
+native submission facts even if SSH then fails or times out; invalid UTF-8 in
+diagnostic stderr cannot invalidate valid protocol stdout. Pre-execution
+failures and completed refusals retain their existing fields. No automatic
+retry or fallback is attempted, and unknown outcomes never add
+`submitted: false`. Missing retry metadata is not permission to resend.
+
 For every command, one remote host returns a flat object and multiple hosts
 return an array. When `CODEX_THREAD_ID` (or the compatibility
 fallback `CODEX_SESSION_ID`) is present, the message envelope and reply command

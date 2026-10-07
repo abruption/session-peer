@@ -163,6 +163,7 @@ class SshRemoteOutcomes(unittest.TestCase):
         ("timed out", "timeout", "SSH connection to user@fixture timed out"),
     )
     SSH_INFO = {"sshUser": "user", "sshUserSource": "explicit"}
+    UNKNOWN = {"status": "unknown", "reason": "outcome_unknown", "retryAllowed": False}
 
     def remote(self, command, stdout, stderr="", returncode=1):
         completed = subprocess.CompletedProcess([], returncode, stdout, stderr)
@@ -180,7 +181,7 @@ class SshRemoteOutcomes(unittest.TestCase):
             "queueId": "fixture-queue", "wake": {"status": "refused"},
         }
         for marker, _, _ in self.MARKERS:
-            for returncode in (1, 255):
+            for returncode in (0, 1, 137, 255):
                 with self.subTest(marker=marker, returncode=returncode):
                     result = self.remote("send", json.dumps(payload),
                                          f"bash: startup: {marker}", returncode)
@@ -194,10 +195,13 @@ class SshRemoteOutcomes(unittest.TestCase):
 
     def test_valid_send_refusal_keeps_the_remote_error(self):
         payload = {"schemaVersion": 1, "command": "send", "ok": False,
-                   "error": "fixture refusal", "submitted": False}
+                   "error": "fixture refusal", "submitted": False,
+                   "status": "refused", "reason": "fixture_refusal", "retryAllowed": False}
         with self.assertRaisesRegex(session_peer.CcPeerError, "fixture refusal") as caught:
             self.remote("send", json.dumps(payload), "Permission denied")
         self.assertNotIn("sshFailure", caught.exception.details)
+        for key in ("submitted", "status", "reason", "retryAllowed"):
+            self.assertEqual(caught.exception.details[key], payload[key])
 
     def test_transport_or_empty_output_keeps_every_classifier_and_message(self):
         for marker, expected, message in self.MARKERS:
@@ -206,7 +210,7 @@ class SshRemoteOutcomes(unittest.TestCase):
                      self.assertRaises(session_peer.CcPeerError) as caught:
                     self.remote("send", stdout, marker, returncode)
                 self.assertEqual(caught.exception.details,
-                                 {**self.SSH_INFO, "sshFailure": expected})
+                                 {**self.SSH_INFO, **self.UNKNOWN, "sshFailure": expected})
                 self.assertIn(message, str(caught.exception))
 
     def test_exit_255_without_marker_remains_a_transport_failure(self):
@@ -217,7 +221,129 @@ class SshRemoteOutcomes(unittest.TestCase):
     def test_nonempty_malformed_output_is_not_classified_from_stderr(self):
         with self.assertRaisesRegex(session_peer.CcPeerError, "unexpected output") as caught:
             self.remote("send", "not JSON", "Permission denied")
-        self.assertEqual(caught.exception.details, self.SSH_INFO)
+        self.assertEqual(caught.exception.details, {**self.SSH_INFO, **self.UNKNOWN})
+
+    def test_abnormal_or_incomplete_sends_are_unknown_without_submission_claims(self):
+        valid = '{"schemaVersion":1,"command":"send","ok":true,"submitted":true}'
+        incomplete = ("", valid[:-1], valid + " trailing", valid + "\n{}",
+                      b'\xff' + valid.encode(), "[]", "null", "true",
+                      valid.replace('"ok":true', '"ok":false,"ok":true'),
+                      valid.replace('"submitted":true', '"submitted":NaN'),
+                      "\v" + valid + "\v")
+        for code in (0, 1, 137, 255, -9):
+            for stdout in incomplete:
+                with self.subTest(code=code, stdout=stdout), \
+                     self.assertRaises(session_peer.CcPeerError) as caught:
+                    self.remote("send", stdout, b'\xff Permission denied fixture', code)
+                details = caught.exception.details
+                self.assertEqual({key: details[key] for key in self.UNKNOWN}, self.UNKNOWN)
+                self.assertNotIn("submitted", details)
+                self.assertNotIn("consumptionConfirmed", details)
+                self.assertIn("Do not automatically retry", str(caught.exception))
+
+    def test_pre_spawn_failures_do_not_claim_unknown_submission(self):
+        for error in (FileNotFoundError("fixture ssh missing"), PermissionError("fixture denied")):
+            with self.subTest(error=type(error).__name__), \
+                 mock.patch.object(session_peer.Path, "read_text", return_value="source"), \
+                 mock.patch.object(session_peer.subprocess, "run", side_effect=error) as run, \
+                 self.assertRaises(session_peer.CcPeerError) as caught:
+                session_peer.run_remote("user@fixture", ["send"], [])
+            self.assertNotIn("status", caught.exception.details)
+            self.assertNotIn("retryAllowed", caught.exception.details)
+            run.assert_called_once()
+
+    def test_complete_refusal_survives_shutdown_timeout_and_invalid_diagnostics(self):
+        payload = {"schemaVersion": 1, "command": "send", "ok": False,
+                   "host": "local", "error": "fixture refusal", "status": "refused",
+                   "reason": "preflight_refused", "submitted": False,
+                   "wake": {"status": "refused", "reason": "writer_unknown"}}
+        with mock.patch.object(session_peer.Path, "read_text", return_value="source"), \
+             mock.patch.object(session_peer.subprocess, "run", side_effect=
+                 subprocess.TimeoutExpired(["ssh"], 120, output=json.dumps(payload).encode(),
+                                           stderr=b'\xffPermission denied')) as run:
+            result = session_peer.run_remote("user@fixture", ["send"], [])
+        self.assertEqual(result, {**payload, **self.SSH_INFO})
+        run.assert_called_once()
+
+    def test_complete_codex_timeout_error_keeps_remote_unknown_fields(self):
+        payload = {"schemaVersion": 1, "command": "send", "ok": False,
+                   "error": "Codex queue timed out", **self.UNKNOWN}
+        with self.assertRaises(session_peer.CcPeerError) as caught:
+            self.remote("send", json.dumps(payload), b'\xffPermission denied', 255)
+        self.assertEqual(caught.exception.details, {**self.SSH_INFO, **self.UNKNOWN})
+        self.assertNotIn("submitted", caught.exception.details)
+
+    def test_complete_refusal_facts_match_every_exit_and_timeout(self):
+        payload = {"schemaVersion": 1, "command": "send", "ok": False,
+                   "host": "local", "error": "fixture refusal", "status": "refused",
+                   "reason": "preflight_refused", "submitted": False, "retryAllowed": False}
+        frame = json.dumps(payload).encode()
+        outcomes = [subprocess.CompletedProcess([], code, frame, b'\xffPermission denied')
+                    for code in (0, 1, 137, 255)]
+        outcomes.append(subprocess.TimeoutExpired(["ssh"], 120, output=frame,
+                                                stderr=b'\xffPermission denied'))
+        for outcome in outcomes:
+            with self.subTest(outcome=type(outcome).__name__, code=getattr(outcome, "returncode", None)), \
+                 mock.patch.object(session_peer.Path, "read_text", return_value="source"), \
+                 mock.patch.object(session_peer.subprocess, "run", side_effect=[outcome]) as run, \
+                 self.assertRaisesRegex(session_peer.CcPeerError, "fixture refusal") as caught:
+                session_peer.run_remote("user@fixture", ["send"], [])
+            expected = {key: value for key, value in payload.items()
+                        if key not in ("schemaVersion", "command", "ok", "host", "error")}
+            self.assertEqual(caught.exception.details, {**expected, **self.SSH_INFO})
+            run.assert_called_once()
+
+    def test_multi_host_cli_retains_independent_success_refusal_and_unknown(self):
+        success = {"schemaVersion": 1, "command": "send", "ok": True,
+                   "target": {"name": "worker"}, "chars": 5, "dryRun": False}
+        refusal = {"schemaVersion": 1, "command": "send", "ok": False,
+                   "host": "local", "error": "fixture refusal", "status": "refused",
+                   "reason": "fixture_refusal", "submitted": False}
+        outcomes = [subprocess.CompletedProcess([], 255, b"", b"Permission denied"),
+                    subprocess.CompletedProcess([], 255, json.dumps(success).encode(), b'\xff'),
+                    subprocess.CompletedProcess([], 137, json.dumps(refusal).encode(), b'\xff')]
+        output = io.StringIO()
+        with mock.patch.object(session_peer, "tailscale_status", return_value=None), \
+             mock.patch.object(session_peer.Path, "read_text", return_value="source"), \
+             mock.patch.object(session_peer.subprocess, "run", side_effect=outcomes) as run, \
+             contextlib.redirect_stdout(output):
+            code = session_peer.main(["send", "--host", "user@unknown", "--host", "user@success",
+                                      "--host", "user@refusal", "--to", "worker", "hello",
+                                      "--no-from", "--no-reply-to", "--no-update-notice", "--json"])
+        results = json.loads(output.getvalue())
+        self.assertEqual(code, session_peer.EXIT_ERROR)
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual([result["host"] for result in results],
+                         ["user@unknown", "user@success", "user@refusal"])
+        self.assertEqual({key: results[0][key] for key in self.UNKNOWN}, self.UNKNOWN)
+        self.assertTrue(results[1]["ok"])
+        for key in ("status", "submitted", "consumptionConfirmed", "retryAllowed"):
+            self.assertNotIn(key, results[1])
+        self.assertFalse(results[2]["ok"])
+        self.assertEqual(results[2]["status"], "refused")
+        self.assertIs(results[2]["submitted"], False)
+        self.assertNotIn("sshFailure", results[2])
+
+    def test_single_host_unknown_send_keeps_json_and_error_exit_contract(self):
+        for code, frame in ((255, b""), (137, b""), (0, b'{"schemaVersion":1')):
+            completed = subprocess.CompletedProcess([], code, frame, b'\xff diagnostic')
+            output = io.StringIO()
+            with self.subTest(code=code), \
+                 mock.patch.object(session_peer, "tailscale_status", return_value=None), \
+                 mock.patch.object(session_peer.Path, "read_text", return_value="source"), \
+                 mock.patch.object(session_peer.subprocess, "run", return_value=completed) as run, \
+                 contextlib.redirect_stdout(output):
+                exit_code = session_peer.main(["send", "--host", "user@fixture", "--to", "worker",
+                                               "hello", "--no-from", "--no-reply-to",
+                                               "--no-update-notice", "--json"])
+            result = json.loads(output.getvalue())
+            self.assertEqual(exit_code, session_peer.EXIT_ERROR)
+            self.assertEqual({key: result[key] for key in self.UNKNOWN}, self.UNKNOWN)
+            self.assertEqual(result["schemaVersion"], 1)
+            self.assertEqual(result["command"], "send")
+            self.assertFalse(result["ok"])
+            self.assertNotIn("submitted", result)
+            run.assert_called_once()
 
     def test_invalid_envelopes_do_not_establish_a_remote_outcome(self):
         valid = {"schemaVersion": 1, "command": "send", "ok": True,
@@ -312,7 +438,7 @@ class SshRemoteOutcomes(unittest.TestCase):
                      mock.patch.object(session_peer.Path, "read_text", return_value="source"), \
                      mock.patch.object(session_peer.subprocess, "run", side_effect=
                          subprocess.TimeoutExpired(["ssh"], 120, output=captured,
-                                                   stderr=b"Permission denied")) as run:
+                                                   stderr=b"\xffPermission denied")) as run:
                     result = session_peer.run_remote("user@fixture", [payload["command"]], [])
                     self.assertEqual(result, {**payload, **self.SSH_INFO})
                     run.assert_called_once()
@@ -463,6 +589,32 @@ class SshRemoteOutcomes(unittest.TestCase):
             self.assertNotIn("submitted", caught.exception.details)
             self.assertIn("\ufffd diagnostic", str(caught.exception))
             run.assert_called_once()
+
+    def test_real_fake_ssh_process_empty_and_truncated_outcomes_are_unknown(self):
+        real_run = subprocess.run
+        script = (
+            "import sys\n"
+            "sys.stdin.buffer.read()\n"
+            "sys.stdout.buffer.write(bytes.fromhex(sys.argv[1]))\n"
+            "sys.stderr.buffer.write(b'\\xffpython3: command not found; Permission denied')\n"
+            "raise SystemExit(int(sys.argv[2]))\n"
+        )
+        for frame in (b"", b'{"schemaVersion":1,"command":"send","ok":true'):
+            for code in (0, 137, 255):
+                def fake_ssh(command, **options):
+                    self.assertEqual(command[0], "ssh")
+                    return real_run([sys.executable, "-c", script, frame.hex(), str(code)],
+                                    **{**options, "timeout": 5})
+
+                with self.subTest(frame=frame, code=code), \
+                     mock.patch.object(session_peer.Path, "read_text", return_value="fixture source"), \
+                     mock.patch.object(session_peer.subprocess, "run", side_effect=fake_ssh) as run, \
+                     self.assertRaises(session_peer.CcPeerError) as caught:
+                    session_peer.run_remote("user@fixture", ["send"], [])
+                details = caught.exception.details
+                self.assertEqual({key: details[key] for key in self.UNKNOWN}, self.UNKNOWN)
+                self.assertNotIn("submitted", details)
+                run.assert_called_once()
 
     def test_non_send_timeouts_keep_the_transport_timeout_behavior(self):
         for operation in ("list", "doctor", "push", "version"):
