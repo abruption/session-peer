@@ -14,6 +14,74 @@ import session_peer_mcp as mcp_peer
 THREAD = '01900000-0000-7000-8000-000000000001'
 
 
+class PolicyLoading(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory(prefix='codex-mcp-policy-')
+        self.addCleanup(self.folder.cleanup)
+        self.path = Path(self.folder.name) / 'policy.json'
+
+    def load(self, destinations):
+        self.path.write_text(json.dumps({'schemaVersion': 1, 'destinations': destinations}),
+                             encoding='utf-8')
+        return mcp_peer.load_policy(str(self.path))
+
+    def test_remote_destinations_load_and_preserve_routes(self):
+        for host in ('web-01', 'web.example.test', 'user@web-01',
+                     '[::1]', 'user@[2001:db8::1]', '2001:db8::1'):
+            for agent in ('claude', 'codex'):
+                with self.subTest(host=host, agent=agent):
+                    entry = {'host': host, 'agents': [agent], 'capabilities': ['list']}
+                    route = ['--host', host]
+                    if agent == 'codex':
+                        entry['codexHome'] = '/custom codex/home'
+                        route += ['--codex-home', '/custom codex/home']
+                    loaded = self.load({'remote': entry})
+                    self.assertEqual(loaded, {'remote': entry})
+                    adapter = mcp_peer.Adapter(loaded)
+                    self.assertEqual(adapter.route(adapter.authorize('remote', 'list', agent)), route)
+
+    def test_invalid_hosts_rejected_from_policy_files(self):
+        for host in ('-oProxyCommand=id', '-A', '-p22', '', 'web 01', 'web\t01',
+                     'web\n01', 'web;id', 'web$(id)', 'web`id`', 'web|id', 'web\0', 123):
+            with self.subTest(host=host):
+                with self.assertRaises((mcp_peer.PolicyError, mcp_peer.core.CcPeerError)):
+                    self.load({'remote': {'host': host, 'agents': ['claude'],
+                                          'capabilities': ['list']}})
+
+    def test_policy_cannot_supply_ssh_options(self):
+        for options in (['-A'], ['-F', '/custom/config'], ['-oProxyCommand=id'],
+                        ['-oLocalCommand=id'], ['-p22']):
+            with self.subTest(options=options):
+                with self.assertRaisesRegex(mcp_peer.PolicyError, 'Unknown settings'):
+                    self.load({'remote': {'host': 'user@web-01', 'agents': ['claude'],
+                                          'capabilities': ['list'], 'sshOpts': options}})
+
+    def test_local_policy_preserves_configured_codex_home(self):
+        destinations = {
+            'claude': {'agents': ['claude'], 'capabilities': ['list', 'send']},
+            'codex': {'agents': ['codex'], 'capabilities': ['list'],
+                      'codexHome': '/custom codex/home'},
+        }
+        loaded = self.load(destinations)
+        self.assertEqual(loaded, destinations)
+        adapter = mcp_peer.Adapter(loaded)
+        self.assertEqual(adapter.route(loaded['claude']), [])
+        self.assertEqual(adapter.route(loaded['codex']), ['--codex-home', '/custom codex/home'])
+
+    def test_default_policy_uses_environment_codex_home(self):
+        with patch.dict(os.environ, {'CODEX_HOME': self.folder.name}):
+            self.assertEqual(mcp_peer.load_policy(None), {
+                'local': {'capabilities': ['list'], 'agents': list(mcp_peer.core.AGENTS.names()),
+                          'codexHome': str(Path(self.folder.name).resolve())}})
+
+    def test_remote_codex_still_requires_absolute_home(self):
+        for home in (None, 'relative/home', '/custom\0home'):
+            with self.subTest(home=home):
+                with self.assertRaisesRegex(mcp_peer.PolicyError, 'absolute codexHome'):
+                    self.load({'remote': {'host': 'user@web-01', 'agents': ['codex'],
+                                          'capabilities': ['list'], 'codexHome': home}})
+
+
 class Policy(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.adapter = mcp_peer.Adapter({
