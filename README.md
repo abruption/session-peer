@@ -32,6 +32,8 @@ in this ~22-second animation, not a screen recording; send success alone is not 
 Python 3.9+. The core local/SSH CLI has no third-party Python dependencies.
 Current stable release: **1.0.3**.
 
+As of 2026-10-07, maintenance version **1.0.4** is prepared, not published; see the [preparation notes](docs/releases/v1.0.4.md).
+
 ```bash
 pipx install session-peer
 session-peer --version

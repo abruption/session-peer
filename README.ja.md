@@ -32,6 +32,8 @@ session-peer 1.0.2による実際のローカル通信です。CodexがClaude Co
 Python 3.9以上が必要です。基本のローカル・SSH CLIに外部Python依存パッケージはありません。
 現在の安定版：**1.0.3**。
 
+2026-10-07時点で、メンテナンス版 **1.0.4** は準備中で、未公開です。[準備ノート](docs/ja/releases/v1.0.4.md)を参照してください。
+
 ```bash
 pipx install session-peer
 session-peer --version

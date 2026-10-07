@@ -32,6 +32,8 @@ session-peer 1.0.2로 실제 로컬 요청과 회신을 주고받았어요. Code
 Python 3.9 이상이 필요해요. 기본 로컬·SSH CLI는 외부 Python 패키지에 의존하지 않아요.
 현재 안정판: **1.0.3**.
 
+2026-10-07 기준, 유지보수 버전 **1.0.4**는 준비 중이며 공개되지 않았습니다. [준비 노트](docs/ko/releases/v1.0.4.md)를 참고하세요.
+
 ```bash
 pipx install session-peer
 session-peer --version

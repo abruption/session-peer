@@ -11,16 +11,16 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class StableCandidate(unittest.TestCase):
     def test_package_and_generated_core_version_agree(self):
-        self.assertEqual(session_peer.__version__, "1.0.3")
-        self.assertIn('__version__ = "1.0.3"',
+        self.assertEqual(session_peer.__version__, "1.0.4")
+        self.assertIn('__version__ = "1.0.4"',
                       (ROOT / "session_peer_core/common.py").read_text(encoding="utf-8"))
 
-    def test_all_current_readmes_and_runbooks_use_stable(self):
+    def test_all_current_readmes_and_runbooks_use_prepared_version(self):
         for suffix in ("", ".ko", ".ja", ".zh-CN"):
             for stem in ("README", "RELEASING"):
                 with self.subTest(stem=stem, suffix=suffix):
                     text = (ROOT / (stem + suffix + ".md")).read_text(encoding="utf-8")
-                    self.assertIn("1.0.3", text)
+                    self.assertIn("1.0.4", text)
                     self.assertNotIn("1.0.0rc4", text)
                     if stem == "RELEASING":
                         self.assertIn("--draft=false --prerelease=false --latest", text)
@@ -31,7 +31,30 @@ class StableCandidate(unittest.TestCase):
                                        "Approve and deploy", "Reject"):
                             self.assertIn(marker, text)
 
-    def test_stable_notes_keep_validation_and_limits_visible(self):
+    def test_prepared_notes_keep_scope_and_limits_visible(self):
+        for locale in ("", "ko/", "ja/", "zh-CN/"):
+            text = (ROOT / ("docs/" + locale + "releases/v1.0.4.md")).read_text(encoding="utf-8")
+            for marker in ("#262", "#263", "#264", "#265", "#266", "#267",
+                           "1.0.4", "1.0.3", "0.3.2", "0.9.1", "1.0.1", "2026-10-07",
+                           "32 KiB", "64 KiB", "256 KiB", "1 MiB",
+                           "outcome_unknown", "retryAllowed: false", "20/21", "#161"):
+                with self.subTest(locale=locale, marker=marker):
+                    self.assertIn(marker, text)
+
+    def test_preparation_does_not_claim_publication(self):
+        self.assertIn("Current stable release: **1.0.3**.",
+                      (ROOT / "README.md").read_text(encoding="utf-8"))
+        for suffix in ("", ".ko", ".ja", ".zh-CN"):
+            text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
+            self.assertIn("**1.0.3**", text)
+            self.assertIn("**1.0.4**", text)
+            self.assertIn("2026-10-07", text)
+        for locale in ("", "ko/", "ja/", "zh-CN/"):
+            text = (ROOT / ("docs/" + locale + "README.md")).read_text(encoding="utf-8")
+            self.assertIn("releases/v1.0.3.md", text)
+            self.assertIn("releases/v1.0.4.md", text)
+
+    def test_historical_security_notes_keep_validation_and_limits_visible(self):
         for locale in ("", "ko/", "ja/", "zh-CN/"):
             text = (ROOT / ("docs/" + locale + "releases/v1.0.3.md")).read_text(encoding="utf-8")
             for marker in ("#161", "#249", "#250", "#251", "#252", "#253", "#254",
