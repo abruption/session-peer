@@ -15,6 +15,18 @@ LAYOUTS = {
 
 
 class ReadmeLayoutTest(unittest.TestCase):
+    def test_every_locale_centers_only_the_hero(self):
+        for suffix in LAYOUTS:
+            text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
+            with self.subTest(locale=suffix or "en"):
+                self.assertTrue(text.startswith('<div align="center">\n\n# session-peer\n'))
+                closing = text.index("</div>")
+                hero = text[:closing]
+                self.assertIn("![", hero)
+                self.assertIn("English", hero)
+                self.assertRegex(hero, r"\n\*\*[^\n]+\*\*\n")
+                self.assertLess(closing, text.index('<a id="see-it-in-action"></a>'))
+
     def test_demo_uses_a_small_gif_and_an_absolute_public_url(self):
         asset = "docs/assets/session-peer-live-codex-claude.gif"
         data = (ROOT / asset).read_bytes()
