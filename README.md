@@ -1,3 +1,5 @@
+<div align="center">
+
 # session-peer
 
 [![PyPI](https://img.shields.io/pypi/v/session-peer)](https://pypi.org/project/session-peer/)
@@ -9,6 +11,8 @@
 **English** · [한국어](https://github.com/abruption/session-peer/blob/main/README.ko.md) · [日本語](https://github.com/abruption/session-peer/blob/main/README.ja.md) · [简体中文](https://github.com/abruption/session-peer/blob/main/README.zh-CN.md)
 
 **Find and message Claude Code and Codex sessions from one CLI, locally or over SSH.**
+
+</div>
 
 Ask another session to review a change, report progress, or pick up a task.
 session-peer uses native agent inboxes and queues; the receiving agent decides how to respond.
