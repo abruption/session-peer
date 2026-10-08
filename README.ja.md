@@ -1,3 +1,5 @@
+<div align="center">
+
 # session-peer
 
 [![PyPI](https://img.shields.io/pypi/v/session-peer)](https://pypi.org/project/session-peer/)
@@ -8,10 +10,12 @@
 
 [English](https://github.com/abruption/session-peer/blob/main/README.md) · [한국어](https://github.com/abruption/session-peer/blob/main/README.ko.md) · **日本語** · [简体中文](https://github.com/abruption/session-peer/blob/main/README.zh-CN.md)
 
-**ひとつのCLIでローカルやSSH接続先のClaude Code・Codexセッションを検索し、メッセージを送れます。**
+**1つのコマンドラインツール（CLI）で、ローカルやSSH接続先にあるClaude Code・Codexのセッションを検索し、メッセージを送れます。**
+
+</div>
 
 別のセッションに変更のレビュー、進捗報告、作業の引き継ぎを依頼できます。
-標準の受信箱やキューを利用し、応答方法は受信側のエージェントが決定します。
+各エージェント固有の受信箱やキューを利用し、応答方法は受信側のエージェントが決定します。
 
 <a id="see-it-in-action"></a>
 
@@ -30,7 +34,9 @@ session-peer 1.0.2による実際のローカル通信です。CodexがClaude Co
 ### インストール
 
 Python 3.9以上が必要です。基本のローカル・SSH CLIに外部Python依存パッケージはありません。
-現在の安定版：**1.0.3**。
+現在の安定版：**1.0.4**。
+
+2026-10-07付のメンテナンス版の[リリースノート](docs/ja/releases/v1.0.4.md)を参照してください。パッケージ公開と本番環境への配備は別です。
 
 ```bash
 pipx install session-peer
@@ -42,7 +48,7 @@ uvを使う場合は `uv tool install session-peer` を選べます。ネイテ�
 仮想環境のpip、単独スクリプト・SSHのインストール方法は
 [インストールガイド](https://github.com/abruption/session-peer/blob/main/docs/ja/cli-reference.md#install)を参照してください。
 
-SSH検索では、例のホスト `worker` を実際のホストまたはエイリアスに置き換えてください。
+SSH経由でセッションを検出するには、例示のホスト `worker` を実際のホストまたはエイリアスに置き換えてください。
 その後、架空のセッション名と完全なUUIDを検索結果の接続先に置き換えてください。
 
 ```bash
@@ -51,13 +57,13 @@ session-peer send --to api-worker --message "進捗を教えてください"
 session-peer send --host worker --to 'codex:00000000-0000-4000-8000-000000000001' --message "変更をレビューしてください"
 ```
 
-SSH接続先にはPythonと対象エージェントの標準受信箱・キューが必要ですが、
+SSH接続先にはPythonと対象エージェント固有の受信箱・キューが必要ですが、
 session-peer CLIのインストールは不要です。独自のCodexホームは検索結果の
 `codexHome` を `--codex-home` で指定し、`--dry-run` で送信せずに検証できます。
 セッションを所有する接続先アカウントを使ってください（`--host USER@HOST`）。
-SSHと受信側の権限が適用されます。
+SSHのアクセス権と受信側の権限は引き続き適用されます。
 
-**`posted` / `queued` は受信箱・キューへの提出の確認であり、消費・ACK・作業完了の確認ではありません。**
+**`posted` / `queued` は受信箱やキューに受け付けられたことを示すだけで、消費・ACK・作業完了を意味しません。**
 必要なら明示的な返信を依頼してください。通常の送信は停止中のCodex接続先をデフォルトで拒否し、
 起動もしません。結果が不確かな送信を自動で再試行しないでください。
 
@@ -75,8 +81,8 @@ pipx upgrade session-peer
 ```
 
 ローカルのインストールでは、`session-peer update` は単独スクリプトのランタイムファイルを置き換えます。
-パッケージ版には更新方法を案内します。このコマンドはスキルを更新しません。
-元のインストールツール（Skills CLI、または同梱コピーの `install.sh`）を使ってください。
+パッケージ管理ツールでインストールした場合、このコマンドは更新方法を案内するだけです。このコマンドはスキルを更新しません。
+スキルの更新には、インストール時に使用したツール（Skills CLI、または同梱コピーの `install.sh`）を使ってください。
 [更新の詳細とリモートでの制約](https://github.com/abruption/session-peer/blob/main/docs/ja/cli-reference.md#updating)を参照してください。
 
 <a id="documentation"></a>
@@ -94,7 +100,7 @@ Unix、Python 3.11以上、`session-peer[relay]`、固定した識別情報と�
 パッケージの公開はホスト型サービスの可用性を保証しません。
 ブラインドRelayはアプリケーションのメッセージ内容を復号できません。
 [MCP・Codexプラグイン](https://github.com/abruption/session-peer/blob/main/docs/ja/mcp.md)にはPython 3.10以上と
-`session-peer[mcp]` が必要で、MCP wakeには `send` と `wake` の両方の権限が必要です。
+`session-peer[mcp]` が必要で、MCP wakeには `send` と `wake` の両方の機能（capability）が必要です。
 [Wake](https://github.com/abruption/session-peer/blob/main/docs/ja/wake.md)は明示的に依頼した場合だけ実行し、
 ターンの開始、利用枠の消費、プロジェクトファイルの変更を伴う場合があります。
 [Antigravityブリッジ](https://github.com/abruption/session-peer/blob/main/docs/ja/antigravity.md)は実験段階です。

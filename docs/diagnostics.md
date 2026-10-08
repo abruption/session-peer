@@ -167,6 +167,18 @@ is an error. SSH preserves partial results and repeated-host envelopes.
 Every row has an `agent` discriminator. See [multi-home listing](multi-home-list.md)
 for candidate discovery, metadata and permission boundaries.
 
+Claude registry reads share a 1 MiB (1,048,576-byte) limit across listing, doctor,
+dry-run target selection, and sender discovery. Records contain small identity
+and inbox metadata, so this leaves room for extensions without unbounded reads.
+Symlinks, nonregular files, oversized records, invalid UTF-8/JSON, non-object JSON,
+and invalid PID or inbox/display field types are skipped while healthy records
+remain available. Doctor counts rejected entries in `invalidRecords` and preserves
+record permission diagnostics. POSIX uses `O_NONBLOCK` and `O_NOFOLLOW` where
+available, checks opened-file kind and identity, and caps reads even during file
+growth. Windows uses bounded binary reads and identity checks without those POSIX
+flag protections. Filesystem operations can still stall; this is not a universal
+filesystem timeout. Existing PID/start-time checks and inbox permissions remain.
+
 ## CLI input and output selection
 
 Use `--output-format json` on list/send/doctor/update for the result envelope;

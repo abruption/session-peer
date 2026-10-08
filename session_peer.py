@@ -45,7 +45,7 @@ try:
 except ImportError:  # Native Windows uses its own read-only writer inspection.
     fcntl = None
 
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 GITHUB_REPO = "abruption/session-peer"
 
 # Claude Code refuses a same-machine message once its serialized form passes
@@ -880,7 +880,11 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
                               env=env, capture_output=True, encoding="utf-8", errors="replace",
                               timeout=CODEX_QUEUE_TIMEOUT)
     except subprocess.TimeoutExpired as exc:
-        raise CcPeerError("Codex queue timed out; submission outcome unknown. Check the target queue before retrying.") from exc
+        raise CcPeerError(
+            "Codex queue timed out; submission outcome unknown. Do not automatically retry; "
+            "check the target queue before retrying.",
+            {"status": "unknown", "reason": "outcome_unknown", "retryAllowed": False},
+        ) from exc
     except OSError as exc:
         raise CcPeerError(f"Could not execute Codex queue: {exc}") from exc
     if done.returncode:
@@ -1182,6 +1186,65 @@ def sessions_dir() -> Path:
 IS_WINDOWS = sys.platform == "win32"
 
 
+# Registry records contain identity/inbox metadata, not conversation history.
+# A 1 MiB ceiling leaves ample room for additional metadata without unbounded IO.
+MAX_CLAUDE_RECORD_BYTES = 1024 * 1024
+
+
+def read_claude_record(path: Path) -> dict:
+    """Read bounded regular-file metadata; leave permission errors to callers.
+
+    POSIX nonblocking/no-follow opens reject FIFO/symlink replacement where the
+    flags exist. Windows uses binary reads and descriptor/path identity checks;
+    neither this fallback nor filesystem IO provides a universal time bound.
+    """
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_CLAUDE_RECORD_BYTES:
+        raise ValueError("Claude session record is not a bounded regular file")
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    if not IS_WINDOWS:
+        flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened = os.fstat(descriptor)
+        current = path.lstat()
+        identity = (before.st_dev, before.st_ino)
+        if (not stat.S_ISREG(opened.st_mode) or not stat.S_ISREG(current.st_mode)
+                or (opened.st_dev, opened.st_ino) != identity
+                or (current.st_dev, current.st_ino) != identity
+                or opened.st_size > MAX_CLAUDE_RECORD_BYTES):
+            raise ValueError("Claude session record changed before reading")
+        chunks = []
+        size = 0
+        while True:
+            chunk = os.read(descriptor, min(64 * 1024, MAX_CLAUDE_RECORD_BYTES + 1 - size))
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > MAX_CLAUDE_RECORD_BYTES:
+                raise ValueError("Claude session record exceeds the byte limit")
+            chunks.append(chunk)
+    finally:
+        os.close(descriptor)
+    try:
+        record = json.loads(b"".join(chunks).decode("utf-8", errors="strict"))
+    except RecursionError as exc:
+        raise ValueError("Claude session record is too deeply nested") from exc
+    if not isinstance(record, dict) or type(record.get("pid")) is not int:
+        raise ValueError("Claude session record must be an object with an integer PID")
+    for field in ("name", "cwd", "status", "messagingSocketPath"):
+        value = record.get(field)
+        if value is not None and not isinstance(value, str):
+            raise ValueError("Claude session record has invalid text metadata")
+        if isinstance(value, str):
+            # Escaped lone surrogates can pass JSON decoding but cannot be
+            # encoded safely for an inbox path, sender header or CLI output.
+            value.encode("utf-8", errors="strict")
+    if "\0" in (record.get("messagingSocketPath") or ""):
+        raise ValueError("Claude session record has an invalid inbox path")
+    return record
+
+
 def windows_process_start_ms(pid: int) -> int | None:
     """Read a live Windows process creation time without trusting a stale PID."""
     if pid <= 1:
@@ -1272,7 +1335,7 @@ def discover(include_unreachable: bool = False) -> list[dict]:
         if not record_file.stem.isdigit():
             continue
         try:
-            record = json.loads(record_file.read_text(encoding="utf-8"))
+            record = read_claude_record(record_file)
         except (OSError, ValueError):
             continue
 
@@ -2114,6 +2177,17 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     # looks like: a metacharacter in any element executes over there. Build
     # the remote command as one already-quoted string instead.
     command = ["ssh", *ssh_opts, host, remote]
+
+    def incomplete_response_error(message: str, details: dict | None = None) -> CcPeerError:
+        metadata = {**ssh_info, **(details or {})}
+        if argv and argv[0] == "send":
+            # Diagnostics may come from a login shell or the remote command.
+            # They do not prove that a launched send had no native effect.
+            metadata.update(status="unknown", reason="outcome_unknown", retryAllowed=False)
+            message += ("; submission outcome unknown. Do not automatically retry; "
+                        "check the target before retrying.")
+        return CcPeerError(message, metadata)
+
     try:
         completed = subprocess.run(
             command, input=source.encode("utf-8"), capture_output=True, timeout=120
@@ -2132,17 +2206,23 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
                                                     stderr if isinstance(stderr, str) else "")
         else:
             if argv and argv[0] == "send":
-                raise CcPeerError(
-                    f"SSH send to {host} timed out; submission outcome unknown. "
-                    "Do not automatically retry; check the target before retrying.",
-                    {**ssh_info, "sshFailure": "timeout", "status": "unknown",
-                     "reason": "outcome_unknown", "retryAllowed": False},
+                raise incomplete_response_error(
+                    f"SSH send to {host} timed out", {"sshFailure": "timeout"},
                 ) from exc
             raise ssh_failure_error(host, ssh_info, "timeout") from exc
     except OSError as exc:
         raise ssh_failure_error(host, ssh_info, "transport_failed", str(exc)) from exc
 
     stdout, result, parsed_result, valid_result = parse_ssh_response(completed.stdout, argv)
+    # Legacy send objects retain their normal-exit compatibility, but an
+    # arbitrary JSON object is not an outcome. Only versioned responses can
+    # establish completion across abnormal transport exit/shutdown timeout.
+    legacy_send_result = (
+        argv and argv[0] == "send" and isinstance(result, dict)
+        and "schemaVersion" not in result and type(result.get("ok")) is bool
+        and result.get("command", "send") == "send"
+        and completed.returncode in (0, 1, 2)
+    )
     # Keep diagnostic decoding independent of protocol decoding. A locale's
     # stderr bytes must not prevent a complete stdout response reaching its
     # strict parser. Only diagnostic text may use replacement characters.
@@ -2160,14 +2240,15 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
             and (completed.returncode == 255 or not stdout)) else None
     )
     if failure:
-        raise ssh_failure_error(host, ssh_info, failure, detail)
+        error = ssh_failure_error(host, ssh_info, failure, detail)
+        raise incomplete_response_error(str(error), error.details)
     runtime_output = (stdout + "\n" + stderr).strip().lower()
-    if not valid_result and (runtime_output == "python"
+    if not valid_result and not legacy_send_result and (runtime_output == "python"
             or "python was not found" in runtime_output
             or ("python3" in runtime_output and any(marker in runtime_output for marker in (
                 "command not found", "not recognized as", "no such file", "python3: not found",
             )))):
-        raise CcPeerError(
+        raise incomplete_response_error(
             f"{host}: remote python3 did not start a usable interpreter. "
             "Source-streamed SSH requires a working python3 and a POSIX-compatible "
             "remote shell. A Windows Store execution alias is not sufficient. "
@@ -2176,10 +2257,11 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
             {**ssh_info, "remoteRuntimeFailure": "python3_unavailable_or_unsupported_shell"},
         )
     if not stdout:
-        raise CcPeerError(f"{host}: {detail}", ssh_info)
+        raise incomplete_response_error(f"{host}: {detail}")
     if not parsed_result or (isinstance(result, dict)
-                             and "schemaVersion" in result and not valid_result):
-        raise CcPeerError(f"{host}: unexpected output: {stdout[:200]}", ssh_info)
+                             and "schemaVersion" in result and not valid_result) or (
+            argv and argv[0] == "send" and not valid_result and not legacy_send_result):
+        raise incomplete_response_error(f"{host}: unexpected output: {stdout[:200]}")
     if isinstance(result, dict):
         result.update(ssh_info)
 
@@ -2211,7 +2293,14 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
         ):
             return result
         details = {}
-        if "codexHomeResolution" in result:
+        if argv and argv[0] == "send" and valid_result:
+            # Preserve completed refusals and native facts without replacing
+            # the caller's command/host envelope or adding agent-specific fields.
+            details = {key: value for key, value in result.items() if key not in (
+                "schemaVersion", "command", "ok", "error", "host",
+                "requestedHost", "resolvedHost",
+            )}
+        elif "codexHomeResolution" in result:
             details["codexHomeResolution"] = result["codexHomeResolution"]
         raise CcPeerError(
             f"{host}: {result.get('error', 'remote command failed')}", details
@@ -2715,7 +2804,7 @@ def diagnose_claude() -> dict:
         if not record_file.stem.isdigit():
             continue
         try:
-            record = json.loads(record_file.read_text(encoding="utf-8"))
+            record = read_claude_record(record_file)
         except PermissionError:
             permission_failures += 1
             continue
@@ -3825,11 +3914,23 @@ def cmd_list(args: argparse.Namespace) -> int:
             result = transport.execute(argv)
             sessions = result.get("sessions", [])
             ssh_info = ssh_metadata_from(result)
-            remote_version = remote_installed_version(requested_host, ssh_opts, ssh_info)
+            remote_version = None
+            version_probe = None
+            try:
+                remote_version = remote_installed_version(requested_host, ssh_opts, ssh_info)
+            except Exception as exc:
+                # This second connection is advisory. Keep discovery and its
+                # identity metadata; never copy probe process/host diagnostics.
+                reason = exc.details.get("sshFailure") if isinstance(exc, CcPeerError) else None
+                if reason not in ("timeout", "transport_failed", "authentication_failed", "host_key_failed"):
+                    reason = "invalid_response" if isinstance(exc, CcPeerError) else "probe_failed"
+                version_probe = {"status": "unknown", "reason": reason}
             shown_host = display_host(requested_host, host)
             human = render_listing(result, shown_host, selected)
             if result.get("ok") is False:
                 exit_code = EXIT_ERROR
+            if version_probe:
+                human = f"Installed session-peer version unknown ({version_probe['reason']}).\n\n{human}"
             if remote_version and remote_version != __version__:
                 human = (
                     f"{shown_host} runs session-peer {human_text(remote_version)}; this machine has {__version__}."
@@ -3843,6 +3944,7 @@ def cmd_list(args: argparse.Namespace) -> int:
                 "ok": result.get("ok", True),
                 "sessions": sessions, "version": __version__,
                 **({"remoteVersion": remote_version} if remote_version else {}),
+                **({"remoteVersionProbe": version_probe} if version_probe else {}),
             })
             all_results.append(host_result)
             if not args.json:

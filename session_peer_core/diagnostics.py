@@ -61,7 +61,7 @@ def diagnose_claude() -> dict:
         if not record_file.stem.isdigit():
             continue
         try:
-            record = json.loads(record_file.read_text(encoding="utf-8"))
+            record = read_claude_record(record_file)
         except PermissionError:
             permission_failures += 1
             continue

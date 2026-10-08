@@ -1,3 +1,5 @@
+<div align="center">
+
 # session-peer
 
 [![PyPI](https://img.shields.io/pypi/v/session-peer)](https://pypi.org/project/session-peer/)
@@ -9,6 +11,8 @@
 **English** · [한국어](https://github.com/abruption/session-peer/blob/main/README.ko.md) · [日本語](https://github.com/abruption/session-peer/blob/main/README.ja.md) · [简体中文](https://github.com/abruption/session-peer/blob/main/README.zh-CN.md)
 
 **Find and message Claude Code and Codex sessions from one CLI, locally or over SSH.**
+
+</div>
 
 Ask another session to review a change, report progress, or pick up a task.
 session-peer uses native agent inboxes and queues; the receiving agent decides how to respond.
@@ -30,7 +34,9 @@ in this ~22-second animation, not a screen recording; send success alone is not 
 ### Install
 
 Python 3.9+. The core local/SSH CLI has no third-party Python dependencies.
-Current stable release: **1.0.3**.
+Current stable release: **1.0.4**.
+
+Maintenance release dated 2026-10-07; see the [release notes](docs/releases/v1.0.4.md). Package publication and operational deployment are separate.
 
 ```bash
 pipx install session-peer

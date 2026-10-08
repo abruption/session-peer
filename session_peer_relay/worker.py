@@ -5,12 +5,16 @@ import sys
 
 import session_peer as core
 from .native import Policy, options, invoke_windows_codex
+from .framing import MAX_WORKER_BYTES, valid_text
 
 
 def main():
     attempted = False
     try:
-        value = json.loads(sys.stdin.buffer.read(65537))
+        raw = sys.stdin.buffer.read(MAX_WORKER_BYTES + 1)
+        if len(raw) > MAX_WORKER_BYTES:
+            raise ValueError('native_worker_frame_too_large')
+        value = json.loads(raw.decode('utf-8'))
         binding, op, text = value['binding'], value['operation'], value.get('text')
         Policy({'targets': {'endpoint': binding}, 'peers': {}})
         if op not in ('list', 'send', 'resolve'):
@@ -21,7 +25,7 @@ def main():
             result = invoke_windows_codex(binding, op, text)
         elif op in ('send', 'resolve'):
             args.dry_run = op == 'resolve'
-            if not isinstance(text, str) or not text.strip() or len(text.encode()) > 32768 or '\0' in text:
+            if not valid_text(text):
                 raise ValueError('invalid_message')
             adapter.validate_send(args, text)
             if binding['agent'] == 'codex':

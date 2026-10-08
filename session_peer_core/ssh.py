@@ -220,6 +220,17 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     # looks like: a metacharacter in any element executes over there. Build
     # the remote command as one already-quoted string instead.
     command = ["ssh", *ssh_opts, host, remote]
+
+    def incomplete_response_error(message: str, details: dict | None = None) -> CcPeerError:
+        metadata = {**ssh_info, **(details or {})}
+        if argv and argv[0] == "send":
+            # Diagnostics may come from a login shell or the remote command.
+            # They do not prove that a launched send had no native effect.
+            metadata.update(status="unknown", reason="outcome_unknown", retryAllowed=False)
+            message += ("; submission outcome unknown. Do not automatically retry; "
+                        "check the target before retrying.")
+        return CcPeerError(message, metadata)
+
     try:
         completed = subprocess.run(
             command, input=source.encode("utf-8"), capture_output=True, timeout=120
@@ -238,17 +249,23 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
                                                     stderr if isinstance(stderr, str) else "")
         else:
             if argv and argv[0] == "send":
-                raise CcPeerError(
-                    f"SSH send to {host} timed out; submission outcome unknown. "
-                    "Do not automatically retry; check the target before retrying.",
-                    {**ssh_info, "sshFailure": "timeout", "status": "unknown",
-                     "reason": "outcome_unknown", "retryAllowed": False},
+                raise incomplete_response_error(
+                    f"SSH send to {host} timed out", {"sshFailure": "timeout"},
                 ) from exc
             raise ssh_failure_error(host, ssh_info, "timeout") from exc
     except OSError as exc:
         raise ssh_failure_error(host, ssh_info, "transport_failed", str(exc)) from exc
 
     stdout, result, parsed_result, valid_result = parse_ssh_response(completed.stdout, argv)
+    # Legacy send objects retain their normal-exit compatibility, but an
+    # arbitrary JSON object is not an outcome. Only versioned responses can
+    # establish completion across abnormal transport exit/shutdown timeout.
+    legacy_send_result = (
+        argv and argv[0] == "send" and isinstance(result, dict)
+        and "schemaVersion" not in result and type(result.get("ok")) is bool
+        and result.get("command", "send") == "send"
+        and completed.returncode in (0, 1, 2)
+    )
     # Keep diagnostic decoding independent of protocol decoding. A locale's
     # stderr bytes must not prevent a complete stdout response reaching its
     # strict parser. Only diagnostic text may use replacement characters.
@@ -266,14 +283,15 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
             and (completed.returncode == 255 or not stdout)) else None
     )
     if failure:
-        raise ssh_failure_error(host, ssh_info, failure, detail)
+        error = ssh_failure_error(host, ssh_info, failure, detail)
+        raise incomplete_response_error(str(error), error.details)
     runtime_output = (stdout + "\n" + stderr).strip().lower()
-    if not valid_result and (runtime_output == "python"
+    if not valid_result and not legacy_send_result and (runtime_output == "python"
             or "python was not found" in runtime_output
             or ("python3" in runtime_output and any(marker in runtime_output for marker in (
                 "command not found", "not recognized as", "no such file", "python3: not found",
             )))):
-        raise CcPeerError(
+        raise incomplete_response_error(
             f"{host}: remote python3 did not start a usable interpreter. "
             "Source-streamed SSH requires a working python3 and a POSIX-compatible "
             "remote shell. A Windows Store execution alias is not sufficient. "
@@ -282,10 +300,11 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
             {**ssh_info, "remoteRuntimeFailure": "python3_unavailable_or_unsupported_shell"},
         )
     if not stdout:
-        raise CcPeerError(f"{host}: {detail}", ssh_info)
+        raise incomplete_response_error(f"{host}: {detail}")
     if not parsed_result or (isinstance(result, dict)
-                             and "schemaVersion" in result and not valid_result):
-        raise CcPeerError(f"{host}: unexpected output: {stdout[:200]}", ssh_info)
+                             and "schemaVersion" in result and not valid_result) or (
+            argv and argv[0] == "send" and not valid_result and not legacy_send_result):
+        raise incomplete_response_error(f"{host}: unexpected output: {stdout[:200]}")
     if isinstance(result, dict):
         result.update(ssh_info)
 
@@ -317,7 +336,14 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
         ):
             return result
         details = {}
-        if "codexHomeResolution" in result:
+        if argv and argv[0] == "send" and valid_result:
+            # Preserve completed refusals and native facts without replacing
+            # the caller's command/host envelope or adding agent-specific fields.
+            details = {key: value for key, value in result.items() if key not in (
+                "schemaVersion", "command", "ok", "error", "host",
+                "requestedHost", "resolvedHost",
+            )}
+        elif "codexHomeResolution" in result:
             details["codexHomeResolution"] = result["codexHomeResolution"]
         raise CcPeerError(
             f"{host}: {result.get('error', 'remote command failed')}", details

@@ -211,6 +211,8 @@ Reply-To 路由。此测试版中未实现 MCP 设备目的地；其现有的本
 消息在加上信封后限制为 32 KiB UTF-8。`--dry-run` 解析配置的原生目标，
 而不进行原生提交。
 
+32 KiB 限制计算包含发送方信封的 UTF-8 消息字节。转义后的完整应用 JSON 必须不超过 64 KiB，包含操作员绑定路径的内部 worker JSON 必须不超过 256 KiB。大量转义字符可能使不足 32 KiB 的正文达到应用上限。明确的超限在应用写入或原生 journal intent 之前返回 `refused`；后续不确定的 I/O 失败仍为 `unknown`，不允许自动重发。
+
 `submitted`/`queued` 仍与消费（consumption）截然不同。`consumptionConfirmed`
 始终为 false；必须独立观察到模型 ACK。原生操作在有界子进程中运行，
 因此它们不会阻塞准入/吊销。在原生效果发生之前，持久化请求意图已被提交。

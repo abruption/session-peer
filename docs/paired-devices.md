@@ -311,6 +311,13 @@ fails over and resends after an uncertain submission. Set `--device-route direct
 or `relay` to force a path. Messages are limited to 32 KiB UTF-8 after the envelope.
 `--dry-run` resolves the configured native target without native submission.
 
+The 32 KiB limit counts UTF-8 message bytes including the sender envelope. The
+complete escaped application JSON must also fit 64 KiB; the internal worker JSON,
+including operator-owned binding paths, must fit 256 KiB. Escaping-heavy text can
+hit the application limit below 32 KiB. Known oversize requests are `refused`
+before application writes or native journal intents; an uncertain later I/O
+failure remains `unknown` and never authorizes automatic resend.
+
 `submitted`/`queued` remains distinct from consumption. `consumptionConfirmed` is
 always false; a model ACK must be independently observed. Native operations run in
 bounded subprocesses so they cannot block admission/revocation. A durable request
