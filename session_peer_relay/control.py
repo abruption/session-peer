@@ -199,8 +199,8 @@ def recovery_receipt(payload, result):
     return expected
 
 
-def prove(store, operation, payload, path, previous_directory=None):
-    login_state = session(store)
+def prove(store, operation, payload, path, previous_directory=None, *, login_state=None):
+    login_state = session(store) if login_state is None else dict(login_state)
     try:
         challenge = call(login_state['server'], '/api/relay/challenge', {'operation': operation, 'payload': payload}, login_state['token'])
     except Rejected as exc:
@@ -225,20 +225,39 @@ def prove(store, operation, payload, path, previous_directory=None):
     return result
 
 
-def enroll(store, name, operation_id=None):
+def enrollment_payload(store, name, operation_id):
+    """Pure original register payload shared by manual and guided enrollment."""
+    payload = {'principal': store.device, 'certificatePEM': store.cert,
+               'keyGeneration': store.generation, 'name': name, 'operationId': operation_id}
+    if store.generation:
+        payload['expectedGeneration'] = store.generation-1
+    return payload
+
+
+def enroll(store, name, operation_id=None, *, prepared_payload=None, login_state=None):
     if store.recovery_required():
         raise Rejected('recovery_required')
     operation_id = operation_id or str(uuid.uuid4())
     previous = None
-    payload = {'principal': store.device, 'certificatePEM': store.cert,
-               'keyGeneration': store.generation, 'name': name, 'operationId': operation_id}
+    payload = enrollment_payload(store, name, operation_id)
+    if prepared_payload is not None:
+        if payload != prepared_payload:
+            raise Rejected('setup_enrollment_payload_changed')
+        # The exact durable original payload supplies the actual request, not
+        # a later independent reconstruction. All fields are primitive values.
+        payload = dict(prepared_payload)
     if store.generation:
         row = store.db.execute('SELECT value FROM metadata WHERE key="local_rotation"').fetchone()
         if not row:
             raise Rejected('previous_key_unavailable')
         previous = store.root/json.loads(row[0])['previousDirectory']
-        payload['expectedGeneration'] = store.generation-1
-    result = prove(store, 'register', payload, '/api/relay/devices', previous)
+    if login_state is None:
+        result = prove(store, 'register', payload, '/api/relay/devices', previous)
+    else:
+        # Guided setup already validated this in-memory login and fenced its
+        # origin into the durable intent. Do not reread a changed login file.
+        result = prove(store, 'register', payload, '/api/relay/devices', previous,
+                       login_state=login_state)
     store.db.execute('INSERT OR REPLACE INTO metadata VALUES("control_name",?)', (name,))
     return {'ok': True, **result}
 
