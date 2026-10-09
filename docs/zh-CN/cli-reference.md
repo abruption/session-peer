@@ -530,7 +530,7 @@ SSH在启动子进程前检查最终shell引用命令的UTF-8字节数。保守�
 
 ```sh
 session-peer list --host workstation --ssh-identity --json
-session-peer send --host workstation --to reviewer --message="Review this change" \\
+session-peer send --host workstation --to reviewer --message="Review this change" \
   --require-ssh-host-key 'SHA256:<previously-verified-fingerprint>' --json
 ```
 

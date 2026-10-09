@@ -901,7 +901,7 @@ SSHは起動前に最終的なshell引用済みコマンドのUTF-8バイト数�
 
 ```sh
 session-peer list --host workstation --ssh-identity --json
-session-peer send --host workstation --to reviewer --message="Review this change" \\
+session-peer send --host workstation --to reviewer --message="Review this change" \
   --require-ssh-host-key 'SHA256:<previously-verified-fingerprint>' --json
 ```
 
