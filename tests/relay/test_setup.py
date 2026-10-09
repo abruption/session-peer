@@ -370,6 +370,24 @@ class Setup(unittest.TestCase):
             self.assertTrue(self.call('--action', 'pair', '--invite', str(path), '--apply')['paired'])
         self.assertEqual(json.loads((self.root/'setup.json').read_text())['pairing']['route'], 'direct')
 
+    def test_locally_denied_pairing_key_does_not_pin_invitation_intent(self):
+        self.initialize()
+        other = Store(self.base/'other')
+        self.addCleanup(other.close)
+        invitation = other.invite({'direct': '127.0.0.1:3770'})
+        private_write(self.root/'received.json', json.dumps(invitation))
+        state = Store(self.root)
+        try:
+            state.remember(invitation)
+            state.db.execute('UPDATE peer_keys SET status="revoked" WHERE principal=?', (other.device,))
+        finally:
+            state.close()
+        with mock.patch.object(setup, 'pair') as pair:
+            result = self.call('--action', 'pair', '--invite', str(self.root/'received.json'), '--apply')
+        self.assertEqual(result['reason'], 'key_already_used')
+        pair.assert_not_called()
+        self.assertNotIn('pairing', json.loads((self.root/'setup.json').read_text()))
+
     def test_interactive_cancel_and_eof_do_not_initialize(self):
         with mock.patch('builtins.input', side_effect=[str(self.root), 'no']), contextlib.redirect_stdout(io.StringIO()):
             self.assertTrue(setup.run(self.args('--interactive'))['cancelled'])

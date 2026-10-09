@@ -38,7 +38,7 @@ def digest(path):
 
 
 def invitation_route(invitation, route, *, already_paired=False):
-    """Validate every locally knowable refusal before retaining effect intent."""
+    """Validate input shape and advertised route before retaining effect intent."""
     try:
         if (type(invitation) is not dict or type(invitation.get('v')) is not int
                 or invitation['v'] not in (1, 2)
@@ -405,6 +405,16 @@ async def execute(args):
                 existing = store.peer(invitation.get('device')) if isinstance(invitation, dict) and isinstance(invitation.get('device'), str) else None
                 selected_route = invitation_route(invitation, args.route,
                        already_paired=bool(saved and existing and existing['status'] == 'paired'))
+                if store.recovery_required():
+                    raise Rejected('recovery_required')
+                if existing and existing['status'] == 'revoked':
+                    raise Rejected('revoked_device')
+                if existing and fingerprint(existing['certificate']) != fingerprint(invitation['certificate']):
+                    raise Rejected('setup_pairing_identity_changed')
+                key = store.db.execute('SELECT principal,status FROM peer_keys WHERE fingerprint=?',
+                                       (fingerprint(invitation['certificate']),)).fetchone()
+                if key and (key[0] != invitation['device'] or key[1] != 'active'):
+                    raise Rejected('key_already_used')
                 intent = {'invitationDigest': hashlib.sha256(raw.encode()).hexdigest(),
                           'device': invitation['device'], 'route': selected_route}
                 if saved and saved != intent:
@@ -412,8 +422,6 @@ async def execute(args):
                 work.saved['pairing'] = intent
                 work.phase('pair', 'pending')
                 if existing and existing['status'] == 'paired':
-                    if fingerprint(existing['certificate']) != fingerprint(invitation['certificate']):
-                        raise Rejected('setup_pairing_identity_changed')
                     result = {'ok': True, 'paired': True, 'resumed': True}
                 else:
                     credential = control.DeviceCredential(store, invitation['device'], 'client') if 'relay' in invitation['routes'] else None
