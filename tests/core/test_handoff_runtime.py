@@ -334,6 +334,11 @@ class HandoffRuntime(unittest.TestCase):
             peer.read_message(args)
 
     def owned_roundtrip(self, early=False):
+        # This positive receipt fixture is not a one-second effect-boundary
+        # test: the public total reserves five seconds for cleanup.  Give its
+        # real handler bootstrap/generation checks a five-second effect budget.
+        # Strict expired/short-budget refusal tests remain separate below.
+        total_seconds = 10
         self.start_collector()
         sessions = self.root / "sessions"
         sessions.mkdir()
@@ -341,19 +346,36 @@ class HandoffRuntime(unittest.TestCase):
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         listener.bind(str(inbox))
         listener.listen(1)
-        listener.settimeout(3)
+        listener.settimeout(total_seconds - 5 + 1)
         self.addCleanup(listener.close)
         pid = os.getpid()
         record_path = sessions / (str(pid) + ".json")
         record_path.write_text(json.dumps({"pid": pid, "name": "owned-fixture", "messagingSocketPath": str(inbox), "startedAt": 1000}))
         row = {"pid": pid, "name": "owned-fixture", "socket": str(inbox), "reachable": True, "alive": True, "agent": "claude"}
         failures = []
+        native_failures = []
         receipt_cap = []
+        fixture_deadline = time.monotonic() + total_seconds
+        actual_post = peer.post_to_socket
+        def post(*args, **kwargs):
+            try:
+                return actual_post(*args, **kwargs)
+            except peer.CcPeerError as error:
+                # Fixed diagnostic only: never include receipt authority,
+                # message body, paths or arbitrary exception strings.
+                native_failures.append(error.details.get("reason", "unclassified"))
+                raise
         def recipient():
+            stage = "accept"
             try:
                 with listener.accept()[0] as connection:
+                    stage = "inbox_read"
                     raw = bytearray()
                     while True:
+                        remaining = fixture_deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise TimeoutError()
+                        connection.settimeout(remaining)
                         chunk = connection.recv(4096)
                         if not chunk:
                             break
@@ -364,17 +386,20 @@ class HandoffRuntime(unittest.TestCase):
                     frame = json.loads(content.rsplit("\n", 1)[1])
                     receipt_cap.append(frame["capability"])
                     if early:
+                        stage = "early_receipt"
                         pending = peer.handoff_ipc(self.ledger.root, frame)
                         if pending.get("pending") is not True or self.ledger.record(frame["correlationId"])[1]["ack"] is not None:
                             raise AssertionError("early receipt was not retained unclassified")
+                    stage = "drain_reply"
                     connection.sendall(b"1")
                 until = peer.handoff_now() + 3
                 while self.ledger.record(frame["correlationId"])[1]["submission"] != "submitted" and peer.handoff_now() < until:
                     time.sleep(0.01)
                 if not early:
+                    stage = "committed_receipt"
                     peer.handoff_ipc(self.ledger.root, frame)
             except Exception as error:
-                failures.append(type(error).__name__)
+                failures.append({"stage": stage, "exception": type(error).__name__})
         thread = threading.Thread(target=recipient)
         thread.start()
         out = io.StringIO()
@@ -382,12 +407,14 @@ class HandoffRuntime(unittest.TestCase):
                 mock.patch.object(peer, "sessions_dir", return_value=sessions), \
                 mock.patch.object(peer, "discover", return_value=[row]), \
                 mock.patch.object(peer, "handoff_producer_command", side_effect=self.protected_producer), \
+                mock.patch.object(peer, "post_to_socket", side_effect=post), \
                 mock.patch.object(peer, "handoff_ensure_collector"), contextlib.redirect_stdout(out):
             status = peer.main(["send", "--to", "owned-fixture", "--message=hello", "--request-ack", "--wait-for", "acknowledged",
-                                "--wait-timeout", "6", "--json", "--no-from", "--no-reply-to", "--no-update-notice"])
-        thread.join(timeout=5)
+                                "--wait-timeout", str(total_seconds), "--json", "--no-from", "--no-reply-to", "--no-update-notice"])
+        thread.join(timeout=total_seconds)
         self.assertFalse(thread.is_alive())
-        self.assertEqual(failures, [], out.getvalue())
+        self.assertEqual(failures, [], {"recipient": failures, "native": native_failures, "result": json.loads(out.getvalue())})
+        self.assertEqual(native_failures, [])
         self.assertEqual(status, 0, out.getvalue())
         result = json.loads(out.getvalue())
         self.assertEqual(result["target"]["pid"], pid)
@@ -406,6 +433,19 @@ class HandoffRuntime(unittest.TestCase):
 
     def test_receipt_during_native_drain_is_retained_not_lost_or_promoted_early(self):
         self.owned_roundtrip(early=True)
+
+    def test_original_one_second_effect_cutoff_never_renews_before_connection(self):
+        # A six-second total leaves exactly one second before its five-second
+        # reserve.  Simulate scheduler/setup delay without changing clocks or
+        # the real adapter's deadline checks; expired input must never connect.
+        started = time.monotonic()
+        cutoff, total = started + 1, started + 6
+        time.sleep(1.05)
+        with mock.patch.object(peer.socket, "socket") as connection, self.assertRaises(peer.CcPeerError) as error:
+            peer.post_to_socket("owned-unused-endpoint", "hello", effect_deadline=cutoff, total_deadline=total)
+        self.assertEqual(error.exception.details["reason"], "effect_deadline_exhausted")
+        self.assertEqual(error.exception.details["status"], "refused")
+        connection.assert_not_called()
 
     def test_sender_classification_cannot_invent_a_receipt(self):
         self.mint()
