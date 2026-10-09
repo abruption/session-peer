@@ -101,6 +101,12 @@ def build_parser() -> argparse.ArgumentParser:
     sending.add_argument("message", nargs="?", help="message text (legacy positional form); omit or use - to read stdin")
     sending.add_argument("--message", "-m", dest="message_option", metavar="TEXT",
                          help="message body; use - for stdin; cannot combine with a positional message")
+    sending.add_argument("--message-file", metavar="PRIVATE_FILE", help="read a private owner-only UTF-8 message file")
+    sending.add_argument("--correlation-id", help="use a previously prepared Handoff v1 intent")
+    sending.add_argument("--request-ack", action="store_true", help="opt in to receipt-only delegated ACK authority")
+    sending.add_argument("--observe-delivery", action="store_true", help="report injection evidence when supported (not consumption)")
+    sending.add_argument("--wait-for", choices=("delivered", "acknowledged"), help="require evidence with a bounded total budget")
+    sending.add_argument("--wait-timeout", type=handoff_timeout, default=30, metavar="SECONDS", help="Handoff total budget, ASCII integer 1..60 (default: 30)")
     sending.add_argument("--b64", help=argparse.SUPPRESS)  # used for remote dispatch
     sending.add_argument(
         "--reply-to",
@@ -118,6 +124,29 @@ def build_parser() -> argparse.ArgumentParser:
                          help="wake deadline, 1..60 seconds (default: 30)")
     sending.add_argument("--dry-run", action="store_true", help="resolve the target, send nothing")
     sending.set_defaults(func=cmd_send)
+
+    handoff = subparsers.add_parser("handoff", help="manage private correlated intents without submitting native messages")
+    handoff_sub = handoff.add_subparsers(dest="handoff_action", required=True)
+    for action in ("init", "prepare", "status", "wait", "confirm"):
+        sub = handoff_sub.add_parser(action)
+        sub.add_argument("--json", action="store_true")
+        sub.set_defaults(func=cmd_handoff, no_update_notice=True)
+        if action in ("status", "wait"):
+            sub.add_argument("--correlation-id", required=True)
+        if action == "wait":
+            sub.add_argument("--wait-for", choices=("delivered", "acknowledged"), required=True)
+            sub.add_argument("--wait-timeout", type=handoff_timeout, default=30)
+        if action == "prepare":
+            sub.add_argument("--to", required=True)
+            sub.add_argument("--message-file", required=True)
+            sub.add_argument("--codex-home")
+            sub.set_defaults(message=None, message_option=None, b64=None, host=[], device=None, target_generation=None)
+        if action == "confirm":
+            sub.add_argument("--receipt", choices=("-",), required=True)
+    ack = subparsers.add_parser("ack", help="submit a receipt over private local IPC, never a native message")
+    ack.add_argument("--receipt", choices=("-",), required=True)
+    ack.add_argument("--json", action="store_true")
+    ack.set_defaults(func=cmd_ack, no_update_notice=True)
 
     updating = subparsers.add_parser("update", help="update this installation")
     add_common(updating)
@@ -168,6 +197,13 @@ def main(argv: list[str] | None = None) -> int:
     global _CLIENT_UPDATE_NOTICE, _SKILL_UPDATE_NOTICES
     cli_invocation = argv is None
     raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if len(raw_argv) == 2 and raw_argv[0] == HANDOFF_COLLECTOR_ARG:
+        if IS_WINDOWS:
+            return 1
+        try:
+            return handoff_collector(Path(raw_argv[1]))
+        except (CcPeerError, OSError, ValueError):
+            return 1
     if raw_argv == [UPDATE_REFRESH_ARG]:
         return refresh_update_cache_background()
 

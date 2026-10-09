@@ -29,6 +29,7 @@ SEGMENTS = (
     "messages.py",
     "release_verification.py",
     "updates.py",
+    "handoff.py",
     "sending.py",
     "relay.py",
     "cli.py",

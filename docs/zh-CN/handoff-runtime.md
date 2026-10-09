@@ -1,0 +1,37 @@
+# Handoff 运行时候选实现
+
+这是 [#181](https://github.com/abruption/session-peer/issues/181) 的未发布候选实现，不是已发布 Python v1.0.4 的功能。[已确定的 Handoff v1 设计](contracts/handoff-v1.md)及合成验证数据保持不变；本候选实现尚未完成所有设计验收条件。
+
+## 候选实现支持的路径
+
+同一 POSIX 机器的 Claude 收件箱提交可以使用用户明确初始化的私有记录及独立的私有收据收集器。连接端的 PID、原始进程创建信息和登记端点必须匹配所选代次。不会启动模型或会话。无正文的 Codex 注入观察、有界 Windows 管道、配对设备及反向 SSH 收据初始化尚不支持。这些路径的选择性发送在实际提交前拒绝；原有本地和 SSH 行为不变，Codex wake 版本限制也不变。
+
+```sh
+session-peer handoff init --json
+session-peer handoff prepare --to worker --message-file ./private-message.txt --json
+session-peer send --to worker --message-file ./private-message.txt --correlation-id PREPARED_UUID --request-ack --wait-for acknowledged --wait-timeout 30 --json
+session-peer handoff status --correlation-id PREPARED_UUID --json
+session-peer handoff wait --correlation-id PREPARED_UUID --wait-for acknowledged --wait-timeout 30 --json
+session-peer ack --receipt - --json
+session-peer handoff confirm --receipt - --json
+```
+
+消息必须来自仅所有者可访问的普通 UTF-8 文件。请使用 prepare 返回的 ID，而非示例占位符。收据和人工确认 JSON 只通过私有标准输入传递。接收方按自身常规权限流程决定是否提交收据。委托的收据权限不授权其他工具调用、消息发送、模型唤醒或对话记录读取，不推断自动答复。
+
+## 证据、隐私和时间限制
+
+完整的收件箱写入只表示提交，不表示消费或轮次完成。只有经认证且对应请求的收据，或时间顺序可证明的明确操作者确认，才能产生 acknowledged。写入或读取响应期间提前到达的收据先保存为有界的未分类证据。仅在提交事实及原始时钟顺序独立成立后分类，不凭空创建收据或回填 ACK 时间。已提交的 ACK 在收集器重启后保留；未使用权限保守失效。即使过期后的重复请求，也必须证明原始令牌哈希。人工确认不会重写旧等待。
+
+Python Claude 原本省略的字段保持省略，不填充 false/null。等待失败仍保留已知提交事实。中断进行中的等待会记录 stopped，并以完整结构化输出和退出码 130 返回；随后状态查询可以退出码 0 成功。状态、等待、收据、人工确认均不提交原生消息。记录缺失、损坏或 ID 未知时返回单独的 handoffQuery 错误，不伪造 epoch。禁止自动重发或改用另一传输路径。
+
+每台目标机器的总预算从准备前开始，默认 30 秒，只接受 ASCII 整数 1..60。总预算内精确保留 5 秒用于清理；观察和提交在总预算减 5 秒时停止，诊断期限也表示该边界。5 秒及以下在提交前拒绝。Python 无法强制取消文件系统、身份检查或 fsync，因此不声称所有环境下的严格实时延迟保证。
+
+原始令牌仅进入授权的原生消息输入、私有 IPC 和标准输入，不进入发送方或收集器的一般输出、参数、URI、环境变量或自身日志；日志只保存哈希。接收方队列或历史可能保留委托令牌，同一用户权限的其他读取者也可能取得它。token_possession 不等于独立的模型身份认证。不读取接收方对话记录。
+
+## 存储方式和剩余条件
+
+POSIX 私有目录为 ~/.local/share/session-peer/handoff。原子保存、fsync 及固定排他锁在实际提交前消耗首次尝试权限。之后即使崩溃发生在真正写入前，也保留 unknown。预先保留未来收据、等待和原生结果空间；10,000 条及 32 MiB 限额包括墓碑和预留空间，不自动驱逐防止重复提交的记录。每条意图最多有 64 次独立等待。
+
+仅在原生启动身份及单调时钟连续性得到证明时，30 天后才将详情压缩为绑定目标的墓碑；无法证明则保守保留，可能更早耗尽容量。跨重启保留仍需验收审查。已知恢复副本在重新使用前必须由操作者明确调用 HandoffLedger.quarantine_restored() 隔离。CLI 恢复和核对工具仍未完成。归档和重新初始化是明确的操作者行动，不自动修复。未标记的回滚或克隆无法可靠检测。不会自动删除或重新绑定旧收集器套接字。收集器最多运行 24 小时，收据权限 TTL 从原始意图的持久提交起算 24 小时，重启撤销未使用权限。发布前仍须检查生命周期和失效与完整设计的一致性。
+
+验证使用专属本地 Unix 收件箱、真实连接 PID 与进程创建信息、私有收集器和标准输入生产者子进程，以及严格 JSON、并发启动、崩溃围栏、延迟、重复、过期收据和 SIGINT 测试。不证明真实 Claude 模型消费、Codex 观察器、远程初始化或 Windows 清理。剩余验收条件解决前 #181 保持开放，确定的设计数据不作为运行时认证。
