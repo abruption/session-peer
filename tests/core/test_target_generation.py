@@ -5,7 +5,9 @@ import io
 import json
 import os
 from pathlib import Path
+import selectors
 import socket
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -232,6 +234,65 @@ class TargetGeneration(unittest.TestCase):
                 with self.assertRaises(peer.CcPeerError) as caught:
                     peer.verify_connected_generation(self.row, token, pid)
             self.assertEqual(caught.exception.details["reason"], reason)
+
+    @unittest.skipUnless(peer.sys.platform in ("darwin", "linux"), "owned Unix process incarnation")
+    def test_actual_process_restart_reusing_name_never_receives_stale_pin(self):
+        fixture = Path(__file__).parents[1] / "fixtures" / "claude_generation_inbox.py"
+        endpoint = self.root / "restart.sock"
+        counter = self.root / "writes.txt"
+        name = "owned-restarted-inbox"
+
+        def spawn():
+            process = subprocess.Popen([peer.sys.executable, str(fixture), str(self.sessions),
+                                        str(endpoint), str(counter), name],
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       start_new_session=True)
+            self.addCleanup(stop, process)
+            with selectors.DefaultSelector() as selector:
+                selector.register(process.stdout, selectors.EVENT_READ)
+                self.assertTrue(selector.select(5), "owned inbox did not become ready")
+                raw = os.read(process.stdout.fileno(), 512)
+            self.assertEqual(json.loads(raw)["pid"], process.pid)
+            return process
+
+        def stop(process):
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate(timeout=5)
+
+        def observed():
+            code, result = self.invoke("list", "--agent", "claude", "--with-target-generation")
+            self.assertEqual(code, 0)
+            rows = [row for row in result["sessions"] if row["name"] == name]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["generationStatus"], "available")
+            return rows[0]["targetGeneration"]
+
+        first = spawn()
+        original = observed()
+        self.assertEqual(counter.read_text(encoding="ascii"), "0")
+        stop(first)
+        endpoint.unlink()  # exact owned fixture socket, not a user inbox
+        second = spawn()
+        successor = observed()
+        self.assertNotEqual(successor, original)
+        for mode in ([], ["--dry-run"]):
+            code, result = self.invoke("send", "--to", name, "--message=must not arrive",
+                                       "--no-from", "--no-reply-to", "--target-generation", original, *mode)
+            self.assertEqual(code, 1)
+            self.assertEqual(result["reason"], "stale_target")
+            self.assertFalse(result["submitted"])
+            self.assertEqual(counter.read_text(encoding="ascii"), "0")
+        code, result = self.invoke("send", "--to", name, "--message=owned positive control",
+                                   "--no-from", "--no-reply-to", "--target-generation", successor)
+        self.assertEqual(code, 0)
+        self.assertEqual(result["target"]["pid"], second.pid)
+        self.assertEqual(result["targetGeneration"], successor)
+        self.assertEqual(counter.read_text(encoding="ascii"), "1")
 
     def test_private_deadline_refuses_before_effect_and_bounds_write_drain(self):
         conn = mock.Mock()
