@@ -103,8 +103,16 @@ def cmd_send(args: argparse.Namespace) -> int:
                 remote_argv.append("--dry-run")
             result = transport.execute(remote_argv)
             if expected_generation is not None and result.get("targetGeneration") != expected_generation:
+                # Failed generation evidence does not erase a complete native
+                # response. Retain its reported facts without inventing Claude's
+                # normally absent submission fields or authorizing another send.
+                native_facts = {key: result[key] for key in (
+                    "target", "chars", "dryRun", "submitted", "consumptionConfirmed",
+                    "queueId",
+                ) if key in result}
                 raise CcPeerError("SSH response did not preserve the requested generation; do not retry automatically",
-                                  {"status": "unknown", "reason": "outcome_unknown", "retryAllowed": False})
+                                  {**native_facts, **ssh_metadata_from(result),
+                                   "status": "unknown", "reason": "outcome_unknown", "retryAllowed": False})
             payload = adapter.remote_submission(result, args, text)
             payload.update(host_metadata(requested_host, host))
             payload.update(routing_metadata)

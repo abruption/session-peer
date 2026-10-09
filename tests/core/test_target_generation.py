@@ -150,6 +150,52 @@ class TargetGeneration(unittest.TestCase):
         self.assertIn("--target-generation", remote.call_args[0][0])
         self.assertEqual(result["targetGeneration"], self.token())
 
+    def test_remote_missing_or_wrong_generation_retains_native_facts_without_resend(self):
+        token = self.token()
+        native = {"schemaVersion": 1, "command": "send", "ok": True,
+                  "target": {"pid": self.pid, "name": "worker"}, "chars": 1,
+                  "dryRun": False, "sshUser": "fixture", "sshUserSource": "explicit"}
+        for observed in (None, "tg1:" + "f" * 64):
+            reply = dict(native)
+            if observed is not None:
+                reply["targetGeneration"] = observed
+            with mock.patch.object(peer, "tailscale_status", return_value={}), \
+                    mock.patch.object(peer, "resolve_ssh_destination", return_value="test-host"), \
+                    mock.patch.object(peer, "tailscale_ssh_options", return_value=[]), \
+                    mock.patch.object(peer.SshTransport, "execute", return_value=reply) as remote:
+                code, result = self.invoke("send", "--host", "test-host", "--to", "worker",
+                                           "--target-generation", token, "--message=x",
+                                           "--no-from", "--no-reply-to")
+            self.assertEqual(code, 1)
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["status"], "unknown")
+            self.assertEqual(result["target"], native["target"])
+            self.assertEqual(result["chars"], 1)
+            self.assertFalse(result["dryRun"])
+            self.assertEqual(result["sshUser"], "fixture")
+            self.assertFalse(result["retryAllowed"])
+            self.assertNotIn("submitted", result)
+            self.assertNotIn("consumptionConfirmed", result)
+            self.assertNotIn("targetGeneration", result)
+            remote.assert_called_once()
+
+    def test_remote_completed_generation_refusal_is_not_downgraded(self):
+        token = self.token()
+        failure = peer.generation_refused("stale_target", "Pinned target changed")
+        with mock.patch.object(peer, "tailscale_status", return_value={}), \
+                mock.patch.object(peer, "resolve_ssh_destination", return_value="test-host"), \
+                mock.patch.object(peer, "tailscale_ssh_options", return_value=[]), \
+                mock.patch.object(peer.SshTransport, "execute", side_effect=failure) as remote:
+            code, result = self.invoke("send", "--host", "test-host", "--to", "worker",
+                                       "--target-generation", token, "--message=x",
+                                       "--no-from", "--no-reply-to")
+        self.assertEqual(code, 1)
+        self.assertEqual(result["status"], "refused")
+        self.assertEqual(result["reason"], "stale_target")
+        self.assertFalse(result["submitted"])
+        self.assertFalse(result["retryAllowed"])
+        remote.assert_called_once()
+
     @unittest.skipUnless(peer.sys.platform in ("darwin", "linux"), "owned Unix inbox")
     def test_owned_socket_peer_identity_and_zero_write_on_wrong_peer(self):
         token = peer.claude_generation(self.row)
