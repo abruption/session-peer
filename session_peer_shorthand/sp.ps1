@@ -1,0 +1,28 @@
+# Dot-source in the current scope. Use -Remove to remove only our alias.
+param([Alias('Remove')][switch] $SessionPeerSpRemove)
+
+if ($MyInvocation.InvocationName -ne '.') {
+    throw 'Dot-source sp.ps1 to change the current PowerShell scope.'
+}
+$SessionPeerSpExisting = @(Get-Command -Name sp -All -ListImported -ErrorAction SilentlyContinue)
+$SessionPeerSpMarker = Get-Variable -Name SessionPeerSpOwned -Scope Local -ErrorAction SilentlyContinue
+if ($SessionPeerSpExisting.Count -eq 1 -and $SessionPeerSpMarker -and $SessionPeerSpMarker.Value -eq $true -and
+    $SessionPeerSpExisting[0].CommandType -eq 'Alias' -and $SessionPeerSpExisting[0].Definition -eq 'session-peer') {
+    if ($SessionPeerSpRemove) {
+        Remove-Item -LiteralPath Alias:sp -ErrorAction Stop
+        Remove-Variable -Name SessionPeerSpOwned -ErrorAction SilentlyContinue
+    }
+    return
+}
+if ($SessionPeerSpExisting.Count -gt 0) {
+    throw 'sp already exists (PowerShell normally uses it for Set-ItemProperty). Nothing was changed.'
+}
+if ($SessionPeerSpRemove) {
+    Remove-Variable -Name SessionPeerSpOwned -ErrorAction SilentlyContinue
+    return
+}
+if (-not (Get-Command -Name session-peer -ListImported -ErrorAction SilentlyContinue)) {
+    throw 'session-peer is unavailable; select its existing installation on PATH first.'
+}
+Set-Alias -Name sp -Value session-peer -Scope Local -ErrorAction Stop
+$SessionPeerSpOwned = $true

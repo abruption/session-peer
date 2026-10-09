@@ -35,6 +35,7 @@ class DistributionContents(unittest.TestCase):
             "session_peer.py",
             "session_peer_mcp.py",
             *self.source_files("session_peer_relay"),
+            *self.source_files("session_peer_shorthand"),
         }
         with zipfile.ZipFile(self.wheel) as archive:
             names = set(archive.namelist())
@@ -72,6 +73,7 @@ class DistributionContents(unittest.TestCase):
             "tools/generate_session_peer.py",
             *self.source_files("session_peer_core"),
             *self.source_files("session_peer_relay"),
+            *self.source_files("session_peer_shorthand"),
             *self.source_files("docs"),
             *self.source_files("deploy/examples"),
             *self.source_files("plugins"),
@@ -108,6 +110,14 @@ class DistributionContents(unittest.TestCase):
             self.assertNotIn("credential", basename, name)
             self.assertNotIn("client_secret", basename, name)
         self.assertFalse(any(PurePosixPath(name).name == "cc_peer.py" for name in wheel_names + sdist_names))
+
+    def test_shorthand_is_passive_packaged_data_not_an_entry_point(self):
+        with zipfile.ZipFile(self.wheel) as archive:
+            entrypoints = next(name for name in archive.namelist() if name.endswith("/entry_points.txt"))
+            self.assertNotIn("\nsp =", archive.read(entrypoints).decode("utf-8"))
+            for filename in ("sp.sh", "sp.ps1"):
+                relative = "session_peer_shorthand/" + filename
+                self.assertEqual(archive.read(relative), (ROOT / relative).read_bytes())
 
 
 if __name__ == "__main__":

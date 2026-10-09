@@ -104,6 +104,32 @@ are ordinary command errors (JSON when requested, exit 1). No messages are
 submitted in either case. JSON results still describe submission rather than
 receipt; these flags introduce no structured JSON message-input protocol.
 
+## Optional interactive shorthand
+
+For releases containing these assets, Bash/zsh and PowerShell users can opt in to a shell-local alias named `sp`. It invokes the currently selected `session-peer` command with the same arguments, stdin, output, exit codes and permissions. It is not a separate parser or a Python/TypeScript selector. Keep the canonical command in scripts, SSH requests and generated reply instructions. Do not install both implementations simultaneously; switch with the original installation manager and verify which command your shell resolves first.
+
+The wheel and source distribution include passive activation files in `session_peer_shorthand`; installation does not activate them or edit profiles or PATH. Use the Python interpreter belonging to the selected installation to locate a file: an activated pip virtual environment's interpreter, or the interpreter inside the tool environment reported by `pipx environment --value PIPX_LOCAL_VENVS` or `uv tool dir`. On Unix those tool environments normally contain `session-peer/bin/python`; Windows uses `session-peer/Scripts/python.exe`. Inspect the actual environment instead of assuming its location. The module only prints the asset's path; read the file before sourcing it.
+
+```bash
+asset=$("/path/to/tool/python" -I -m session_peer_shorthand bash)
+source "$asset"
+sp --version
+source "$asset" --remove
+```
+
+```powershell
+$asset = & 'C:\path\to\tool\Scripts\python.exe' -I -m session_peer_shorthand powershell
+. $asset
+sp --version
+. $asset -Remove
+```
+
+Activation refuses an existing `sp` executable, alias or function without replacing it. PowerShell normally already defines `sp` as `Set-ItemProperty`, so activation refuses by default; continue using the canonical command unless you deliberately manage that collision yourself. Bash/zsh must source the file, and PowerShell must dot-source it. These assets do not support cmd.exe. Shell aliases require the shell's normal alias expansion; Bash disables it in non-interactive scripts, which should use the canonical command instead.
+
+Repeated activation of this unchanged owned alias succeeds without further changes. Removal affects only the alias created in the same shell; it refuses if you replaced it with another alias or command. Closing the shell removes the alias. An upgrade through the original manager keeps the alias pointing at the canonical command, not a copied runtime. Remove the alias before uninstalling or switching implementations; uninstall does not modify a running shell. Do not add these files to profiles unless you intentionally take responsibility for persistent setup and removal.
+
+Standalone installation remains unchanged and does not install these files automatically. To use the shorthand with standalone, obtain the files from a reviewed checkout or extract `session_peer_shorthand` from the corresponding verified release source distribution. Follow [release verification](../RELEASING.md) rather than sourcing an unverified download. Source the reviewed local file directly, keeping the canonical command on PATH. Updating or removing this manually selected file is your responsibility; it does not change standalone, pipx, uv or pip ownership. Alias collision detection covers only commands visible to the current shell and PATH, not other shells or future PATH changes.
+
 ## Install
 
 Python 3.9+, standard library only — no external dependencies.
