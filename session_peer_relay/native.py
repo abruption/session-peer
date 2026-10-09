@@ -179,7 +179,14 @@ def invoke_windows_codex(binding, operation, text=None, peer_fingerprint=None):
     argv = [binding['codexPython'], '-', *args]
     # CreateProcessW permits 32,767 UTF-16 units including its terminating NUL.
     # Account for every option/path and Windows quoting before starting a send.
-    command_units = len(subprocess.list2cmdline(argv).encode('utf-16-le')) // 2 + 1
+    command_units = core.windows_command_units(argv)
+    if operation != 'list':
+        framed = core.peer_delivery_message(text, 'codex', peer_fingerprint)
+        # The streamed Python process launches Codex with the final frame, not
+        # the shorter raw body in its own argv. Both commands must fit before
+        # starting native Python; never turn a predictable refusal into unknown.
+        command_units = max(command_units, core.windows_command_units(
+            core.codex_queue_argv(native_bin, binding['target'].removeprefix('codex:'), framed)))
     if command_units > 32767:
         return {'ok': False, 'status': 'refused', 'submitted': False,
                 'reason': 'native_windows_command_too_long', 'retryAllowed': False,

@@ -143,7 +143,11 @@ class WindowsBridge(unittest.TestCase):
                     def units(text):
                         args = baseline[:]
                         args[index] = '--message=' + text
-                        return len(subprocess.list2cmdline(args).encode('utf-16-le')) // 2 + 1
+                        inner = native.core.codex_queue_argv(
+                            'C:\\工具 🧪\\codex.exe', self.binding['target'].removeprefix('codex:'),
+                            native.core.peer_delivery_message(text, 'codex'))
+                        return max(native.core.windows_command_units(args),
+                                   native.core.windows_command_units(inner))
                     # Find the largest repeated body that fits without exceeding
                     # the independent 32 KiB UTF-8 message policy.
                     low, high = 1, 32768 // len(sample.encode())
@@ -174,6 +178,36 @@ class WindowsBridge(unittest.TestCase):
                  mock.patch.object(native.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, b'{"ok":true}', b'')) as run:
                 self.assertTrue(native.invoke_windows_codex(self.binding, operation, text)['ok'])
             run.assert_called_once()
+
+    def test_expanded_controls_and_lines_budget_final_codex_argv_before_launch(self):
+        binding = {**self.binding, 'target': 'codex:01900000-0000-7000-8000-000000000001'}
+        for sample in ('\x01', 'x\n'):
+            for operation in ('resolve', 'send'):
+                for fingerprint in (None, 'a' * 64):
+                    def units(count):
+                        framed = native.core.peer_delivery_message(sample * count, 'codex', fingerprint)
+                        return native.core.windows_command_units(native.core.codex_queue_argv(
+                            r'C:\tools\codex.exe', binding['target'].removeprefix('codex:'), framed))
+                    low, high = 1, 32768 // len(sample.encode())
+                    while low < high:
+                        middle = (low + high + 1) // 2
+                        if units(middle) <= 32767:
+                            low = middle
+                        else:
+                            high = middle - 1
+                    with self.subTest(sample=repr(sample), operation=operation, fingerprint=fingerprint):
+                        self.assertLessEqual(units(low), 32767)
+                        self.assertGreater(units(low + 1), 32767)
+                        with mock.patch.object(native.Path, 'read_bytes', return_value=b'if __name__ == "__main__":\n    main()\n'), \
+                             mock.patch.object(native.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, b'{"ok":true}', b'')) as run:
+                            self.assertTrue(native.invoke_windows_codex(binding, operation, sample * low, fingerprint)['ok'])
+                        run.assert_called_once()
+                        with mock.patch.object(native.subprocess, 'run') as run:
+                            result = native.invoke_windows_codex(binding, operation, sample * (low + 1), fingerprint)
+                        self.assertEqual(result['status'], 'refused')
+                        self.assertEqual(result['reason'], 'native_windows_command_too_long')
+                        self.assertFalse(result['submitted'])
+                        run.assert_not_called()
 
     def test_timeout_is_unknown_and_never_retried(self):
         with mock.patch.object(native.subprocess, 'run', side_effect=subprocess.TimeoutExpired('native', 32)) as run:

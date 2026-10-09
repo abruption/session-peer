@@ -753,10 +753,25 @@ def check_codex_message(text: str) -> None:
         raise CcPeerError(f"Codex message is {size} UTF-8 bytes; session-peer limit is {MAX_CODEX_MESSAGE_BYTES}, including headers")
 
 
+def codex_queue_argv(executable: str, thread_id: str, text: str) -> list[str]:
+    return [executable, "queue", "--thread", thread_id, "--message=" + text]
+
+
+def windows_command_units(argv: list[str]) -> int:
+    """CreateProcessW budget, including quoting and the terminating NUL."""
+    return len(subprocess.list2cmdline(argv).encode("utf-16-le")) // 2 + 1
+
+
 def _queue_codex(args: argparse.Namespace, text: str) -> dict:
     thread_id = codex_thread(args.to)
     check_codex_message(text)
     executable = codex_executable(args)
+    argv = codex_queue_argv(executable, thread_id, text)
+    if os.name == "nt" and windows_command_units(argv) > 32767:
+        raise CcPeerError("Framed Codex command exceeds the Windows command-line limit",
+                          {"status": "refused", "submitted": False,
+                           "reason": "native_windows_command_too_long", "retryAllowed": False,
+                           "consumptionConfirmed": False})
     selected = codex_home(args)
     root, home_resolution = resolve_codex_home(args, selected, thread_id)
     result = {"ok": True, "target": {"agent": "codex", "id": thread_id},
@@ -779,7 +794,7 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
     env = dict(os.environ, CODEX_HOME=process_home)
     try:
         # Keep leading dashes inside the option value, including with --no-from.
-        done = subprocess.run([executable, "queue", "--thread", thread_id, "--message=" + text],
+        done = subprocess.run(argv,
                               env=env, capture_output=True, encoding="utf-8", errors="replace",
                               timeout=CODEX_QUEUE_TIMEOUT)
     except subprocess.TimeoutExpired as exc:
