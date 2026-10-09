@@ -190,9 +190,13 @@ class WakeChain(unittest.TestCase):
                 return real_popen(argv, **kwargs)
             expected = peer.wake_chain_environment(CONTEXT)
             self.assertEqual({key:kwargs['env'][key] for key in peer.WAKE_CHAIN_ENV}, expected)
+            self.assertEqual(kwargs['env']['CODEX_HOME'], folder)
+            self.assertNotIn('CODEX_SQLITE_HOME', kwargs['env'])
             kwargs['env']['WAKE_TEST_EXPECT_CHAIN'] = json.dumps(expected)
             return real_popen([sys.executable, str(fixture)], **kwargs)
-        with tempfile.TemporaryDirectory() as folder, patch.object(peer.subprocess, 'Popen', side_effect=spawn):
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.dict(os.environ, {'CODEX_SQLITE_HOME': '  '}), \
+                patch.object(peer.subprocess, 'Popen', side_effect=spawn):
             result = peer.run_codex_wake('codex', Path(folder), THREAD, folder, 1, wake_context=CONTEXT)
         self.assertEqual(result['status'], 'completed')
 

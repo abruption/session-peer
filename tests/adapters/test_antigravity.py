@@ -155,7 +155,8 @@ class Adapter(unittest.TestCase):
                     rpc.assert_not_called(); run.assert_not_called()
                 else:
                     self.assertEqual(run.call_args.args[0], [str(Path('/fixture/bin/agentapi')), 'send-message',
-                                                            '--title=session-peer', '--', THREAD, text])
+                                                            '--title=session-peer', '--', THREAD,
+                                                            p.peer_delivery_message(text, 'antigravity')])
 
     def test_invalid_bodies_agree_for_dry_run_and_real_send(self):
         for text in ('', ' \n', 'x\0y', '한' * 10923):

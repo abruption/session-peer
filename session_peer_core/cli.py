@@ -27,6 +27,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_common(sub: argparse.ArgumentParser) -> None:
+        sub.add_argument("--ssh-identity", action="store_true", help="report connection-verified SSH host-key identity (POSIX opt-in)")
+        sub.add_argument("--require-ssh-host-key", metavar="SHA256:KEY", help="require this host key on the actual SSH connection (POSIX opt-in)")
         sub.add_argument(
             "--host", action="append", default=[], metavar="DEST",
             help="SSH [USER@]HOST, repeatable; otherwise User comes from SSH config/default",
@@ -54,6 +56,8 @@ def build_parser() -> argparse.ArgumentParser:
                  "set explicitly for Orca/multiple homes")
     listing.add_argument("--codex-home", help="list only this destination home (default: known default, CODEX_HOME, Orca and configured homes)")
     listing.add_argument("--codex-bin", help="Codex executable on the destination (used by send)")
+    listing.add_argument("--with-target-generation", action="store_true",
+                         help="report optional inbox generation preconditions (not ACK or consumption)")
     listing.add_argument(
         "--all", action="store_true", help="include stale records and sessions with no inbox"
     )
@@ -83,6 +87,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="session name, PID, codex:UUID, antigravity:UUID, or session-peer://v1/reply address",
     )
     sending.add_argument("--codex-home", help=home_help)
+    sending.add_argument("--target-generation", metavar="TOKEN",
+                         help="require a previously discovered inbox generation; fail closed if unsupported")
     sending.add_argument(
         "--allow-inactive-codex-home", action="store_true",
         help="with --codex-home, intentionally queue an inactive thread for a future resume",
@@ -194,6 +200,7 @@ def main(argv: list[str] | None = None) -> int:
         _SKILL_UPDATE_NOTICES = []
     show_human_notice = True
     try:
+        validate_ssh_identity_options(args)
         exit_code = args.func(args)
     except CcPeerError as exc:
         message = str(exc)

@@ -72,7 +72,7 @@ def check_ssh_options(options: list[str]) -> None:
             raise CcPeerError("invalid StrictHostKeyChecking value")
 
 
-SSH_METADATA_FIELDS = ("sshUser", "sshUserSource")
+SSH_METADATA_FIELDS = ("sshUser", "sshUserSource", "sshIdentity")
 
 
 def ssh_metadata_from(payload: dict) -> dict:
@@ -192,10 +192,46 @@ def parse_ssh_response(output, argv):
         and type(result.get("ok")) is bool
         and bool(argv) and result.get("command") == argv[0]
     )
+    if valid and "lastSeenTarget" in result:
+        observed = result["lastSeenTarget"]
+        requested = []
+        targets = []
+        for index, argument in enumerate(argv):
+            if not isinstance(argument, str):
+                continue
+            if argument == "--target-generation" and index + 1 < len(argv):
+                requested.append(argv[index + 1])
+            elif argument.startswith("--target-generation="):
+                requested.append(argument.split("=", 1)[1])
+            if argument == "--to" and index + 1 < len(argv):
+                targets.append(argv[index + 1])
+            elif argument.startswith("--to="):
+                targets.append(argument.split("=", 1)[1])
+        last_seen_valid = (
+            isinstance(observed, dict) and set(observed) == {"agent", "targetGeneration"}
+            and observed["agent"] == "claude" and isinstance(observed["targetGeneration"], str)
+            and re.fullmatch(r"tg1:[0-9a-f]{64}", observed["targetGeneration"]) is not None
+            and argv[0] == "send" and len(targets) == 1
+            and isinstance(targets[0], str) and bool(targets[0])
+            and AGENTS.for_target(targets[0]).name == "claude"
+            and requested == [observed["targetGeneration"]]
+            and result["ok"] is False and result.get("status") == "refused"
+            and result.get("reason") == "stale_target" and result.get("submitted") is False
+            and result.get("retryAllowed") is False
+        )
+        if not last_seen_valid:
+            # Bad optional refusal metadata cannot prove no effect. It also
+            # cannot erase a complete positive response accepted by the
+            # existing ordinary parser. Keep its existing native semantics without reflecting
+            # the invalid optional metadata or granting resend permission.
+            if result["ok"] is True or result.get("submitted") is True:
+                result.pop("lastSeenTarget")
+            else:
+                valid = False
     return stdout, result, bool(stdout), valid
 
 
-def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
+def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, identity_options=()) -> dict:
     check_ssh_argument(host, "--host")
     check_ssh_options(ssh_opts)
 
@@ -219,7 +255,7 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     # result to the remote *shell*, so an argv list is not the protection it
     # looks like: a metacharacter in any element executes over there. Build
     # the remote command as one already-quoted string instead.
-    command = ["ssh", *ssh_opts, host, remote]
+    command = ["ssh", *identity_options, *ssh_opts, host, remote]
 
     def incomplete_response_error(message: str, details: dict | None = None) -> CcPeerError:
         metadata = {**ssh_info, **(details or {})}

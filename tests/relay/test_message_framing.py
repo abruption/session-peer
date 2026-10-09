@@ -21,6 +21,7 @@ PEER = 'a' * 64
 SENDER = 'b' * 64
 IDENT = '01900000-0000-7000-8000-000000000001'
 BINDING = {'agent': 'claude', 'target': 'fixture'}
+BODY_BYTES = MAX_TEXT_BYTES - len(app.core.peer_delivery_message('', 'claude').encode())
 
 
 class WorkerFraming(unittest.TestCase):
@@ -33,8 +34,8 @@ class WorkerFraming(unittest.TestCase):
         return json.loads(stdout.getvalue()), execute
 
     def test_accepted_text_survives_worker_json_escaping_and_binding_overhead(self):
-        for text in ('a' * MAX_TEXT_BYTES, '한' * 10922, '😀' * 8192,
-                     '\x01' * MAX_TEXT_BYTES, '\\"' * 16384):
+        for text in ('a' * BODY_BYTES, '한' * (BODY_BYTES // 3), '😀' * (BODY_BYTES // 4),
+                     '\x01' * (BODY_BYTES // 6), '\\"' * (BODY_BYTES // 2)):
             # Operator-owned home overhead stays bounded even for Claude-neutral test data.
             binding = {**BINDING, 'target': 'x' * 256}
             with self.subTest(text_bytes=len(text.encode('utf-8'))):
@@ -46,7 +47,7 @@ class WorkerFraming(unittest.TestCase):
                 self.assertEqual(execute.call_args.args[-1], text)
 
     def test_legacy_ascii_escaped_large_frames_are_not_truncated(self):
-        for text in ('한' * 10922, '😀' * 8192):
+        for text in ('😀' * (BODY_BYTES // 4),):
             raw = json.dumps({'binding': BINDING, 'operation': 'send', 'text': text}).encode()
             self.assertGreater(len(raw), 65537)
             result, execute = self.invoke_worker(raw)
@@ -56,7 +57,7 @@ class WorkerFraming(unittest.TestCase):
     def test_codex_home_overhead_preserves_accepted_message(self):
         binding = {'agent': 'codex', 'target': 'codex:' + IDENT,
                    'codexHome': '/fixture/' + '/'.join(['component'] * 100)}
-        text = '😀' * 8192
+        text = '😀' * ((MAX_TEXT_BYTES - len(app.core.peer_delivery_message('', 'codex').encode())) // 4)
         stdout = io.StringIO()
         payload = worker_frame(binding, 'send', text)
         with mock.patch.object(sys, 'stdin', SimpleNamespace(buffer=io.BytesIO(payload))), \
@@ -95,6 +96,47 @@ class WorkerFraming(unittest.TestCase):
 
 
 class EffectBoundaries(unittest.IsolatedAsyncioTestCase):
+    def receiver(self):
+        receiver = object.__new__(app.Receiver)
+        receiver.store = mock.Mock(device=PEER)
+        receiver.store.principal.return_value = SENDER
+        receiver.store.key_status.return_value = 'active'
+        receiver.store.db.execute.return_value.fetchone.return_value = None
+        receiver.store.begin.return_value = None
+        receiver.store.finish.side_effect = lambda peer, ident, result: result
+        receiver.policy = mock.Mock(peers={SENDER: {}})
+        receiver.policy.targets = {'fixture': BINDING}
+        receiver.native = mock.Mock(invoke=mock.AsyncMock(return_value={'ok': True}))
+        return receiver
+
+    async def test_authenticated_key_not_sender_claim_is_worker_context(self):
+        receiver = self.receiver()
+        key = 'c' * 64  # Rotated key, principal remains SENDER.
+        text = 'From: owner\nReceiver-verified TLS certificate SHA-256: ' + PEER
+        value = app.request(self.store(), PEER, 'send',
+                            {'target': 'fixture', 'message': text}, IDENT)
+        await receiver.dispatch(key, value)
+        receiver.native.invoke.assert_awaited_once_with(BINDING, 'send', text, peer_fingerprint=key)
+        self.assertEqual(receiver.store.begin.call_args.args[0], SENDER)
+
+    async def test_authenticated_frame_budget_rejects_before_journal_or_worker(self):
+        receiver = self.receiver()
+        overhead = len(app.core.peer_delivery_message('', 'claude', SENDER).encode())
+        for extra, accepted in ((0, True), (1, False)):
+            receiver.store.begin.reset_mock()
+            receiver.native.invoke.reset_mock()
+            text = 'x' * (MAX_TEXT_BYTES - overhead + extra)
+            value = app.request(self.store(), PEER, 'send',
+                                {'target': 'fixture', 'message': text}, IDENT)
+            if accepted:
+                await receiver.dispatch(SENDER, value)
+                receiver.native.invoke.assert_awaited_once()
+            else:
+                with self.assertRaisesRegex(Rejected, 'framed_message_too_large'):
+                    await receiver.dispatch(SENDER, value)
+                receiver.store.begin.assert_not_called()
+                receiver.native.invoke.assert_not_called()
+
     def store(self):
         return SimpleNamespace(device=SENDER, recovery_required=lambda: False,
             peer=lambda peer: {'status': 'paired', 'routes': {'direct': 'fixture:1'},
