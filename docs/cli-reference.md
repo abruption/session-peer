@@ -440,6 +440,16 @@ remote paths. Sending requires a Codex executable with the `queue` command and
 the appropriate saved thread/rollout in that home; a listing alone does not
 prove the queue can accept it.
 
+### SQLite storage boundary
+
+The 2026-10-09 source investigation examined native Codex [0.154.0](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/core/src/config/mod.rs) and [0.159.0](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/core/src/config/mod.rs). Both resolve SQLite storage from configured `sqlite_home`, then nonempty `CODEX_SQLITE_HOME`, then `CODEX_HOME`; relative environment paths use the native resolved working directory. [Managed requirements](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/core/src/config/requirements.rs) can replace configured storage, including command-line overrides. The [native queue path](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/tui/src/session_queue_commands.rs) can reuse a running shared server, whose storage is not established by the new client's environment. These are source findings, not new live-delivery or platform validation.
+
+session-peer refuses a nonempty inherited `CODEX_SQLITE_HOME` or a root `sqlite_home` setting in any inspected home's configuration before discovery, dry-run, or queue submission. This includes quoted/escaped root keys and root dotted/table forms, even when the configured path equals the selected home. Unselected nested keys are not root storage settings. Empty environment overrides are removed from native child environments; environment names are case-sensitive on POSIX and case-insensitive on Windows. The guard retains the selected native-home translation where already supported and does not add relocated-storage support.
+
+The home's `config.toml` must be a regular, non-symlink UTF-8 file of at most 1 MiB; missing files are allowed. Unreadable, changed, oversized, or lexically unclassifiable files are refused without printing their contents. The dependency-free key classifier supports Python 3.9 and is not a general TOML/schema validator; native Codex still validates other values. Queue and wake recheck this boundary before starting a child. A refusal has `status=refused`, `submitted=false`, and `retryAllowed=false`; valid ordinary outputs and writer-ownership checks remain unchanged. SSH performs this check on the destination, not on the sender's environment.
+
+This is bounded hardening, not proof of effective native storage for every configuration. Project/system/profile layers, managed requirements, and an existing shared server are not resolved or attested by this guard; configuration can also change after the final check. Do not infer storage agreement from a successful check alone. [#268](https://github.com/abruption/session-peer/issues/268) remains open for that evidence gate and version/platform acceptance. Fake-child fixtures show refusal and environment behavior only; they do not establish actual wrong-target delivery, a security exploit, or new native compatibility. The wake version matrix remains unchanged.
+
 ### Orca and multiple Codex homes
 
 An Orca-launched session can use a per-account home while a separate terminal

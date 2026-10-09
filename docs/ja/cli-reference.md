@@ -437,6 +437,16 @@ Codex の検出は、読み取り専用の SQLite 接続を使用して `state_5
 そのホーム内の適切な保存済みスレッド/ロールアウトが必要です。一覧表示だけでは
 キューがそれを受け入れられることは証明されません。
 
+### SQLite ストレージの境界
+
+2026-10-09 のソース調査では native Codex [0.154.0](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/core/src/config/mod.rs) と [0.159.0](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/core/src/config/mod.rs) を確認しました。両版は設定済みの `sqlite_home`、空でない `CODEX_SQLITE_HOME`、`CODEX_HOME` の順で SQLite ストレージを選択します。相対的な環境変数のパスは native が解決した作業ディレクトリを基準にします。[管理要件](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/core/src/config/requirements.rs) はコマンドライン指定を含むストレージ設定を置き換えられます。[native のキュー経路](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/tui/src/session_queue_commands.rs) は稼働中の共有サーバーを再利用できるため、新しいクライアントの環境だけではサーバーのストレージを確認できません。これはソース上の確認であり、新たな実送信やプラットフォーム検証ではありません。
+
+session-peer は継承された `CODEX_SQLITE_HOME` が空でない場合、または調べるホームの設定にルートの `sqlite_home` がある場合、検出、事前検証、キュー投入の前に拒否します。設定パスが選択したホームと同じ場合も拒否し、引用符・エスケープを含むルートキー、ルートのドット区切りキーやテーブルも対象です。選択されていない入れ子のキーはルートのストレージ設定と見なしません。空の環境変数指定は native 子プロセスの環境から除去します。環境変数名は POSIX では大文字と小文字を区別し、Windows では区別しません。既存の native ホームのパス変換は維持し、ストレージの移動には対応しません。
+
+ホームの `config.toml` は最大 1 MiB の UTF-8 通常ファイルであり、シンボリックリンクであってはなりません。ファイルが存在しなくても構いません。読み取り不能、変更、サイズ超過、キー構文を分類できない場合は内容を表示せず拒否します。外部依存のないキー分類器は Python 3.9 に対応しますが、完全な TOML・スキーマ検証器ではありません。他の値は引き続き native Codex が検証します。キュー投入と wake は子プロセスの起動前にこの境界を再確認します。拒否結果は `status=refused`、`submitted=false`、`retryAllowed=false` となり、通常の既存出力と書き込みプロセスの所有権検査は変わりません。SSH では送信元の環境ではなく送信先で検査します。
+
+これは範囲を限定した防御の強化であり、すべての設定で native ストレージが一致する証明ではありません。プロジェクト・システム・プロファイルの設定層、管理要件、既存の共有サーバーをこの検査で解決・証明することはありません。最後の検査後に設定が変わる場合もあります。検査の成功だけからストレージの一致を推測しないでください。[#268](https://github.com/abruption/session-peer/issues/268) は、この証拠とバージョン・プラットフォームの受け入れ検証のため未完了のまま維持します。擬似子プロセスのテストが示すのは拒否と環境処理のみであり、実際の誤送信、セキュリティ上の悪用、新たな native 互換性を証明しません。wake の対応バージョン範囲は変わりません。
+
 ### Orca と複数の Codex ホーム
 
 Orca で起動されたセッションはアカウントごとのホームを使用でき、別のターミナルまたは
