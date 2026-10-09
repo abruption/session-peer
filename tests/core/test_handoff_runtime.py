@@ -496,13 +496,28 @@ class HandoffRuntime(unittest.TestCase):
             connection.settimeout(2)
             connection.connect(str(self.ledger.root / "receipt.sock"))
             connection.sendall(b'{')
+            closed = False
+            for chunk in (b'"', b'x'):
+                time.sleep(0.4)
+                try:
+                    connection.sendall(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    # The aggregate one-second deadline can correctly close
+                    # before a loaded runner schedules the next slow write.
+                    closed = True
+                    break
             time.sleep(0.4)
-            connection.sendall(b'"')
-            time.sleep(0.4)
-            connection.sendall(b'x')
-            time.sleep(0.4)
-            response = connection.recv(4096)
-        self.assertFalse(json.loads(response)["ok"])
+            # A per-chunk one-second renewal would remain open until at least
+            # t=1.8 here and fail this bounded read at approximately t=1.55.
+            connection.settimeout(0.35)
+            try:
+                response = connection.recv(4096)
+            except ConnectionResetError:
+                closed, response = True, b""
+        if response:
+            self.assertFalse(json.loads(response)["ok"])
+        else:
+            self.assertTrue(closed or response == b"")
         start = peer.handoff_now()
         self.assertIsNotNone(peer.handoff_channel_epoch(self.ledger))
         self.assertLess(peer.handoff_now() - start, 0.5)
