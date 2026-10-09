@@ -37,10 +37,10 @@ or broadened. Selection is rechecked before applying, not a permanent native
 session-incarnation guarantee.
 
 The private `setup.json` durably retains the original enrollment UUID, name,
-server and key identity before the request. After interruption/lost response,
+server, key identity and exact registration payload before the request. After interruption/lost response,
 explicitly resume `enroll` with the same state/name: the existing API reconciles
 that same operation, never silently creates another mutation. Changed intent or
-identity is refused. Expired login needs explicit `login` again while retaining
+identity or payload (including certificate PEM formatting) is refused before network access. Expired login needs explicit `login` again while retaining
 the UUID. Ambiguous invitation creation blocks for operator reconciliation.
 The displayed receiver command runs in the foreground; `--action receiver --apply`
 uses the same lifetime until Ctrl-C or `--seconds`. No autostart/service

@@ -271,8 +271,13 @@ async def execute(args):
                     raise Rejected('setup_enrollment_intent_changed')
                 if not saved:
                     saved = {'operationId': str(uuid.uuid4()), 'intent': intent, 'state': 'prepared'}
+                    saved['payload'] = control.enrollment_payload(store, args.name, saved['operationId'])
                     work.saved['enrollment'] = saved
                     work.save()  # Durable original UUID/identity before any network mutation.
+                if saved.get('payload') != control.enrollment_payload(store, args.name, saved['operationId']):
+                    # DER identity alone does not fence the Control API's exact
+                    # canonical payload digest. Even PEM whitespace is material.
+                    raise Rejected('setup_enrollment_payload_changed')
                 if saved['state'] == 'committed':
                     return {'ok': True, **saved['receipt'], 'reconciled': True}
                 saved['state'] = 'unknown'

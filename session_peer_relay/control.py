@@ -225,19 +225,26 @@ def prove(store, operation, payload, path, previous_directory=None):
     return result
 
 
+def enrollment_payload(store, name, operation_id):
+    """Pure original register payload shared by manual and guided enrollment."""
+    payload = {'principal': store.device, 'certificatePEM': store.cert,
+               'keyGeneration': store.generation, 'name': name, 'operationId': operation_id}
+    if store.generation:
+        payload['expectedGeneration'] = store.generation-1
+    return payload
+
+
 def enroll(store, name, operation_id=None):
     if store.recovery_required():
         raise Rejected('recovery_required')
     operation_id = operation_id or str(uuid.uuid4())
     previous = None
-    payload = {'principal': store.device, 'certificatePEM': store.cert,
-               'keyGeneration': store.generation, 'name': name, 'operationId': operation_id}
+    payload = enrollment_payload(store, name, operation_id)
     if store.generation:
         row = store.db.execute('SELECT value FROM metadata WHERE key="local_rotation"').fetchone()
         if not row:
             raise Rejected('previous_key_unavailable')
         previous = store.root/json.loads(row[0])['previousDirectory']
-        payload['expectedGeneration'] = store.generation-1
     result = prove(store, 'register', payload, '/api/relay/devices', previous)
     store.db.execute('INSERT OR REPLACE INTO metadata VALUES("control_name",?)', (name,))
     return {'ok': True, **result}

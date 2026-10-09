@@ -27,9 +27,9 @@ session-peer setup --mode relay --interactive --role client --no-browser
 服务，也不修改已有服务。策略只新建私密0600文件或复用完全相同的文件，不覆盖其他
 策略、不扩大权限。应用前重新检查目标，但不保证之后原生会话仍为同一实例。
 
-私密 `setup.json` 在请求前持久保存原注册 UUID、名称、服务器、密钥标识。中断、丢失
+私密 `setup.json` 在请求前持久保存原注册 UUID、名称、服务器、密钥标识及完整注册请求。中断、丢失
 响应后，用相同状态、名称明确恢复 `enroll`，现有 API 核对同一操作，不更换成新修改。
-意图、密钥变化会被拒绝。登录过期需重新 `login`，但 UUID 保留。邀请生成结果不明时，
+意图、密钥、请求（包括证书 PEM 的空白）变化会在联网前被拒绝。登录过期需重新 `login`，但 UUID 保留。邀请生成结果不明时，
 等待操作员核对。提示命令和 `--action receiver --apply` 在前台运行，直到 Ctrl-C 或
 `--seconds` 到期；不安装自动启动、服务、配置文件，已有 launchd、systemd 管理独立进行。
 `--action cancel --apply`、EOF、Ctrl-C 只停止设置等待，不撤销已提交注册或原消息。

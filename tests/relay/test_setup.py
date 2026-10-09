@@ -173,6 +173,23 @@ class Setup(unittest.TestCase):
         self.assertFalse(result['operationCancelled'])
         self.assertEqual(before, json.loads((self.root/'setup.json').read_text())['enrollment'])
 
+    def test_same_der_changed_pem_text_refuses_before_network_and_retains_payload(self):
+        self.initialize()
+        self.login_state()
+        with mock.patch.object(setup.control, 'enroll', side_effect=Rejected('timeout')):
+            self.call('--action', 'enroll', '--name', 'fixture', '--apply')
+        saved = json.loads((self.root/'setup.json').read_text())['enrollment']
+        certificate = (self.root/'identity.pem').read_text()
+        private_write(self.root/'identity.pem', certificate+'\n')
+        self.assertEqual(setup.fingerprint(certificate), setup.fingerprint(certificate+'\n'))
+        with mock.patch.object(setup.control, 'enroll') as enroll, \
+                mock.patch.object(setup.control, 'call') as call:
+            result = self.call('--action', 'enroll', '--name', 'fixture', '--apply')
+        self.assertEqual(result['reason'], 'setup_enrollment_payload_changed')
+        enroll.assert_not_called()
+        call.assert_not_called()
+        self.assertEqual(json.loads((self.root/'setup.json').read_text())['enrollment'], saved)
+
     def test_policy_preview_then_exclusive_apply_least_privilege_no_overwrite(self):
         self.initialize()
         with mock.patch.object(core, 'collect_listing', return_value=self.rows()), \
