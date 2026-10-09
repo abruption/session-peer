@@ -189,6 +189,13 @@ function session-peer { 'updated implementation'; $global:LASTEXITCODE = 0 }
 Require ((sp --version) -eq 'updated implementation') 'canonical selection not followed after update'
 . $asset -Remove
 . $asset -Remove
+Require (-not (Get-Alias -Name sp -ErrorAction SilentlyContinue)) 'owned alias not removed'
+. $asset
+function sp { 'hidden command appeared after activation' }
+. $asset -Remove
+Require (-not (Get-Alias -Name sp -ErrorAction SilentlyContinue)) 'hidden function prevented owned alias removal'
+Require ((Get-Command -Name sp).CommandType -eq 'Function') 'hidden function was deleted'
+Remove-Item Function:sp
 Require (-not (Get-Command sp -ListImported -ErrorAction SilentlyContinue)) 'owned alias not removed'
 function sp { 'unrelated' }
 $refused = $false
@@ -209,6 +216,48 @@ try { . $asset } catch { $refused = $true }
 Require $refused 'missing canonical command not refused'
 exit 0
 """.replace("__ASSET__", asset).replace("__PYTHON__", python).replace("__FIXTURE__", fixture)
+            .replace("__CANONICAL__", str(self.bin / ("session-peer.cmd" if os.name == "nt" else "session-peer")).replace("'", "''")), encoding="utf-8-sig")
+        result = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script)],
+                                env=self.env, input="", capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    @unittest.skipUnless(os.name == "nt" or shutil.which("pwsh"), "PowerShell not installed")
+    def test_powershell_collision_lookup_never_autoloads_modules(self):
+        shell = shutil.which("powershell") if os.name == "nt" else shutil.which("pwsh")
+        if not shell:
+            self.skipTest("PowerShell unavailable")
+        modules = self.directory / "modules"
+        module = modules / "SpLookupProbe"
+        module.mkdir(parents=True)
+        marker = self.directory / "autoloaded"
+        module.joinpath("SpLookupProbe.psm1").write_text(
+            "[IO.File]::WriteAllText('" + str(marker).replace("'", "''") + "', 'loaded')\n"
+            "function sp { 'unimported' }; function session-peer { 'unimported' }\n"
+            "Export-ModuleMember -Function sp,session-peer\n", encoding="utf-8-sig")
+        module.joinpath("SpLookupProbe.psd1").write_text(
+            "@{RootModule='SpLookupProbe.psm1';ModuleVersion='1.0.0';"
+            "GUID='01900000-0000-7000-8000-000000000001';FunctionsToExport=@('sp','session-peer')}\n",
+            encoding="utf-8-sig")
+        script = self.directory / "autoload-lookup.ps1"
+        script.write_text("""$ErrorActionPreference = 'Stop'
+Remove-Item Alias:sp -Force -ErrorAction SilentlyContinue
+$env:PSModulePath = '__MODULES__' + [IO.Path]::PathSeparator + $env:PSModulePath
+$asset = '__ASSET__'
+. $asset
+if (Test-Path '__MARKER__') { throw 'sp lookup auto-imported a module' }
+. $asset -Remove
+Remove-Item '__CANONICAL__'
+$refused = $false
+try { . $asset } catch { $refused = $true }
+if (-not $refused) { throw 'missing canonical command accepted' }
+if (Test-Path '__MARKER__') { throw 'canonical lookup auto-imported a module' }
+# Verify the test module really can be discovered by an ordinary exact lookup.
+Get-Command -Name sp | Out-Null
+if (-not (Test-Path '__MARKER__')) { throw 'autoload fixture was ineffective' }
+exit 0
+""".replace("__MODULES__", str(modules).replace("'", "''"))
+            .replace("__ASSET__", str(ASSETS / "sp.ps1").replace("'", "''"))
+            .replace("__MARKER__", str(marker).replace("'", "''"))
             .replace("__CANONICAL__", str(self.bin / ("session-peer.cmd" if os.name == "nt" else "session-peer")).replace("'", "''")), encoding="utf-8-sig")
         result = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script)],
                                 env=self.env, input="", capture_output=True, text=True, timeout=30)
