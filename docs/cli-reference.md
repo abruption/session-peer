@@ -889,7 +889,7 @@ completed remote result is only `observed`, not `verified`.
 
 ```sh
 session-peer list --host workstation --ssh-identity --json
-session-peer send --host workstation --to reviewer --message="Review this change" \\
+session-peer send --host workstation --to reviewer --message="Review this change" \
   --require-ssh-host-key 'SHA256:<previously-verified-fingerprint>' --json
 ```
 

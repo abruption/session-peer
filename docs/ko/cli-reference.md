@@ -859,7 +859,7 @@ SSH는 하위 프로세스 시작 전에 최종 셸 인용 명령의 UTF-8 바�
 
 ```sh
 session-peer list --host workstation --ssh-identity --json
-session-peer send --host workstation --to reviewer --message="Review this change" \\
+session-peer send --host workstation --to reviewer --message="Review this change" \
   --require-ssh-host-key 'SHA256:<previously-verified-fingerprint>' --json
 ```
 
