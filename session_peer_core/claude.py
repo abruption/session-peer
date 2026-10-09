@@ -298,7 +298,7 @@ def _post_to_pipe(pipe_path: str, pid: int, text: str, *, generation_session=Non
 
 
 def post_to_socket(socket_path: str, text: str, pid: int = 0, *, generation_session=None,
-                   expected_generation=None) -> None:
+                   expected_generation=None, effect_deadline=None, total_deadline=None) -> None:
     """Write one message to a session's inbox socket.
 
     On macOS and Linux the {"type":"auth",...} line the docs describe is
@@ -308,6 +308,19 @@ def post_to_socket(socket_path: str, text: str, pid: int = 0, *, generation_sess
     a complete line within 30 seconds, so the message is built before the
     socket is opened.
     """
+    bounded = effect_deadline is not None or total_deadline is not None
+    if bounded:
+        import math
+        if (type(effect_deadline) not in (int, float) or type(total_deadline) not in (int, float)
+                or not math.isfinite(effect_deadline) or not math.isfinite(total_deadline)
+                or effect_deadline > total_deadline):
+            raise generation_refused("invalid_effect_deadline", "Invalid private effect budget; nothing sent")
+        if IS_WINDOWS:
+            # Python's synchronous named-pipe open/write has no proven bounded
+            # cancellation contract. Never advertise it as bounded handoff.
+            raise generation_refused("unsupported_bounded_inbox", "Bounded Windows pipe submission is unsupported")
+        if time.monotonic() >= effect_deadline:
+            raise generation_refused("effect_deadline_exhausted", "Effect budget exhausted; nothing sent")
     if IS_WINDOWS and socket_path.startswith("\\\\.\\pipe\\"):
         _post_to_pipe(socket_path, pid, text, generation_session=generation_session,
                       expected_generation=expected_generation)
@@ -321,24 +334,41 @@ def post_to_socket(socket_path: str, text: str, pid: int = 0, *, generation_sess
     )
 
     conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    conn.settimeout(CONNECT_TIMEOUT)
     try:
+        remaining = effect_deadline - time.monotonic() if bounded else CONNECT_TIMEOUT
+        if remaining <= 0:
+            raise generation_refused("effect_deadline_exhausted", "Effect budget exhausted; nothing sent")
+        conn.settimeout(min(CONNECT_TIMEOUT, remaining))
         try:
             conn.connect(socket_path)
         except OSError as exc:
+            if bounded:
+                raise generation_refused("inbox_connection_failed", "Inbox connection failed before any write") from exc
             raise CcPeerError(f"cannot reach inbox at {socket_path}: {exc}") from exc
 
         try:
             if expected_generation is not None:
                 verify_connected_generation(generation_session, expected_generation, connected_inbox_pid(conn))
+            if bounded:
+                remaining = effect_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise generation_refused("effect_deadline_exhausted", "Effect budget exhausted; nothing sent")
+                conn.settimeout(remaining)
             conn.sendall((payload + "\n").encode("utf-8"))
             conn.shutdown(socket.SHUT_WR)
-            conn.settimeout(DRAIN_TIMEOUT)
+            remaining = effect_deadline - time.monotonic() if bounded else DRAIN_TIMEOUT
+            if remaining <= 0:
+                return  # Full write retained; no further wait beyond cutoff.
+            conn.settimeout(min(DRAIN_TIMEOUT, remaining))
             try:
                 conn.recv(1)
             except OSError:
                 pass
         except OSError as exc:
+            if bounded:
+                raise CcPeerError("Inbox write outcome unknown; do not automatically retry",
+                                  {"status": "unknown", "reason": "outcome_unknown",
+                                   "retryAllowed": False}) from exc
             raise CcPeerError(f"failed writing to {socket_path}: {exc}") from exc
     finally:
         conn.close()

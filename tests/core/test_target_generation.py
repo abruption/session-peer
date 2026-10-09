@@ -187,6 +187,42 @@ class TargetGeneration(unittest.TestCase):
                     peer.verify_connected_generation(self.row, token, pid)
             self.assertEqual(caught.exception.details["reason"], reason)
 
+    def test_private_deadline_refuses_before_effect_and_bounds_write_drain(self):
+        conn = mock.Mock()
+        with mock.patch.object(peer, "IS_WINDOWS", False), \
+                mock.patch.object(peer.socket, "socket", return_value=conn), \
+                mock.patch.object(peer.time, "monotonic", side_effect=[0, 0, 10]):
+            with self.assertRaises(peer.CcPeerError) as caught:
+                peer.post_to_socket("fixture", "hello", effect_deadline=10, total_deadline=15)
+        self.assertEqual(caught.exception.details["reason"], "effect_deadline_exhausted")
+        conn.sendall.assert_not_called()
+        conn.close.assert_called_once()
+        conn = mock.Mock()
+        with mock.patch.object(peer, "IS_WINDOWS", False), \
+                mock.patch.object(peer.socket, "socket", return_value=conn), \
+                mock.patch.object(peer.time, "monotonic", side_effect=[0, 1, 2, 9]):
+            peer.post_to_socket("fixture", "hello", effect_deadline=10, total_deadline=15)
+        self.assertEqual([call.args[0] for call in conn.settimeout.call_args_list], [9, 8, 1])
+        conn.sendall.assert_called_once()
+
+    def test_private_deadline_post_write_error_unknown_and_windows_unsupported(self):
+        conn = mock.Mock()
+        conn.sendall.side_effect = OSError("synthetic partial write")
+        with mock.patch.object(peer, "IS_WINDOWS", False), \
+                mock.patch.object(peer.socket, "socket", return_value=conn), \
+                mock.patch.object(peer.time, "monotonic", return_value=0):
+            with self.assertRaises(peer.CcPeerError) as caught:
+                peer.post_to_socket("fixture", "hello", effect_deadline=10, total_deadline=15)
+        self.assertEqual(caught.exception.details["status"], "unknown")
+        self.assertNotIn("submitted", caught.exception.details)
+        self.assertFalse(caught.exception.details["retryAllowed"])
+        with mock.patch.object(peer, "IS_WINDOWS", True), \
+                mock.patch.object(peer, "_post_to_pipe") as pipe:
+            with self.assertRaises(peer.CcPeerError) as caught:
+                peer.post_to_socket(r"\\.\pipe\fixture", "hello", effect_deadline=10, total_deadline=15)
+        self.assertEqual(caught.exception.details["reason"], "unsupported_bounded_inbox")
+        pipe.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
