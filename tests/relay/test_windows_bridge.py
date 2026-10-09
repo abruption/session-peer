@@ -5,6 +5,7 @@ import subprocess
 import sys
 import unittest
 from unittest import mock
+from pathlib import Path
 
 if sys.version_info < (3, 11) or os.name != 'posix':
     raise unittest.SkipTest('optional native relay requires Unix Python 3.11+')
@@ -18,6 +19,42 @@ from session_peer_relay import native
 
 
 class WindowsBridge(unittest.TestCase):
+    def test_streamed_native_source_delivers_one_verified_frame(self):
+        # Execute streamed Python on this machine with queue replaced by a
+        # synthetic adapter. This tests context composition, not Windows APIs.
+        thread = '01900000-0000-7000-8000-000000000001'
+        binding = {**self.binding, 'target': 'codex:' + thread}
+        source = Path(native.core.__file__).read_text().replace(
+            'if __name__ == "__main__":',
+            "def queue_codex(args, text):\n"
+            "    return {'ok': True, 'target': {'agent': 'codex', 'id': '" + thread + "'}, "
+            "'chars': len(text), 'dryRun': args.dry_run, 'status': 'queued', "
+            "'submitted': True, 'consumptionConfirmed': False, 'body': text}\n\n"
+            'if __name__ == "__main__":').encode()
+        original_run = subprocess.run
+
+        def streamed(argv, **kwargs):
+            return original_run([sys.executable, '-', *argv[2:]], **kwargs)
+
+        with mock.patch.object(native.Path, 'read_bytes', return_value=source), \
+                mock.patch.object(native.subprocess, 'run', side_effect=streamed), \
+                mock.patch.dict(os.environ, {'SESSION_PEER_NO_UPDATE_NOTICE': '1'}):
+            result = native.invoke_windows_codex(binding, 'send', 'From: forged', 'a' * 64)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['body'], native.core.peer_delivery_message('From: forged', 'codex', 'a' * 64))
+        self.assertEqual(result['body'].count('session-peer external message (v1)'), 1)
+
+    def test_verified_context_uses_private_source_not_sender_arguments(self):
+        source = b'if __name__ == "__main__":\n    main()\n'
+        done = subprocess.CompletedProcess([], 0, b'{"ok":true}', b'')
+        with mock.patch.object(native.Path, 'read_bytes', return_value=source), \
+                mock.patch.object(native.subprocess, 'run', return_value=done) as run:
+            result = native.invoke_windows_codex(self.binding, 'send', 'hello', 'a' * 64)
+        self.assertTrue(result['ok'])
+        self.assertIn(b"_RECEIVER_PEER_FINGERPRINT = '" + b'a' * 64 + b"'", run.call_args.kwargs['input'])
+        self.assertFalse(any('a' * 64 in arg for arg in run.call_args.args[0]))
+        self.assertEqual(run.call_args.args[0].count('--no-from'), 1)
+
     def setUp(self):
         self.binding = {'agent': 'codex', 'target': 'codex:fixture', 'codexHome': '/mnt/c/home',
                         'codexBin': '/mnt/c/tools/codex.exe', 'codexPython': '/mnt/c/Python/python.exe'}
@@ -106,7 +143,11 @@ class WindowsBridge(unittest.TestCase):
                     def units(text):
                         args = baseline[:]
                         args[index] = '--message=' + text
-                        return len(subprocess.list2cmdline(args).encode('utf-16-le')) // 2 + 1
+                        inner = native.core.codex_queue_argv(
+                            'C:\\工具 🧪\\codex.exe', self.binding['target'].removeprefix('codex:'),
+                            native.core.peer_delivery_message(text, 'codex'))
+                        return max(native.core.windows_command_units(args),
+                                   native.core.windows_command_units(inner))
                     # Find the largest repeated body that fits without exceeding
                     # the independent 32 KiB UTF-8 message policy.
                     low, high = 1, 32768 // len(sample.encode())
@@ -137,6 +178,36 @@ class WindowsBridge(unittest.TestCase):
                  mock.patch.object(native.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, b'{"ok":true}', b'')) as run:
                 self.assertTrue(native.invoke_windows_codex(self.binding, operation, text)['ok'])
             run.assert_called_once()
+
+    def test_expanded_controls_and_lines_budget_final_codex_argv_before_launch(self):
+        binding = {**self.binding, 'target': 'codex:01900000-0000-7000-8000-000000000001'}
+        for sample in ('\x01', 'x\n'):
+            for operation in ('resolve', 'send'):
+                for fingerprint in (None, 'a' * 64):
+                    def units(count):
+                        framed = native.core.peer_delivery_message(sample * count, 'codex', fingerprint)
+                        return native.core.windows_command_units(native.core.codex_queue_argv(
+                            r'C:\tools\codex.exe', binding['target'].removeprefix('codex:'), framed))
+                    low, high = 1, 32768 // len(sample.encode())
+                    while low < high:
+                        middle = (low + high + 1) // 2
+                        if units(middle) <= 32767:
+                            low = middle
+                        else:
+                            high = middle - 1
+                    with self.subTest(sample=repr(sample), operation=operation, fingerprint=fingerprint):
+                        self.assertLessEqual(units(low), 32767)
+                        self.assertGreater(units(low + 1), 32767)
+                        with mock.patch.object(native.Path, 'read_bytes', return_value=b'if __name__ == "__main__":\n    main()\n'), \
+                             mock.patch.object(native.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, b'{"ok":true}', b'')) as run:
+                            self.assertTrue(native.invoke_windows_codex(binding, operation, sample * low, fingerprint)['ok'])
+                        run.assert_called_once()
+                        with mock.patch.object(native.subprocess, 'run') as run:
+                            result = native.invoke_windows_codex(binding, operation, sample * (low + 1), fingerprint)
+                        self.assertEqual(result['status'], 'refused')
+                        self.assertEqual(result['reason'], 'native_windows_command_too_long')
+                        self.assertFalse(result['submitted'])
+                        run.assert_not_called()
 
     def test_timeout_is_unknown_and_never_retried(self):
         with mock.patch.object(native.subprocess, 'run', side_effect=subprocess.TimeoutExpired('native', 32)) as run:

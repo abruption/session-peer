@@ -160,7 +160,7 @@ def options(binding):
     return args
 
 
-def invoke_windows_codex(binding, operation, text=None):
+def invoke_windows_codex(binding, operation, text=None, peer_fingerprint=None):
     """Stream our core to a fixed operator-approved native Windows interpreter."""
     native_home = validate_wsl_codex(binding)
     native_bin = windows_codex_home(binding['codexBin'])
@@ -179,13 +179,30 @@ def invoke_windows_codex(binding, operation, text=None):
     argv = [binding['codexPython'], '-', *args]
     # CreateProcessW permits 32,767 UTF-16 units including its terminating NUL.
     # Account for every option/path and Windows quoting before starting a send.
-    command_units = len(subprocess.list2cmdline(argv).encode('utf-16-le')) // 2 + 1
+    command_units = core.windows_command_units(argv)
+    if operation != 'list':
+        framed = core.peer_delivery_message(text, 'codex', peer_fingerprint)
+        # The streamed Python process launches Codex with the final frame, not
+        # the shorter raw body in its own argv. Both commands must fit before
+        # starting native Python; never turn a predictable refusal into unknown.
+        command_units = max(command_units, core.windows_command_units(
+            core.codex_queue_argv(native_bin, binding['target'].removeprefix('codex:'), framed)))
     if command_units > 32767:
         return {'ok': False, 'status': 'refused', 'submitted': False,
                 'reason': 'native_windows_command_too_long', 'retryAllowed': False,
                 'consumptionConfirmed': False}
     try:
         source = Path(core.__file__).resolve().read_bytes()
+        if peer_fingerprint is not None:
+            # Receiver-controlled code travels on private stdin; never add an
+            # argv/env/body switch that lets a sender assert authenticated identity.
+            core.peer_delivery_message('', 'codex', peer_fingerprint)
+            marker = b'if __name__ == "__main__":'
+            if source.count(marker) != 1:
+                raise ValueError('invalid_native_source')
+            source = source.replace(marker, (
+                '_RECEIVER_PEER_FINGERPRINT = ' + repr(peer_fingerprint) + '\n\n'
+            ).encode() + marker)
         done = subprocess.run(
             argv, input=source,
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -212,9 +229,9 @@ class Native:
     def __init__(self):
         self.slots = asyncio.Semaphore(2)
 
-    async def invoke(self, binding, operation, text=None):
+    async def invoke(self, binding, operation, text=None, *, peer_fingerprint=None):
         try:
-            payload = worker_frame(binding, operation, text)
+            payload = worker_frame(binding, operation, text, peer_fingerprint)
         except FrameRejected as exc:
             return {'ok': False, 'status': 'refused', 'submitted': False,
                     'reason': str(exc), 'retryAllowed': False, 'consumptionConfirmed': False}

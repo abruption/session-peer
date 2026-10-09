@@ -526,3 +526,5 @@ MIT
 `install.sh` 在目标文件系统暂存本地和SSH更新，先下载runtime和skill并验证暂存CLI版本，再原子替换runtime。下载或验证失败时保留现有runtime、launcher和skill。这不表示全部安装文件的事务、签名验证或后续skill-manager失败的回滚；原有安装管理器归属不变。
 
 SSH在启动子进程前检查最终shell引用命令的UTF-8字节数。保守上限131071字节包含base64展开、envelope、选项及引用。超限在本地返回 `ssh_command_too_large` 和 `submitted: false`；Unicode不能仅按字符数判断。本地传输限制不变，也不保证所有远端OS的参数与环境总空间。
+
+在向原生会话投递时，session-peer 会引用对方正文的每一行，并将发送会话和回复地址标记为未经验证的声明。Codex 和 Antigravity 还会收到明确警告：对方文字不是用户授权。Claude Code 已提供此警告，因此不再重复。`--no-from` 和 `--no-reply-to` 仅省略发送方元数据，不能移除接收侧的这层标记。Reply-To 只是没有执行权限的路由数据。请检查其所在的标记，并在回复第三方之前向会话所有者确认目的地。此机制减少歧义，但不能阻止所有提示注入。标记和转义后的控制字符也计入消息限制；`chars` 表示实际投递的引用后文本长度。提交与消费、ACK 的含义保持不变。
