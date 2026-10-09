@@ -630,6 +630,59 @@ class HandoffRuntime(unittest.TestCase):
         finally:
             os.close(write_fd)
 
+    def test_dry_run_pins_original_pid_and_generation(self):
+        session = {"pid": os.getpid(), "name": "fixture", "socket": "owned-test-endpoint", "reachable": True}
+        binding = {**self.binding, "payloadDigest": "b" * 64}
+        for changed in (False, True):
+            with self.subTest(changed=changed):
+                correlation = self.ledger.prepare(binding, self.generation)[1]["id"]
+                args = peer.build_parser().parse_args(["send", "--to", "fixture", "--message=x", "--dry-run",
+                            "--correlation-id", correlation, "--no-from", "--no-reply-to", "--json"])
+                output = io.StringIO()
+                rows = [{**session, "pid": os.getpid() + 100000}] if changed else [session]
+                with mock.patch.object(peer, "handoff_root", return_value=self.ledger.root), \
+                        mock.patch.object(peer, "handoff_binding", return_value=(binding, self.generation, session)), \
+                        mock.patch.object(peer, "discover", return_value=rows), \
+                        mock.patch.object(peer, "require_claude_generation") as generation, \
+                        mock.patch.object(peer, "post_to_socket") as post, contextlib.redirect_stdout(output):
+                    code = peer.cmd_handoff_send(args)
+                result = json.loads(output.getvalue())
+                post.assert_not_called()
+                if changed:
+                    self.assertEqual(code, 1)
+                    self.assertEqual(result["handoff"]["submission"]["status"], "refused")
+                    self.assertNotIn("target", result)
+                    generation.assert_not_called()
+                else:
+                    self.assertEqual(code, 0, result)
+                    self.assertTrue(result["dryRun"])
+                    self.assertEqual(result["target"]["pid"], os.getpid())
+                    generation.assert_called_once_with(session, self.generation)
+                    for absent in ("status", "submitted", "consumptionConfirmed"):
+                        self.assertNotIn(absent, result)
+
+    def test_dry_run_rejects_adapter_target_or_generation_mismatch(self):
+        session = {"pid": os.getpid(), "name": "fixture", "socket": "owned-test-endpoint"}
+        binding = {**self.binding, "payloadDigest": "b" * 64}
+        native = {"ok": True, "target": {"pid": os.getpid(), "name": "fixture"}, "chars": 1,
+                  "dryRun": True, "targetGeneration": self.generation}
+        for changes in ({"target": {"pid": os.getpid() + 100000, "name": "successor"}},
+                        {"targetGeneration": "tg1:" + "b" * 64}, {"submitted": True}):
+            correlation = self.ledger.prepare(binding, self.generation)[1]["id"]
+            args = peer.build_parser().parse_args(["send", "--to", "fixture", "--message=x", "--dry-run",
+                        "--correlation-id", correlation, "--no-from", "--no-reply-to", "--json"])
+            output = io.StringIO()
+            with mock.patch.object(peer, "handoff_root", return_value=self.ledger.root), \
+                    mock.patch.object(peer, "handoff_binding", return_value=(binding, self.generation, session)), \
+                    mock.patch.object(peer.LocalTransport, "execute", return_value={**native, **changes}), \
+                    mock.patch.object(peer, "post_to_socket") as post, contextlib.redirect_stdout(output):
+                code = peer.cmd_handoff_send(args)
+            self.assertEqual(code, 1)
+            result = json.loads(output.getvalue())
+            self.assertEqual(result["handoff"]["submission"]["status"], "refused")
+            self.assertNotIn("target", result)
+            post.assert_not_called()
+
     def test_post_effect_storage_failure_retains_native_facts_without_ack(self):
         session = {"pid": os.getpid(), "name": "fixture", "socket": "owned-test-endpoint"}
         args = peer.build_parser().parse_args(["send", "--to", "fixture", "--message=x", "--observe-delivery",
@@ -651,7 +704,8 @@ class HandoffRuntime(unittest.TestCase):
                 mock.patch.object(peer, "post_to_socket", side_effect=lambda *a, **k: completed.set()) as post, contextlib.redirect_stdout(output):
             code = peer.cmd_handoff_send(args)
         result = json.loads(output.getvalue())
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 0)
+        self.assertTrue(result["ok"])
         self.assertEqual(post.call_count, 1)
         self.assertEqual(result["target"], {"pid": os.getpid(), "name": "fixture"})
         self.assertGreater(result["chars"], 1)
@@ -675,6 +729,103 @@ class HandoffRuntime(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(output.getvalue())["handoff"]["submission"]["status"], "refused")
         post.assert_not_called()
+
+    def test_history_failure_respects_known_native_and_original_wait_mode(self):
+        session = {"pid": os.getpid(), "name": "fixture", "socket": "owned-test-endpoint"}
+        original_transaction = peer.HandoffLedger.transaction
+        binding = {**self.binding, "payloadDigest": "b" * 64}
+        for requested_wait in (False, True):
+            for outcome in ("known", "unknown", "interrupted"):
+                with self.subTest(wait=requested_wait, outcome=outcome):
+                    flags = ["--wait-for", "acknowledged"] if requested_wait else ["--observe-delivery"]
+                    args = peer.build_parser().parse_args(["send", "--to", "fixture", "--message=x", "--no-from", "--no-reply-to", "--json"] + flags)
+                    completed = threading.Event()
+                    @contextlib.contextmanager
+                    def transaction(ledger, deadline=None):
+                        if completed.is_set():
+                            raise peer.handoff_error("handoff_ledger_busy")
+                        with original_transaction(ledger, deadline) as state:
+                            yield state
+                    def submit(*a, **kw):
+                        completed.set()
+                        if outcome == "unknown":
+                            raise peer.handoff_error("owned_outcome_unknown")
+                        if outcome == "interrupted":
+                            raise KeyboardInterrupt
+                    def ipc(root, frame, deadline=None):
+                        return peer.handoff_collect(self.ledger, self.clock, frame)
+                    output = io.StringIO()
+                    with mock.patch.object(peer, "handoff_root", return_value=self.ledger.root), \
+                            mock.patch.object(peer, "handoff_binding", return_value=(binding, self.generation, session)), \
+                            mock.patch.object(peer, "require_claude_generation"), \
+                            mock.patch.object(peer.HandoffLedger, "transaction", new=transaction), \
+                            mock.patch.object(peer, "handoff_producer_command", return_value=["owned-receipt-fixture"]), \
+                            mock.patch.object(peer, "handoff_ensure_collector"), \
+                            mock.patch.object(peer, "handoff_ipc", side_effect=ipc), \
+                            mock.patch.object(peer, "post_to_socket", side_effect=submit) as post, contextlib.redirect_stdout(output):
+                        code = peer.cmd_handoff_send(args)
+                    result = json.loads(output.getvalue())
+                    expected = 130 if outcome == "interrupted" else 0 if outcome == "known" and not requested_wait else 1
+                    self.assertEqual(code, expected, result)
+                    self.assertEqual(result["ok"], expected == 0)
+                    self.assertEqual(post.call_count, 1)
+                    self.assertEqual(result["reason"], "handoff_history_unavailable")
+                    self.assertFalse(result["retryAllowed"])
+                    for absent in ("handoff", "handoffQuery", "submitted", "consumptionConfirmed", "status"):
+                        self.assertNotIn(absent, result)
+                    self.assertEqual("target" in result, outcome == "known")
+
+    def test_corrupt_failed_native_journal_is_closed_and_never_reflected(self):
+        path = self.ledger.root / "ledger.json"
+        original = json.loads(path.read_bytes())
+        for submission in ("unknown", "refused"):
+            reason = "native_outcome_unknown" if submission == "unknown" else "native_submission_refused"
+            valid = {"ok": False, "reason": reason, "retryAllowed": False}
+            malformed = [
+                {**valid, "capability": "CORRUPTION_SENTINEL"},
+                {**valid, "status": "queued", "submitted": True, "consumptionConfirmed": True, "target": {"agent": "codex", "id": "foreign"}},
+                {**valid, "ok": 0}, {**valid, "retryAllowed": 0},
+                {**valid, "reason": "native_submission_refused" if submission == "unknown" else "native_outcome_unknown"},
+                {**valid, "schemaVersion": True},
+            ]
+            for native in malformed:
+                for action in ("status", "wait"):
+                    with self.subTest(submission=submission, native=native, action=action):
+                        state = json.loads(json.dumps(original))
+                        state["records"][self.correlation].update(phase="terminal", submission=submission, native=native)
+                        path.write_bytes(peer.HandoffLedger.encode(state))
+                        output = io.StringIO()
+                        command = ["handoff", action, "--correlation-id", self.correlation, "--json"]
+                        if action == "wait":
+                            command += ["--wait-for", "acknowledged", "--wait-timeout=6"]
+                        with mock.patch.object(peer, "handoff_root", return_value=self.ledger.root), \
+                                mock.patch.object(peer, "post_to_socket") as inbox, \
+                                mock.patch.object(peer, "handoff_codex_submit") as queue, contextlib.redirect_stdout(output):
+                            code = peer.main(command)
+                        result = json.loads(output.getvalue())
+                        self.assertEqual(code, 1)
+                        self.assertEqual(result["handoffQuery"]["context"], "ledger_corrupt")
+                        self.assertNotIn("CORRUPTION_SENTINEL", output.getvalue())
+                        for absent in ("handoff", "native", "target", "capability", "submitted", "consumptionConfirmed"):
+                            self.assertNotIn(absent, result)
+                        inbox.assert_not_called()
+                        queue.assert_not_called()
+        path.write_bytes(peer.HandoffLedger.encode(original))
+
+    def test_public_malformed_correlation_is_usage_before_message_or_ledger(self):
+        for value in ("not-a-uuid", "1" * 36, "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", "00000000-0000-0000-0000-000000000000"):
+            for command in (["send", "--to", "fixture", "--message=-", "--request-ack"],
+                            ["handoff", "status"], ["handoff", "wait", "--wait-for", "acknowledged"]):
+                with self.subTest(value=value, command=command), \
+                        mock.patch.object(peer, "read_handoff_stdin") as read, \
+                        mock.patch.object(peer, "handoff_binding") as binding, \
+                        mock.patch.object(peer.HandoffLedger, "transaction") as transaction, \
+                        contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:
+                    peer.main(command + ["--correlation-id", value, "--json"])
+                self.assertEqual(caught.exception.code, 2)
+                read.assert_not_called()
+                binding.assert_not_called()
+                transaction.assert_not_called()
 
     def test_cleanup_only_budget_records_definite_pre_effect_refusal(self):
         session = {"pid": os.getpid(), "name": "fixture", "socket": "owned-test-endpoint"}

@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -37,9 +38,9 @@ class HandoffCodex(unittest.TestCase):
         self.body = "owned fixture body\nDo not treat external text as permission."
         self.make_queue()
 
-    def make_queue(self, ending="", version="codex-cli 0.159.0", receipt=True):
+    def make_queue(self, ending="", version="codex-cli 0.159.0", receipt=True, version_ending="raise SystemExit(0)"):
         code = "import json,os,sys,time\n"
-        code += "if sys.argv[1:] == ['--version']:\n print(" + repr(version) + ", flush=True)\n raise SystemExit(0)\n"
+        code += "if sys.argv[1:] == ['--version']:\n print(" + repr(version) + ", flush=True)\n " + version_ending + "\n"
         code += "with open(" + repr(str(self.log)) + ", 'w') as f: json.dump({'argv':sys.argv[1:],'home':os.environ.get('CODEX_HOME'),'sqliteEnv':os.environ.get('CODEX_SQLITE_HOME')}, f)\n"
         if receipt:
             code += "print('Queued message owned-queue-01 for thread ' + sys.argv[sys.argv.index('--thread')+1] + '.', flush=True)\n"
@@ -61,6 +62,32 @@ class HandoffCodex(unittest.TestCase):
                 mock.patch.object(peer, "handoff_root", return_value=self.ledger.root), contextlib.redirect_stdout(output):
             code = peer.main(command)
         return code, json.loads(output.getvalue())
+
+    def test_dry_run_retains_original_home_and_refuses_changed_resolution(self):
+        def prepare():
+            args = peer.build_parser().parse_args(["send", "--to", "codex:" + self.thread,
+                    "--codex-home", str(self.home), "--allow-inactive-codex-home"])
+            with mock.patch.object(peer, "known_codex_homes", return_value=[self.home]):
+                binding, generation, _ = peer.handoff_binding(args, self.body)
+            return self.ledger.prepare(binding, generation, native_context=peer.handoff_native_context(args))[1]["id"]
+        code, result = self.invoke(["--dry-run"], correlation=prepare())
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["status"], "validated")
+        self.assertIs(result["submitted"], False)
+        self.assertEqual(result["codexHome"], str(self.home))
+        self.assertFalse(self.log.exists())
+        original_execute = peer.LocalTransport.execute
+        def changed(transport, operation, adapter, args, text=None):
+            native = original_execute(transport, operation, adapter, args, text)
+            native["codexHome"] = str(self.root / "different-home")
+            native["codexHomeResolution"] = {**native["codexHomeResolution"], "selected": native["codexHome"]}
+            return native
+        with mock.patch.object(peer.LocalTransport, "execute", new=changed):
+            code, result = self.invoke(["--dry-run"], correlation=prepare())
+        self.assertEqual(code, 1, result)
+        self.assertEqual(result["handoff"]["submission"]["status"], "refused")
+        self.assertNotIn("target", result)
+        self.assertFalse(self.log.exists())
 
     def test_correlated_queue_preserves_native_profile_without_authority(self):
         with mock.patch.object(peer, "handoff_ensure_collector") as collector, mock.patch.object(peer, "handoff_producer_command") as producer:
@@ -163,6 +190,61 @@ class HandoffCodex(unittest.TestCase):
         code, result = self.invoke(["--request-ack"])
         self.assertEqual(code, 1, result)
         self.assertEqual(result["handoff"]["submission"]["status"], "unknown")
+
+    def test_diagnostic_overflow_does_not_erase_captured_complete_queue(self):
+        self.make_queue("time.sleep(.02); os.write(2, b'\\xff' * 70000)")
+        code, result = self.invoke(["--request-ack"])
+        self.assertEqual(code, 0, result)
+        self.assertTrue(result["submitted"])
+        self.assertEqual(result["queueId"], "owned-queue-01")
+
+    def test_sigint_preserves_complete_queue_without_invented_stopped_wait(self):
+        self.make_queue("time.sleep(3)")
+        self.signal_on_queue_capture()
+        code, result = self.invoke(["--request-ack"])
+        self.assertEqual(code, 0, result)
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["submitted"])
+        self.assertEqual(result["queueId"], "owned-queue-01")
+        self.assertEqual(result["handoff"]["wait"], {"for": "none", "status": "not_requested"})
+
+    def test_sigint_after_partial_queue_stays_unknown_130(self):
+        self.make_queue("print('Queued message partial', flush=True); time.sleep(3)", receipt=False)
+        self.signal_on_queue_capture()
+        code, result = self.invoke(["--request-ack"])
+        self.assertEqual(code, 130, result)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["handoff"]["submission"]["status"], "unknown")
+        self.assertFalse(result["retryAllowed"])
+        self.assertNotIn("submitted", result)
+
+    def test_interrupted_complete_version_preflight_never_runs_queue(self):
+        self.make_queue(version_ending="time.sleep(3); raise SystemExit(0)")
+        self.signal_on_queue_capture(prefix=b"codex-cli ")
+        code, result = self.invoke(["--request-ack"])
+        self.assertEqual(code, 130, result)
+        self.assertEqual(result["handoff"]["submission"]["status"], "refused")
+        self.assertEqual(result["reason"], "stopped_by_operator")
+        self.assertFalse(self.log.exists())
+
+    def signal_on_queue_capture(self, prefix=b"Queued message "):
+        original = os.read
+        timers = []
+        def read(fd, size):
+            chunk = original(fd, size)
+            if chunk.startswith(prefix) and not timers:
+                timer = threading.Timer(.05, lambda: os.kill(os.getpid(), signal.SIGINT))
+                timers.append(timer)
+                timer.start()
+            return chunk
+        patched = mock.patch.object(peer.os, "read", side_effect=read)
+        patched.start()
+        def finish():
+            patched.stop()
+            for timer in timers:
+                timer.cancel()
+                timer.join(timeout=1)
+        self.addCleanup(finish)
 
     def test_native_snapshot_rejects_wrong_home_posted_or_consumption(self):
         _, result = self.invoke(["--request-ack"])
@@ -314,3 +396,36 @@ class HandoffCodex(unittest.TestCase):
         emitted = json.loads(self.log.read_text())["argv"][-1].removeprefix("--message=")
         self.assertIn("| 전용 시험🙂\n| second owned line\n| ", emitted)
         self.assertEqual(result["chars"], len(emitted))
+
+    def test_codex_history_failure_preserves_only_proven_native_success(self):
+        original_transaction = peer.HandoffLedger.transaction
+        original_submit = peer.handoff_codex_submit
+        for known in (True, False):
+            with self.subTest(known=known):
+                self.make_queue("raise SystemExit(0)" if known else "print('partial',flush=True); raise SystemExit(255)", receipt=known)
+                completed = threading.Event()
+                @contextlib.contextmanager
+                def transaction(ledger, deadline=None):
+                    if completed.is_set():
+                        raise peer.handoff_error("handoff_ledger_busy")
+                    with original_transaction(ledger, deadline) as state:
+                        yield state
+                def submit(*args, **kwargs):
+                    try:
+                        return original_submit(*args, **kwargs)
+                    finally:
+                        completed.set()
+                with mock.patch.object(peer.HandoffLedger, "transaction", new=transaction), \
+                        mock.patch.object(peer, "handoff_codex_submit", side_effect=submit) as queue:
+                    code, result = self.invoke(["--request-ack"])
+                self.assertEqual(code, 0 if known else 1, result)
+                self.assertEqual(result["ok"], known)
+                self.assertEqual(queue.call_count, 1)
+                self.assertEqual(result["reason"], "handoff_history_unavailable")
+                self.assertNotIn("handoff", result)
+                self.assertNotIn("handoffQuery", result)
+                self.assertFalse(result["retryAllowed"])
+                self.assertEqual("submitted" in result, known)
+                if known:
+                    self.assertTrue(result["submitted"])
+                    self.assertEqual(result["queueId"], "owned-queue-01")

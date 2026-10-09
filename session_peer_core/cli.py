@@ -102,7 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
     sending.add_argument("--message", "-m", dest="message_option", metavar="TEXT",
                          help="message body; use - for stdin; cannot combine with a positional message")
     sending.add_argument("--message-file", metavar="PRIVATE_FILE", help="read a private owner-only UTF-8 message file")
-    sending.add_argument("--correlation-id", help="use a previously prepared Handoff v1 intent")
+    sending.add_argument("--correlation-id", type=handoff_cli_uuid, help="use a previously prepared Handoff v1 intent")
     sending.add_argument("--request-ack", action="store_true", help="opt in to receipt-only delegated ACK authority")
     sending.add_argument("--observe-delivery", action="store_true", help="report injection evidence when supported (not consumption)")
     sending.add_argument("--wait-for", choices=("delivered", "acknowledged"), help="require evidence with a bounded total budget")
@@ -132,7 +132,7 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--json", action="store_true")
         sub.set_defaults(func=cmd_handoff, no_update_notice=True)
         if action in ("status", "wait"):
-            sub.add_argument("--correlation-id", required=True)
+            sub.add_argument("--correlation-id", required=True, type=handoff_cli_uuid)
         if action == "wait":
             sub.add_argument("--wait-for", choices=("delivered", "acknowledged"), required=True)
             sub.add_argument("--wait-timeout", type=handoff_timeout, default=30)

@@ -59,6 +59,13 @@ def handoff_uuid(value):
     return value
 
 
+def handoff_cli_uuid(value):
+    try:
+        return handoff_uuid(value)
+    except CcPeerError as exc:
+        raise argparse.ArgumentTypeError("expected a canonical UUIDv4") from exc
+
+
 def handoff_identifier(value, limit=256):
     if (type(value) is not str or not value or
             any(ord(c) < 32 or 127 <= ord(c) <= 159 or 0xd800 <= ord(c) <= 0xdfff for c in value)):
@@ -412,6 +419,11 @@ class HandoffLedger:
             raise ValueError()
         if record["phase"] not in ("prepared", "attempted", "terminal", "tombstone", "quarantined") or record["submission"] not in ("not_attempted", "submitted", "refused", "unknown"):
             raise ValueError()
+        if record["phase"] == "terminal" and record["submission"] == "not_attempted":
+            raise ValueError()
+        for key in ("observe", "ackRequested"):
+            if key in record and type(record[key]) is not bool:
+                raise ValueError()
         for key in ("createdNs", "createdUtcMs"):
             uint(record[key], 9007199254740991 if key == "createdUtcMs" else 9223372036854775807)
         if record["historyBoot"] is not None and (type(record["historyBoot"]) is not str or re.fullmatch(r"[0-9a-f]{64}", record["historyBoot"]) is None):
@@ -505,6 +517,10 @@ class HandoffLedger:
                 raise ValueError()
             if record["submission"] == "submitted":
                 handoff_validate_native(native, record)
+            elif (set(native) != {"ok", "reason", "retryAllowed"} or native["ok"] is not False
+                    or native["retryAllowed"] is not False
+                    or native["reason"] != {"unknown": "native_outcome_unknown", "refused": "native_submission_refused"}.get(record["submission"])):
+                raise ValueError()
 
     def quarantine_restored(self):
         """Explicit operator API for a known restored copy, never automatic."""
@@ -551,6 +567,44 @@ def handoff_validate_native(native, record):
         raise handoff_error("invalid_native_profile")
     if target["name"] is not None:
         target["name"].encode("utf-8", errors="strict")
+
+
+def handoff_validate_dry_run(native, record):
+    """Validate no-effect evidence against the immutable prepared target.
+
+    Dry-run facts are not positive submission facts and are never journaled as
+    such.  Native discovery may race preparation, so check the returned profile
+    rather than attaching an original binding to an unrelated new target.
+    """
+    binding = record["binding"]
+    if type(native) is not dict or native.get("ok") is not True or native.get("dryRun") is not True:
+        raise handoff_error("invalid_native_profile")
+    target = native.get("target")
+    if type(native.get("chars")) is not int or not 0 <= native["chars"] <= MAX_MESSAGE_CHARS:
+        raise handoff_error("invalid_native_profile")
+    if binding["agent"] == "claude":
+        allowed = {"ok", "target", "chars", "dryRun"}
+        if (set(native) not in (allowed, allowed | {"targetGeneration"}) or type(target) is not dict
+                or set(target) != {"pid", "name"} or type(target["pid"]) is not int
+                or str(target["pid"]) != binding["target"]
+                or target["name"] is not None and type(target["name"]) is not str
+                or native.get("targetGeneration") != record["generation"]):
+            raise handoff_error("invalid_native_profile")
+        if target["name"] is not None:
+            target["name"].encode("utf-8", errors="strict")
+    elif binding["agent"] == "codex":
+        required = {"ok", "target", "chars", "dryRun", "codexHome", "submitted", "consumptionConfirmed", "status", "codexHomeResolution"}
+        if (set(native) != required or type(target) is not dict or set(target) != {"agent", "id"}
+                or target["agent"] != "codex" or type(target["id"]) is not str
+                or target["id"].lower() != binding["target"]
+                or native["status"] != "validated" or native["submitted"] is not False
+                or native["consumptionConfirmed"] is not False or native["codexHome"] != binding["home"]
+                or record.get("nativeContext") is None
+                or native["codexHomeResolution"] != record["nativeContext"]["resolution"]):
+            raise handoff_error("invalid_native_profile")
+        handoff_codex_resolution(native["codexHomeResolution"], binding["home"])
+    else:
+        raise handoff_error("invalid_native_profile")
 
 
 def handoff_codex_resolution(resolution, root):
@@ -1091,7 +1145,7 @@ def handoff_child(argv, cutoff, total, env=None):
                     continue
                 limit, destination = key.data
                 if len(destination) + len(chunk) > limit:
-                    reason = "native_output_capacity"
+                    reason = "native_output_capacity" if destination is output else "native_diagnostic_capacity"
                     break
                 destination.extend(chunk)
             if reason:
@@ -1130,9 +1184,7 @@ def handoff_child(argv, cutoff, total, env=None):
                 stream.close()
         else:
             code = None
-    if interrupted:
-        raise KeyboardInterrupt
-    return {"returncode": code, "stdout": bytes(output), "stderr": bytes(diagnostics), "reason": reason}
+    return {"returncode": code, "stdout": bytes(output), "stderr": bytes(diagnostics), "reason": reason, "interrupted": interrupted}
 
 
 def handoff_codex_context(args, binding, cutoff, total):
@@ -1143,6 +1195,8 @@ def handoff_codex_context(args, binding, cutoff, total):
     # A bounded harmless version query proves the selected queue executable is
     # callable. It does not certify all native versions or a writer generation.
     probe = handoff_child([executable, "--version"], cutoff, total, codex_process_environment(root))
+    if probe["interrupted"]:
+        raise KeyboardInterrupt
     try:
         version = probe["stdout"].decode("utf-8", errors="strict").strip()
     except UnicodeError as exc:
@@ -1168,17 +1222,32 @@ def handoff_codex_submit(args, text, binding, context, cutoff, total):
     done = handoff_child(codex_queue_argv(executable, binding["target"], text), cutoff, total, env)
     # Overflow is never salvaged from an apparently valid retained prefix.
     if done["reason"] == "native_output_capacity":
+        if done["interrupted"]:
+            raise KeyboardInterrupt
         raise handoff_error("native_outcome_unknown")
     try:
         stdout = done["stdout"].decode("utf-8", errors="strict")
     except UnicodeError as exc:
+        if done["interrupted"]:
+            raise KeyboardInterrupt from exc
         raise handoff_error("native_outcome_unknown") from exc
     marker = re.fullmatch(r"Queued message ([^\s]+) for thread (?i:" + re.escape(binding["target"]) + r")\.\r?\n?", stdout)
     # A matching complete native queue receipt is retained after disconnect or
     # deadline; partial/wrong-target output never supplies submission evidence.
     if marker is None:
+        if done["interrupted"]:
+            raise KeyboardInterrupt
         raise handoff_error("native_outcome_unknown")
-    handoff_identifier(marker.group(1), 128)
+    try:
+        handoff_identifier(marker.group(1), 128)
+    except CcPeerError:
+        if done["interrupted"]:
+            raise KeyboardInterrupt
+        raise
+    # This supported Codex mode has no pending explicit wait. An independently
+    # proven native queue submission already satisfies its goal, even when
+    # SIGINT ends transport cleanup. Never invent a stopped wait or a new
+    # queued/true + false/130 non-wait tuple. Missing proof above stays unknown.
     result = {"ok": True, "target": {"agent": "codex", "id": binding["target"]}, "chars": len(text),
               "dryRun": False, "codexHome": str(root), "submitted": True, "consumptionConfirmed": False,
               "status": "queued", "codexHomeResolution": resolution}
@@ -1187,7 +1256,7 @@ def handoff_codex_submit(args, text, binding, context, cutoff, total):
     return result
 
 
-def handoff_refuse_send(ledger, correlation, args, reason, total):
+def handoff_refuse_send(ledger, correlation, args, reason, total, exit_code=1):
     with ledger.transaction(total) as state:
         record = state["records"][correlation]
         if record["phase"] != "prepared":
@@ -1202,7 +1271,7 @@ def handoff_refuse_send(ledger, correlation, args, reason, total):
     epoch, record = ledger.record(correlation, total)
     emit(args.json, {"ok": False, "reason": reason, "handoff": handoff_public(epoch, record)},
          "Handoff refused before native submission.", command="send", host=args.host[0] if args.host else None)
-    return 1
+    return exit_code
 
 
 def cmd_handoff_send(args):
@@ -1243,7 +1312,21 @@ def cmd_handoff_send(args):
     if args.dry_run:
         if args.host or getattr(args, "device", None):
             raise handoff_error("handoff_route_unsupported")
-        result = LocalTransport().execute("send", adapter, args, text)
+        import copy
+        checked_args = copy.copy(args)
+        if adapter.name == "claude":
+            # Resolve the original PID, not a mutable human alias.  The native
+            # generation check remains the pre-effect incarnation guard.
+            checked_args.to = binding["target"]
+            checked_args.target_generation = generation
+        try:
+            if adapter.name == "codex":
+                root, resolution = args._handoff_codex_selection
+                revalidate_codex_home(root, binding["target"], resolution)
+            result = LocalTransport().execute("send", adapter, checked_args, text)
+            handoff_validate_dry_run(result, prepared)
+        except (CcPeerError, OSError, UnicodeError):
+            return handoff_refuse_send(ledger, correlation, args, "evidence_failed", total)
         result["handoff"] = handoff_public(epoch, prepared)
         emit(args.json, result, "Handoff validated; nothing sent.", command="send")
         return 0
@@ -1258,6 +1341,8 @@ def cmd_handoff_send(args):
     if reason is None and adapter.name == "codex":
         try:
             codex_context = handoff_codex_context(args, binding, cutoff, total)
+        except KeyboardInterrupt:
+            return handoff_refuse_send(ledger, correlation, args, "stopped_by_operator", total, 130)
         except CcPeerError:
             reason = "evidence_failed"
     if reason is None and wants_ack and receipt_capable:
@@ -1377,9 +1462,10 @@ def cmd_handoff_send(args):
         # The durable effect fence already exists. A failed commit/query must
         # not erase independently validated native facts or invent handoff/ACK.
         result = dict(native)
-        result.update(ok=False, reason="handoff_history_unavailable", retryAllowed=False)
+        retained_code = 0 if submission == "submitted" and not args.wait_for else 130 if interrupted or code == 130 else 1
+        result.update(ok=retained_code == 0, reason="handoff_history_unavailable", retryAllowed=False)
         emit(args.json, result, "Native outcome retained; handoff history unavailable. Do not resend.", command="send")
-        return 130 if interrupted or code == 130 else 1
+        return retained_code
     result = dict(native)
     result.update(ok=code == 0, handoff=handoff_public(epoch, record, authority["clockEpoch"] if authority else None))
     emit(args.json, result, "Handoff " + result["handoff"]["state"] + "; submission is not consumption.", command="send")
