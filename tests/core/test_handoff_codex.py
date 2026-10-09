@@ -359,12 +359,9 @@ class HandoffCodex(unittest.TestCase):
         original_clock = peer.handoff_now
         original_popen = subprocess.Popen
         started = original_clock()
-        calls = 0
         children = []
         def clock():
-            nonlocal calls
-            calls += 1
-            if calls >= 3:
+            if children:
                 raise peer.handoff_error("handoff_clock_unavailable")
             return original_clock()
         def spawn(*args, **kwargs):

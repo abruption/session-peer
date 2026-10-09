@@ -1109,82 +1109,19 @@ def handoff_native_context(args):
 
 
 def handoff_child(argv, cutoff, total, env=None):
-    """Bounded metadata-only owned POSIX child; never inspect a transcript.
-
-    Keep the leader PID reserved until its owned group has been signalled.
-    No PID/group signal is sent after wait(), including timeout/SIGINT paths.
-    Blocking OS process creation/kill/fsync cannot be universally cancelled.
-    """
+    """Use the shared owned-process primitive; never inspect a transcript."""
     if IS_WINDOWS or handoff_now() >= cutoff:
         raise handoff_error("deadline_before_effect")
-    native_now, shared_now = time.monotonic(), handoff_now()
-    cleanup_limit = native_now + total - shared_now
-    process = None
-    selector = selectors.DefaultSelector()
-    output, diagnostics = bytearray(), bytearray()
-    reason = None
-    interrupted = False
-    try:
-        process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, env=env, start_new_session=True)
-        for stream, limit, destination in ((process.stdout, 1048576, output), (process.stderr, 65536, diagnostics)):
-            os.set_blocking(stream.fileno(), False)
-            selector.register(stream, selectors.EVENT_READ, (limit, destination))
-        while selector.get_map():
-            remaining = cutoff - handoff_now()
-            if remaining <= 0:
-                reason = "native_deadline"
-                break
-            for key, _ in selector.select(min(0.05, remaining)):
-                try:
-                    chunk = os.read(key.fd, 65536)
-                except BlockingIOError:
-                    continue
-                if not chunk:
-                    selector.unregister(key.fileobj)
-                    continue
-                limit, destination = key.data
-                if len(destination) + len(chunk) > limit:
-                    reason = "native_output_capacity" if destination is output else "native_diagnostic_capacity"
-                    break
-                destination.extend(chunk)
-            if reason:
-                break
-    except KeyboardInterrupt:
-        interrupted, reason = True, "native_interrupted"
-    except OSError:
-        reason = "native_process_failed"
-    except CcPeerError:
-        reason = "native_clock_failed"
-    finally:
-        selector.close()
-        if process is not None:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            except PermissionError:
-                # Darwin can report EPERM for groups containing only zombies.
-                # Probe only the still-reserved owned group within cleanup.
-                try:
-                    remaining = cleanup_limit - time.monotonic()
-                    if sys.platform != "darwin" or remaining <= 0:
-                        raise OSError()
-                    members = subprocess.run(["ps", "-o", "stat=", "-g", str(process.pid)],
-                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=remaining)
-                    if members.returncode not in (0, 1) or any(not line.strip().startswith(b"Z") for line in members.stdout.splitlines() if line.strip()):
-                        raise OSError()
-                except (OSError, subprocess.SubprocessError):
-                    reason = reason or "native_cleanup_failed"
-            try:
-                code = process.wait(timeout=max(0, cleanup_limit - time.monotonic()))
-            except subprocess.TimeoutExpired:
-                reason, code = "native_cleanup_failed", None
-            for stream in (process.stdout, process.stderr):
-                stream.close()
-        else:
-            code = None
-    return {"returncode": code, "stdout": bytes(output), "stderr": bytes(diagnostics), "reason": reason, "interrupted": interrupted}
+    done = handoff_stream_child(argv, b"", cutoff, total, handoff_now, env=env)
+    reasons = {"process_deadline": "native_deadline",
+               "stderr_capacity": "native_diagnostic_capacity",
+               "process_not_started": "native_process_failed",
+               "process_clock_unavailable": "native_clock_failed",
+               "process_cleanup_failed": "native_cleanup_failed"}
+    reason = "native_output_capacity" if done.stdout_overflow else reasons.get(done.reason, done.reason)
+    return {"returncode": done.returncode, "stdout": done.stdout, "stderr": done.stderr,
+            "reason": reason, "interrupted": done.interrupted,
+            "spawned": done.spawned, "cleanupFailed": done.cleanup_failed}
 
 
 def handoff_codex_context(args, binding, cutoff, total):

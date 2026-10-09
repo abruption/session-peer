@@ -2441,7 +2441,7 @@ def ssh_metadata_from(payload: dict) -> dict:
     return {key: payload[key] for key in SSH_METADATA_FIELDS if key in payload}
 
 
-def ssh_user_metadata(host: str, ssh_opts: list[str]) -> dict:
+def ssh_user_metadata(host: str, ssh_opts: list[str], *, handoff_budget=None) -> dict:
     """Ask OpenSSH which login user it will use without making a connection."""
     check_ssh_argument(host, "--host")
     check_ssh_options(ssh_opts)
@@ -2449,6 +2449,18 @@ def ssh_user_metadata(host: str, ssh_opts: list[str]) -> dict:
     explicit_user, separator, _ = host.rpartition("@")
     if separator and explicit_user:
         return {"sshUser": explicit_user, "sshUserSource": "explicit"}
+
+    if handoff_budget is not None:
+        completed = ssh_handoff_configuration(host, ssh_opts, handoff_budget)
+        output = completed.stdout.decode("utf-8", errors="strict")
+        for line in output.splitlines():
+            key, separator, value = line.partition(" ")
+            if separator and key.lower() == "user" and value.strip():
+                user = value.strip()
+                if len(user.encode("utf-8")) > 1024 or any(ord(c) < 32 or ord(c) == 127 for c in user):
+                    break
+                return {"sshUser": user, "sshUserSource": "ssh_config_or_local_default"}
+        return {"sshUser": None, "sshUserSource": "unknown"}
 
     try:
         completed = subprocess.run(
@@ -2557,9 +2569,172 @@ def parse_ssh_response(output, argv):
     return stdout, result, bool(stdout), valid
 
 
-def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, identity_options=()) -> dict:
+def ssh_handoff_request(handoff_budget, context=None, *, require_context=False) -> None:
+    """Validate private opt-in plumbing before any config/effect child.
+
+    This is not an ACK authority or a public wire mode. The handoff owner also
+    validates the actual response's native profile against this closed context.
+    """
+    import math
+    try:
+        budget_valid = (isinstance(handoff_budget, tuple) and len(handoff_budget) == 2
+                        and all(type(v) in (int, float) and math.isfinite(v) for v in handoff_budget)
+                        and handoff_budget[1] >= handoff_budget[0])
+    except (TypeError, ValueError, OverflowError):
+        budget_valid = False
+    if not budget_valid:
+        raise CcPeerError("Invalid private SSH handoff budget",
+                          {"reason": "invalid_ssh_handoff_budget", "retryAllowed": False, "spawned": False})
+    if context is None:
+        if require_context:
+            raise CcPeerError("Private SSH handoff requires a request context",
+                              {"reason": "invalid_ssh_handoff_context", "retryAllowed": False, "spawned": False})
+        return
+    keys = {"schemaVersion", "phase", "requestId", "agent", "target", "home", "nativeContext",
+            "anchor", "remainingCutoffMs", "remainingTotalMs", "generation"}
+    try:
+        request = uuid.UUID(context["requestId"])
+        valid = (isinstance(context, dict) and set(context) == keys
+                 and type(context["schemaVersion"]) is int and context["schemaVersion"] == 1
+                 and context["phase"] in ("probe", "effect") and context["agent"] in ("claude", "codex")
+                 and (context["generation"] is None or (isinstance(context["generation"], str)
+                      and bool(context["generation"]) and len(context["generation"].encode("utf-8")) <= 128
+                      and all(ord(c) >= 32 and ord(c) != 127 for c in context["generation"])))
+                 and request.version == 4 and str(request) == context["requestId"]
+                 and isinstance(context["target"], str) and bool(context["target"])
+                 and len(context["target"].encode("utf-8")) <= 1024
+                 and all(ord(c) >= 32 and ord(c) != 127 for c in context["target"])
+                 and (context["home"] is None or (isinstance(context["home"], str)
+                      and bool(context["home"]) and len(context["home"].encode("utf-8")) <= 4096
+                      and all(ord(c) >= 32 and ord(c) != 127 for c in context["home"])))
+                 and (context["nativeContext"] is None or (isinstance(context["nativeContext"], dict)
+                      and set(context["nativeContext"]) == {"root", "resolution"}
+                      and isinstance(context["nativeContext"]["root"], str)
+                      and isinstance(context["nativeContext"]["resolution"], dict)
+                      and len(json.dumps(context["nativeContext"], allow_nan=False).encode("utf-8")) <= 4096))
+                 and (context["anchor"] is None or (isinstance(context["anchor"], dict)
+                      and set(context["anchor"]) == {"boot", "monotonicMs"}
+                      and isinstance(context["anchor"]["boot"], str) and bool(context["anchor"]["boot"])
+                      and len(context["anchor"]["boot"].encode("utf-8")) <= 128
+                      and all(ord(c) >= 32 and ord(c) != 127 for c in context["anchor"]["boot"])
+                      and type(context["anchor"]["monotonicMs"]) is int and 0 <= context["anchor"]["monotonicMs"] <= 2**53 - 1))
+                 and all(context[field] is None or (type(context[field]) is int and 0 <= context[field] <= 60000)
+                         for field in ("remainingCutoffMs", "remainingTotalMs")))
+        if context["phase"] == "effect":
+            valid = valid and context["anchor"] is not None and context["remainingCutoffMs"] is not None \
+                    and context["remainingTotalMs"] is not None \
+                    and context["remainingTotalMs"] >= context["remainingCutoffMs"]
+        else:
+            valid = valid and all(context[field] is None for field in
+                                  ("anchor", "remainingCutoffMs", "remainingTotalMs"))
+    except (KeyError, TypeError, ValueError, UnicodeError, AttributeError, OverflowError, RecursionError):
+        valid = False
+    if not valid:
+        raise CcPeerError("Invalid private SSH handoff context",
+                          {"reason": "invalid_ssh_handoff_context", "retryAllowed": False, "spawned": False})
+
+
+def ssh_handoff_configuration(host, ssh_opts, handoff_budget):
+    """Bounded ssh -G on the original budget; never reconnect or submit."""
+    ssh_handoff_request(handoff_budget)
+    cutoff, total = handoff_budget
+    completed = None
+    try:
+        probe_cutoff = min(cutoff, handoff_now() + DETECT_TIMEOUT)
+        completed = handoff_stream_child(["ssh", "-G", *ssh_opts, host], b"", probe_cutoff,
+                                         min(total, probe_cutoff + 5), handoff_now)
+        valid = (completed.returncode in (0, -signal.SIGKILL) and completed.reason is None
+                 and not completed.interrupted and not completed.stdout_overflow
+                 and not completed.stderr_overflow and not completed.cleanup_failed)
+        if valid:
+            completed.stdout.decode("utf-8", errors="strict")
+            return completed
+    except (UnicodeError, OSError, CcPeerError):
+        pass
+    raise CcPeerError("Cannot inspect bounded SSH configuration before handoff",
+                      {"reason": "ssh_handoff_config_unavailable", "retryAllowed": False, "spawned": False,
+                       "interrupted": bool(completed is not None and completed.interrupted)})
+
+
+def _run_remote_handoff_dispatch(host, argv, ssh_opts, identity_options, budget, context):
+    ssh_handoff_request(budget, context, require_context=True)
+    if (not isinstance(argv, list) or not argv or argv[0] != "send"
+            or any(not isinstance(arg, str) or "\0" in arg for arg in argv)):
+        raise CcPeerError("Invalid private SSH handoff command",
+                          {"reason": "invalid_ssh_handoff_command", "retryAllowed": False, "spawned": False})
+    remote = " ".join(shlex.quote(a) for a in ["python3", "-", *argv, "--json"])
+    if len(remote.encode("utf-8")) > MAX_SSH_COMMAND_BYTES:
+        raise CcPeerError("SSH handoff command exceeds its byte budget",
+                          {"reason": "ssh_command_too_large", "retryAllowed": False, "spawned": False})
+    try:
+        path = Path(__file__).resolve()
+        node = path.stat()
+        if not stat.S_ISREG(node.st_mode) or not 0 < node.st_size <= 4 * 1024 * 1024:
+            raise OSError("source budget")
+        descriptor = os.open(str(path), os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+                             | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            opened = os.fstat(descriptor)
+            if (not stat.S_ISREG(opened.st_mode) or not 0 < opened.st_size <= 4 * 1024 * 1024
+                    or (opened.st_dev, opened.st_ino) != (node.st_dev, node.st_ino)):
+                raise OSError("source identity")
+            chunks, size = [], 0
+            while True:
+                if handoff_now() >= budget[0]:
+                    raise OSError("source deadline")
+                chunk = os.read(descriptor, min(65536, 4 * 1024 * 1024 - size + 1))
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > 4 * 1024 * 1024:
+                    raise OSError("source budget")
+                chunks.append(chunk)
+            after = os.fstat(descriptor)
+            if (after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns):
+                raise OSError("source changed")
+            source = b"".join(chunks)
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise CcPeerError("Cannot read source for private SSH handoff",
+                          {"reason": "ssh_handoff_source_unavailable", "retryAllowed": False, "spawned": False}) from exc
+    ssh_info = ssh_user_metadata(host, ssh_opts, handoff_budget=budget)
+    completed = handoff_stream_child(["ssh", *identity_options, *ssh_opts, host, remote],
+                                     source, *budget, handoff_now)
+    if context["phase"] == "probe" and completed.interrupted:
+        # Probe success is not effect evidence. Operator cancellation must
+        # prevent the caller from turning complete metadata into a later send.
+        raise CcPeerError("Private SSH handoff probe stopped before native effect",
+                          {**ssh_info, "reason": "ssh_handoff_probe_interrupted", "retryAllowed": False,
+                           "spawned": completed.spawned, "interrupted": True})
+    if not completed.stdout_overflow:
+        _, result, _, valid = parse_ssh_response(completed.stdout, argv)
+        if valid:
+            try:
+                result = handoff_validate_remote_response(result, context)
+                if not isinstance(result, dict):
+                    raise ValueError("invalid private response validator")
+                result.update(ssh_info)
+                return result
+            except (CcPeerError, ValueError, TypeError, KeyError, UnicodeError):
+                pass
+    # A launched/possibly constructed child with no complete matching evidence
+    # is not proof of no effect. Do not reflect remote diagnostics or stdout.
+    details = {**ssh_info, "reason": "ssh_handoff_response_unknown", "retryAllowed": False,
+               "spawned": completed.spawned, "interrupted": completed.interrupted}
+    if context["phase"] == "effect":
+        details["status"] = "refused" if completed.spawned is False else "unknown"
+    raise CcPeerError("Private SSH handoff outcome lacks complete matching evidence; do not retry", details)
+
+
+def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, identity_options=(),
+                         handoff_budget=None, handoff_context=None) -> dict:
     check_ssh_argument(host, "--host")
     check_ssh_options(ssh_opts)
+
+    if handoff_budget is not None or handoff_context is not None:
+        return _run_remote_handoff_dispatch(host, argv, ssh_opts, identity_options,
+                                            handoff_budget, handoff_context)
 
     remote = " ".join(shlex.quote(a) for a in ["python3", "-", *argv, "--json"])
     if len(remote.encode("utf-8")) > MAX_SSH_COMMAND_BYTES:
@@ -3053,18 +3228,25 @@ def validate_ssh_identity_options(args) -> None:
                           {"reason": "unsupported_ssh_identity", "retryAllowed": False})
 
 
-def ssh_identity_configuration(host: str, ssh_opts: list[str]) -> dict:
+def ssh_identity_configuration(host: str, ssh_opts: list[str], *, handoff_budget=None) -> dict:
     check_ssh_argument(host, "--host")
     check_ssh_options(ssh_opts)
     try:
-        completed = subprocess.run(["ssh", "-G", *ssh_opts, host],
-                                   capture_output=True, timeout=DETECT_TIMEOUT)
+        completed = (ssh_handoff_configuration(host, ssh_opts, handoff_budget)
+                     if handoff_budget is not None else subprocess.run(
+                         ["ssh", "-G", *ssh_opts, host], capture_output=True, timeout=DETECT_TIMEOUT))
         output = completed.stdout
         if isinstance(output, bytes):
             if len(output) > 1024 * 1024:
                 raise ValueError("config budget")
             output = output.decode("utf-8", errors="strict")
-        if not isinstance(output, str) or len(output.encode("utf-8")) > 1024 * 1024 or completed.returncode:
+        # The bounded owned helper reserves the leader until group cleanup and
+        # may return its own SIGKILL after full pipe EOF. Configuration metadata
+        # is accepted only through that helper's no-error/full-output guard;
+        # the actual connection callback still supplies all host-key evidence.
+        valid_code = (completed.returncode in (0, -signal.SIGKILL)
+                      if handoff_budget is not None else completed.returncode == 0)
+        if not isinstance(output, str) or len(output.encode("utf-8")) > 1024 * 1024 or not valid_code:
             raise ValueError("config unavailable")
         values = {}
         for line in output.splitlines():
@@ -3112,14 +3294,18 @@ def ssh_key_receipt(path: Path) -> dict | None:
 
 
 def run_remote_with_identity(host: str, argv: list[str], ssh_opts: list[str],
-                             expected: str | None = None) -> dict:
+                             expected: str | None = None, *, handoff_budget=None,
+                             handoff_context=None) -> dict:
     if IS_WINDOWS:
         raise CcPeerError("Connection-bound SSH identity is currently POSIX-only",
                           {"reason": "unsupported_ssh_identity", "retryAllowed": False})
     if expected is not None and not re.fullmatch(SSH_FINGERPRINT_PATTERN, expected):
         raise CcPeerError("Invalid SHA256 SSH host-key fingerprint",
                           {"reason": "invalid_ssh_host_key", "retryAllowed": False})
-    configuration = ssh_identity_configuration(host, ssh_opts)
+    if handoff_budget is not None or handoff_context is not None:
+        ssh_handoff_request(handoff_budget, handoff_context, require_context=True)
+    configuration = (ssh_identity_configuration(host, ssh_opts, handoff_budget=handoff_budget)
+                     if handoff_budget is not None else ssh_identity_configuration(host, ssh_opts))
     with tempfile.TemporaryDirectory(prefix="session-peer-ssh-identity-") as directory:
         root = Path(directory)
         root.chmod(0o700)
@@ -3139,7 +3325,11 @@ def run_remote_with_identity(host: str, argv: list[str], ssh_opts: list[str],
             fixed += ["-oUserKnownHostsFile=none", "-oGlobalKnownHostsFile=none",
                       "-oHostKeyAlias=session-peer-pinned"]
         try:
-            result = _run_remote_dispatch(host, argv, ssh_opts, identity_options=fixed)
+            if handoff_budget is not None:
+                result = _run_remote_dispatch(host, argv, ssh_opts, identity_options=fixed,
+                                              handoff_budget=handoff_budget, handoff_context=handoff_context)
+            else:
+                result = _run_remote_dispatch(host, argv, ssh_opts, identity_options=fixed)
         except CcPeerError as exc:
             proof = ssh_key_receipt(receipt)
             # An offered key is not verified authentication or remote execution.
@@ -3177,7 +3367,11 @@ def run_remote_with_identity(host: str, argv: list[str], ssh_opts: list[str],
         return result
 
 
-def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
+def run_remote(host: str, argv: list[str], ssh_opts: list[str], *, handoff_budget=None,
+               handoff_context=None) -> dict:
+    if handoff_budget is not None or handoff_context is not None:
+        return _run_remote_dispatch(host, argv, ssh_opts, handoff_budget=handoff_budget,
+                                     handoff_context=handoff_context)
     return _run_remote_dispatch(host, argv, ssh_opts)
 
 
@@ -4445,7 +4639,14 @@ class SshTransport:
         self.expected_host_key = getattr(args, "require_ssh_host_key", None)
         self.identity_requested = bool(self.expected_host_key is not None or getattr(args, "ssh_identity", False))
 
-    def execute(self, argv: list[str]) -> dict:
+    def execute(self, argv: list[str], *, handoff_budget=None, handoff_context=None) -> dict:
+        if handoff_budget is not None or handoff_context is not None:
+            if self.identity_requested:
+                return run_remote_with_identity(self.requested_host, argv, self.ssh_opts,
+                                                self.expected_host_key, handoff_budget=handoff_budget,
+                                                handoff_context=handoff_context)
+            return run_remote(self.requested_host, argv, self.ssh_opts,
+                              handoff_budget=handoff_budget, handoff_context=handoff_context)
         if self.identity_requested:
             return run_remote_with_identity(self.requested_host, argv, self.ssh_opts, self.expected_host_key)
         return run_remote(self.requested_host, argv, self.ssh_opts)
@@ -5615,6 +5816,401 @@ def read_handoff_stdin(stream, cutoff, clock, max_bytes=4_000_000,
             raise HandoffStdinError("handoff_stdin_unavailable") from None
 
 
+"""Bounded source-streamed POSIX child, with no delivery or receipt authority."""
+
+import math
+import os
+import selectors
+import signal
+import subprocess
+import sys
+import time
+from typing import NamedTuple, Optional
+
+
+class HandoffProcessResult(NamedTuple):
+    stdout: bytes
+    stderr: bytes
+    returncode: Optional[int]
+    reason: Optional[str]
+    spawned: Optional[bool]
+    interrupted: bool
+    stdout_overflow: bool
+    stderr_overflow: bool
+    cleanup_failed: bool
+
+
+def handoff_group_zombies_only(pid, native_total):
+    """Darwin EPERM-only diagnostic while the original leader stays reserved.
+
+    Inspect only native stat codes, not command lines or other user data. The
+    trusted local system utility has its own bounded pipes and reserved PID;
+    no recursive group probe or post-reap signal is used for it.
+    """
+    probe = selector = None
+    buffers = {"out": bytearray(), "err": bytearray()}
+    valid = False
+    probe_interrupted = False
+    try:
+        remaining = native_total - time.monotonic()
+        if remaining <= 0 or sys.platform != "darwin":
+            return False
+        probe = subprocess.Popen(["/bin/ps", "-o", "stat=", "-g", str(pid)],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, start_new_session=True)
+        selector = selectors.DefaultSelector()
+        for stream, name in ((probe.stdout, "out"), (probe.stderr, "err")):
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream, selectors.EVENT_READ, name)
+        while selector.get_map():
+            remaining = native_total - time.monotonic()
+            if remaining <= 0:
+                return False
+            for key, _ in selector.select(min(.05, remaining)):
+                destination = buffers[key.data]
+                limit = 65536 if key.data == "out" else 4096
+                try:
+                    chunk = os.read(key.fd, min(4096, limit - len(destination) + 1))
+                except BlockingIOError:
+                    continue
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                if len(destination) + len(chunk) > limit:
+                    return False
+                destination.extend(chunk)
+        statuses = [line.strip() for line in buffers["out"].splitlines() if line.strip()]
+        valid = bool(statuses) and not buffers["err"] and all(line.startswith(b"Z") for line in statuses)
+    except KeyboardInterrupt:
+        probe_interrupted = True
+    except (OSError, ValueError, TypeError):
+        return False
+    finally:
+        if selector is not None:
+            try:
+                selector.close()
+            except KeyboardInterrupt:
+                probe_interrupted = True
+        if probe is not None:
+            while True:
+                try:
+                    # Still unreaped, known owned system utility PID; not the
+                    # target group and never a post-wait signal.
+                    os.kill(probe.pid, signal.SIGKILL)
+                    break
+                except KeyboardInterrupt:
+                    probe_interrupted = True
+                    if time.monotonic() >= native_total:
+                        valid = False
+                        break
+                except ProcessLookupError:
+                    break
+                except OSError:
+                    valid = False
+                    break
+            while True:
+                try:
+                    code = probe.wait(timeout=max(0, native_total - time.monotonic()))
+                    valid = valid and code in (0, 1)
+                    break
+                except KeyboardInterrupt:
+                    probe_interrupted = True
+                except subprocess.TimeoutExpired:
+                    valid = False
+                    break
+            for stream in (probe.stdout, probe.stderr):
+                try:
+                    stream.close()
+                except KeyboardInterrupt:
+                    probe_interrupted = True
+                    try:
+                        stream.close()
+                    except (KeyboardInterrupt, OSError):
+                        valid = False
+        if probe_interrupted:
+            # Propagate only after the diagnostic child is cleaned up. The
+            # caller records interruption and still reaps the original leader.
+            raise KeyboardInterrupt()
+    return valid
+
+
+def handoff_stream_child(argv, source_bytes, cutoff, total, clock, *, env=None):
+    """Stream trusted source on stdin and drain both output pipes concurrently.
+
+    ``cutoff`` and ``total`` use the caller's original clock, including its
+    cleanup reserve; no renewed timeout is created here. A native-first sample
+    supplies conservative remaining-duration cleanup if that clock fails.
+    Only this child's still-reserved process group is signalled, before wait
+    reaps the leader. Escaped/detached descendants are outside this boundary.
+    The caller must not auto-reap children or concurrently waitpid this owned
+    child; a foreign SIGCHLD/waitpid owner would invalidate PID reservation.
+    OS spawn, signal and filesystem calls are not universally cancellable.
+
+    This primitive returns RAW bytes and fixed metadata, never prints source,
+    argv, diagnostics, native success or capabilities. A strict caller parser
+    may preserve complete stdout evidence after diagnostic overflow or other
+    transport trouble. STDOUT overflow always forbids adopting its valid
+    prefix. Ledger/fence, target checks and SSH trust are caller responsibilities.
+    ``spawned=None`` means construction was interrupted after entering Popen,
+    before an owned process object was returned; effect and cleanup are unknown.
+    Only ``spawned is False`` denotes a proven pre-spawn refusal/failure.
+    """
+    output, diagnostics = bytearray(), bytearray()
+    process = selector = None
+    construction_started = construction_unknown = False
+    reason = None
+    interrupted = stdout_overflow = stderr_overflow = cleanup_failed = False
+    code = None
+    source_limit, output_limit, diagnostic_limit = 4 * 1024 * 1024, 1024 * 1024, 64 * 1024
+
+    def result(spawned):
+        return HandoffProcessResult(bytes(output), bytes(diagnostics), code, reason,
+                                    spawned, interrupted, stdout_overflow,
+                                    stderr_overflow, cleanup_failed)
+
+    if os.name != "posix":
+        reason = "process_platform_unsupported"
+        return result(False)
+    if (not isinstance(argv, (list, tuple)) or not argv
+            or any(type(arg) is not str or "\0" in arg for arg in argv)
+            or type(source_bytes) is not bytes):
+        reason = "invalid_process_request"
+        return result(False)
+    if len(source_bytes) > source_limit:
+        reason = "source_capacity"
+        return result(False)
+    try:
+        valid_deadline = (type(cutoff) in (int, float) and type(total) in (int, float)
+                          and math.isfinite(cutoff) and math.isfinite(total)
+                          and total >= cutoff)
+    except (OverflowError, TypeError, ValueError):
+        valid_deadline = False
+    if not valid_deadline:
+        reason = "invalid_process_deadline"
+        return result(False)
+    try:
+        native_start = time.monotonic()
+        shared_start = clock()
+        if type(shared_start) not in (int, float) or not math.isfinite(shared_start):
+            raise ValueError()
+    except KeyboardInterrupt:
+        reason, interrupted = "process_interrupted", True
+        return result(False)
+    except Exception:
+        reason = "process_clock_unavailable"
+        return result(False)
+    if shared_start >= cutoff:
+        reason = "deadline_before_spawn"
+        return result(False)
+    native_cutoff = native_start + (cutoff - shared_start)
+    native_total = native_start + (total - shared_start)
+
+    def remaining(deadline, native_deadline, require_shared):
+        nonlocal reason, interrupted
+        backup = native_deadline - time.monotonic()
+        try:
+            shared = clock()
+            if type(shared) not in (int, float) or not math.isfinite(shared):
+                raise ValueError()
+            return min(backup, deadline - shared)
+        except KeyboardInterrupt:
+            if require_shared:
+                raise
+            interrupted = True
+            reason = reason or "process_interrupted"
+            return backup
+        except Exception:
+            reason = reason or "process_clock_unavailable"
+            return 0 if require_shared else backup
+
+    def close_stream(stream):
+        nonlocal reason, interrupted, cleanup_failed
+        if selector is not None:
+            while True:
+                try:
+                    selector.unregister(stream)
+                    break
+                except KeyboardInterrupt:
+                    interrupted = True
+                    reason = reason or "process_interrupted"
+                    if time.monotonic() >= native_total:
+                        cleanup_failed = True
+                        break
+                except (KeyError, ValueError):
+                    break
+        try:
+            stream.close()
+        except KeyboardInterrupt:
+            interrupted = True
+            reason = reason or "process_interrupted"
+            # close is idempotent for these privately owned pipe objects.
+            try:
+                stream.close()
+            except (KeyboardInterrupt, OSError, ValueError):
+                cleanup_failed = True
+        except (OSError, ValueError):
+            cleanup_failed = True
+            reason = reason or "process_cleanup_failed"
+
+    def read_stream(key):
+        nonlocal reason, stdout_overflow, stderr_overflow
+        kind = key.data
+        destination = output if kind == "stdout" else diagnostics
+        limit = output_limit if kind == "stdout" else diagnostic_limit
+        try:
+            chunk = os.read(key.fd, min(65536, limit - len(destination) + 1))
+        except BlockingIOError:
+            return
+        if not chunk:
+            close_stream(key.fileobj)
+            return
+        available = limit - len(destination)
+        destination.extend(chunk[:available])
+        if len(chunk) > available:
+            if kind == "stdout":
+                stdout_overflow = True
+                reason = "stdout_capacity"
+            else:
+                stderr_overflow = True
+                reason = reason or "stderr_capacity"
+            # Keep the bounded diagnostic prefix, but avoid repeatedly waking
+            # an already saturated pipe. The other pipe is drained in cleanup.
+            close_stream(key.fileobj)
+
+    try:
+        if remaining(cutoff, native_cutoff, True) <= 0:
+            reason = reason or "deadline_before_spawn"
+            return result(False)
+        construction_started = True
+        process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, env=env, close_fds=True,
+                                   start_new_session=True)
+        selector = selectors.DefaultSelector()
+        for stream, events, kind in ((process.stdin, selectors.EVENT_WRITE, "stdin"),
+                                    (process.stdout, selectors.EVENT_READ, "stdout"),
+                                    (process.stderr, selectors.EVENT_READ, "stderr")):
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream, events, kind)
+        offset = 0
+        if not source_bytes:
+            close_stream(process.stdin)
+        while selector.get_map():
+            budget = remaining(cutoff, native_cutoff, True)
+            if budget <= 0:
+                reason = reason or "process_deadline"
+                break
+            stop_io = False
+            for key, _ in selector.select(min(.05, budget)):
+                # Readiness is not a renewed deadline. A scheduled-out caller
+                # must not finish source feeding after its effect cutoff.
+                if remaining(cutoff, native_cutoff, True) <= 0:
+                    reason = reason or "process_deadline"
+                    stop_io = True
+                    break
+                if key.data == "stdin":
+                    try:
+                        n = os.write(key.fd, source_bytes[offset:offset + 65536])
+                    except BlockingIOError:
+                        continue
+                    except BrokenPipeError:
+                        reason = reason or "source_stream_failed"
+                        close_stream(key.fileobj)
+                        continue
+                    offset += n
+                    if offset == len(source_bytes):
+                        close_stream(key.fileobj)
+                else:
+                    read_stream(key)
+            if stop_io or stdout_overflow or stderr_overflow or interrupted:
+                break
+    except KeyboardInterrupt:
+        interrupted, reason = True, "process_interrupted"
+        if construction_started and process is None:
+            # The constructor may already have created an OS process. Without
+            # its returned handle, do not invent no-effect or owned-cleanup
+            # evidence and never signal a guessed PID/process group.
+            construction_unknown = cleanup_failed = True
+            reason = "process_spawn_interrupted"
+    except (OSError, ValueError, TypeError):
+        reason = reason or ("process_not_started" if process is None else "process_stream_failed")
+    finally:
+        if process is not None:
+            # No poll/wait has reaped this leader. Keep PID/group ownership
+            # until the only group signal has been issued, even on EOF/SIGINT.
+            while True:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    break
+                except KeyboardInterrupt:
+                    interrupted = True
+                    reason = reason or "process_interrupted"
+                    if time.monotonic() >= native_total:
+                        cleanup_failed = True
+                        break
+                except ProcessLookupError:
+                    break
+                except OSError as exc:
+                    # Darwin may refuse KILL for a group whose members are all
+                    # zombies. Prove that condition before reaping the leader;
+                    # otherwise retain conservative cleanup failure metadata.
+                    try:
+                        zombie_only = (isinstance(exc, PermissionError)
+                                       and handoff_group_zombies_only(process.pid, native_total))
+                    except KeyboardInterrupt:
+                        interrupted = True
+                        reason = reason or "process_interrupted"
+                        zombie_only = False
+                    if not zombie_only:
+                        cleanup_failed = True
+                        reason = reason or "process_cleanup_failed"
+                    break
+            close_stream(process.stdin)
+            # Capture buffered complete stdout during cleanup; diagnostic
+            # saturation must not discard independently valid native facts.
+            if selector is not None:
+                while selector.get_map():
+                    try:
+                        budget = remaining(total, native_total, False)
+                        if budget <= 0:
+                            cleanup_failed = True
+                            reason = reason or "process_cleanup_failed"
+                            break
+                        for key, _ in selector.select(min(.05, budget)):
+                            read_stream(key)
+                    except KeyboardInterrupt:
+                        interrupted = True
+                        reason = reason or "process_interrupted"
+                    except (OSError, ValueError, TypeError):
+                        cleanup_failed = True
+                        reason = reason or "process_cleanup_failed"
+                        break
+            # Repeated interruption can change result metadata, never the
+            # deadline or ownership. No signal is issued after this wait.
+            while True:
+                try:
+                    code = process.wait(timeout=max(0, remaining(total, native_total, False)))
+                    break
+                except KeyboardInterrupt:
+                    interrupted = True
+                    reason = reason or "process_interrupted"
+                except subprocess.TimeoutExpired:
+                    cleanup_failed = True
+                    reason = reason or "process_cleanup_failed"
+                    break
+            for stream in (process.stdout, process.stderr):
+                close_stream(stream)
+        if selector is not None:
+            try:
+                selector.close()
+            except KeyboardInterrupt:
+                interrupted = True
+                reason = reason or "process_interrupted"
+            except (OSError, ValueError):
+                cleanup_failed = True
+                reason = reason or "process_cleanup_failed"
+    return result(None if construction_unknown else process is not None)
+
+
 # Opt-in Handoff v1. The frozen design fixture remains a design artifact; this
 # module implements a deliberately narrower, same-user POSIX receipt channel.
 HANDOFF_LEDGER_BYTES = 33554432
@@ -6726,82 +7322,19 @@ def handoff_native_context(args):
 
 
 def handoff_child(argv, cutoff, total, env=None):
-    """Bounded metadata-only owned POSIX child; never inspect a transcript.
-
-    Keep the leader PID reserved until its owned group has been signalled.
-    No PID/group signal is sent after wait(), including timeout/SIGINT paths.
-    Blocking OS process creation/kill/fsync cannot be universally cancelled.
-    """
+    """Use the shared owned-process primitive; never inspect a transcript."""
     if IS_WINDOWS or handoff_now() >= cutoff:
         raise handoff_error("deadline_before_effect")
-    native_now, shared_now = time.monotonic(), handoff_now()
-    cleanup_limit = native_now + total - shared_now
-    process = None
-    selector = selectors.DefaultSelector()
-    output, diagnostics = bytearray(), bytearray()
-    reason = None
-    interrupted = False
-    try:
-        process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, env=env, start_new_session=True)
-        for stream, limit, destination in ((process.stdout, 1048576, output), (process.stderr, 65536, diagnostics)):
-            os.set_blocking(stream.fileno(), False)
-            selector.register(stream, selectors.EVENT_READ, (limit, destination))
-        while selector.get_map():
-            remaining = cutoff - handoff_now()
-            if remaining <= 0:
-                reason = "native_deadline"
-                break
-            for key, _ in selector.select(min(0.05, remaining)):
-                try:
-                    chunk = os.read(key.fd, 65536)
-                except BlockingIOError:
-                    continue
-                if not chunk:
-                    selector.unregister(key.fileobj)
-                    continue
-                limit, destination = key.data
-                if len(destination) + len(chunk) > limit:
-                    reason = "native_output_capacity" if destination is output else "native_diagnostic_capacity"
-                    break
-                destination.extend(chunk)
-            if reason:
-                break
-    except KeyboardInterrupt:
-        interrupted, reason = True, "native_interrupted"
-    except OSError:
-        reason = "native_process_failed"
-    except CcPeerError:
-        reason = "native_clock_failed"
-    finally:
-        selector.close()
-        if process is not None:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            except PermissionError:
-                # Darwin can report EPERM for groups containing only zombies.
-                # Probe only the still-reserved owned group within cleanup.
-                try:
-                    remaining = cleanup_limit - time.monotonic()
-                    if sys.platform != "darwin" or remaining <= 0:
-                        raise OSError()
-                    members = subprocess.run(["ps", "-o", "stat=", "-g", str(process.pid)],
-                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=remaining)
-                    if members.returncode not in (0, 1) or any(not line.strip().startswith(b"Z") for line in members.stdout.splitlines() if line.strip()):
-                        raise OSError()
-                except (OSError, subprocess.SubprocessError):
-                    reason = reason or "native_cleanup_failed"
-            try:
-                code = process.wait(timeout=max(0, cleanup_limit - time.monotonic()))
-            except subprocess.TimeoutExpired:
-                reason, code = "native_cleanup_failed", None
-            for stream in (process.stdout, process.stderr):
-                stream.close()
-        else:
-            code = None
-    return {"returncode": code, "stdout": bytes(output), "stderr": bytes(diagnostics), "reason": reason, "interrupted": interrupted}
+    done = handoff_stream_child(argv, b"", cutoff, total, handoff_now, env=env)
+    reasons = {"process_deadline": "native_deadline",
+               "stderr_capacity": "native_diagnostic_capacity",
+               "process_not_started": "native_process_failed",
+               "process_clock_unavailable": "native_clock_failed",
+               "process_cleanup_failed": "native_cleanup_failed"}
+    reason = "native_output_capacity" if done.stdout_overflow else reasons.get(done.reason, done.reason)
+    return {"returncode": done.returncode, "stdout": done.stdout, "stderr": done.stderr,
+            "reason": reason, "interrupted": done.interrupted,
+            "spawned": done.spawned, "cleanupFailed": done.cleanup_failed}
 
 
 def handoff_codex_context(args, binding, cutoff, total):
