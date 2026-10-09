@@ -243,13 +243,16 @@ exit 0
 Remove-Item Alias:sp -Force -ErrorAction SilentlyContinue
 $env:PSModulePath = '__MODULES__' + [IO.Path]::PathSeparator + $env:PSModulePath
 $asset = '__ASSET__'
+$PSModuleAutoLoadingPreference = 'All'
 . $asset
+if ($PSModuleAutoLoadingPreference -ne 'All') { throw 'caller autoload preference changed' }
 if (Test-Path '__MARKER__') { throw 'sp lookup auto-imported a module' }
 . $asset -Remove
 Remove-Item '__CANONICAL__'
 $refused = $false
 try { . $asset } catch { $refused = $true }
 if (-not $refused) { throw 'missing canonical command accepted' }
+if ($PSModuleAutoLoadingPreference -ne 'All') { throw 'refusal changed caller autoload preference' }
 if (Test-Path '__MARKER__') { throw 'canonical lookup auto-imported a module' }
 # Verify the test module really can be discovered by an ordinary exact lookup.
 Get-Command -Name sp | Out-Null

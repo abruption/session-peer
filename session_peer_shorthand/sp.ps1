@@ -5,12 +5,21 @@ if ($MyInvocation.InvocationName -ne '.') {
     throw 'Dot-source sp.ps1 to change the current PowerShell scope.'
 }
 # -ListImported alone still permits exact-name misses to auto-import a module.
-# Disable autoload only in a child lookup scope, preserving caller preferences.
+# Disable autoload only during lookup, restoring the caller's local preference.
 # Exact-name lookup still finds native executables and Windows .cmd launchers.
-$SessionPeerSpExisting = @(& {
-    $PSModuleAutoLoadingPreference = 'None'
-    Get-Command -Name sp -All -ListImported -ErrorAction SilentlyContinue
-})
+$SessionPeerSpPreference = Get-Variable -Name PSModuleAutoLoadingPreference -Scope Local -ErrorAction SilentlyContinue
+$SessionPeerSpSavedPreference = if ($SessionPeerSpPreference) { $SessionPeerSpPreference.Value } else { $null }
+try {
+    Set-Variable -Name PSModuleAutoLoadingPreference -Value 'None' -Scope Local -ErrorAction Stop
+    $SessionPeerSpExisting = @(Get-Command -Name sp -All -ListImported -ErrorAction SilentlyContinue)
+    $SessionPeerSpCanonical = @(Get-Command -Name session-peer -ListImported -ErrorAction SilentlyContinue)
+} finally {
+    if ($SessionPeerSpPreference) {
+        Set-Variable -Name PSModuleAutoLoadingPreference -Value $SessionPeerSpSavedPreference -Scope Local -ErrorAction Stop
+    } else {
+        Remove-Variable -Name PSModuleAutoLoadingPreference -Scope Local -ErrorAction SilentlyContinue
+    }
+}
 $SessionPeerSpMarker = Get-Variable -Name SessionPeerSpOwned -Scope Local -ErrorAction SilentlyContinue
 $SessionPeerSpVisibleAlias = Get-Alias -Name sp -ErrorAction SilentlyContinue
 if ($SessionPeerSpVisibleAlias -and $SessionPeerSpMarker -and $SessionPeerSpMarker.Value -eq $true -and
@@ -28,10 +37,6 @@ if ($SessionPeerSpRemove) {
     Remove-Variable -Name SessionPeerSpOwned -ErrorAction SilentlyContinue
     return
 }
-$SessionPeerSpCanonical = @(& {
-    $PSModuleAutoLoadingPreference = 'None'
-    Get-Command -Name session-peer -ListImported -ErrorAction SilentlyContinue
-})
 if ($SessionPeerSpCanonical.Count -eq 0) {
     throw 'session-peer is unavailable; select its existing installation on PATH first.'
 }
