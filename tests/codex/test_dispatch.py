@@ -119,12 +119,13 @@ class Codex(unittest.TestCase):
                 self.assertEqual(code, 0)
                 self.assertTrue(result["ok"])
                 self.assertEqual(result["submitted"], not dry_run)
-                self.assertEqual(result["chars"], len(text))
+                framed = peer.peer_delivery_message(text, 'codex')
+                self.assertEqual(result["chars"], len(framed))
                 if dry_run:
                     run.assert_not_called()
                 else:
                     self.assertEqual(run.call_args.args[0], ["/fixture/codex", "queue", "--thread", THREAD,
-                                                            "--message=" + text])
+                                                            "--message=" + framed])
 
     def test_header_wrapping_preserves_dash_body(self):
         identity = {"agent": "codex", "id": OTHER, "host": "fixture@fixture.example"}
@@ -135,8 +136,9 @@ class Codex(unittest.TestCase):
                                   "--allow-inactive-codex-home", "--message=--help", "--no-reply-to", "--json")
         self.assertEqual(code, 0)
         value = run.call_args.args[0][-1].removeprefix("--message=")
-        self.assertTrue(value.startswith("From: "), value)
-        self.assertTrue(value.endswith("\n\n--help"), value)
+        self.assertTrue(value.startswith("session-peer external message (v1)"), value)
+        self.assertIn("\n| From: ", value)
+        self.assertTrue(value.endswith("\n| --help\nEND QUOTED PEER BODY"), value)
 
     def test_invalid_bodies_fail_before_queue_for_dry_run_and_real_send(self):
         cases = (("", "refusing to send an empty message"),

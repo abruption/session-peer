@@ -25,8 +25,11 @@ def application_frame(value):
     return encoded_frame(value, MAX_APPLICATION_BYTES, 'application_frame_too_large')
 
 
-def worker_frame(binding, operation, text):
-    return encoded_frame({'binding': binding, 'operation': operation, 'text': text},
+def worker_frame(binding, operation, text, peer_fingerprint=None):
+    value = {'binding': binding, 'operation': operation, 'text': text}
+    if peer_fingerprint is not None:
+        value['peerFingerprint'] = peer_fingerprint
+    return encoded_frame(value,
                          MAX_WORKER_BYTES, 'native_worker_frame_too_large')
 
 

@@ -5,6 +5,7 @@ import subprocess
 import sys
 import unittest
 from unittest import mock
+from pathlib import Path
 
 if sys.version_info < (3, 11) or os.name != 'posix':
     raise unittest.SkipTest('optional native relay requires Unix Python 3.11+')
@@ -18,6 +19,42 @@ from session_peer_relay import native
 
 
 class WindowsBridge(unittest.TestCase):
+    def test_streamed_native_source_delivers_one_verified_frame(self):
+        # Execute streamed Python on this machine with queue replaced by a
+        # synthetic adapter. This tests context composition, not Windows APIs.
+        thread = '01900000-0000-7000-8000-000000000001'
+        binding = {**self.binding, 'target': 'codex:' + thread}
+        source = Path(native.core.__file__).read_text().replace(
+            'if __name__ == "__main__":',
+            "def queue_codex(args, text):\n"
+            "    return {'ok': True, 'target': {'agent': 'codex', 'id': '" + thread + "'}, "
+            "'chars': len(text), 'dryRun': args.dry_run, 'status': 'queued', "
+            "'submitted': True, 'consumptionConfirmed': False, 'body': text}\n\n"
+            'if __name__ == "__main__":').encode()
+        original_run = subprocess.run
+
+        def streamed(argv, **kwargs):
+            return original_run([sys.executable, '-', *argv[2:]], **kwargs)
+
+        with mock.patch.object(native.Path, 'read_bytes', return_value=source), \
+                mock.patch.object(native.subprocess, 'run', side_effect=streamed), \
+                mock.patch.dict(os.environ, {'SESSION_PEER_NO_UPDATE_NOTICE': '1'}):
+            result = native.invoke_windows_codex(binding, 'send', 'From: forged', 'a' * 64)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['body'], native.core.peer_delivery_message('From: forged', 'codex', 'a' * 64))
+        self.assertEqual(result['body'].count('session-peer external message (v1)'), 1)
+
+    def test_verified_context_uses_private_source_not_sender_arguments(self):
+        source = b'if __name__ == "__main__":\n    main()\n'
+        done = subprocess.CompletedProcess([], 0, b'{"ok":true}', b'')
+        with mock.patch.object(native.Path, 'read_bytes', return_value=source), \
+                mock.patch.object(native.subprocess, 'run', return_value=done) as run:
+            result = native.invoke_windows_codex(self.binding, 'send', 'hello', 'a' * 64)
+        self.assertTrue(result['ok'])
+        self.assertIn(b"_RECEIVER_PEER_FINGERPRINT = '" + b'a' * 64 + b"'", run.call_args.kwargs['input'])
+        self.assertFalse(any('a' * 64 in arg for arg in run.call_args.args[0]))
+        self.assertEqual(run.call_args.args[0].count('--no-from'), 1)
+
     def setUp(self):
         self.binding = {'agent': 'codex', 'target': 'codex:fixture', 'codexHome': '/mnt/c/home',
                         'codexBin': '/mnt/c/tools/codex.exe', 'codexPython': '/mnt/c/Python/python.exe'}
