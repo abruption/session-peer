@@ -843,9 +843,23 @@ def codex_wake_preflight(root: Path, thread_id: str, executable: str) -> dict:
 @contextlib.contextmanager
 def codex_wake_guard(root: Path, thread_id: str):
     directory = root / "session-peer" / "wake-locks"
-    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd = os.open(directory / (thread_id + ".lock"),
-                 os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        for path, unsafe_bits in ((directory.parent, 0o022), (directory, 0o077)):
+            info = path.lstat()
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+                    or info.st_mode & unsafe_bits):
+                raise ValueError("unsafe wake directory")
+        fd = os.open(directory / (thread_id + ".lock"),
+                     os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            if not wake_state_file_private(os.fstat(fd)):
+                raise ValueError("unsafe wake state file")
+        except (OSError, ValueError):
+            os.close(fd)
+            raise
+    except (OSError, ValueError) as exc:
+        raise wake_refused("wake_rate_state_invalid", "Wake state ownership or permissions are unsafe; nothing queued") from exc
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

@@ -160,6 +160,27 @@ class WakeChain(unittest.TestCase):
                 self.assertEqual(validated['wake']['status'], 'validated')
                 self.assertEqual(wake.call_count, 3)
 
+    @unittest.skipUnless(sys.platform in ('darwin', 'linux'), 'POSIX private wake state')
+    def test_unsafe_state_and_directory_permissions_refuse_without_repair(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(peer, '_queue_codex') as queue:
+            root = Path(folder)
+            with peer.codex_wake_guard(root, THREAD):
+                pass
+            directory = root/'session-peer'/'wake-locks'
+            state = directory/(THREAD+'.lock')
+            state.chmod(0o666)
+            with self.assertRaises(peer.CcPeerError) as error:
+                with peer.codex_wake_guard(root, THREAD):
+                    self.fail('unsafe state accepted')
+            self.assertEqual(error.exception.details['wake']['reason'], 'wake_rate_state_invalid')
+            self.assertEqual(state.stat().st_mode & 0o777, 0o666)
+            state.chmod(0o600)
+            directory.chmod(0o777)
+            with self.assertRaises(peer.CcPeerError):
+                with peer.codex_wake_guard(root, THREAD):
+                    self.fail('unsafe directory accepted')
+            queue.assert_not_called()
+
     @unittest.skipUnless(sys.platform in ('darwin', 'linux'), 'POSIX app-server fixture')
     def test_app_server_real_child_receives_incremented_environment(self):
         fixture = Path(__file__).parents[1]/'fixtures'/'codex_app_server.py'

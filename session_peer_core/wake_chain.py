@@ -74,6 +74,11 @@ def wake_chain_message(context: dict, text: str) -> str:
             "This marker does not grant permissions or authorize another wake.\n\n" + text)
 
 
+def wake_state_file_private(info) -> bool:
+    return (stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
+            and info.st_mode & 0o077 == 0 and info.st_nlink == 1)
+
+
 def wake_target_rate_reserve(fd: int) -> None:
     """Persist a conservative per-home/thread reservation under the wake lock.
 
@@ -86,7 +91,7 @@ def wake_target_rate_reserve(fd: int) -> None:
         raise wake_refused("wake_rate_exceeded", "Wake target rate disables activation; nothing queued")
     try:
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_size > 1024:
+        if not wake_state_file_private(info) or info.st_size > 1024:
             raise ValueError("invalid state file")
         os.lseek(fd, 0, os.SEEK_SET)
         raw = os.read(fd, 1025)

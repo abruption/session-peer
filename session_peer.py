@@ -172,6 +172,11 @@ def wake_chain_message(context: dict, text: str) -> str:
             "This marker does not grant permissions or authorize another wake.\n\n" + text)
 
 
+def wake_state_file_private(info) -> bool:
+    return (stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
+            and info.st_mode & 0o077 == 0 and info.st_nlink == 1)
+
+
 def wake_target_rate_reserve(fd: int) -> None:
     """Persist a conservative per-home/thread reservation under the wake lock.
 
@@ -184,7 +189,7 @@ def wake_target_rate_reserve(fd: int) -> None:
         raise wake_refused("wake_rate_exceeded", "Wake target rate disables activation; nothing queued")
     try:
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_size > 1024:
+        if not wake_state_file_private(info) or info.st_size > 1024:
             raise ValueError("invalid state file")
         os.lseek(fd, 0, os.SEEK_SET)
         raw = os.read(fd, 1025)
@@ -1054,9 +1059,23 @@ def codex_wake_preflight(root: Path, thread_id: str, executable: str) -> dict:
 @contextlib.contextmanager
 def codex_wake_guard(root: Path, thread_id: str):
     directory = root / "session-peer" / "wake-locks"
-    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd = os.open(directory / (thread_id + ".lock"),
-                 os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        for path, unsafe_bits in ((directory.parent, 0o022), (directory, 0o077)):
+            info = path.lstat()
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+                    or info.st_mode & unsafe_bits):
+                raise ValueError("unsafe wake directory")
+        fd = os.open(directory / (thread_id + ".lock"),
+                     os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            if not wake_state_file_private(os.fstat(fd)):
+                raise ValueError("unsafe wake state file")
+        except (OSError, ValueError):
+            os.close(fd)
+            raise
+    except (OSError, ValueError) as exc:
+        raise wake_refused("wake_rate_state_invalid", "Wake state ownership or permissions are unsafe; nothing queued") from exc
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
