@@ -103,6 +103,32 @@ session-peer list --output-format json
 않습니다.
 
 <a id="install"></a>
+## 선택적 대화형 단축 명령
+
+이 파일이 포함된 릴리스에서는 Bash/zsh와 PowerShell에서 현재 셸에만 적용되는 `sp` 별칭을 선택적으로 사용할 수 있습니다. 현재 선택된 `session-peer` 명령에 인자와 표준 입력을 그대로 전달하며 출력, 종료 코드, 권한도 동일합니다. 별도의 인자 해석기나 Python/TypeScript 선택기가 아닙니다. 스크립트, SSH 요청, 자동 생성 회신 안내에는 정식 명령을 사용하세요. 두 구현을 동시에 설치하지 마세요. 기존 설치 관리자로 구현을 교체하고 셸에서 어떤 명령이 먼저 선택되는지 확인하세요.
+
+wheel과 소스 배포 파일의 `session_peer_shorthand`에 활성화 파일이 포함됩니다. 설치만으로 활성화되거나 프로필과 PATH가 바뀌지는 않습니다. 선택한 설치본의 Python 인터프리터로 파일 경로를 확인하세요. 활성화한 pip 가상 환경의 인터프리터 또는 `pipx environment --value PIPX_LOCAL_VENVS`나 `uv tool dir`에서 확인한 도구 환경의 인터프리터를 사용합니다. 일반적으로 Unix 도구 환경에는 `session-peer/bin/python`, Windows에는 `session-peer/Scripts/python.exe`가 있습니다. 경로를 추측하지 말고 실제 환경을 확인하세요. 모듈은 파일 경로만 출력합니다. 셸에서 읽어 실행하기 전에 파일을 검토하세요.
+
+```bash
+asset=$("/path/to/tool/python" -I -m session_peer_shorthand bash)
+source "$asset"
+sp --version
+source "${asset%/*}/sp-remove.sh"
+```
+
+```powershell
+$asset = & 'C:\path\to\tool\Scripts\python.exe' -I -m session_peer_shorthand powershell
+. $asset
+sp --version
+. $asset -Remove
+```
+
+이미 `sp` 실행 파일, 별칭 또는 함수가 있으면 덮어쓰지 않고 활성화를 거부합니다. PowerShell은 보통 `sp`를 `Set-ItemProperty`의 별칭으로 정의하므로 기본적으로 활성화가 거부됩니다. 충돌을 직접 관리하기로 결정하지 않았다면 정식 명령을 계속 사용하세요. Bash/zsh에서는 source로, PowerShell에서는 dot-source로 파일을 읽어야 합니다. cmd.exe는 지원하지 않습니다. 별칭은 셸의 일반적인 별칭 확장 규칙을 따릅니다. Bash의 비대화형 스크립트는 기본적으로 별칭 확장을 끄므로 정식 명령을 사용해야 합니다.
+
+이 방식으로 만든 별칭이 변경되지 않았다면 반복 활성화해도 추가 변경 없이 성공합니다. 제거는 같은 셸에서 생성한 별칭에만 적용되며, 다른 별칭이나 명령으로 바꾸었다면 거부합니다. 셸을 닫으면 별칭도 사라집니다. 기존 설치 관리자로 업데이트하면 별칭은 복사된 실행본이 아니라 정식 명령을 계속 가리킵니다. 제거하거나 구현을 교체하기 전에 별칭을 먼저 제거하세요. 패키지 제거는 실행 중인 셸을 바꾸지 않습니다. 영구 설정과 제거를 직접 관리할 의사가 없다면 프로필에 이 파일을 추가하지 마세요.
+
+standalone 설치 방식은 바뀌지 않으며 이 파일들을 자동 설치하지 않습니다. standalone과 함께 쓰려면 검토한 체크아웃에서 파일을 가져오거나 해당 릴리스의 검증된 소스 배포 파일에서 `session_peer_shorthand`를 추출하세요. 검증되지 않은 다운로드를 바로 실행하지 말고 [릴리스 검증](../../RELEASING.ko.md) 절차를 따르세요. PATH에서 정식 명령을 찾을 수 있게 한 뒤 검토한 로컬 파일을 직접 읽으세요. 직접 선택한 파일의 업데이트와 제거는 사용자의 책임이며 standalone, pipx, uv, pip의 관리 주체는 바뀌지 않습니다. 충돌 검사는 현재 셸과 PATH에 보이는 명령만 확인하며 다른 셸이나 향후 PATH 변경까지 확인하지 않습니다.
+
 ## 설치
 
 Python 3.9+, 표준 라이브러리 전용 — 외부 의존성 없음.
