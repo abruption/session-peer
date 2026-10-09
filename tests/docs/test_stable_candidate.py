@@ -18,7 +18,7 @@ class StableCandidate(unittest.TestCase):
             self.assertIn('<div align="center">', text)
         for locale in ("", "ko/", "ja/", "zh-CN/"):
             text = (ROOT / ("docs/" + locale + "releases/v1.1.0.md")).read_text(encoding="utf-8")
-            for marker in ("#261", "#283–#289", "#290", "#242", "#268", "#232", "#180", "#183",
+            for marker in ("#261", "#283–#290", "#242", "#268", "#232", "#180", "#183",
                            "#238", "#211", "#181", "#30", "1.0.4", "1.1.0", "0.154.0",
                            "0.3.2", "0.9.1", "1.0.1", "32 KiB", "64 KiB", "256 KiB",
                            "1 MiB", "131,071", "90,000", "20/21", "#161"):
