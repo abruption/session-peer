@@ -22,6 +22,7 @@
 
 ## 开发与历史
 
+- [Handoff 运行时候选实现](handoff-runtime.md)说明未发布的私有收据、支持路径及剩余验收条件。
 - [v1兼容性契约](compatibility-v1.md)对stable、versioned、migrated、internal和experimental surface分类。
 - [代理传输架构](architecture/agent-transports.md)和[中继开发计划](relay-development-plan.md)介绍实现边界。
 - [v1.0.4说明](releases/v1.0.4.md)描述2026-10-07的当前维护版本；[v1.0.3说明](releases/v1.0.3.md)保留先前安全版本历史；[验证记录](validation/69-rc.md)保留范围明确的证据及限制。

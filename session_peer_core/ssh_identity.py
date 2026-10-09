@@ -54,18 +54,25 @@ def validate_ssh_identity_options(args) -> None:
                           {"reason": "unsupported_ssh_identity", "retryAllowed": False})
 
 
-def ssh_identity_configuration(host: str, ssh_opts: list[str]) -> dict:
+def ssh_identity_configuration(host: str, ssh_opts: list[str], *, handoff_budget=None) -> dict:
     check_ssh_argument(host, "--host")
     check_ssh_options(ssh_opts)
     try:
-        completed = subprocess.run(["ssh", "-G", *ssh_opts, host],
-                                   capture_output=True, timeout=DETECT_TIMEOUT)
+        completed = (ssh_handoff_configuration(host, ssh_opts, handoff_budget)
+                     if handoff_budget is not None else subprocess.run(
+                         ["ssh", "-G", *ssh_opts, host], capture_output=True, timeout=DETECT_TIMEOUT))
         output = completed.stdout
         if isinstance(output, bytes):
             if len(output) > 1024 * 1024:
                 raise ValueError("config budget")
             output = output.decode("utf-8", errors="strict")
-        if not isinstance(output, str) or len(output.encode("utf-8")) > 1024 * 1024 or completed.returncode:
+        # The bounded owned helper reserves the leader until group cleanup and
+        # may return its own SIGKILL after full pipe EOF. Configuration metadata
+        # is accepted only through that helper's no-error/full-output guard;
+        # the actual connection callback still supplies all host-key evidence.
+        valid_code = (completed.returncode in (0, -signal.SIGKILL)
+                      if handoff_budget is not None else completed.returncode == 0)
+        if not isinstance(output, str) or len(output.encode("utf-8")) > 1024 * 1024 or not valid_code:
             raise ValueError("config unavailable")
         values = {}
         for line in output.splitlines():
@@ -113,14 +120,23 @@ def ssh_key_receipt(path: Path) -> dict | None:
 
 
 def run_remote_with_identity(host: str, argv: list[str], ssh_opts: list[str],
-                             expected: str | None = None) -> dict:
+                             expected: str | None = None, *, handoff_budget=None,
+                             handoff_context=None) -> dict:
     if IS_WINDOWS:
         raise CcPeerError("Connection-bound SSH identity is currently POSIX-only",
                           {"reason": "unsupported_ssh_identity", "retryAllowed": False})
     if expected is not None and not re.fullmatch(SSH_FINGERPRINT_PATTERN, expected):
         raise CcPeerError("Invalid SHA256 SSH host-key fingerprint",
                           {"reason": "invalid_ssh_host_key", "retryAllowed": False})
-    configuration = ssh_identity_configuration(host, ssh_opts)
+    if handoff_budget is not None or handoff_context is not None:
+        ssh_handoff_request(handoff_budget, handoff_context, require_context=True)
+        try:
+            handoff_validate_remote_argv(argv, handoff_context)
+        except (CcPeerError, ValueError, TypeError, KeyError, UnicodeError) as exc:
+            raise CcPeerError("Invalid private SSH handoff command",
+                              {"reason": "invalid_ssh_handoff_command", "retryAllowed": False, "spawned": False}) from exc
+    configuration = (ssh_identity_configuration(host, ssh_opts, handoff_budget=handoff_budget)
+                     if handoff_budget is not None else ssh_identity_configuration(host, ssh_opts))
     with tempfile.TemporaryDirectory(prefix="session-peer-ssh-identity-") as directory:
         root = Path(directory)
         root.chmod(0o700)
@@ -140,7 +156,11 @@ def run_remote_with_identity(host: str, argv: list[str], ssh_opts: list[str],
             fixed += ["-oUserKnownHostsFile=none", "-oGlobalKnownHostsFile=none",
                       "-oHostKeyAlias=session-peer-pinned"]
         try:
-            result = _run_remote_dispatch(host, argv, ssh_opts, identity_options=fixed)
+            if handoff_budget is not None:
+                result = _run_remote_dispatch(host, argv, ssh_opts, identity_options=fixed,
+                                              handoff_budget=handoff_budget, handoff_context=handoff_context)
+            else:
+                result = _run_remote_dispatch(host, argv, ssh_opts, identity_options=fixed)
         except CcPeerError as exc:
             proof = ssh_key_receipt(receipt)
             # An offered key is not verified authentication or remote execution.
@@ -178,5 +198,9 @@ def run_remote_with_identity(host: str, argv: list[str], ssh_opts: list[str],
         return result
 
 
-def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
+def run_remote(host: str, argv: list[str], ssh_opts: list[str], *, handoff_budget=None,
+               handoff_context=None) -> dict:
+    if handoff_budget is not None or handoff_context is not None:
+        return _run_remote_dispatch(host, argv, ssh_opts, handoff_budget=handoff_budget,
+                                     handoff_context=handoff_context)
     return _run_remote_dispatch(host, argv, ssh_opts)

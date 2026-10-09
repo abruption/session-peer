@@ -24,6 +24,7 @@ installation paths.
 
 ## Development and history
 
+- [Handoff runtime candidate](handoff-runtime.md) describes unreleased private receipts, supported routes and remaining acceptance gates.
 - [v1 compatibility contract](compatibility-v1.md) classifies stable, versioned, migrated, internal and experimental surfaces.
 - [Agent transport architecture](architecture/agent-transports.md) and the [relay development plan](relay-development-plan.md) explain implementation boundaries.
 - [v1.0.4 notes](releases/v1.0.4.md) describe the current maintenance release dated 2026-10-07; [v1.0.3 notes](releases/v1.0.3.md) preserve the prior security release history; [validation records](validation/69-rc.md) preserve scoped evidence and limitations.

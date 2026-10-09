@@ -23,6 +23,7 @@
 
 ## 개발과 이력
 
+- [Handoff 런타임 후보](handoff-runtime.md)는 미발행 비공개 수신 확인 구현, 지원 경로와 남은 수락 조건을 설명합니다.
 - [v1 호환성 계약](compatibility-v1.md)은 안정적, 버전형, 마이그레이션형, 내부형, 실험적 표면을 분류합니다.
 - [에이전트 전송 아키텍처](architecture/agent-transports.md)와 [릴레이 개발 계획](relay-development-plan.md)은 구현 경계를 설명합니다.
 - [v1.0.4 노트](releases/v1.0.4.md)는 2026-10-07 현재 유지보수 릴리스를 설명하고, [v1.0.3 노트](releases/v1.0.3.md)는 이전 보안 릴리스 이력을, [검증 기록](validation/69-rc.md)은 범위가 명시된 증거와 한계를 보존합니다.

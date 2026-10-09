@@ -1,4 +1,8 @@
 def cmd_send(args: argparse.Namespace) -> int:
+    if getattr(args, "_handoff_native_context", None) is not None:
+        return cmd_handoff_remote_native(args)
+    if handoff_requested(args):
+        return cmd_handoff_send(args)
     expected_generation = getattr(args, "target_generation", None)
     validate_target_generation(expected_generation)
     if getattr(args, "device", None) and expected_generation is not None:

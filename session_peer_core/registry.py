@@ -109,7 +109,14 @@ class SshTransport:
         self.expected_host_key = getattr(args, "require_ssh_host_key", None)
         self.identity_requested = bool(self.expected_host_key is not None or getattr(args, "ssh_identity", False))
 
-    def execute(self, argv: list[str]) -> dict:
+    def execute(self, argv: list[str], *, handoff_budget=None, handoff_context=None) -> dict:
+        if handoff_budget is not None or handoff_context is not None:
+            if self.identity_requested:
+                return run_remote_with_identity(self.requested_host, argv, self.ssh_opts,
+                                                self.expected_host_key, handoff_budget=handoff_budget,
+                                                handoff_context=handoff_context)
+            return run_remote(self.requested_host, argv, self.ssh_opts,
+                              handoff_budget=handoff_budget, handoff_context=handoff_context)
         if self.identity_requested:
             return run_remote_with_identity(self.requested_host, argv, self.ssh_opts, self.expected_host_key)
         return run_remote(self.requested_host, argv, self.ssh_opts)
