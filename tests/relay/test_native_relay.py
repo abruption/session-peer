@@ -147,14 +147,16 @@ class NativeRelay(unittest.IsolatedAsyncioTestCase):
         sent = await invoke('send', '--to', 'review', '--message', 'real CLI', '--no-from', '--no-reply-to')
         self.assertTrue(sent['submitted'])
         self.assertEqual(sent['transport'], 'paired_device')
-        self.assertEqual(self.effects[0]['message']['content'], 'real CLI')
+        self.assertIn('| real CLI', self.effects[0]['message']['content'])
+        self.assertIn('Receiver-verified TLS certificate SHA-256: ' + self.client.device,
+                      self.effects[0]['message']['content'])
 
     async def test_direct_native_discovery_and_delivery(self):
         found=await self.call('list')
         self.assertTrue(found['ok']);self.assertEqual(found['sessions'][0]['target'],'review')
         result=await self.call('send',{'target':'review','message':'direct native'})
         self.assertEqual(result['status'],'submitted');self.assertFalse(result['consumptionConfirmed'])
-        self.assertEqual(self.effects[0]['message']['content'],'direct native')
+        self.assertIn('| direct native', self.effects[0]['message']['content'])
 
     async def test_relay_native_delivery_ciphertext_and_cross_route_dedup(self):
         ident=str(uuid.uuid4());body={'target':'review','message':'SP_NATIVE_RELAY_SENTINEL'}

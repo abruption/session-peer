@@ -42,7 +42,7 @@ class CliOptions(unittest.TestCase):
             self.assertEqual(error.exception.code,2)
             dispatch.assert_not_called()
 
-    def test_claude_message_aliases_preserve_exact_utf8_text_and_output(self):
+    def test_claude_message_aliases_preserve_utf8_inside_receiving_frame_and_output(self):
         text='안녕하세요\n"quotes" & $(literal) --json'
         session={'pid':42,'name':'worker','alive':True,'reachable':True,'socket':'/test.sock'}
         for inputs in ([text],['--message',text],['-m',text]):
@@ -52,7 +52,7 @@ class CliOptions(unittest.TestCase):
                                        '--output-format','json',*inputs)
                 self.assertEqual(code,0)
                 self.assertTrue(json.loads(out)['ok'])
-                post.assert_called_once_with('/test.sock',text,pid=42)
+                post.assert_called_once_with('/test.sock',peer.peer_delivery_message(text, 'claude'),pid=42)
 
     def test_codex_named_message_is_text_not_json_input(self):
         payload={'ok':True,'dryRun':False,'target':{'agent':'codex','id':THREAD},
@@ -61,7 +61,7 @@ class CliOptions(unittest.TestCase):
             code,out,_=self.invoke('send','--to','codex:'+THREAD,'--message','ordinary text',
                                    '--no-from','--no-reply-to','--output-format','json')
         self.assertEqual(code,0)
-        self.assertEqual(queue.call_args.args[1],'ordinary text')
+        self.assertEqual(queue.call_args.args[1],peer.peer_delivery_message('ordinary text', 'codex'))
         self.assertEqual(json.loads(out)['queueId'],'test-queue')
         self.assertFalse(json.loads(out)['consumptionConfirmed'])
 

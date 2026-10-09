@@ -65,8 +65,18 @@ class LocalTransport:
                 # destroy successful results from other adapters, even in JSON mode.
                 for row in result["sessions"]:
                     adapter.display_row(row)
+                    if getattr(args, "with_target_generation", False):
+                        value = claude_generation(row) if adapter.name == "claude" else None
+                        row["targetGeneration"] = value
+                        row["generationStatus"] = "available" if value else "unsupported"
                 return result
             if operation == "send":
+                check_message(text, remote=False)
+                adapter.validate_send(args, text)
+                text = peer_delivery_message(
+                    text, adapter.name,
+                    getattr(args, "_peer_fingerprint", _RECEIVER_PEER_FINGERPRINT))
+                check_message(text, remote=False)
                 adapter.validate_send(args, text)
                 result = adapter.submit(context, text)
                 if not isinstance(result, dict) or type(result.get("ok")) is not bool:

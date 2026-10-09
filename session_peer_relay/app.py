@@ -147,13 +147,18 @@ class Receiver:
         if not valid_text(text):
             raise Rejected('invalid_message')
         binding = self.policy.targets[alias]
+        # Authenticated certificate key, not the principal/From claim supplied
+        # in the application body. Budget the final frame before journal/effect.
+        framed = core.peer_delivery_message(text, binding['agent'], key)
+        if not valid_text(framed):
+            raise Rejected('framed_message_too_large')
         # Binding overhead must also fit, before resolve or journal begin.
         try:
-            worker_frame(binding, 'resolve' if op == 'resolve' else 'send', text)
+            worker_frame(binding, 'resolve' if op == 'resolve' else 'send', text, key)
         except FrameRejected as exc:
             raise Rejected(str(exc)) from None
         if op == 'resolve':
-            result = await self.native.invoke(binding, 'resolve', text)
+            result = await self.native.invoke(binding, 'resolve', text, peer_fingerprint=key)
             if result.get('reason') == 'codex_executable_not_found':
                 self.lifecycle_event('native_preflight_refused', operation='resolve',
                                      reason='codex_executable_not_found')
@@ -162,7 +167,7 @@ class Receiver:
         existing = self.store.begin(peer, value['id'], canonical)
         if existing is not None:
             return existing
-        result = await self.native.invoke(binding, 'send', text)
+        result = await self.native.invoke(binding, 'send', text, peer_fingerprint=key)
         if result.get('reason') == 'codex_executable_not_found':
             self.lifecycle_event('native_preflight_refused', operation='send',
                                  reason='codex_executable_not_found')

@@ -1,4 +1,6 @@
 def cmd_list(args: argparse.Namespace) -> int:
+    if getattr(args, "device", None) and getattr(args, "with_target_generation", False):
+        raise generation_refused("unsupported_target_generation", "Paired devices use a separate generation contract")
     if getattr(args, "device", None):
         return optional_relay().invoke_core(args)
     selected = getattr(args, "agent", None)
@@ -16,6 +18,8 @@ def cmd_list(args: argparse.Namespace) -> int:
             transport = SshTransport(requested_host, args, tailnet_status)
             host, ssh_opts = transport.host, transport.ssh_opts
             argv = ["list", "--no-update-notice"] + (["--all"] if args.all else [])
+            if getattr(args, "with_target_generation", False):
+                argv.append("--with-target-generation")
             if selected:
                 argv += ["--agent", selected]
             argv += agent_remote_options(args, selected)
