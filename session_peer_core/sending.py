@@ -1,4 +1,8 @@
 def cmd_send(args: argparse.Namespace) -> int:
+    expected_generation = getattr(args, "target_generation", None)
+    validate_target_generation(expected_generation)
+    if getattr(args, "device", None) and expected_generation is not None:
+        raise generation_refused("unsupported_target_generation", "Paired devices use a separate generation contract")
     if getattr(args, "device", None):
         return optional_relay().invoke_core(args)
     resolved_address = apply_reply_target(args)
@@ -91,9 +95,14 @@ def cmd_send(args: argparse.Namespace) -> int:
             encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
             remote_argv = ["send", "--no-update-notice", "--to", args.to, "--b64", encoded]
             remote_argv += adapter.remote_options(args)
+            if expected_generation is not None:
+                remote_argv += ["--target-generation", expected_generation]
             if args.dry_run:
                 remote_argv.append("--dry-run")
             result = transport.execute(remote_argv)
+            if expected_generation is not None and result.get("targetGeneration") != expected_generation:
+                raise CcPeerError("SSH response did not preserve the requested generation; do not retry automatically",
+                                  {"status": "unknown", "reason": "outcome_unknown", "retryAllowed": False})
             payload = adapter.remote_submission(result, args, text)
             payload.update(host_metadata(requested_host, host))
             payload.update(routing_metadata)

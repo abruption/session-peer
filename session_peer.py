@@ -1438,7 +1438,8 @@ def _read_win_auth(pid: int) -> str | None:
     return None
 
 
-def _post_to_pipe(pipe_path: str, pid: int, text: str) -> None:
+def _post_to_pipe(pipe_path: str, pid: int, text: str, *, generation_session=None,
+                  expected_generation=None) -> None:
     """Write one message to a Windows named pipe inbox."""
     check_message(text, remote=False)
 
@@ -1454,6 +1455,8 @@ def _post_to_pipe(pipe_path: str, pid: int, text: str) -> None:
     import time
     try:
         with open(pipe_path, "wb") as pipe:
+            if expected_generation is not None:
+                verify_connected_generation(generation_session, expected_generation, connected_pipe_pid(pipe))
             pipe.write((auth_line + "\n").encode("utf-8"))
             pipe.write((payload + "\n").encode("utf-8"))
             pipe.flush()
@@ -1462,7 +1465,8 @@ def _post_to_pipe(pipe_path: str, pid: int, text: str) -> None:
         raise CcPeerError(f"cannot reach inbox at {pipe_path}: {exc}") from exc
 
 
-def post_to_socket(socket_path: str, text: str, pid: int = 0) -> None:
+def post_to_socket(socket_path: str, text: str, pid: int = 0, *, generation_session=None,
+                   expected_generation=None) -> None:
     """Write one message to a session's inbox socket.
 
     On macOS and Linux the {"type":"auth",...} line the docs describe is
@@ -1473,7 +1477,8 @@ def post_to_socket(socket_path: str, text: str, pid: int = 0) -> None:
     socket is opened.
     """
     if IS_WINDOWS and socket_path.startswith("\\\\.\\pipe\\"):
-        _post_to_pipe(socket_path, pid, text)
+        _post_to_pipe(socket_path, pid, text, generation_session=generation_session,
+                      expected_generation=expected_generation)
         return
 
     check_message(text, remote=False)
@@ -1492,6 +1497,8 @@ def post_to_socket(socket_path: str, text: str, pid: int = 0) -> None:
             raise CcPeerError(f"cannot reach inbox at {socket_path}: {exc}") from exc
 
         try:
+            if expected_generation is not None:
+                verify_connected_generation(generation_session, expected_generation, connected_inbox_pid(conn))
             conn.sendall((payload + "\n").encode("utf-8"))
             conn.shutdown(socket.SHUT_WR)
             conn.settimeout(DRAIN_TIMEOUT)
@@ -1503,6 +1510,128 @@ def post_to_socket(socket_path: str, text: str, pid: int = 0) -> None:
             raise CcPeerError(f"failed writing to {socket_path}: {exc}") from exc
     finally:
         conn.close()
+
+
+# Optional discovery-to-inbox preconditions. These are not ACK or dedup keys.
+
+def generation_refused(reason: str, message: str) -> CcPeerError:
+    return CcPeerError(message, {"status": "refused", "reason": reason,
+                                "submitted": False, "retryAllowed": False})
+
+
+def process_generation(pid: int) -> str | None:
+    """Use native creation evidence, never the second-resolution ps display."""
+    if type(pid) is not int or pid <= 1:
+        return None
+    try:
+        if sys.platform == "linux":
+            # comm may contain spaces and ')'; fields after the final ')' start
+            # at field 3, so starttime (22) is offset 19.
+            fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+            boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+            return f"linux:{boot}:{fields[19]}" if fields[19].isdigit() else None
+        if sys.platform == "darwin":
+            import ctypes
+            class BsdInfo(ctypes.Structure):
+                _fields_ = [("prefix", ctypes.c_uint32 * 12),
+                            ("comm", ctypes.c_char * 16), ("name", ctypes.c_char * 32),
+                            ("suffix", ctypes.c_uint32 * 6),
+                            ("seconds", ctypes.c_uint64), ("micros", ctypes.c_uint64)]
+            lib = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+            lib.proc_pidinfo.argtypes = (ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
+                                        ctypes.c_void_p, ctypes.c_int)
+            lib.proc_pidinfo.restype = ctypes.c_int
+            value = BsdInfo()
+            if lib.proc_pidinfo(pid, 3, 0, ctypes.byref(value), ctypes.sizeof(value)) != ctypes.sizeof(value):
+                return None
+            if value.prefix[3] != pid or not value.seconds:
+                return None
+            return f"darwin:{value.seconds}:{value.micros}"
+        if sys.platform == "win32":
+            rows = _windows_process_inspect("identity", str(pid))
+            return "win32:" + rows[0]["startTime"] if rows and len(rows) == 1 else None
+    except (OSError, ValueError, IndexError, AttributeError):
+        pass
+    return None
+
+
+def claude_generation(session: dict) -> str | None:
+    """Hash bounded registry/process/endpoint facts; expose no raw native key."""
+    import hashlib
+    try:
+        pid = session["pid"]
+        birth = process_generation(pid)
+        if not birth:
+            return None
+        directory = sessions_dir().resolve()
+        record = read_claude_record(directory / f"{pid}.json")
+        endpoint = record.get("messagingSocketPath")
+        if record["pid"] != pid or endpoint != session["socket"]:
+            return None
+        identity = ["claude", sys.platform, socket.gethostname(), str(directory), pid, birth, endpoint]
+        if not IS_WINDOWS:
+            node = Path(endpoint).lstat()
+            if not stat.S_ISSOCK(node.st_mode):
+                return None
+            identity += [node.st_dev, node.st_ino]
+        else:
+            if not endpoint.startswith("\\\\.\\pipe\\"):
+                return None
+            identity += [record.get("startedAt")]
+        return "tg1:" + hashlib.sha256(json.dumps(identity, ensure_ascii=False,
+                                                separators=(",", ":")).encode("utf-8")).hexdigest()
+    except (OSError, ValueError, KeyError, RuntimeError):
+        return None
+
+
+def validate_target_generation(value: str | None) -> None:
+    if value is not None and (not isinstance(value, str) or not re.fullmatch(r"tg1:[0-9a-f]{64}", value)):
+        raise generation_refused("invalid_target_generation", "Invalid target generation; run discovery again")
+
+
+def require_claude_generation(session: dict, expected: str) -> None:
+    validate_target_generation(expected)
+    current = claude_generation(session)
+    if current is None:
+        raise generation_refused("target_generation_unavailable", "Cannot prove the selected inbox generation; nothing sent")
+    if current != expected:
+        raise generation_refused("stale_target", "The selected inbox generation changed; nothing sent")
+
+
+def connected_inbox_pid(conn) -> int | None:
+    """Read credentials for the connected endpoint, not its current pathname."""
+    import struct
+    try:
+        if sys.platform == "linux" and hasattr(socket, "SO_PEERCRED"):
+            return struct.unpack("3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))[0]
+        if sys.platform == "darwin":
+            # SOL_LOCAL / LOCAL_PEERPID from sys/un.h.
+            return struct.unpack("i", conn.getsockopt(0, 2, 4))[0]
+    except (OSError, ValueError, struct.error):
+        pass
+    return None
+
+
+def connected_pipe_pid(pipe) -> int | None:
+    try:
+        import ctypes
+        from ctypes import wintypes
+        import msvcrt
+        function = ctypes.windll.kernel32.GetNamedPipeServerProcessId
+        function.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.ULONG))
+        function.restype = wintypes.BOOL
+        pid = wintypes.ULONG()
+        return pid.value if function(msvcrt.get_osfhandle(pipe.fileno()), ctypes.byref(pid)) else None
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
+def verify_connected_generation(session: dict, expected: str, server_pid: int | None) -> None:
+    if server_pid is None:
+        raise generation_refused("target_generation_unavailable", "Connected inbox identity unavailable; nothing sent")
+    if server_pid != session["pid"]:
+        raise generation_refused("stale_target", "Connected inbox belongs to another process; nothing sent")
+    require_claude_generation(session, expected)
 
 
 # --------------------------------------------------------------------------
@@ -3175,6 +3304,11 @@ class AgentAdapter:
         return SessionIdentity(self.name, context.host, target[len(prefix):])
 
     def validate_send(self, args: argparse.Namespace, text: str | None = None) -> None:
+        expected = getattr(args, "target_generation", None)
+        validate_target_generation(expected)
+        if expected is not None and self.name != "claude":
+            raise generation_refused("unsupported_target_generation",
+                                     "This native transport cannot atomically bind an inbox incarnation; nothing sent")
         if not self.capabilities.send:
             raise AdapterError(self.name, "unsupported_capability", "Agent does not support send")
         if getattr(args, "wake", False) and not self.capabilities.wake:
@@ -3235,11 +3369,24 @@ class ClaudeAdapter(AgentAdapter):
 
     def submit(self, context: ExecutionContext, text: str) -> SubmissionResult:
         args = context.options
-        session = resolve_target(discover(include_unreachable=True), args.to)
+        expected = getattr(args, "target_generation", None)
+        try:
+            session = resolve_target(discover(include_unreachable=True), args.to)
+        except CcPeerError as exc:
+            if expected is not None:
+                raise generation_refused("stale_target", "Pinned target disappeared or became ambiguous; nothing sent") from exc
+            raise
+        if expected is not None:
+            require_claude_generation(session, expected)
         if not args.dry_run:
-            post_to_socket(session["socket"], text, pid=session["pid"])
+            if expected is not None:
+                post_to_socket(session["socket"], text, pid=session["pid"],
+                               generation_session=session, expected_generation=expected)
+            else:
+                post_to_socket(session["socket"], text, pid=session["pid"])
         return {"ok": True, "target": {"pid": session["pid"], "name": session["name"]},
-                "chars": len(text), "dryRun": args.dry_run}
+                "chars": len(text), "dryRun": args.dry_run,
+                **({"targetGeneration": expected} if expected is not None else {})}
 
     def diagnose(self, context: ExecutionContext) -> dict:
         return diagnose_claude()
@@ -3266,6 +3413,7 @@ class ClaudeAdapter(AgentAdapter):
 
     def remote_submission(self, result: dict, args: argparse.Namespace, text: str) -> dict:
         return {"target": result.get("target", {}), **ssh_metadata_from(result),
+                **({"targetGeneration": result["targetGeneration"]} if "targetGeneration" in result else {}),
                 "chars": len(text), "dryRun": args.dry_run}
 
 
@@ -3793,6 +3941,10 @@ class LocalTransport:
                 # destroy successful results from other adapters, even in JSON mode.
                 for row in result["sessions"]:
                     adapter.display_row(row)
+                    if getattr(args, "with_target_generation", False):
+                        value = claude_generation(row) if adapter.name == "claude" else None
+                        row["targetGeneration"] = value
+                        row["generationStatus"] = "available" if value else "unsupported"
                 return result
             if operation == "send":
                 adapter.validate_send(args, text)
@@ -3891,6 +4043,8 @@ def render_listing(payload: dict, where: str, selected: str | None) -> str:
 
 
 def cmd_list(args: argparse.Namespace) -> int:
+    if getattr(args, "device", None) and getattr(args, "with_target_generation", False):
+        raise generation_refused("unsupported_target_generation", "Paired devices use a separate generation contract")
     if getattr(args, "device", None):
         return optional_relay().invoke_core(args)
     selected = getattr(args, "agent", None)
@@ -3908,6 +4062,8 @@ def cmd_list(args: argparse.Namespace) -> int:
             transport = SshTransport(requested_host, args, tailnet_status)
             host, ssh_opts = transport.host, transport.ssh_opts
             argv = ["list", "--no-update-notice"] + (["--all"] if args.all else [])
+            if getattr(args, "with_target_generation", False):
+                argv.append("--with-target-generation")
             if selected:
                 argv += ["--agent", selected]
             argv += agent_remote_options(args, selected)
@@ -4865,6 +5021,10 @@ def cmd_update(args: argparse.Namespace) -> int:
 
 
 def cmd_send(args: argparse.Namespace) -> int:
+    expected_generation = getattr(args, "target_generation", None)
+    validate_target_generation(expected_generation)
+    if getattr(args, "device", None) and expected_generation is not None:
+        raise generation_refused("unsupported_target_generation", "Paired devices use a separate generation contract")
     if getattr(args, "device", None):
         return optional_relay().invoke_core(args)
     resolved_address = apply_reply_target(args)
@@ -4957,9 +5117,14 @@ def cmd_send(args: argparse.Namespace) -> int:
             encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
             remote_argv = ["send", "--no-update-notice", "--to", args.to, "--b64", encoded]
             remote_argv += adapter.remote_options(args)
+            if expected_generation is not None:
+                remote_argv += ["--target-generation", expected_generation]
             if args.dry_run:
                 remote_argv.append("--dry-run")
             result = transport.execute(remote_argv)
+            if expected_generation is not None and result.get("targetGeneration") != expected_generation:
+                raise CcPeerError("SSH response did not preserve the requested generation; do not retry automatically",
+                                  {"status": "unknown", "reason": "outcome_unknown", "retryAllowed": False})
             payload = adapter.remote_submission(result, args, text)
             payload.update(host_metadata(requested_host, host))
             payload.update(routing_metadata)
@@ -5086,6 +5251,8 @@ def build_parser() -> argparse.ArgumentParser:
                  "set explicitly for Orca/multiple homes")
     listing.add_argument("--codex-home", help="list only this destination home (default: known default, CODEX_HOME, Orca and configured homes)")
     listing.add_argument("--codex-bin", help="Codex executable on the destination (used by send)")
+    listing.add_argument("--with-target-generation", action="store_true",
+                         help="report optional inbox generation preconditions (not ACK or consumption)")
     listing.add_argument(
         "--all", action="store_true", help="include stale records and sessions with no inbox"
     )
@@ -5115,6 +5282,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="session name, PID, codex:UUID, antigravity:UUID, or session-peer://v1/reply address",
     )
     sending.add_argument("--codex-home", help=home_help)
+    sending.add_argument("--target-generation", metavar="TOKEN",
+                         help="require a previously discovered inbox generation; fail closed if unsupported")
     sending.add_argument(
         "--allow-inactive-codex-home", action="store_true",
         help="with --codex-home, intentionally queue an inactive thread for a future resume",
