@@ -49,6 +49,14 @@ class SetupChoices(unittest.TestCase):
             self.assertEqual(core.main(['setup', '--interactive', '--json']), 1)
         self.assertEqual(json.loads(output.getvalue())['reason'], 'invalid_setup_mode')
 
+    def test_cancel_at_initial_choice_has_no_import_or_effect_and_exit_130(self):
+        for interrupt in (EOFError, KeyboardInterrupt):
+            with mock.patch('builtins.input', side_effect=interrupt), \
+                    mock.patch.object(core, 'optional_relay', side_effect=AssertionError('optional import')), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(core.main(['setup', '--interactive', '--json']), 130)
+            self.assertTrue(json.loads(output.getvalue())['cancelled'])
+
 
 if __name__ == '__main__':
     unittest.main()

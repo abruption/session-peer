@@ -5032,7 +5032,12 @@ def cmd_optional_relay(args):
 
 def cmd_setup(args):
     if args.interactive and not args.mode:
-        args.mode = input("Connection mode [local/ssh/relay]: ").strip()
+        try:
+            args.mode = input("Connection mode [local/ssh/relay]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            result = {'ok': False, 'cancelled': True, 'operationCancelled': False}
+            emit(args.json, result, 'Setup cancelled; no operation was started.', command='setup')
+            return 130
         if args.mode not in ('local', 'ssh', 'relay'):
             raise CcPeerError('Choose local, ssh, or relay', {'reason': 'invalid_setup_mode'})
     if args.mode in ('local', 'ssh') or not args.mode:
