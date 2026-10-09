@@ -62,6 +62,32 @@ session-peer list --output-format json
 `--json --output-format json` 是合法的；无论先后顺序，将 `--json` 与 `--output-format text` 组合都会报错。无效或矛盾的输出选项属于 argparse 用法错误（stderr，退出码 2）；消息来源冲突属于普通命令错误（请求时为 JSON，退出码 1）。无论哪种情况均不会提交任何消息。JSON 结果仍然描述提交情况而非接收情况；这些标志并未引入结构化的 JSON 消息输入协议。
 
 <a id="install"></a>
+## 可选的交互式短命令
+
+在包含这些文件的版本中，Bash/zsh 和 PowerShell 用户可以自行启用仅在当前 shell 生效的 `sp` 别名。它调用当前选中的 `session-peer` 命令，保持参数、标准输入、输出、退出码和权限不变。它不是独立的参数解析器，也不是 Python/TypeScript 选择器。脚本、SSH 请求和自动生成的回复指令仍应使用正式命令。不要同时安装两个实现；切换时使用原安装管理工具，并确认 shell 优先找到哪个命令。
+
+wheel 和源码发行包在 `session_peer_shorthand` 中包含启用脚本。安装不会自动启用，也不会修改配置文件或 PATH。请使用所选安装对应的 Python 解释器定位文件：已激活的 pip 虚拟环境解释器，或通过 `pipx environment --value PIPX_LOCAL_VENVS`、`uv tool dir` 查到的工具环境解释器。Unix 工具环境通常包含 `session-peer/bin/python`，Windows 使用 `session-peer/Scripts/python.exe`。请查看实际环境，不要猜测位置。模块只输出文件路径；在 shell 中加载前请先审阅文件。
+
+```bash
+asset=$("/path/to/tool/python" -I -m session_peer_shorthand bash)
+source "$asset"
+sp --version
+source "${asset%/*}/sp-remove.sh"
+```
+
+```powershell
+$asset = & 'C:\path\to\tool\Scripts\python.exe' -I -m session_peer_shorthand powershell
+. $asset
+sp --version
+. $asset -Remove
+```
+
+如果已有 `sp` 可执行文件、别名或函数，脚本会拒绝启用而不会覆盖。PowerShell 通常已将 `sp` 定义为 `Set-ItemProperty` 的别名，因此默认会拒绝启用；除非您明确决定自行处理冲突，否则请继续使用正式命令。Bash/zsh 必须通过 source 加载，PowerShell 必须通过 dot-source 加载。不支持 cmd.exe。别名遵循 shell 的正常展开规则；Bash 在非交互脚本中默认关闭别名展开，因此脚本应使用正式命令。
+
+如果此方式创建的别名没有被修改，重复启用会成功且不产生额外变更。移除操作只针对同一 shell 中创建的别名；若已被替换成其他别名或命令，则拒绝移除。关闭 shell 也会清除别名。通过原管理工具升级后，别名仍指向正式命令，而非复制的运行时。在卸载或切换实现前请先移除别名；包卸载不会修改正在运行的 shell。除非您愿意自行负责持久配置及其移除，否则不要把这些文件加入 shell 配置文件。
+
+standalone 安装方式不变，不会自动安装这些文件。如果要搭配 standalone 使用，请从已审阅的检出目录取得文件，或从对应版本经过验证的源码发行包提取 `session_peer_shorthand`。遵循[发行验证](../../RELEASING.zh-CN.md)流程，不要直接加载未经验证的下载。确保 PATH 能找到正式命令，再直接加载审阅后的本地文件。手动选择文件的更新和移除由您负责，不会改变 standalone、pipx、uv 或 pip 的管理归属。冲突检查仅覆盖当前 shell 和 PATH 中可见的命令，不覆盖其他 shell 或将来的 PATH 变更。
+
 ## 安装
 
 Python 3.9+，仅限标准库 —— 无外部依赖。
