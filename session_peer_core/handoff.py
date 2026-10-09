@@ -364,7 +364,7 @@ class HandoffLedger:
         finally:
             os.close(fd)
 
-    def prepare(self, binding, generation, correlation=None, deadline=None):
+    def prepare(self, binding, generation, correlation=None, deadline=None, native_context=None):
         import copy
         with self.transaction(deadline) as state:
             if correlation is not None:
@@ -376,6 +376,8 @@ class HandoffLedger:
                     raise handoff_error("handoff_binding_conflict")
                 if record["phase"] != "prepared":
                     raise handoff_error("handoff_already_attempted")
+                if record.get("nativeContext") != native_context:
+                    raise handoff_error("handoff_native_context_changed")
                 return state["epoch"], copy.deepcopy(record)
             correlation = str(uuid.uuid4())
             record = {"id": correlation, "binding": binding, "generation": generation,
@@ -383,6 +385,8 @@ class HandoffLedger:
                       "waits": [], "ack": None, "createdNs": handoff_now_ns(),
                       "createdUtcMs": int(time.time() * 1000), "capability": None, "pendingReceipt": None,
                       "historyBoot": handoff_boot_clock()}
+            if native_context is not None:
+                record["nativeContext"] = native_context
             state["records"][correlation] = record
             return state["epoch"], copy.deepcopy(record)
 
@@ -404,7 +408,7 @@ class HandoffLedger:
             if value is not None:
                 handoff_uuid(value)
         required = {"id", "binding", "generation", "phase", "submission", "native", "waits", "ack", "createdNs", "createdUtcMs", "capability", "historyBoot", "pendingReceipt"}
-        if not required <= set(record) <= required | {"observe", "ackRequested"}:
+        if not required <= set(record) <= required | {"observe", "ackRequested", "nativeContext"}:
             raise ValueError()
         if record["phase"] not in ("prepared", "attempted", "terminal", "tombstone", "quarantined") or record["submission"] not in ("not_attempted", "submitted", "refused", "unknown"):
             raise ValueError()
@@ -428,6 +432,12 @@ class HandoffLedger:
             handoff_identifier(binding["home"], 4096)
         if type(binding["payloadDigest"]) is not str or re.fullmatch(r"[0-9a-f]{64}", binding["payloadDigest"]) is None:
             raise ValueError()
+        if "nativeContext" in record:
+            context = record["nativeContext"]
+            if (binding["agent"] != "codex" or type(context) is not dict or set(context) != {"root", "resolution"}
+                    or context["root"] != binding["home"] or len(HandoffLedger.encode(context)) > 4096):
+                raise ValueError()
+            handoff_codex_resolution(context["resolution"], binding["home"])
         if type(record["waits"]) is not list or len(record["waits"]) > 64:
             raise ValueError()
         for wait in record["waits"]:
@@ -528,6 +538,9 @@ def handoff_validate_native(native, record):
             raise handoff_error("invalid_native_profile")
         if "queueId" in native:
             handoff_identifier(native["queueId"], 128)
+        handoff_codex_resolution(native["codexHomeResolution"], binding["home"])
+        if record.get("nativeContext") is not None and native["codexHomeResolution"] != record["nativeContext"]["resolution"]:
+            raise handoff_error("invalid_native_profile")
         return
     if (binding["agent"] != "claude" or binding["destination"] != ["local"] or type(target) is not dict
             or set(native) != {"ok", "target", "chars", "dryRun"} or set(target) != {"pid", "name"}
@@ -538,6 +551,35 @@ def handoff_validate_native(native, record):
         raise handoff_error("invalid_native_profile")
     if target["name"] is not None:
         target["name"].encode("utf-8", errors="strict")
+
+
+def handoff_codex_resolution(resolution, root):
+    if (type(resolution) is not dict or set(resolution) != {"schemaVersion", "status", "selected", "reason", "candidates"}
+            or type(resolution["schemaVersion"]) is not int or resolution["schemaVersion"] != 1
+            or resolution["status"] not in ("explicit", "selected") or resolution["selected"] != root
+            or resolution["reason"] not in ("explicit_inactive_opt_in", "explicit_live_writer", "single_stable_live_writer")
+            or type(resolution["candidates"]) is not list or not 1 <= len(resolution["candidates"]) <= 32):
+        raise handoff_error("invalid_native_profile")
+    for candidate in resolution["candidates"]:
+        required = {"codexHome", "savedThread", "writerLock", "reason"}
+        optional = {"activity", "ownerPid", "ownerStartTime", "ownerStable"}
+        if (type(candidate) is not dict or not required <= set(candidate) <= required | optional
+                or candidate["savedThread"] is not None and type(candidate["savedThread"]) is not bool
+                or candidate["writerLock"] not in ("not_checked", "absent", "free", "held", "unknown")
+                or candidate.get("activity") not in (None, "inactive", "live_writer", "unknown")):
+            raise handoff_error("invalid_native_profile")
+        handoff_identifier(candidate["codexHome"], 4096)
+        handoff_identifier(candidate["reason"])
+        if "ownerStable" in candidate and type(candidate["ownerStable"]) is not bool:
+            raise handoff_error("invalid_native_profile")
+        for field in ("ownerPid",):
+            if field in candidate and (type(candidate[field]) is not int or not 0 <= candidate[field] <= 9007199254740991):
+                raise handoff_error("invalid_native_profile")
+        for field in ("ownerStartTime",):
+            if field in candidate:
+                handoff_identifier(candidate[field], 4096)
+    if sum(candidate["codexHome"] == root and candidate["savedThread"] is True for candidate in resolution["candidates"]) != 1:
+        raise handoff_error("invalid_native_profile")
 
 
 def handoff_cap_hash(epoch, correlation, generation, cap):
@@ -937,7 +979,7 @@ def cmd_handoff(args):
     if action == "prepare":
         text = read_message(args)
         binding, generation, _ = handoff_binding(args, text)
-        epoch, record = ledger.prepare(binding, generation)
+        epoch, record = ledger.prepare(binding, generation, native_context=handoff_native_context(args))
         emit(args.json, {"ok": True, "handoff": handoff_public(epoch, record)}, "Handoff intent prepared; nothing sent.", command="handoff")
         return 0
     if action == "confirm":
@@ -1000,6 +1042,18 @@ def handoff_binding(args, text):
     return binding, generation, session
 
 
+def handoff_native_context(args):
+    selected = getattr(args, "_handoff_codex_selection", None)
+    if selected is None:
+        return None
+    root, resolution = selected
+    context = {"root": str(root), "resolution": resolution}
+    handoff_codex_resolution(resolution, str(root))
+    if len(HandoffLedger.encode(context)) > 4096:
+        raise handoff_error("native_context_capacity")
+    return context
+
+
 def handoff_child(argv, cutoff, total, env=None):
     """Bounded metadata-only owned POSIX child; never inspect a transcript.
 
@@ -1009,6 +1063,8 @@ def handoff_child(argv, cutoff, total, env=None):
     """
     if IS_WINDOWS or handoff_now() >= cutoff:
         raise handoff_error("deadline_before_effect")
+    native_now, shared_now = time.monotonic(), handoff_now()
+    cleanup_limit = native_now + total - shared_now
     process = None
     selector = selectors.DefaultSelector()
     output, diagnostics = bytearray(), bytearray()
@@ -1044,6 +1100,8 @@ def handoff_child(argv, cutoff, total, env=None):
         interrupted, reason = True, "native_interrupted"
     except OSError:
         reason = "native_process_failed"
+    except CcPeerError:
+        reason = "native_clock_failed"
     finally:
         selector.close()
         if process is not None:
@@ -1055,7 +1113,7 @@ def handoff_child(argv, cutoff, total, env=None):
                 # Darwin can report EPERM for groups containing only zombies.
                 # Probe only the still-reserved owned group within cleanup.
                 try:
-                    remaining = total - handoff_now()
+                    remaining = cleanup_limit - time.monotonic()
                     if sys.platform != "darwin" or remaining <= 0:
                         raise OSError()
                     members = subprocess.run(["ps", "-o", "stat=", "-g", str(process.pid)],
@@ -1065,7 +1123,7 @@ def handoff_child(argv, cutoff, total, env=None):
                 except (OSError, subprocess.SubprocessError):
                     reason = reason or "native_cleanup_failed"
             try:
-                code = process.wait(timeout=max(0, total - handoff_now()))
+                code = process.wait(timeout=max(0, cleanup_limit - time.monotonic()))
             except subprocess.TimeoutExpired:
                 reason, code = "native_cleanup_failed", None
             for stream in (process.stdout, process.stderr):
@@ -1084,7 +1142,7 @@ def handoff_codex_context(args, binding, cutoff, total):
     executable = codex_executable(args)
     # A bounded harmless version query proves the selected queue executable is
     # callable. It does not certify all native versions or a writer generation.
-    probe = handoff_child([executable, "--version"], cutoff, total)
+    probe = handoff_child([executable, "--version"], cutoff, total, codex_process_environment(root))
     try:
         version = probe["stdout"].decode("utf-8", errors="strict").strip()
     except UnicodeError as exc:
@@ -1106,7 +1164,7 @@ def handoff_codex_submit(args, text, binding, context, cutoff, total):
         raise CcPeerError("Codex handoff refused before queue", {"status": "refused", "retryAllowed": False}) from exc
     if handoff_now() >= cutoff:
         raise CcPeerError("Codex handoff refused before queue", {"status": "refused", "retryAllowed": False})
-    env = dict(os.environ, CODEX_HOME=str(root))
+    env = codex_process_environment(root)
     done = handoff_child(codex_queue_argv(executable, binding["target"], text), cutoff, total, env)
     # Overflow is never salvaged from an apparently valid retained prefix.
     if done["reason"] == "native_output_capacity":
@@ -1166,18 +1224,21 @@ def cmd_handoff_send(args):
     if message is None:
         message = args.message
     if args.b64 is None and getattr(args, "message_file", None) is None and (message is None or message == "-"):
-        # A producer may keep stdin open indefinitely. This candidate does not
-        # implement cancellable message input, so never begin an unbounded read
-        # inside the frozen total send budget. Receipt stdin is a separate API.
-        raise handoff_error("handoff_message_stdin_unsupported")
-    text = read_message(args)
+        try:
+            text = read_handoff_stdin(sys.stdin, cutoff, handoff_now)
+        except HandoffStdinError as exc:
+            # No canonical binding/epoch/ID is available at this boundary.
+            emit(args.json, {"ok": False, **exc.details}, "Handoff input refused before native submission.", command="send")
+            return exc.exit_code
+    else:
+        text = read_message(args)
     check_message(text, remote=bool(args.host))
     adapter = AGENTS.for_target(args.to)
     validate_agent_send(adapter, args, text)
     binding, generation, session = handoff_binding(args, text)
     ledger = HandoffLedger()
     epoch, prepared = ledger.prepare(binding, generation, args.correlation_id,
-                                     total if args.wait_timeout <= 5 else cutoff)
+                                     total if args.wait_timeout <= 5 else cutoff, native_context=handoff_native_context(args))
     correlation = prepared["id"]
     if args.dry_run:
         if args.host or getattr(args, "device", None):
@@ -1238,6 +1299,15 @@ def cmd_handoff_send(args):
         check_message(text, remote=False)
         if adapter.name == "codex":
             check_codex_message(text)
+            root, resolution, _ = codex_context
+            # Size a private prospective profile without claiming submission.
+            # Reserve escaped queue-ID space before the only queue invocation.
+            prospective = {"ok": True, "target": {"agent": "codex", "id": binding["target"]}, "chars": len(text),
+                "dryRun": False, "codexHome": str(root), "submitted": True, "consumptionConfirmed": False,
+                "status": "queued", "codexHomeResolution": resolution}
+            handoff_validate_native(prospective, prepared)
+            if len(HandoffLedger.encode(prospective)) > 8192 - 300:
+                raise handoff_error("native_snapshot_capacity")
             native_success = None  # A profile cannot be invented before queue.
         else:
             native_success = {"ok": True, "target": {"pid": session["pid"], "name": session["name"]}, "chars": len(text), "dryRun": False}

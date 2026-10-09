@@ -582,16 +582,40 @@ class HandoffRuntime(unittest.TestCase):
         self.assertEqual(json.loads(output.getvalue())["handoff"]["submission"]["status"], "refused")
         post.assert_not_called()
 
-    def test_handoff_message_stdin_refuses_before_read_or_native_effect(self):
+    def test_handoff_stdin_failure_has_no_fabricated_binding_or_effect(self):
         for source in ([], ["-"], ["--message=-"]):
             with self.subTest(source=source):
                 args = peer.build_parser().parse_args(["send", "--to", "fixture", "--request-ack", "--json"] + source)
-                with mock.patch.object(peer, "read_message") as read, mock.patch.object(peer, "post_to_socket") as post:
-                    with self.assertRaises(peer.CcPeerError) as caught:
-                        peer.cmd_handoff_send(args)
-                self.assertEqual(caught.exception.details["reason"], "handoff_message_stdin_unsupported")
+                output = io.StringIO()
+                with mock.patch.object(peer, "read_message") as read, mock.patch.object(peer, "post_to_socket") as post, \
+                        mock.patch.object(peer, "read_handoff_stdin", side_effect=peer.HandoffStdinError("handoff_stdin_interrupted", 130)), \
+                        mock.patch.object(peer, "handoff_binding") as binding, contextlib.redirect_stdout(output):
+                    code = peer.cmd_handoff_send(args)
+                result = json.loads(output.getvalue())
+                self.assertEqual(code, 130)
+                self.assertEqual(result["reason"], "handoff_stdin_interrupted")
+                for absent in ("handoff", "handoffQuery", "submitted", "ledgerEpoch", "correlationId"):
+                    self.assertNotIn(absent, result)
+                binding.assert_not_called()
                 read.assert_not_called()
                 post.assert_not_called()
+
+    def test_handoff_stdin_owned_pipe_without_eof_never_initializes_intent(self):
+        read_fd, write_fd = os.pipe()
+        args = peer.build_parser().parse_args(["send", "--to", "fixture", "--request-ack", "--wait-timeout=6", "--json"])
+        output = io.StringIO()
+        try:
+            with os.fdopen(read_fd, "rb") as stream, mock.patch.object(peer.sys, "stdin", stream), \
+                    mock.patch.object(peer, "handoff_binding") as binding, mock.patch.object(peer, "post_to_socket") as post, contextlib.redirect_stdout(output):
+                code = peer.cmd_handoff_send(args)
+        finally:
+            os.close(write_fd)
+        result = json.loads(output.getvalue())
+        self.assertEqual(code, 1)
+        self.assertEqual(result["reason"], "handoff_stdin_deadline")
+        self.assertNotIn("handoff", result)
+        binding.assert_not_called()
+        post.assert_not_called()
 
     def test_private_receipt_stdin_pipe_without_eof_has_one_deadline(self):
         read_fd, write_fd = os.pipe()
