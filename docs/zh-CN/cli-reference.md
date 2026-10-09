@@ -72,7 +72,7 @@ wheel 和源码发行包在 `session_peer_shorthand` 中包含启用脚本。安
 asset=$("/path/to/tool/python" -I -m session_peer_shorthand bash)
 source "$asset"
 sp --version
-source "$asset" --remove
+source "${asset%/*}/sp-remove.sh"
 ```
 
 ```powershell

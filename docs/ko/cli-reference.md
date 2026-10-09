@@ -113,7 +113,7 @@ wheel과 소스 배포 파일의 `session_peer_shorthand`에 활성화 파일이
 asset=$("/path/to/tool/python" -I -m session_peer_shorthand bash)
 source "$asset"
 sp --version
-source "$asset" --remove
+source "${asset%/*}/sp-remove.sh"
 ```
 
 ```powershell

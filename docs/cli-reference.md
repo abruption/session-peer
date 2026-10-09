@@ -114,7 +114,7 @@ The wheel and source distribution include passive activation files in `session_p
 asset=$("/path/to/tool/python" -I -m session_peer_shorthand bash)
 source "$asset"
 sp --version
-source "$asset" --remove
+source "${asset%/*}/sp-remove.sh"
 ```
 
 ```powershell

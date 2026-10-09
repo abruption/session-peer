@@ -115,7 +115,7 @@ class DistributionContents(unittest.TestCase):
         with zipfile.ZipFile(self.wheel) as archive:
             entrypoints = next(name for name in archive.namelist() if name.endswith("/entry_points.txt"))
             self.assertNotIn("\nsp =", archive.read(entrypoints).decode("utf-8"))
-            for filename in ("sp.sh", "sp.ps1"):
+            for filename in ("sp.sh", "sp-remove.sh", "sp.ps1"):
                 relative = "session_peer_shorthand/" + filename
                 self.assertEqual(archive.read(relative), (ROOT / relative).read_bytes())
 

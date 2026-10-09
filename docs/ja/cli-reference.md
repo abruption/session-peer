@@ -113,7 +113,7 @@ wheel とソース配布物には `session_peer_shorthand` 内に有効化ファ
 asset=$("/path/to/tool/python" -I -m session_peer_shorthand bash)
 source "$asset"
 sp --version
-source "$asset" --remove
+source "${asset%/*}/sp-remove.sh"
 ```
 
 ```powershell

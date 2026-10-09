@@ -55,6 +55,10 @@ class ShorthandTests(unittest.TestCase):
     def source(self):
         return "source " + shlex.quote(str(ASSETS / "sp.sh"))
 
+    @property
+    def remove_source(self):
+        return "source " + shlex.quote(str(ASSETS / "sp-remove.sh"))
+
     @unittest.skipIf(os.name == "nt", "POSIX shell contracts")
     def test_alias_preserves_argv_stdin_exit_and_option_separator(self):
         for shell in self.shells():
@@ -98,7 +102,7 @@ class ShorthandTests(unittest.TestCase):
     def test_repeated_activation_owned_removal_update_and_uninstall(self):
         for shell in self.shells():
             result = self.run_shell(shell, self.source + "\n" + self.source + "\n" +
-                                    self.source + " --remove\n" + self.source + " --remove\n" +
+                                    self.remove_source + "\n" + self.remove_source + "\n" +
                                     "command -v sp && exit 9\n" + self.source + "\nsp before-update\n")
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)["args"], ["before-update"])
@@ -107,7 +111,7 @@ class ShorthandTests(unittest.TestCase):
             updated = self.directory / "updated.py"
             updated.write_text("print('updated implementation')\n", encoding="utf-8")
             script = (self.source + "\nPATH=" + shlex.quote(str(self.directory / "new-bin")) + ":$PATH\n"
-                      "sp --version\n" + self.source + " --remove\n")
+                      "sp --version\n" + self.remove_source + "\n")
             new_bin = self.directory / "new-bin"
             new_bin.mkdir(exist_ok=True)
             launcher = new_bin / "session-peer"
@@ -120,7 +124,7 @@ class ShorthandTests(unittest.TestCase):
     @unittest.skipIf(os.name == "nt", "POSIX shell contracts")
     def test_changed_alias_is_never_removed_and_missing_runtime_refused(self):
         for shell in self.shells():
-            result = self.run_shell(shell, self.source + "\nalias sp='other'\n" + self.source + " --remove\nactivation_status=$?\nalias sp\nexit $activation_status\n")
+            result = self.run_shell(shell, self.source + "\nalias sp='other'\n" + self.remove_source + "\nactivation_status=$?\nalias sp\nexit $activation_status\n")
             self.assertEqual(result.returncode, 1, result.stderr)
             self.assertIn("other", result.stdout)
             result = self.run_shell(shell, "PATH=/nonexistent\n" + self.source + "\n")
@@ -128,13 +132,14 @@ class ShorthandTests(unittest.TestCase):
             self.assertIn("unavailable", result.stderr)
 
     @unittest.skipIf(os.name == "nt", "POSIX shell contracts")
-    def test_executing_asset_and_invalid_activation_arguments_refused(self):
+    def test_execution_refused_and_caller_arguments_do_not_change_activation(self):
         for shell in self.shells():
             result = subprocess.run([shell, str(ASSETS / "sp.sh")], env=self.env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 1)
             self.assertIn("Source", result.stderr)
-            result = self.run_shell(shell, self.source + " --unknown\n")
-            self.assertEqual(result.returncode, 2)
+            result = self.run_shell(shell, "set -- --remove 'caller argument'\n" + self.source + "\n" + self.source + "\nsp preserved\n" + self.remove_source + "\n")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)["args"], ["preserved"])
 
     def test_asset_locator_is_read_only_and_constrained(self):
         for shell, filename in (("bash", "sp.sh"), ("powershell", "sp.ps1")):
