@@ -690,3 +690,39 @@ class HandoffRuntime(unittest.TestCase):
             value = peer.handoff_now_ns()
         self.assertIs(type(value), int)
         self.assertGreater(value, 0)
+
+    def test_native_deadline_translation_is_conservative_across_clock_domains(self):
+        session = {"pid": os.getpid(), "name": "fixture", "socket": "owned-test-endpoint"}
+        args = peer.build_parser().parse_args(["send", "--to", "fixture", "--message=x", "--observe-delivery",
+                                              "--wait-timeout=30", "--no-from", "--no-reply-to", "--json"])
+        base = peer.handoff_now()
+        native_sampled = threading.Event()
+        def native_clock():
+            native_sampled.set()
+            return 1000.0
+        def shared_clock():
+            # Time between the native-first and shared-second samples consumes
+            # budget; different offsets do not extend either cutoff.
+            return base + (2 if native_sampled.is_set() else 0)
+        output = io.StringIO()
+        binding = {**self.binding, "payloadDigest": "b" * 64}
+        with mock.patch.object(peer, "handoff_root", return_value=self.ledger.root), \
+                mock.patch.object(peer, "handoff_binding", return_value=(binding, self.generation, session)), \
+                mock.patch.object(peer, "require_claude_generation"), \
+                mock.patch.object(peer.time, "monotonic", side_effect=native_clock), \
+                mock.patch.object(peer, "handoff_now", side_effect=shared_clock), \
+                mock.patch.object(peer, "post_to_socket") as post, contextlib.redirect_stdout(output):
+            self.assertEqual(peer.cmd_handoff_send(args), 0)
+        self.assertEqual(post.call_count, 1)
+        self.assertAlmostEqual(post.call_args.kwargs["effect_deadline"], 1023.0)
+        self.assertAlmostEqual(post.call_args.kwargs["total_deadline"], 1028.0)
+
+    def test_missing_native_clock_refuses_before_input_or_effect(self):
+        args = peer.build_parser().parse_args(["send", "--to", "fixture", "--message=x", "--request-ack", "--json"])
+        with mock.patch.object(peer, "handoff_now_ns", side_effect=peer.handoff_error("handoff_clock_unavailable")), \
+                mock.patch.object(peer, "read_message") as read, mock.patch.object(peer, "post_to_socket") as post, \
+                self.assertRaises(peer.CcPeerError) as caught:
+            peer.cmd_handoff_send(args)
+        self.assertEqual(caught.exception.details["reason"], "handoff_clock_unavailable")
+        read.assert_not_called()
+        post.assert_not_called()
