@@ -90,7 +90,8 @@ class Wake(unittest.TestCase):
         self.assertTrue(result['submitted'])
         self.assertFalse(result['consumptionConfirmed'])
         queue.assert_called_once()
-        wake.assert_called_once_with('codex', self.root, THREAD, str(self.root), 1)
+        wake.assert_called_once_with('codex', self.root, THREAD, str(self.root), 1,
+                                     wake_context=result['wakeProvenance'])
 
     def test_active_writer_only_queues(self):
         active = {'activity':'live_writer', 'writerLock':'held', 'ownerPid':42,

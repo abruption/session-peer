@@ -1052,15 +1052,29 @@ def codex_wake_preflight(root: Path, thread_id: str, executable: str) -> dict:
 @contextlib.contextmanager
 def codex_wake_guard(root: Path, thread_id: str):
     directory = root / "session-peer" / "wake-locks"
-    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd = os.open(directory / (thread_id + ".lock"),
-                 os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        for path, unsafe_bits in ((directory.parent, 0o022), (directory, 0o077)):
+            info = path.lstat()
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+                    or info.st_mode & unsafe_bits):
+                raise ValueError("unsafe wake directory")
+        fd = os.open(directory / (thread_id + ".lock"),
+                     os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            if not wake_state_file_private(os.fstat(fd)):
+                raise ValueError("unsafe wake state file")
+        except (OSError, ValueError):
+            os.close(fd)
+            raise
+    except (OSError, ValueError) as exc:
+        raise wake_refused("wake_rate_state_invalid", "Wake state ownership or permissions are unsafe; nothing queued") from exc
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
             raise wake_refused("wake_in_progress", "Another session-peer wake is in progress; nothing submitted") from exc
-        yield
+        yield fd
     finally:
         os.close(fd)
 
@@ -1108,7 +1122,8 @@ def stop_codex_wake(process, grace: float = CODEX_WAKE_CLEANUP_GRACE) -> None:
             process.wait(timeout=CODEX_WAKE_CLEANUP_WAIT)
 
 
-def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeout: float) -> dict:
+def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeout: float,
+                   *, wake_context: dict | None = None) -> dict:
     """Resume one thread, await one turn, and own/clean up the native process."""
     process = None
     def cancelled(signum, frame):
@@ -1122,7 +1137,8 @@ def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeou
         # into CLI JSON. Only lifecycle states and bounded error text escape.
         with tempfile.TemporaryFile() as diagnostics:
             process = subprocess.Popen([executable, "app-server"], cwd=cwd,
-                env=codex_process_environment(root), stdin=subprocess.PIPE,
+                env={**codex_process_environment(root),
+                     **(wake_chain_environment(wake_context) if wake_context else {})}, stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=diagnostics, start_new_session=True)
             selector = selectors.DefaultSelector()
             selector.register(process.stdout, selectors.EVENT_READ)
@@ -1201,6 +1217,8 @@ def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeou
 def queue_codex(args: argparse.Namespace, text: str) -> dict:
     if not getattr(args, "wake", False):
         return _queue_codex(args, text)
+    provenance = wake_chain_context(args)
+    text = wake_chain_message(provenance, text)
     thread_id = codex_thread(args.to)
     check_codex_message(text)
     try:
@@ -1218,22 +1236,29 @@ def queue_codex(args: argparse.Namespace, text: str) -> dict:
     selected.codex_home = str(root)
     if args.dry_run:
         result = _queue_codex(selected, text)
+        result["wakeProvenance"] = dict(provenance)
         result["wake"] = {"status": "validated", "reason": "dry_run", "cwd": preflight["cwd"]}
         return result
-    with codex_wake_guard(root, thread_id):
+    with codex_wake_guard(root, thread_id) as guard_fd:
         revalidate_codex_home(root, thread_id, resolution)
         preflight = codex_wake_preflight(root, thread_id, executable)
+        # A known active writer only receives the existing queue submission;
+        # it does not start another native process or consume an activation.
+        initially_active = preflight.get("writer", {}).get("activity") == "live_writer"
+        if not initially_active:
+            wake_target_rate_reserve(guard_fd)
         result = _queue_codex(selected, text)
+        result["wakeProvenance"] = dict(provenance)
         result["codexHomeResolution"] = resolution
         try:
             writer = inspect_codex_writer(root, thread_id)
             if writer["activity"] == "live_writer":
                 wake = {"status": "already_active", "reason": "stable_live_writer"}
-            elif writer["activity"] == "unknown":
+            elif writer["activity"] == "unknown" or initially_active:
                 wake = {"status": "refused", "reason": "writer_changed_after_submission"}
             else:
                 wake = run_codex_wake(executable, root, thread_id, preflight["cwd"],
-                                      getattr(args, "wake_timeout", 30))
+                                      getattr(args, "wake_timeout", 30), wake_context=provenance)
         except KeyboardInterrupt:
             wake = {"status": "unknown", "reason": "activation_interrupted"}
         except Exception as exc:
@@ -1251,6 +1276,7 @@ def codex_remote_options(args: argparse.Namespace) -> list[str]:
             argv.extend([flag, value])
     if getattr(args, "wake", False):
         argv += ["--wake", "--wake-timeout", str(args.wake_timeout)]
+        argv += wake_chain_options(wake_chain_context(args))
     if getattr(args, "allow_inactive_codex_home", False):
         argv.append("--allow-inactive-codex-home")
     return argv

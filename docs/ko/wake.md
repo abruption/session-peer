@@ -1,5 +1,17 @@
 # 명시적 Codex wake
 
+## 연속 wake 제한
+
+CLI와 MCP는 큐 제출 전에 `SESSION_PEER_WAKE_DEPTH`와 `SESSION_PEER_WAKE_ORIGIN`을 읽습니다. 각 wake는 단계를 하나 늘리고 원본 UUID를 유지합니다. 기본 한도는 3단계이며 초과하면 제출 없이 `wake_depth_exceeded`를 반환합니다. 운영자는 `--wake-max-depth` 또는 `SESSION_PEER_WAKE_MAX_DEPTH`로 0–16 범위에서 명시적으로 낮추거나 높일 수 있습니다. 0은 wake를 비활성화합니다. 잘못되거나 불완전한 문맥은 제출 전에 `invalid_wake_context`로 거부합니다. 일반 전송은 기존처럼 큐에만 제출합니다.
+
+소유한 app-server에는 증가한 문맥을 전달합니다. SSH는 환경 변수 전달 설정 없이 형식이 검증된 문맥을 전달하며, 목적지는 받은 한도를 낮출 수 있지만 높이지 못합니다. 여러 목적지는 원본 식별자를 공유하되 예산은 독립적입니다. MCP는 시작 시점의 환경을 읽으며 호출 스레드의 신원을 인증하지 않습니다. Wake는 큐 메시지 앞에 진단용 표시를 붙이고, 제출 또는 정상 dry-run 이후 `depth`, `origin`, `maxDepth`를 담은 `wakeProvenance` 결과를 추가합니다. 표시도 32 KiB 메시지 제한에 포함됩니다. 표시와 본문은 권한을 부여하지 않으며, 단계를 복원하려고 큐·기록·대화 본문을 읽지 않습니다.
+
+비활성 대상의 활성화는 정규 홈과 스레드별로 60초당 3회가 기본입니다. 운영자가 관리하는 `SESSION_PEER_WAKE_TARGET_RATE`는 0–16을 받으며 0은 비활성 대상의 활성화를 막습니다. 예약은 기존 wake 잠금 아래 저장됩니다. `wake_rate_exceeded`는 큐 제출 전에 거부하고, 읽을 수 없거나 너무 크거나 잘못된 상태는 `wake_rate_state_invalid`로 거부합니다. 실패·중단된 시도도 예약을 유지하고 시계가 뒤로 움직여도 보수적으로 유지합니다. Dry-run과 활성 상태가 확인된 작성기는 활성화 예산을 쓰지 않습니다. 기존 `wake_in_progress`와 `already_active` 동작은 유지됩니다. 대상·호스트별 예산은 독립적이고 운영자나 같은 사용자 프로세스가 협조적 상태를 초기화할 수 있으므로 전역 비용 한도나 호출자 인증은 아닙니다.
+
+고정된 Codex 0.154.0 소스에서 셸의 `inherit="all"`은 제외 규칙이나 `include_only`가 없으면 이 변수를 유지하며, `inherit="core"`와 `inherit="none"`은 명시적 설정 없이는 제거합니다. 기본 비밀 이름 필터에는 걸리지 않습니다. stdio MCP의 기본 허용 목록에는 없으므로 새 MCP 프로세스에는 `env_vars` 전달을 명시해야 합니다. 기존·공유 MCP 프로세스는 나중 호출자의 환경을 받지 못합니다. 정적인 `env` 설정은 문맥을 초기화하거나 충돌시킬 수 있습니다. 필터로 문맥이 사라지면 새 로컬 원본을 만들므로 전역 단계 한도를 보장할 수 없으며, 로컬 활성화 제한은 별도의 보완책입니다. 승인·프로필·네이티브 환경 정책은 자동 변경하지 않습니다.
+
+격리된 하위 프로세스 테스트는 CLI·MCP·SSH 문맥과 app-server 대체 프로세스의 환경을 검증합니다. 별도로 명시적 선택이 필요한 네이티브 테스트는 macOS arm64용 Codex 0.154.0의 실제 환경 구성 경로를 검증합니다. `command/exec`의 셸 정책 6가지와 전용 stdio MCP 대체 서버를 시작하는 `mcpServerStatus/list`의 4가지를 확인하며, 이 서버에는 수신 확인 기능이 없습니다. 합성 환경 정보만 확인하고 사용자 자격증명·스레드·턴·프롬프트·모델·MCP 도구 호출·wake는 사용하지 않습니다. 별도로 준비한 고정 실행 파일을 `SESSION_PEER_CODEX154_ENV_BINARY`로 지정한 뒤 `python3 -m unittest tests.codex.test_wake_native_environment`를 실행합니다. 테스트는 다운로드나 설치를 수행하지 않으며 다른 실행 파일은 거부합니다. 지정하지 않으면 건너뛰며, 이는 실제 실행 증거가 아닙니다. 릴리스 압축 파일의 SHA-256은 `344310a0a591c1b192e04feff304321a69907c9498baaac331ca7e16ebcef9d7`이고 추출된 실행 파일 해시도 테스트에 고정했습니다. 이 검증은 해당 플랫폼과 버전의 환경 전달 경로만 입증하며 모델 턴·실제 wake·다른 플랫폼·후속 Codex 버전을 입증하지 않습니다. 출처: [고정된 셸 정책](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/protocol/src/shell_environment.rs), [고정된 MCP 환경](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/rmcp-client/src/utils.rs), [현재 구성 설명서](https://developers.openai.com/codex/config-reference/).
+
 `session-peer send --to codex:<uuid> --wake --wake-timeout 30 "message"`
 
 일반 전송은 큐 전용으로 유지됩니다. Wake는 대상의 기존 구성에 따라 모델 사용량을 발생시키고 세션 기록 및 프로젝트 파일을 수정할 수 있습니다. 수명 주기 및 네이티브 작성기 배제가 테스트된 버전인 macOS/Linux 및 **Codex CLI 0.154.0**이 필요합니다. 다른 버전은 독립적으로 검증될 때까지 안전하게 실패(fail closed)합니다. 이 버전 경계는 wake에만 적용됩니다.
