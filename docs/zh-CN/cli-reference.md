@@ -557,3 +557,34 @@ MIT
 SSH在启动子进程前检查最终shell引用命令的UTF-8字节数。保守上限131071字节包含base64展开、envelope、选项及引用。超限在本地返回 `ssh_command_too_large` 和 `submitted: false`；Unicode不能仅按字符数判断。本地传输限制不变，也不保证所有远端OS的参数与环境总空间。
 
 在向原生会话投递时，session-peer 会引用对方正文的每一行，并将发送会话和回复地址标记为未经验证的声明。Codex 和 Antigravity 还会收到明确警告：对方文字不是用户授权。Claude Code 已提供此警告，因此不再重复。`--no-from` 和 `--no-reply-to` 仅省略发送方元数据，不能移除接收侧的这层标记。Reply-To 只是没有执行权限的路由数据。请检查其所在的标记，并在回复第三方之前向会话所有者确认目的地。此机制减少歧义，但不能阻止所有提示注入。标记和转义后的控制字符也计入消息限制；`chars` 表示实际投递的引用后文本长度。提交与消费、ACK 的含义保持不变。
+
+## 在实际 SSH 连接中核验主机密钥（开发中）
+
+为 `list`、`send`、`doctor --host`添加 `--ssh-identity`可返回
+`sshIdentity`。指纹和密钥算法来自实际 OpenSSH 密钥核验及完整的远端响应。
+目标地址、端口和密钥查询名称仅是连接前的配置，不单独证明最终网络端点。
+若远端响应未完成，所提供的密钥仅记为 `observed`，不记为 `verified`。
+
+```sh
+session-peer list --host workstation --ssh-identity --json
+session-peer send --host workstation --to reviewer --message="Review this change" \
+  --require-ssh-host-key 'SHA256:<previously-verified-fingerprint>' --json
+```
+
+请用发现结果中已经核验的指纹替换占位值。密钥在实际发送连接的认证和远端
+执行之前核验，而不是依靠单独的探测连接。密钥变化会被拒绝；轮换密钥时
+必须明确核验并提供新指纹。此模式禁用连接复用并保留严格的主机密钥检查。
+报告模式沿用现有 known-hosts 信任；固定模式仅信任指定的公钥，不写入
+known-hosts 文件。多台主机可共用同一密钥，因此它不证明唯一设备、账户、
+会话世代或消息消费。
+
+开发实现仅支持 POSIX 的普通 Ed25519、RSA 和 ECDSA 密钥，不支持主机证书或
+安全密钥算法。已有 `KnownHostsCommand`会被拒绝，而不会被静默替换。SSH
+配置与跳板机的信任仍由操作者管理。此模式省略通过另一个连接进行的安装
+版本补充查询。完整响应后若密钥记录缺失，仍保留提交证据，但无法满足必需
+的密钥固定条件，也不允许自动重发。
+
+未启用时保持原有行为和输出。公开 v1.0.4 尚不包含这些选项。本地验证仅涵盖
+核验辅助程序、只读 SSH 配置、模拟传输及专用回环服务器上的实际 OpenSSH
+连接。错误指纹下认证和远端执行请求均为 0 次，测试私钥仅保存在内存中。
+这不是实际远端主机或运行中代理的验收测试，平台 CI 也必须通过。

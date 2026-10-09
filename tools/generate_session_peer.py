@@ -20,6 +20,7 @@ SEGMENTS = (
     "target_generation.py",
     "replies.py",
     "ssh.py",
+    "ssh_identity.py",
     "output.py",
     "diagnostics.py",
     "adapters.py",

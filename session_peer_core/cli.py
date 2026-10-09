@@ -27,6 +27,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_common(sub: argparse.ArgumentParser) -> None:
+        sub.add_argument("--ssh-identity", action="store_true", help="report connection-verified SSH host-key identity (POSIX opt-in)")
+        sub.add_argument("--require-ssh-host-key", metavar="SHA256:KEY", help="require this host key on the actual SSH connection (POSIX opt-in)")
         sub.add_argument(
             "--host", action="append", default=[], metavar="DEST",
             help="SSH [USER@]HOST, repeatable; otherwise User comes from SSH config/default",
@@ -194,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
         _SKILL_UPDATE_NOTICES = []
     show_human_notice = True
     try:
+        validate_ssh_identity_options(args)
         exit_code = args.func(args)
     except CcPeerError as exc:
         message = str(exc)
