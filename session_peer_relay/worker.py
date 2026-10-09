@@ -16,13 +16,19 @@ def main():
             raise ValueError('native_worker_frame_too_large')
         value = json.loads(raw.decode('utf-8'))
         binding, op, text = value['binding'], value['operation'], value.get('text')
+        peer_fingerprint = value.get('peerFingerprint')
         Policy({'targets': {'endpoint': binding}, 'peers': {}})
         if op not in ('list', 'send', 'resolve'):
             raise ValueError('invalid_operation')
         adapter = core.AGENTS.get(binding['agent'])
         args = options(binding)
+        args._peer_fingerprint = peer_fingerprint
+        if op in ('send', 'resolve'):
+            if not valid_text(text) or not valid_text(
+                    core.peer_delivery_message(text, binding['agent'], peer_fingerprint)):
+                raise ValueError('invalid_framed_message')
         if binding.get('codexPython') is not None:
-            result = invoke_windows_codex(binding, op, text)
+            result = invoke_windows_codex(binding, op, text, peer_fingerprint)
         elif op in ('send', 'resolve'):
             args.dry_run = op == 'resolve'
             if not valid_text(text):

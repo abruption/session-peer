@@ -177,7 +177,7 @@ class ClaudeAdapter(AgentAdapter):
     def remote_submission(self, result: dict, args: argparse.Namespace, text: str) -> dict:
         return {"target": result.get("target", {}), **ssh_metadata_from(result),
                 **({"targetGeneration": result["targetGeneration"]} if "targetGeneration" in result else {}),
-                "chars": len(text), "dryRun": args.dry_run}
+                "chars": result.get("chars", len(text)), "dryRun": args.dry_run}
 
 
 class CodexAdapter(AgentAdapter):

@@ -71,6 +71,12 @@ class LocalTransport:
                         row["generationStatus"] = "available" if value else "unsupported"
                 return result
             if operation == "send":
+                check_message(text, remote=False)
+                adapter.validate_send(args, text)
+                text = peer_delivery_message(
+                    text, adapter.name,
+                    getattr(args, "_peer_fingerprint", _RECEIVER_PEER_FINGERPRINT))
+                check_message(text, remote=False)
                 adapter.validate_send(args, text)
                 result = adapter.submit(context, text)
                 if not isinstance(result, dict) or type(result.get("ok")) is not bool:

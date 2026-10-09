@@ -82,6 +82,9 @@ EXIT_NO_TARGET = 2
 _CLIENT_UPDATE_NOTICE: dict | None = None
 _SKILL_UPDATE_NOTICES: list[dict] = []
 _IDENTITY_UNSET = object()
+# Only private receiver workers/streamed native bridge code populate this.
+# No command-line flag, environment variable or body marker can set it.
+_RECEIVER_PEER_FINGERPRINT: str | None = None
 
 
 class CcPeerError(Exception):
