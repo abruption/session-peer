@@ -408,6 +408,16 @@ Codex 검색은 읽기 전용 SQLite 연결을 사용하여 `state_5.sqlite`를 
 적절한 저장된 스레드/롤아웃이 필요합니다. 목록 조회만으로는 큐가 이를 수락할 수
 있음을 증명하지 못합니다.
 
+### SQLite 저장소 경계
+
+2026-10-09 소스 조사에서는 native Codex [0.154.0](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/core/src/config/mod.rs)과 [0.159.0](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/core/src/config/mod.rs)을 확인했습니다. 두 버전 모두 설정된 `sqlite_home`, 비어 있지 않은 `CODEX_SQLITE_HOME`, `CODEX_HOME` 순으로 SQLite 저장소를 선택합니다. 상대 환경 변수 경로의 기준은 native에서 결정한 작업 디렉터리입니다. [관리자 요구사항](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/core/src/config/requirements.rs)은 명령행 재정의를 포함한 저장소 설정을 바꿀 수 있습니다. [native 큐 경로](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/tui/src/session_queue_commands.rs)는 이미 실행 중인 공유 서버를 재사용할 수 있으므로 새 클라이언트의 환경만으로 서버의 저장소를 확인할 수 없습니다. 이는 소스 조사 결과이며 새로운 실제 전송이나 플랫폼 검증이 아닙니다.
+
+session-peer는 상속된 `CODEX_SQLITE_HOME`이 비어 있지 않거나 검사하는 홈의 설정에 루트 `sqlite_home`이 있으면 발견, 사전 검증, 큐 제출 전에 거부합니다. 설정 경로가 선택한 홈과 같아도 거부하며, 따옴표·이스케이프가 있는 루트 키와 루트의 점 구분 키·테이블도 포함합니다. 선택되지 않은 하위 키는 루트 저장소 설정으로 취급하지 않습니다. 빈 환경 변수 재정의는 native 자식 프로세스의 환경에서 제거합니다. 환경 변수 이름은 POSIX에서 대소문자를 구분하고 Windows에서는 구분하지 않습니다. 기존에 지원하는 native 홈 경로 변환은 유지하며 저장소 위치 변경 지원을 추가하지 않습니다.
+
+홈의 `config.toml`은 최대 1 MiB의 UTF-8 일반 파일이어야 하며 심볼릭 링크는 허용하지 않습니다. 파일이 없어도 됩니다. 읽을 수 없거나 변경·크기 초과·키 구문 판별 불가 상태인 파일은 내용을 출력하지 않고 거부합니다. 외부 의존성이 없는 키 판별기는 Python 3.9를 지원하지만 완전한 TOML·스키마 검증기는 아닙니다. 다른 값은 native Codex가 계속 검증합니다. 큐 제출과 wake는 자식 프로세스를 시작하기 전에 이 경계를 다시 확인합니다. 거부 결과는 `status=refused`, `submitted=false`, `retryAllowed=false`이며 정상적인 기존 출력과 쓰기 프로세스 소유권 검사는 바뀌지 않습니다. SSH에서는 발신자의 환경이 아니라 대상 기기에서 검사합니다.
+
+이 변경은 한정된 방어 강화이며 모든 설정에서 native 저장소가 일치함을 증명하지 않습니다. 프로젝트·시스템·프로필 계층, 관리자 요구사항, 기존 공유 서버는 이 검사로 해석하거나 증명하지 않습니다. 마지막 검사 후 설정이 바뀔 수도 있습니다. 검사 성공만으로 저장소 일치를 추론하지 마세요. [#268](https://github.com/abruption/session-peer/issues/268)은 이 증거와 버전·플랫폼 수락 검증을 위해 열린 상태로 유지합니다. 가짜 자식 프로세스 테스트는 거부와 환경 처리만 보여주며 실제 오대상 전송, 보안 악용, 새로운 native 호환성을 입증하지 않습니다. wake의 버전 지원 범위는 바뀌지 않습니다.
+
 ### Orca 및 여러 Codex 홈
 
 Orca에서 실행된 세션은 계정별 홈을 사용할 수 있는 반면, 별도의 터미널이나 SSH 명령어는
