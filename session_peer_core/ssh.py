@@ -72,14 +72,14 @@ def check_ssh_options(options: list[str]) -> None:
             raise CcPeerError("invalid StrictHostKeyChecking value")
 
 
-SSH_METADATA_FIELDS = ("sshUser", "sshUserSource")
+SSH_METADATA_FIELDS = ("sshUser", "sshUserSource", "sshIdentity")
 
 
 def ssh_metadata_from(payload: dict) -> dict:
     return {key: payload[key] for key in SSH_METADATA_FIELDS if key in payload}
 
 
-def ssh_user_metadata(host: str, ssh_opts: list[str]) -> dict:
+def ssh_user_metadata(host: str, ssh_opts: list[str], *, handoff_budget=None) -> dict:
     """Ask OpenSSH which login user it will use without making a connection."""
     check_ssh_argument(host, "--host")
     check_ssh_options(ssh_opts)
@@ -87,6 +87,18 @@ def ssh_user_metadata(host: str, ssh_opts: list[str]) -> dict:
     explicit_user, separator, _ = host.rpartition("@")
     if separator and explicit_user:
         return {"sshUser": explicit_user, "sshUserSource": "explicit"}
+
+    if handoff_budget is not None:
+        completed = ssh_handoff_configuration(host, ssh_opts, handoff_budget)
+        output = completed.stdout.decode("utf-8", errors="strict")
+        for line in output.splitlines():
+            key, separator, value = line.partition(" ")
+            if separator and key.lower() == "user" and value.strip():
+                user = value.strip()
+                if len(user.encode("utf-8")) > 1024 or any(ord(c) < 32 or ord(c) == 127 for c in user):
+                    break
+                return {"sshUser": user, "sshUserSource": "ssh_config_or_local_default"}
+        return {"sshUser": None, "sshUserSource": "unknown"}
 
     try:
         completed = subprocess.run(
@@ -192,12 +204,216 @@ def parse_ssh_response(output, argv):
         and type(result.get("ok")) is bool
         and bool(argv) and result.get("command") == argv[0]
     )
+    if valid and "lastSeenTarget" in result:
+        observed = result["lastSeenTarget"]
+        requested = []
+        targets = []
+        for index, argument in enumerate(argv):
+            if not isinstance(argument, str):
+                continue
+            if argument == "--target-generation" and index + 1 < len(argv):
+                requested.append(argv[index + 1])
+            elif argument.startswith("--target-generation="):
+                requested.append(argument.split("=", 1)[1])
+            if argument == "--to" and index + 1 < len(argv):
+                targets.append(argv[index + 1])
+            elif argument.startswith("--to="):
+                targets.append(argument.split("=", 1)[1])
+        last_seen_valid = (
+            isinstance(observed, dict) and set(observed) == {"agent", "targetGeneration"}
+            and observed["agent"] == "claude" and isinstance(observed["targetGeneration"], str)
+            and re.fullmatch(r"tg1:[0-9a-f]{64}", observed["targetGeneration"]) is not None
+            and argv[0] == "send" and len(targets) == 1
+            and isinstance(targets[0], str) and bool(targets[0])
+            and AGENTS.for_target(targets[0]).name == "claude"
+            and requested == [observed["targetGeneration"]]
+            and result["ok"] is False and result.get("status") == "refused"
+            and result.get("reason") == "stale_target" and result.get("submitted") is False
+            and result.get("retryAllowed") is False
+        )
+        if not last_seen_valid:
+            # Bad optional refusal metadata cannot prove no effect. It also
+            # cannot erase a complete positive response accepted by the
+            # existing ordinary parser. Keep its existing native semantics without reflecting
+            # the invalid optional metadata or granting resend permission.
+            if result["ok"] is True or result.get("submitted") is True:
+                result.pop("lastSeenTarget")
+            else:
+                valid = False
     return stdout, result, bool(stdout), valid
 
 
-def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
+def ssh_handoff_request(handoff_budget, context=None, *, require_context=False) -> None:
+    """Validate private opt-in plumbing before any config/effect child.
+
+    This is not an ACK authority or a public wire mode. The handoff owner also
+    validates the actual response's native profile against this closed context.
+    """
+    import math
+    try:
+        budget_valid = (isinstance(handoff_budget, tuple) and len(handoff_budget) == 2
+                        and all(type(v) in (int, float) and math.isfinite(v) for v in handoff_budget)
+                        and handoff_budget[1] >= handoff_budget[0])
+    except (TypeError, ValueError, OverflowError):
+        budget_valid = False
+    if not budget_valid:
+        raise CcPeerError("Invalid private SSH handoff budget",
+                          {"reason": "invalid_ssh_handoff_budget", "retryAllowed": False, "spawned": False})
+    if context is None:
+        if require_context:
+            raise CcPeerError("Private SSH handoff requires a request context",
+                              {"reason": "invalid_ssh_handoff_context", "retryAllowed": False, "spawned": False})
+        return
+    keys = {"schemaVersion", "phase", "requestId", "agent", "target", "home", "nativeContext",
+            "anchor", "remainingCutoffMs", "remainingTotalMs", "generation"}
+    try:
+        request = uuid.UUID(context["requestId"])
+        valid = (isinstance(context, dict) and set(context) == keys
+                 and type(context["schemaVersion"]) is int and context["schemaVersion"] == 1
+                 and context["phase"] in ("probe", "effect") and context["agent"] in ("claude", "codex")
+                 and (context["generation"] is None or (isinstance(context["generation"], str)
+                      and bool(context["generation"]) and len(context["generation"].encode("utf-8")) <= 128
+                      and all(ord(c) >= 32 and ord(c) != 127 for c in context["generation"])))
+                 and request.version == 4 and str(request) == context["requestId"]
+                 and isinstance(context["target"], str) and bool(context["target"])
+                 and len(context["target"].encode("utf-8")) <= 1024
+                 and all(ord(c) >= 32 and ord(c) != 127 for c in context["target"])
+                 and (context["home"] is None or (isinstance(context["home"], str)
+                      and bool(context["home"]) and len(context["home"].encode("utf-8")) <= 4096
+                      and all(ord(c) >= 32 and ord(c) != 127 for c in context["home"])))
+                 and (context["nativeContext"] is None or (isinstance(context["nativeContext"], dict)
+                      and set(context["nativeContext"]) == {"root", "resolution"}
+                      and isinstance(context["nativeContext"]["root"], str)
+                      and isinstance(context["nativeContext"]["resolution"], dict)
+                      and len(json.dumps(context["nativeContext"], allow_nan=False).encode("utf-8")) <= 4096))
+                 and (context["anchor"] is None or (isinstance(context["anchor"], dict)
+                      and set(context["anchor"]) == {"boot", "monotonicMs"}
+                      and isinstance(context["anchor"]["boot"], str) and bool(context["anchor"]["boot"])
+                      and len(context["anchor"]["boot"].encode("utf-8")) <= 128
+                      and all(ord(c) >= 32 and ord(c) != 127 for c in context["anchor"]["boot"])
+                      and type(context["anchor"]["monotonicMs"]) is int and 0 <= context["anchor"]["monotonicMs"] <= 2**53 - 1))
+                 and all(context[field] is None or (type(context[field]) is int and 0 <= context[field] <= 60000)
+                         for field in ("remainingCutoffMs", "remainingTotalMs")))
+        if context["phase"] == "effect":
+            valid = valid and context["anchor"] is not None and context["remainingCutoffMs"] is not None \
+                    and context["remainingTotalMs"] is not None \
+                    and context["remainingTotalMs"] >= context["remainingCutoffMs"]
+        else:
+            valid = valid and all(context[field] is None for field in
+                                  ("anchor", "remainingCutoffMs", "remainingTotalMs"))
+    except (KeyError, TypeError, ValueError, UnicodeError, AttributeError, OverflowError, RecursionError):
+        valid = False
+    if not valid:
+        raise CcPeerError("Invalid private SSH handoff context",
+                          {"reason": "invalid_ssh_handoff_context", "retryAllowed": False, "spawned": False})
+
+
+def ssh_handoff_configuration(host, ssh_opts, handoff_budget):
+    """Bounded ssh -G on the original budget; never reconnect or submit."""
+    ssh_handoff_request(handoff_budget)
+    cutoff, total = handoff_budget
+    completed = None
+    try:
+        probe_cutoff = min(cutoff, handoff_now() + DETECT_TIMEOUT)
+        completed = handoff_stream_child(["ssh", "-G", *ssh_opts, host], b"", probe_cutoff,
+                                         min(total, probe_cutoff + 5), handoff_now)
+        valid = (completed.returncode in (0, -signal.SIGKILL) and completed.reason is None
+                 and not completed.interrupted and not completed.stdout_overflow
+                 and not completed.stderr_overflow and not completed.cleanup_failed)
+        if valid:
+            completed.stdout.decode("utf-8", errors="strict")
+            return completed
+    except (UnicodeError, OSError, CcPeerError):
+        pass
+    raise CcPeerError("Cannot inspect bounded SSH configuration before handoff",
+                      {"reason": "ssh_handoff_config_unavailable", "retryAllowed": False, "spawned": False,
+                       "interrupted": bool(completed is not None and completed.interrupted)})
+
+
+def _run_remote_handoff_dispatch(host, argv, ssh_opts, identity_options, budget, context):
+    ssh_handoff_request(budget, context, require_context=True)
+    try:
+        handoff_validate_remote_argv(argv, context)
+    except (CcPeerError, ValueError, TypeError, KeyError, UnicodeError) as exc:
+        raise CcPeerError("Invalid private SSH handoff command",
+                          {"reason": "invalid_ssh_handoff_command", "retryAllowed": False, "spawned": False}) from exc
+    if (not isinstance(argv, list) or not argv or argv[0] != "send"
+            or any(not isinstance(arg, str) or "\0" in arg for arg in argv)):
+        raise CcPeerError("Invalid private SSH handoff command",
+                          {"reason": "invalid_ssh_handoff_command", "retryAllowed": False, "spawned": False})
+    remote = " ".join(shlex.quote(a) for a in ["python3", "-", *argv, "--json"])
+    if len(remote.encode("utf-8")) > MAX_SSH_COMMAND_BYTES:
+        raise CcPeerError("SSH handoff command exceeds its byte budget",
+                          {"reason": "ssh_command_too_large", "retryAllowed": False, "spawned": False})
+    try:
+        path = Path(__file__).resolve()
+        node = path.stat()
+        if not stat.S_ISREG(node.st_mode) or not 0 < node.st_size <= 4 * 1024 * 1024:
+            raise OSError("source budget")
+        descriptor = os.open(str(path), os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+                             | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            opened = os.fstat(descriptor)
+            if (not stat.S_ISREG(opened.st_mode) or not 0 < opened.st_size <= 4 * 1024 * 1024
+                    or (opened.st_dev, opened.st_ino) != (node.st_dev, node.st_ino)):
+                raise OSError("source identity")
+            chunks, size = [], 0
+            while True:
+                if handoff_now() >= budget[0]:
+                    raise OSError("source deadline")
+                chunk = os.read(descriptor, min(65536, 4 * 1024 * 1024 - size + 1))
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > 4 * 1024 * 1024:
+                    raise OSError("source budget")
+                chunks.append(chunk)
+            after = os.fstat(descriptor)
+            if (after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns):
+                raise OSError("source changed")
+            source = b"".join(chunks)
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise CcPeerError("Cannot read source for private SSH handoff",
+                          {"reason": "ssh_handoff_source_unavailable", "retryAllowed": False, "spawned": False}) from exc
+    ssh_info = ssh_user_metadata(host, ssh_opts, handoff_budget=budget)
+    completed = handoff_stream_child(["ssh", *identity_options, *ssh_opts, host, remote],
+                                     source, *budget, handoff_now)
+    if context["phase"] == "probe" and completed.interrupted:
+        # Probe success is not effect evidence. Operator cancellation must
+        # prevent the caller from turning complete metadata into a later send.
+        raise CcPeerError("Private SSH handoff probe stopped before native effect",
+                          {**ssh_info, "reason": "ssh_handoff_probe_interrupted", "retryAllowed": False,
+                           "spawned": completed.spawned, "interrupted": True})
+    if not completed.stdout_overflow:
+        _, result, _, valid = parse_ssh_response(completed.stdout, argv)
+        if valid:
+            try:
+                result = handoff_validate_remote_response(result, context)
+                if not isinstance(result, dict):
+                    raise ValueError("invalid private response validator")
+                result.update(ssh_info)
+                return result
+            except (CcPeerError, ValueError, TypeError, KeyError, UnicodeError):
+                pass
+    # A launched/possibly constructed child with no complete matching evidence
+    # is not proof of no effect. Do not reflect remote diagnostics or stdout.
+    details = {**ssh_info, "reason": "ssh_handoff_response_unknown", "retryAllowed": False,
+               "spawned": completed.spawned, "interrupted": completed.interrupted}
+    if context["phase"] == "effect":
+        details["status"] = "refused" if completed.spawned is False else "unknown"
+    raise CcPeerError("Private SSH handoff outcome lacks complete matching evidence; do not retry", details)
+
+
+def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, identity_options=(),
+                         handoff_budget=None, handoff_context=None) -> dict:
     check_ssh_argument(host, "--host")
     check_ssh_options(ssh_opts)
+
+    if handoff_budget is not None or handoff_context is not None:
+        return _run_remote_handoff_dispatch(host, argv, ssh_opts, identity_options,
+                                            handoff_budget, handoff_context)
 
     remote = " ".join(shlex.quote(a) for a in ["python3", "-", *argv, "--json"])
     if len(remote.encode("utf-8")) > MAX_SSH_COMMAND_BYTES:
@@ -219,7 +435,7 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     # result to the remote *shell*, so an argv list is not the protection it
     # looks like: a metacharacter in any element executes over there. Build
     # the remote command as one already-quoted string instead.
-    command = ["ssh", *ssh_opts, host, remote]
+    command = ["ssh", *identity_options, *ssh_opts, host, remote]
 
     def incomplete_response_error(message: str, details: dict | None = None) -> CcPeerError:
         metadata = {**ssh_info, **(details or {})}

@@ -54,6 +54,7 @@ include = [
     "/.gitattributes",
     "/session_peer_core",
     "/session_peer_relay",
+    "/session_peer_shorthand",
     "/session_peer.py",
     "/session_peer_mcp.py",
     "/tools/generate_session_peer.py",
@@ -71,4 +72,4 @@ include = [
 ]
 
 [tool.hatch.build.targets.wheel]
-only-include = ["session_peer_relay", "session_peer.py", "session_peer_mcp.py"]
+only-include = ["session_peer_relay", "session_peer_shorthand", "session_peer.py", "session_peer_mcp.py"]

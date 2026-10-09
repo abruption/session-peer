@@ -1,7 +1,26 @@
 def read_message(args: argparse.Namespace) -> str:
     named = getattr(args, "message_option", None)
-    if sum(value is not None for value in (args.message, named, args.b64)) > 1:
+    file_name = getattr(args, "message_file", None)
+    if sum(value is not None for value in (args.message, named, args.b64, file_name)) > 1:
         raise CcPeerError("Choose one message source: positional message, --message/-m, or internal --b64")
+    if file_name is not None:
+        path = Path(file_name)
+        before = handoff_private_stat(path)
+        if before.st_size > 4 * MAX_MESSAGE_CHARS:
+            raise CcPeerError("Private message file exceeds the message limit")
+        try:
+            fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+            with os.fdopen(fd, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns):
+                    raise handoff_error("unsafe_message_file")
+                raw = stream.read(4 * MAX_MESSAGE_CHARS + 1)
+                final = os.fstat(stream.fileno())
+                if (info.st_size, info.st_mtime_ns) != (final.st_size, final.st_mtime_ns) or len(raw) > 4 * MAX_MESSAGE_CHARS:
+                    raise handoff_error("unsafe_message_file")
+            return raw.decode("utf-8", errors="strict")
+        except (OSError, UnicodeError) as exc:
+            raise handoff_error("invalid_private_message_file") from exc
     message = named if named is not None else args.message
     if args.b64 is not None:
         try:

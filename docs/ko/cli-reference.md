@@ -2,6 +2,39 @@
 
 [개요로 돌아가기](../../README.ko.md)
 
+## 수신 세션 세대 고정 조건 (개발 중)
+
+`list --with-target-generation --json`은 각 행에 `targetGeneration`과
+`generationStatus`를 추가합니다. 운영체제의 프로세스 생성 정보를 확인할 수 있는
+Claude 세션은 `tg1:` 토큰을 `send --target-generation TOKEN`에 전달할 수 있습니다.
+`--dry-run`과 SSH에서도 원래 대상의 토큰을 사용합니다. 토큰은 전송 조건이며 비밀정보,
+권한, ACK 또는 재전송·중복 방지 키가 아닙니다. 사용하지 않으면 기존 출력과 동작을 유지합니다.
+
+전송 직전에 세션 기록, 프로세스 생성 정보, 수신 경로를 재확인하고 실제 연결된 소켓·파이프의
+서버 PID를 확인한 뒤 메시지와 Windows 인증 줄을 씁니다. 이름·PID 재사용이나 경로 변경은
+`stale_target`으로 거부하며, 확인 불가능한 신원은 추정하지 않습니다. 같은 프로세스의 상태나
+이름 변경만으로 토큰이 바뀌지는 않습니다. 모델의 신원을 인증하거나 같은 OS 계정의 악성
+프로세스를 막는 기능은 아니며, 필요한 운영체제 API가 없으면 사용할 수 없습니다.
+생성 정보의 정밀도는 운영체제마다 다릅니다(Linux는 부팅 ID와 시작 시각의 clock tick 사용).
+전역적으로 고유하거나 복제를 방지하는 신원, 암호학적 SSH 호스트 키 연속성을 보장하지 않습니다.
+
+`stale_target` 거부에는 원래 요청한 Claude 세대를 담은 `lastSeenTarget`이 포함됩니다.
+새 수신 프로세스를 다시 조회한 결과가 아닙니다. 이 제한된 메타데이터에는 프로세스 생성값,
+경로, 사용자 이름이나 호스트 이름을 넣지 않습니다.
+
+`{"status":"refused","reason":"stale_target","submitted":false,"retryAllowed":false,"lastSeenTarget":{"agent":"claude","targetGeneration":"tg1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`
+
+`target_generation_unavailable`은 운영체제의 신원을 확인할 수 없다는 뜻이고,
+`unsupported_target_generation`은 대상이 이 전송 조건을 지원하지 않는다는 뜻입니다.
+두 결과에는 `lastSeenTarget`을 넣지 않으며 재전송 권한도 주지 않습니다.
+소스 전송·재시작 회귀 테스트는 전용 프로토콜 수신함과 로컬 SSH 대역을 사용합니다.
+실제 원격 장비나 실제 에이전트의 검증 근거는 아닙니다.
+
+Codex 큐, Antigravity와 페어링 기기는 이 수신 프로세스 세대 보장을 제공하지 않습니다.
+일반 세대 고정 요청은 큐 삽입·wake 전에 거부하고 각각의 기존 계약을 유지합니다.
+Codex의 작성자 재확인만으로 나중에 큐를 소비하는 작성자를 원자적으로 제한할 수는 없습니다.
+#180의 전체 작업은 아직 열려 있습니다. v1.0.4에 발행된 기능이 아니며 자동 대체 전송·재전송도 없습니다.
+
 명령어의 상세 동작, 설치 옵션, 전송 한계 및 과거 검증 내역은 아래와 같습니다.
 기계 소비자는 [v1 호환성 계약](compatibility-v1.md)도 따라야 합니다.
 
@@ -103,6 +136,32 @@ session-peer list --output-format json
 않습니다.
 
 <a id="install"></a>
+## 선택적 대화형 단축 명령
+
+이 파일이 포함된 릴리스에서는 Bash/zsh와 PowerShell에서 현재 셸에만 적용되는 `sp` 별칭을 선택적으로 사용할 수 있습니다. 현재 선택된 `session-peer` 명령에 인자와 표준 입력을 그대로 전달하며 출력, 종료 코드, 권한도 동일합니다. 별도의 인자 해석기나 Python/TypeScript 선택기가 아닙니다. 스크립트, SSH 요청, 자동 생성 회신 안내에는 정식 명령을 사용하세요. 두 구현을 동시에 설치하지 마세요. 기존 설치 관리자로 구현을 교체하고 셸에서 어떤 명령이 먼저 선택되는지 확인하세요.
+
+wheel과 소스 배포 파일의 `session_peer_shorthand`에 활성화 파일이 포함됩니다. 설치만으로 활성화되거나 프로필과 PATH가 바뀌지는 않습니다. 선택한 설치본의 Python 인터프리터로 파일 경로를 확인하세요. 활성화한 pip 가상 환경의 인터프리터 또는 `pipx environment --value PIPX_LOCAL_VENVS`나 `uv tool dir`에서 확인한 도구 환경의 인터프리터를 사용합니다. 일반적으로 Unix 도구 환경에는 `session-peer/bin/python`, Windows에는 `session-peer/Scripts/python.exe`가 있습니다. 경로를 추측하지 말고 실제 환경을 확인하세요. 모듈은 파일 경로만 출력합니다. 셸에서 읽어 실행하기 전에 파일을 검토하세요.
+
+```bash
+asset=$("/path/to/tool/python" -I -m session_peer_shorthand bash)
+source "$asset"
+sp --version
+source "${asset%/*}/sp-remove.sh"
+```
+
+```powershell
+$asset = & 'C:\path\to\tool\Scripts\python.exe' -I -m session_peer_shorthand powershell
+. $asset
+sp --version
+. $asset -Remove
+```
+
+이미 `sp` 실행 파일, 별칭 또는 함수가 있으면 덮어쓰지 않고 활성화를 거부합니다. PowerShell은 보통 `sp`를 `Set-ItemProperty`의 별칭으로 정의하므로 기본적으로 활성화가 거부됩니다. 충돌을 직접 관리하기로 결정하지 않았다면 정식 명령을 계속 사용하세요. Bash/zsh에서는 source로, PowerShell에서는 dot-source로 파일을 읽어야 합니다. cmd.exe는 지원하지 않습니다. 별칭은 셸의 일반적인 별칭 확장 규칙을 따릅니다. Bash의 비대화형 스크립트는 기본적으로 별칭 확장을 끄므로 정식 명령을 사용해야 합니다.
+
+이 방식으로 만든 별칭이 변경되지 않았다면 반복 활성화해도 추가 변경 없이 성공합니다. 제거는 같은 셸에서 생성한 별칭에만 적용되며, 다른 별칭이나 명령으로 바꾸었다면 거부합니다. 셸을 닫으면 별칭도 사라집니다. 기존 설치 관리자로 업데이트하면 별칭은 복사된 실행본이 아니라 정식 명령을 계속 가리킵니다. 제거하거나 구현을 교체하기 전에 별칭을 먼저 제거하세요. 패키지 제거는 실행 중인 셸을 바꾸지 않습니다. 영구 설정과 제거를 직접 관리할 의사가 없다면 프로필에 이 파일을 추가하지 마세요.
+
+standalone 설치 방식은 바뀌지 않으며 이 파일들을 자동 설치하지 않습니다. standalone과 함께 쓰려면 검토한 체크아웃에서 파일을 가져오거나 해당 릴리스의 검증된 소스 배포 파일에서 `session_peer_shorthand`를 추출하세요. 검증되지 않은 다운로드를 바로 실행하지 말고 [릴리스 검증](../../RELEASING.ko.md) 절차를 따르세요. PATH에서 정식 명령을 찾을 수 있게 한 뒤 검토한 로컬 파일을 직접 읽으세요. 직접 선택한 파일의 업데이트와 제거는 사용자의 책임이며 standalone, pipx, uv, pip의 관리 주체는 바뀌지 않습니다. 충돌 검사는 현재 셸과 PATH에 보이는 명령만 확인하며 다른 셸이나 향후 PATH 변경까지 확인하지 않습니다.
+
 ## 설치
 
 Python 3.9+, 표준 라이브러리 전용 — 외부 의존성 없음.
@@ -407,6 +466,16 @@ Codex 검색은 읽기 전용 SQLite 연결을 사용하여 `state_5.sqlite`를 
 원격 경로입니다. 전송하려면 `queue` 명령어가 있는 Codex 실행 파일과 해당 홈에
 적절한 저장된 스레드/롤아웃이 필요합니다. 목록 조회만으로는 큐가 이를 수락할 수
 있음을 증명하지 못합니다.
+
+### SQLite 저장소 경계
+
+2026-10-09 소스 조사에서는 native Codex [0.154.0](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/core/src/config/mod.rs)과 [0.159.0](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/core/src/config/mod.rs)을 확인했습니다. 두 버전 모두 설정된 `sqlite_home`, 비어 있지 않은 `CODEX_SQLITE_HOME`, `CODEX_HOME` 순으로 SQLite 저장소를 선택합니다. 상대 환경 변수 경로의 기준은 native에서 결정한 작업 디렉터리입니다. [관리자 요구사항](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/core/src/config/requirements.rs)은 명령행 재정의를 포함한 저장소 설정을 바꿀 수 있습니다. [native 큐 경로](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/tui/src/session_queue_commands.rs)는 이미 실행 중인 공유 서버를 재사용할 수 있으므로 새 클라이언트의 환경만으로 서버의 저장소를 확인할 수 없습니다. 이는 소스 조사 결과이며 새로운 실제 전송이나 플랫폼 검증이 아닙니다.
+
+session-peer는 상속된 `CODEX_SQLITE_HOME`이 비어 있지 않거나 검사하는 홈의 설정에 루트 `sqlite_home`이 있으면 발견, 사전 검증, 큐 제출 전에 거부합니다. 설정 경로가 선택한 홈과 같아도 거부하며, 따옴표·이스케이프가 있는 루트 키와 루트의 점 구분 키·테이블도 포함합니다. 선택되지 않은 하위 키는 루트 저장소 설정으로 취급하지 않습니다. 빈 환경 변수 재정의는 native 자식 프로세스의 환경에서 제거합니다. 환경 변수 이름은 POSIX에서 대소문자를 구분하고 Windows에서는 구분하지 않습니다. 기존에 지원하는 native 홈 경로 변환은 유지하며 저장소 위치 변경 지원을 추가하지 않습니다.
+
+홈의 `config.toml`은 최대 1 MiB의 UTF-8 일반 파일이어야 하며 심볼릭 링크는 허용하지 않습니다. 파일이 없어도 됩니다. 읽을 수 없거나 변경·크기 초과·키 구문 판별 불가 상태인 파일은 내용을 출력하지 않고 거부합니다. 외부 의존성이 없는 키 판별기는 Python 3.9를 지원하지만 완전한 TOML·스키마 검증기는 아닙니다. 다른 값은 native Codex가 계속 검증합니다. 큐 제출과 wake는 자식 프로세스를 시작하기 전에 이 경계를 다시 확인합니다. 거부 결과는 `status=refused`, `submitted=false`, `retryAllowed=false`이며 정상적인 기존 출력과 쓰기 프로세스 소유권 검사는 바뀌지 않습니다. SSH에서는 발신자의 환경이 아니라 대상 기기에서 검사합니다.
+
+이 변경은 한정된 방어 강화이며 모든 설정에서 native 저장소가 일치함을 증명하지 않습니다. 프로젝트·시스템·프로필 계층, 관리자 요구사항, 기존 공유 서버는 이 검사로 해석하거나 증명하지 않습니다. 마지막 검사 후 설정이 바뀔 수도 있습니다. 검사 성공만으로 저장소 일치를 추론하지 마세요. [#268](https://github.com/abruption/session-peer/issues/268)은 이 증거와 버전·플랫폼 수락 검증을 위해 열린 상태로 유지합니다. 가짜 자식 프로세스 테스트는 거부와 환경 처리만 보여주며 실제 오대상 전송, 보안 악용, 새로운 native 호환성을 입증하지 않습니다. wake의 버전 지원 범위는 바뀌지 않습니다.
 
 ### Orca 및 여러 Codex 홈
 
@@ -848,3 +917,40 @@ Python 3.10+ 환경에서 `session-peer[mcp]`를 설치하고 [MCP 설정](mcp.m
 `install.sh`는 로컬·SSH 갱신을 대상 파일시스템에서 준비하고 런타임·스킬을 모두 받은 후 임시 CLI 버전을 검증하여 런타임을 원자적으로 교체합니다. 다운로드·검증 실패 시 기존 런타임·실행기·스킬을 유지합니다. 전체 설치 파일의 트랜잭션, 서명 검증 또는 이후 스킬 관리자 실패의 롤백을 의미하지 않습니다. 기존 설치 관리자 소유권은 유지됩니다.
 
 SSH는 하위 프로세스 시작 전에 최종 셸 인용 명령의 UTF-8 바이트 수를 검사합니다. 보수적 상한 131071바이트에는 base64 메시지·봉투·옵션·인용이 포함됩니다. 초과 시 로컬에서 `ssh_command_too_large`, `submitted: false`로 거부합니다. Unicode에는 글자 수만으로 충분하지 않습니다. 로컬 전송 제한은 그대로이며 이 검사만으로 모든 OS의 전체 인자·환경 공간을 보장하지는 않습니다.
+
+네이티브 전달 시 session-peer는 상대 메시지의 모든 줄을 인용하고 발신 세션과 회신 경로를 검증되지 않은 주장으로 표시합니다. Codex와 Antigravity에는 상대 메시지가 사용자의 권한 부여가 아니라는 경고도 붙습니다. Claude Code는 이미 이 경고를 제공하므로 반복하지 않습니다. `--no-from`과 `--no-reply-to`는 발신 메타데이터만 생략하며 수신 측의 이 표시는 제거하지 않습니다. Reply-To는 실행 권한이 없는 경로 정보입니다. 주변 표시를 확인하고 제삼자에게 회신하기 전 세션 소유자에게 목적지를 확인하십시오. 이 표시는 혼동을 줄일 뿐 모든 프롬프트 주입을 막지는 않습니다. 표시와 이스케이프된 제어 문자도 메시지 한도에 포함되며, `chars`는 실제 전달할 인용된 텍스트의 길이입니다. 제출과 소비·ACK의 의미는 바뀌지 않습니다.
+
+## 실제 SSH 연결의 호스트 키 확인 (개발 중)
+
+`list`, `send`, `doctor --host`에 `--ssh-identity`를 추가하면
+`sshIdentity`를 반환합니다. 지문과 키 종류는 실제 OpenSSH 호스트 키 확인과
+완전한 원격 응답으로 확인합니다. 목적지·포트·키 조회 이름은 연결 전 설정
+조회 결과이며, 최종 네트워크 목적지의 별도 증명이 아닙니다. 원격 응답이
+완료되지 않은 키는 `observed`이며 `verified`로 표시하지 않습니다.
+
+```sh
+session-peer list --host workstation --ssh-identity --json
+session-peer send --host workstation --to reviewer --message="Review this change" \
+  --require-ssh-host-key 'SHA256:<previously-verified-fingerprint>' --json
+```
+
+위 자리표시자를 발견 결과의 확인된 지문으로 바꾸세요. 지문은 별도 시험
+연결이 아니라 실제 전송 연결에서 인증·원격 실행 전에 확인합니다. 키가
+바뀌면 거부하며, 키 교체 시 직접 확인한 새 지문을 지정해야 합니다. 이
+모드는 연결 재사용을 끄고 엄격한 호스트 키 확인을 유지합니다. 조회 모드는
+기존 known-hosts 신뢰를 사용하고, 고정 모드는 지정한 공개 키만 신뢰하며
+known-hosts 파일에 기록하지 않습니다. 여러 기기가 같은 키를 쓸 수 있으므로
+기기·계정·세션 세대·메시지 소비를 증명하는 값은 아닙니다.
+
+개발 구현은 POSIX의 일반 Ed25519·RSA·ECDSA 키만 지원하며 호스트 인증서와
+보안 키 방식은 지원하지 않습니다. 사용자 설정의 `KnownHostsCommand`는
+덮어쓰지 않고 거부합니다. SSH 설정과 중간 경유 호스트의 신뢰는 운영자가
+관리합니다. 별도 연결인 설치 버전 보충 조회는 이 모드에서 생략합니다.
+완전한 응답 뒤 확인 기록이 없으면 기존 제출 증거를 유지하지만 필수 지문
+조건은 만족하지 않으며 자동 재전송을 허용하지 않습니다.
+
+옵션을 쓰지 않으면 기존 동작·출력이 유지됩니다. 공개 v1.0.4에는 포함되지
+않았습니다. 로컬 검증은 확인 도우미·읽기 전용 SSH 설정·가짜 전송 경로와
+전용 루프백 서버에 대한 실제 OpenSSH 연결을 포함합니다. 잘못된 지문에서는
+인증·원격 실행 요청이 0회였으며 시험용 비밀 키는 메모리에만 두었습니다.
+실제 원격 호스트나 실행 중인 에이전트의 검증은 아니며 플랫폼 CI도 필요합니다.

@@ -23,6 +23,7 @@
 
 ## 開発と履歴
 
+- [Handoff ランタイム候補](handoff-runtime.md)は、未公開の非公開受領確認実装、対応経路、残る受け入れ条件を説明します。
 - [v1互換性契約](compatibility-v1.md)はstable、versioned、migrated、internal、experimentalなsurfaceを分類します。
 - [エージェント転送アーキテクチャ](architecture/agent-transports.md)と[リレー開発計画](relay-development-plan.md)は実装境界を説明します。
 - [v1.1.0候補ノート](releases/v1.1.0.md)は未公開の準備・依存順序・部分対応の境界を説明します。現在の公開安定版は1.0.4です。

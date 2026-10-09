@@ -65,8 +65,18 @@ class LocalTransport:
                 # destroy successful results from other adapters, even in JSON mode.
                 for row in result["sessions"]:
                     adapter.display_row(row)
+                    if getattr(args, "with_target_generation", False):
+                        value = claude_generation(row) if adapter.name == "claude" else None
+                        row["targetGeneration"] = value
+                        row["generationStatus"] = "available" if value else "unsupported"
                 return result
             if operation == "send":
+                check_message(text, remote=False)
+                adapter.validate_send(args, text)
+                text = peer_delivery_message(
+                    text, adapter.name,
+                    getattr(args, "_peer_fingerprint", _RECEIVER_PEER_FINGERPRINT))
+                check_message(text, remote=False)
                 adapter.validate_send(args, text)
                 result = adapter.submit(context, text)
                 if not isinstance(result, dict) or type(result.get("ok")) is not bool:
@@ -96,8 +106,19 @@ class SshTransport:
         self.requested_host = requested_host
         self.host = resolve_ssh_destination(requested_host, status)
         self.ssh_opts = tailscale_ssh_options(requested_host, self.host) + args.ssh_opt
+        self.expected_host_key = getattr(args, "require_ssh_host_key", None)
+        self.identity_requested = bool(self.expected_host_key is not None or getattr(args, "ssh_identity", False))
 
-    def execute(self, argv: list[str]) -> dict:
+    def execute(self, argv: list[str], *, handoff_budget=None, handoff_context=None) -> dict:
+        if handoff_budget is not None or handoff_context is not None:
+            if self.identity_requested:
+                return run_remote_with_identity(self.requested_host, argv, self.ssh_opts,
+                                                self.expected_host_key, handoff_budget=handoff_budget,
+                                                handoff_context=handoff_context)
+            return run_remote(self.requested_host, argv, self.ssh_opts,
+                              handoff_budget=handoff_budget, handoff_context=handoff_context)
+        if self.identity_requested:
+            return run_remote_with_identity(self.requested_host, argv, self.ssh_opts, self.expected_host_key)
         return run_remote(self.requested_host, argv, self.ssh_opts)
 
 

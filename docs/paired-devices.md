@@ -1,5 +1,58 @@
 # Paired devices and private relay (v1.0)
 
+## Guided connection setup (explicit opt-in)
+
+`session-peer setup` explains local/SSH and Relay choices without installing
+anything. Local/SSH needs only the ordinary standard-library CLI. Relay requires
+Unix Python 3.11+ and optional `[relay]` dependencies, not Node.js. Missing extras
+produce original-manager guidance (or a separate environment for standalone),
+never an implicit install or manager switch. A skill/plugin does not install the
+runtime or hosted service; no public-service availability is promised.
+
+```bash
+session-peer setup
+session-peer setup --mode local
+session-peer setup --mode ssh --host worker
+session-peer setup --mode relay --interactive --role receiver
+session-peer setup --mode relay --interactive --role client --no-browser
+```
+
+Run the Relay guide on both ends. It asks separately before initialization,
+browser/headless login, named enrollment, policy/invitation creation and pairing.
+Explicitly trust the client's principal from its init result, choose the current
+native target and executable/home, and review the generated policy. Default:
+`list` for that one peer/target; `send` is a separate choice. Securely transfer
+the private invitation within ten minutes. Enrollment is not pairing; pairing
+is not native agent approval. Setup never sends a test message.
+
+For headless operation, use `--action init|login|enroll|policy|invite|pair|ready`
+and `--apply` for each action; required peer/target/path/route options are in
+`--help`. `plan`, `targets`, and policy preview without `--apply` do not construct
+Store, initialize keys/DB/journal or migrate state. Database inventory is a
+checkpointed diagnostic view, not current authorization. Receiver locks and
+known service files are reported, but arbitrary service discovery is incomplete.
+No existing service is changed. A policy is created as a new 0600 private file,
+or an identical file is reused; a different existing policy is never overwritten
+or broadened. Selection is rechecked before applying, not a permanent native
+session-incarnation guarantee.
+An incomplete existing identity/database or missing active rotated key requires
+manual recovery, even for approved initialization; setup will not reconstruct it.
+
+The private `setup.json` durably retains the original enrollment UUID, name,
+server, key identity and exact registration payload before the request. After interruption/lost response,
+explicitly resume `enroll` with the same state/name: the existing API reconciles
+that same operation, never silently creates another mutation. Changed intent or
+identity or payload (including certificate PEM formatting) is refused before network access. Expired login needs explicit `login` again while retaining
+the UUID. Ambiguous invitation creation blocks for operator reconciliation.
+The displayed receiver command runs in the foreground; `--action receiver --apply`
+uses the same lifetime until Ctrl-C or `--seconds`. No autostart/service
+or profile is installed; existing launchd/systemd management stays separate.
+`--action cancel --apply`, EOF and Ctrl-C stop setup waiting, not committed
+enrollment or original messages. Keep state/policy/key directories 0700 and files
+0600; do not share journals, tokens or invitation secrets. Client readiness uses
+authenticated probe/list metadata only, not consumption/ACK, native approval or
+availability evidence. No uncertain message is resent. Manual commands remain.
+
 This optional Unix/Python 3.11+ transport carries requests to operator-defined
 Claude, Codex or registered Antigravity endpoints. The usual local/SSH commands
 stay dependency-free. This is an explicit CLI workflow; no mobile application,
@@ -389,3 +442,5 @@ session-peer device enroll --state /private/device-state --name laptop --operati
 ```
 
 Create a receiver policy using the schema above and start `session-peer` `device serve --state /private/device-state --policy /private/receiver-policy.json --relay wss://relay.abruption.dev/v1/connect --login --seconds 3600`. In another terminal create `device invite --state /private/device-state --relay wss://relay.abruption.dev/v1/connect --out /private/invite.json` (also prefixed by `session-peer`). Securely transfer that invitation to the logged-in/enrolled client, pair within ten minutes with `session-peer` `device pair --state /private/client-state --invite /private/invite.json --route relay --login`, then inspect using `session-peer list --device RECEIVER-ID --device-state /private/client-state --device-route relay --relay-login --json`. Keep the receiver running. Enrollment is not pairing, and pairing does not grant native target permissions. Use a dry-run before sending; queued is not an ACK. Guidance never installs, logs in or retries automatically. A generic 403/404 or `no_authenticated_route` does not prove the receiver is stopped. Missing/expired login and explicit device-not-found evidence receive separate hints; uncertain sends must be reconciled, not resent.
+
+The paired receiver adds the authenticated TLS certificate fingerprint outside the quoted message body. It identifies the paired device key, not a person or native agent session; a From or Reply-To claim inside the body cannot replace it. The final quoted body, fingerprint and warning must fit the 32 KiB limit before journal admission or native delivery. Reply-To is only as trustworthy as its surrounding frame: confirm third-party routes with the session owner. This framing does not bypass approvals or guarantee resistance to prompt injection.

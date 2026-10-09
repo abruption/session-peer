@@ -27,6 +27,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_common(sub: argparse.ArgumentParser) -> None:
+        sub.add_argument("--ssh-identity", action="store_true", help="report connection-verified SSH host-key identity (POSIX opt-in)")
+        sub.add_argument("--require-ssh-host-key", metavar="SHA256:KEY", help="require this host key on the actual SSH connection (POSIX opt-in)")
         sub.add_argument(
             "--host", action="append", default=[], metavar="DEST",
             help="SSH [USER@]HOST, repeatable; otherwise User comes from SSH config/default",
@@ -54,6 +56,8 @@ def build_parser() -> argparse.ArgumentParser:
                  "set explicitly for Orca/multiple homes")
     listing.add_argument("--codex-home", help="list only this destination home (default: known default, CODEX_HOME, Orca and configured homes)")
     listing.add_argument("--codex-bin", help="Codex executable on the destination (used by send)")
+    listing.add_argument("--with-target-generation", action="store_true",
+                         help="report optional inbox generation preconditions (not ACK or consumption)")
     listing.add_argument(
         "--all", action="store_true", help="include stale records and sessions with no inbox"
     )
@@ -83,6 +87,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="session name, PID, codex:UUID, antigravity:UUID, or session-peer://v1/reply address",
     )
     sending.add_argument("--codex-home", help=home_help)
+    sending.add_argument("--target-generation", metavar="TOKEN",
+                         help="require a previously discovered inbox generation; fail closed if unsupported")
     sending.add_argument(
         "--allow-inactive-codex-home", action="store_true",
         help="with --codex-home, intentionally queue an inactive thread for a future resume",
@@ -97,7 +103,16 @@ def build_parser() -> argparse.ArgumentParser:
     sending.add_argument("message", nargs="?", help="message text (legacy positional form); omit or use - to read stdin")
     sending.add_argument("--message", "-m", dest="message_option", metavar="TEXT",
                          help="message body; use - for stdin; cannot combine with a positional message")
+    sending.add_argument("--message-file", metavar="PRIVATE_FILE", help="read a private owner-only UTF-8 message file")
+    sending.add_argument("--correlation-id", type=handoff_cli_uuid, help="use a previously prepared Handoff v1 intent")
+    sending.add_argument("--request-ack", action="store_true", help="opt in to receipt-only delegated ACK authority")
+    sending.add_argument("--observe-delivery", action="store_true", help="report injection evidence when supported (not consumption)")
+    sending.add_argument("--wait-for", choices=("delivered", "acknowledged"), help="require evidence with a bounded total budget")
+    sending.add_argument("--wait-timeout", type=handoff_timeout, default=30, metavar="SECONDS", help="Handoff total budget, ASCII integer 1..60 (default: 30)")
     sending.add_argument("--b64", help=argparse.SUPPRESS)  # used for remote dispatch
+    sending.add_argument("--_handoff-native-context", help=argparse.SUPPRESS)
+    sending.add_argument("--_handoff-native-cutoff-ms", type=handoff_private_ms, help=argparse.SUPPRESS)
+    sending.add_argument("--_handoff-native-total-ms", type=handoff_private_ms, help=argparse.SUPPRESS)
     sending.add_argument(
         "--reply-to",
         metavar="HOST",
@@ -110,10 +125,37 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-from", action="store_true", help="send without the From: header"
     )
     sending.add_argument("--wake", action="store_true", help="explicitly resume a Codex thread; may use models and modify history")
+    sending.add_argument("--wake-max-depth", type=int, choices=range(0, 17), metavar="HOPS",
+                         help="explicit wake chain limit, 0..16 (default: 3; 0 disables wakes)")
+    for flag in ("--_wake-depth", "--_wake-origin", "--_wake-limit"):
+        sending.add_argument(flag, help=argparse.SUPPRESS)
     sending.add_argument("--wake-timeout", type=int, choices=range(1, 61), default=30, metavar="SECONDS",
                          help="wake deadline, 1..60 seconds (default: 30)")
     sending.add_argument("--dry-run", action="store_true", help="resolve the target, send nothing")
     sending.set_defaults(func=cmd_send)
+
+    handoff = subparsers.add_parser("handoff", help="manage private correlated intents without submitting native messages")
+    handoff_sub = handoff.add_subparsers(dest="handoff_action", required=True)
+    for action in ("init", "prepare", "status", "wait", "confirm"):
+        sub = handoff_sub.add_parser(action)
+        sub.add_argument("--json", action="store_true")
+        sub.set_defaults(func=cmd_handoff, no_update_notice=True)
+        if action in ("status", "wait"):
+            sub.add_argument("--correlation-id", required=True, type=handoff_cli_uuid)
+        if action == "wait":
+            sub.add_argument("--wait-for", choices=("delivered", "acknowledged"), required=True)
+            sub.add_argument("--wait-timeout", type=handoff_timeout, default=30)
+        if action == "prepare":
+            sub.add_argument("--to", required=True)
+            sub.add_argument("--message-file", required=True)
+            sub.add_argument("--codex-home")
+            sub.set_defaults(message=None, message_option=None, b64=None, host=[], device=None, target_generation=None)
+        if action == "confirm":
+            sub.add_argument("--receipt", choices=("-",), required=True)
+    ack = subparsers.add_parser("ack", help="submit a receipt over private local IPC, never a native message")
+    ack.add_argument("--receipt", choices=("-",), required=True)
+    ack.add_argument("--json", action="store_true")
+    ack.set_defaults(func=cmd_ack, no_update_notice=True)
 
     updating = subparsers.add_parser("update", help="update this installation")
     add_common(updating)
@@ -145,6 +187,32 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument('--help', '-h', dest='relay_help', action='store_true')
         sub.add_argument('relay_args', nargs=argparse.REMAINDER)
         sub.set_defaults(func=cmd_optional_relay, json=True, no_update_notice=True)
+    setup = subparsers.add_parser('setup', help='explicit connection choices and guided paired-device setup')
+    add_common(setup)
+    setup.add_argument('--mode', choices=('local', 'ssh', 'relay'))
+    setup.add_argument('--interactive', action='store_true', help='ask before each setup mutation; EOF/Ctrl-C cancels')
+    setup.add_argument('--action', choices=('plan', 'init', 'login', 'enroll', 'targets', 'policy', 'invite', 'pair', 'ready', 'receiver', 'cancel'), default='plan')
+    setup.add_argument('--apply', action='store_true', help='explicitly approve the selected setup action, never a message send')
+    setup.add_argument('--state')
+    setup.add_argument('--server')
+    setup.add_argument('--name')
+    setup.add_argument('--no-browser', action='store_true')
+    setup.add_argument('--role', choices=('receiver', 'client'), default='receiver')
+    setup.add_argument('--policy')
+    setup.add_argument('--target', help='exact native target; Claude uses the selected PID, not an ambiguous name')
+    setup.add_argument('--alias', default='main')
+    setup.add_argument('--peer', help='explicit trusted paired-device principal (64 lowercase hexadecimal characters)')
+    setup.add_argument('--capability', action='append', choices=('list', 'send'), default=[])
+    setup.add_argument('--codex-home')
+    setup.add_argument('--codex-bin')
+    setup.add_argument('--antigravity-home')
+    setup.add_argument('--direct')
+    setup.add_argument('--relay', help='receiver WSS connect URL, not an account-login URL')
+    setup.add_argument('--invite', help='private existing invitation file for a client')
+    setup.add_argument('--out', help='new private invitation file for a receiver')
+    setup.add_argument('--route', choices=('auto', 'direct', 'relay'), default='auto')
+    setup.add_argument('--seconds', type=int, choices=range(1, 86401), default=3600, metavar='SECONDS')
+    setup.set_defaults(func=cmd_setup, json=False, no_update_notice=True, agent=None, all=False)
     return parser
 
 
@@ -164,6 +232,30 @@ def main(argv: list[str] | None = None) -> int:
     global _CLIENT_UPDATE_NOTICE, _SKILL_UPDATE_NOTICES
     cli_invocation = argv is None
     raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if len(raw_argv) == 2 and raw_argv[0] == HANDOFF_SENDER_PREFLIGHT_ARG:
+        try:
+            cutoff = float(raw_argv[1])
+            if IS_WINDOWS or not __import__("math").isfinite(cutoff) or handoff_now() >= cutoff:
+                raise ValueError()
+            return handoff_sender_preflight_child(cutoff)
+        except (CcPeerError, HandoffStdinError, OSError, ValueError, KeyError, TypeError):
+            print('{"ok":false,"reason":"sender_preflight_unavailable"}')
+            return 1
+    if len(raw_argv) == 2 and raw_argv[0] == HANDOFF_PRODUCER_ARG:
+        if IS_WINDOWS:
+            return 1
+        try:
+            return cmd_ack(argparse.Namespace(json=True), root=Path(raw_argv[1]))
+        except (CcPeerError, OSError, ValueError):
+            print('{"ok":false,"reason":"receipt_operation_refused"}')
+            return 1
+    if len(raw_argv) == 2 and raw_argv[0] == HANDOFF_COLLECTOR_ARG:
+        if IS_WINDOWS:
+            return 1
+        try:
+            return handoff_collector(Path(raw_argv[1]))
+        except (CcPeerError, OSError, ValueError):
+            return 1
     if raw_argv == [UPDATE_REFRESH_ARG]:
         return refresh_update_cache_background()
 
@@ -190,6 +282,7 @@ def main(argv: list[str] | None = None) -> int:
         _SKILL_UPDATE_NOTICES = []
     show_human_notice = True
     try:
+        validate_ssh_identity_options(args)
         exit_code = args.func(args)
     except CcPeerError as exc:
         message = str(exc)

@@ -275,7 +275,7 @@ class ReceiverLifecycle(unittest.IsolatedAsyncioTestCase):
                    'id': str(uuid.uuid4()), 'expires': time.time()+30, 'op': 'resolve',
                    'body': {'target': 'review', 'message': 'SECRET-MESSAGE'}}
         with patch.object(app.logging, 'getLogger') as logger:
-            result = await receiver.dispatch('certificate', request)
+            result = await receiver.dispatch('c' * 64, request)
         self.assertEqual(result['status'], 'refused')
         row = logger.return_value.warning.call_args.args[1]
         self.assertIn('codex_executable_not_found', row)
