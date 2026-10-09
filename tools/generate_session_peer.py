@@ -33,6 +33,7 @@ SEGMENTS = (
     "handoff_stdin.py",
     "handoff_process.py",
     "handoff.py",
+    "handoff_remote.py",
     "sending.py",
     "relay.py",
     "cli.py",

@@ -296,6 +296,11 @@ def ssh_handoff_configuration(host, ssh_opts, handoff_budget):
 
 def _run_remote_handoff_dispatch(host, argv, ssh_opts, identity_options, budget, context):
     ssh_handoff_request(budget, context, require_context=True)
+    try:
+        handoff_validate_remote_argv(argv, context)
+    except (CcPeerError, ValueError, TypeError, KeyError, UnicodeError) as exc:
+        raise CcPeerError("Invalid private SSH handoff command",
+                          {"reason": "invalid_ssh_handoff_command", "retryAllowed": False, "spawned": False}) from exc
     if (not isinstance(argv, list) or not argv or argv[0] != "send"
             or any(not isinstance(arg, str) or "\0" in arg for arg in argv)):
         raise CcPeerError("Invalid private SSH handoff command",

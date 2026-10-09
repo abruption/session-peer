@@ -110,6 +110,9 @@ def build_parser() -> argparse.ArgumentParser:
     sending.add_argument("--wait-for", choices=("delivered", "acknowledged"), help="require evidence with a bounded total budget")
     sending.add_argument("--wait-timeout", type=handoff_timeout, default=30, metavar="SECONDS", help="Handoff total budget, ASCII integer 1..60 (default: 30)")
     sending.add_argument("--b64", help=argparse.SUPPRESS)  # used for remote dispatch
+    sending.add_argument("--_handoff-native-context", help=argparse.SUPPRESS)
+    sending.add_argument("--_handoff-native-cutoff-ms", type=handoff_private_ms, help=argparse.SUPPRESS)
+    sending.add_argument("--_handoff-native-total-ms", type=handoff_private_ms, help=argparse.SUPPRESS)
     sending.add_argument(
         "--reply-to",
         metavar="HOST",
@@ -199,6 +202,15 @@ def main(argv: list[str] | None = None) -> int:
     global _CLIENT_UPDATE_NOTICE, _SKILL_UPDATE_NOTICES
     cli_invocation = argv is None
     raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if len(raw_argv) == 2 and raw_argv[0] == HANDOFF_SENDER_PREFLIGHT_ARG:
+        try:
+            cutoff = float(raw_argv[1])
+            if IS_WINDOWS or not __import__("math").isfinite(cutoff) or handoff_now() >= cutoff:
+                raise ValueError()
+            return handoff_sender_preflight_child(cutoff)
+        except (CcPeerError, HandoffStdinError, OSError, ValueError, KeyError, TypeError):
+            print('{"ok":false,"reason":"sender_preflight_unavailable"}')
+            return 1
     if len(raw_argv) == 2 and raw_argv[0] == HANDOFF_PRODUCER_ARG:
         if IS_WINDOWS:
             return 1

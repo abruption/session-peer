@@ -540,7 +540,7 @@ def handoff_validate_native(native, record):
     target = native.get("target")
     if binding["agent"] == "codex":
         required = {"ok", "target", "chars", "dryRun", "codexHome", "submitted", "consumptionConfirmed", "status", "codexHomeResolution"}
-        if (binding["destination"] != ["local"] or type(target) is not dict or set(target) != {"agent", "id"}
+        if (len(binding["destination"]) != 1 or type(target) is not dict or set(target) != {"agent", "id"}
                 or not required <= set(native) <= required | {"queueId"}
                 or target["agent"] != "codex" or type(target["id"]) is not str
                 or re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", target["id"]) is None
@@ -558,7 +558,7 @@ def handoff_validate_native(native, record):
         if record.get("nativeContext") is not None and native["codexHomeResolution"] != record["nativeContext"]["resolution"]:
             raise handoff_error("invalid_native_profile")
         return
-    if (binding["agent"] != "claude" or binding["destination"] != ["local"] or type(target) is not dict
+    if (binding["agent"] != "claude" or len(binding["destination"]) != 1 or type(target) is not dict
             or set(native) != {"ok", "target", "chars", "dryRun"} or set(target) != {"pid", "name"}
             or type(target["pid"]) is not int or target["pid"] <= 1 or str(target["pid"]) != binding["target"]
             or native["ok"] is not True or native["dryRun"] is not False
@@ -1217,8 +1217,12 @@ def cmd_handoff_send(args):
     Remote source streaming and unproven Codex observation/cleanup are refused
     before effect, not silently converted to another transport or generic ACK.
     """
-    total = handoff_now() + args.wait_timeout
+    total = getattr(args, "_handoff_fixed_total", None)
+    total = handoff_now() + args.wait_timeout if total is None else total
     cutoff = total - 5
+    address = parse_reply_address(args.to)
+    if args.host or address is not None and address["transport"] == "ssh":
+        return cmd_handoff_remote_send(args, cutoff, total)
     if args.dry_run and (args.request_ack or args.observe_delivery or args.wait_for):
         raise NoTargetError("--dry-run cannot request observation, ACK or waiting")
     apply_reply_target(args)
@@ -1300,7 +1304,9 @@ def cmd_handoff_send(args):
                         cap["revoked"] = True
     if reason is not None:
         return handoff_refuse_send(ledger, correlation, args, reason, total)
-    if args.b64 is None and (not args.no_from or not args.no_reply_to):
+    if getattr(args, "_handoff_wrapped_body", None) is not None:
+        text = args._handoff_wrapped_body
+    elif args.b64 is None and (not args.no_from or not args.no_reply_to):
         identity = sender_identity(args.reply_to)
         configured = configured_reply_host(args.reply_to)
         local_reply = configured is None or bool(identity and identity.get("host") and is_self_ssh_destination(str(identity["host"])))
@@ -1404,6 +1410,7 @@ def cmd_handoff_send(args):
         emit(args.json, result, "Native outcome retained; handoff history unavailable. Do not resend.", command="send")
         return retained_code
     result = dict(native)
+    result.update(getattr(args, "_handoff_routing_metadata", {}))
     result.update(ok=code == 0, handoff=handoff_public(epoch, record, authority["clockEpoch"] if authority else None))
     emit(args.json, result, "Handoff " + result["handoff"]["state"] + "; submission is not consumption.", command="send")
     return code

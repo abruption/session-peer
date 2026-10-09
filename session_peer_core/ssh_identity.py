@@ -130,6 +130,11 @@ def run_remote_with_identity(host: str, argv: list[str], ssh_opts: list[str],
                           {"reason": "invalid_ssh_host_key", "retryAllowed": False})
     if handoff_budget is not None or handoff_context is not None:
         ssh_handoff_request(handoff_budget, handoff_context, require_context=True)
+        try:
+            handoff_validate_remote_argv(argv, handoff_context)
+        except (CcPeerError, ValueError, TypeError, KeyError, UnicodeError) as exc:
+            raise CcPeerError("Invalid private SSH handoff command",
+                              {"reason": "invalid_ssh_handoff_command", "retryAllowed": False, "spawned": False}) from exc
     configuration = (ssh_identity_configuration(host, ssh_opts, handoff_budget=handoff_budget)
                      if handoff_budget is not None else ssh_identity_configuration(host, ssh_opts))
     with tempfile.TemporaryDirectory(prefix="session-peer-ssh-identity-") as directory:

@@ -1,6 +1,6 @@
 """Private budget plumbing: owned fake SSH only, no remote agent or model.
 
-The profile callback here is a deliberate test double. It verifies dispatch
+The profile and argv callbacks here are deliberate test doubles. They verify dispatch
 uses the owner's validator; it does not certify the future remote protocol.
 """
 import argparse
@@ -43,6 +43,9 @@ class HandoffSshBackend(unittest.TestCase):
                 "nativeContext": self.context["nativeContext"]}}
         self.budget = (peer.handoff_now() + 3, peer.handoff_now() + 8)
         self.output = json.dumps(self.response).encode() + b"\n"
+        self.argv_guard = mock.patch.object(peer, "handoff_validate_remote_argv")
+        self.argv_guard.start()
+        self.addCleanup(self.argv_guard.stop)
 
     def result(self, **changes):
         fields = dict(stdout=self.output, stderr=b"", returncode=0, reason=None,
@@ -234,6 +237,22 @@ class HandoffSshBackend(unittest.TestCase):
         self.assertIs(caught.exception.details["spawned"], False)
         config.assert_not_called()
         child.assert_not_called()
+
+    def test_actual_ordinary_send_argv_rejected_before_any_configuration_or_source_child(self):
+        self.argv_guard.stop()
+        for pinned in (False, True):
+            runner = peer.run_remote_with_identity if pinned else peer.run_remote
+            with self.subTest(pinned=pinned), \
+                    mock.patch.object(peer, "ssh_identity_configuration") as identity, \
+                    mock.patch.object(peer, "ssh_user_metadata") as metadata, \
+                    mock.patch.object(peer, "handoff_stream_child") as child, \
+                    self.assertRaises(peer.CcPeerError) as caught:
+                runner("operator@fixture", ["send", "--to=4242", "--message=untrusted"], [],
+                       handoff_budget=self.budget, handoff_context=self.context)
+            self.assertIs(caught.exception.details["spawned"], False)
+            identity.assert_not_called()
+            metadata.assert_not_called()
+            child.assert_not_called()
 
     def test_complete_config_eof_then_owned_kill_keeps_raw_code_consistently(self):
         config = self.result(stdout=b"user operator\nhostname owned\nport 22\nhostkeyalias none\nknownhostscommand none\n",
