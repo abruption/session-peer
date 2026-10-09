@@ -172,10 +172,12 @@ function session-peer { & '__PYTHON__' '__FIXTURE__' @args }
 Set-StrictMode -Version 2.0
 . $asset
 . $asset
-$result = sp send '--message=값 $;`literal`' -- 'space value' '雪' --fail | ConvertFrom-Json
+$expected = session-peer send '--message=값 $;`literal`' '--' 'space value' '雪' --fail | ConvertFrom-Json
+$result = sp send '--message=값 $;`literal`' '--' 'space value' '雪' --fail | ConvertFrom-Json
 Require ($LASTEXITCODE -eq 7) 'native exit code changed'
 Require ($result.args.Count -eq 6) 'argument count changed'
 Require ($result.args[1] -eq '--message=값 $;`literal`') 'argument changed'
+Require (($result | ConvertTo-Json -Compress) -eq ($expected | ConvertTo-Json -Compress)) 'alias changed native argument input'
 function session-peer { 'updated implementation'; $global:LASTEXITCODE = 0 }
 Require ((sp --version) -eq 'updated implementation') 'canonical selection not followed after update'
 . $asset -Remove
@@ -220,6 +222,7 @@ function session-peer { & '__PYTHON__' '__CLI__' @args }
 $cases = @(
     @('--version'), @('--help'), @('list', '--agent', 'claude', '--json'),
     @('send', '--to', 'missing-target-for-isolated-test', '--dry-run', '-m', 'hello 雪', '--json'),
+    @('send', '--to', 'missing-target-for-isolated-test', '--dry-run', '--json', '--', '-leading 雪'),
     @('--invalid-option')
 )
 foreach ($arguments in $cases) {
