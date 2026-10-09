@@ -125,6 +125,19 @@ class Setup(unittest.TestCase):
         store.assert_not_called()
         self.assertFalse((self.root/relative).exists())
 
+    def test_all_identity_files_lost_with_retained_journal_never_creates_new_state(self):
+        self.initialize()
+        original = (self.root/'setup.json').read_bytes()
+        for name in ('identity.pem', 'identity.key', 'device.sqlite'):
+            (self.root/name).unlink()
+        with mock.patch.object(setup, 'Store') as store:
+            result = self.call('--action', 'init', '--apply')
+        self.assertEqual(result['reason'], 'setup_state_incomplete_manual_recovery_required')
+        store.assert_not_called()
+        self.assertEqual((self.root/'setup.json').read_bytes(), original)
+        self.assertFalse((self.root/'identity.key').exists())
+        self.assertFalse((self.root/'device.sqlite').exists())
+
     def test_headless_login_uses_existing_api_and_keeps_tokens_out_of_output(self):
         self.initialize()
         async def login(store, origin, no_browser):
@@ -150,11 +163,12 @@ class Setup(unittest.TestCase):
         self.initialize()
         self.login_state()
         operation_ids = []
-        def enroll(store, name, operation):
+        def enroll(store, name, operation, **prepared):
             operation_ids.append(operation)
             journal = json.loads((self.root/'setup.json').read_text())
             self.assertEqual(journal['enrollment']['operationId'], operation)
             self.assertEqual(journal['enrollment']['state'], 'unknown')
+            self.assertEqual(prepared['prepared_payload'], journal['enrollment']['payload'])
             if len(operation_ids) == 1:
                 raise Rejected('timeout')
             return {'ok': True, 'operationId': operation, 'principal': store.device,
@@ -220,6 +234,33 @@ class Setup(unittest.TestCase):
         enroll.assert_not_called()
         call.assert_not_called()
         self.assertEqual(json.loads((self.root/'setup.json').read_text())['enrollment'], saved)
+
+    def test_actual_request_uses_original_payload_and_origin_after_file_changes(self):
+        self.initialize()
+        self.login_state()
+        original_enroll = setup.control.enroll
+        seen = []
+        def mutate_then_enroll(store, name, operation, **prepared):
+            private_write(self.root/'identity.pem', store.cert+'\n')
+            private_write(self.root/'login.json', json.dumps({'server': 'https://changed.example',
+                'token': 'changed-fixture-token', 'expiresAt': time.time()+3600}))
+            return original_enroll(store, name, operation, **prepared)
+        def call(server, path, body=None, token=None):
+            self.assertEqual(server, 'https://control.example')
+            self.assertEqual(token, 'fixture-token-never-disclosed')
+            saved = json.loads((self.root/'setup.json').read_text())['enrollment']['payload']
+            if path == '/api/relay/challenge':
+                self.assertEqual(body['payload'], saved)
+                seen.append(dict(body['payload']))
+                return {'challengeId': 'fixture', 'proofMessage': 'session-peer-control-v1:fixture'}
+            self.assertEqual({key: body[key] for key in saved}, saved)
+            return {'operationId': body['operationId'], 'principal': body['principal'],
+                    'keyFingerprint': setup.fingerprint(body['certificatePEM']),
+                    'keyGeneration': body['keyGeneration'], 'committed': True}
+        with mock.patch.object(setup.control, 'enroll', side_effect=mutate_then_enroll), \
+                mock.patch.object(setup.control, 'call', side_effect=call):
+            self.assertTrue(self.call('--action', 'enroll', '--name', 'fixture', '--apply')['ok'])
+        self.assertEqual(len(seen), 1)
 
     def test_policy_preview_then_exclusive_apply_least_privilege_no_overwrite(self):
         self.initialize()

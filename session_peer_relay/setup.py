@@ -108,6 +108,11 @@ def validate_existing_state(root):
     """An approved setup is still not permission to reconstruct lost state/keys."""
     present = [(root/name).exists() for name in ('identity.pem', 'identity.key', 'device.sqlite')]
     if not any(present):
+        # A directory retaining any prior-state artifact is not a fresh
+        # installation, even when all three identity/database files are lost.
+        # setup.lock alone is created by this approved operation itself.
+        if root.exists() and any(path.name != 'setup.lock' for path in root.iterdir()):
+            raise Rejected('setup_state_incomplete_manual_recovery_required')
         return False
     if not all(present):
         raise Rejected('setup_state_incomplete_manual_recovery_required')
@@ -318,7 +323,8 @@ async def execute(args):
                     return {'ok': True, **saved['receipt'], 'reconciled': True}
                 saved['state'] = 'unknown'
                 work.save()
-                result = control.enroll(store, args.name, saved['operationId'])
+                result = control.enroll(store, args.name, saved['operationId'],
+                                        prepared_payload=saved['payload'], login_state=login)
                 saved.update(state='committed', receipt={key: result[key] for key in (
                     'operationId', 'principal', 'keyFingerprint', 'keyGeneration', 'committed')})
                 work.phase('enroll', 'complete')
