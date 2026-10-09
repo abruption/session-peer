@@ -190,6 +190,7 @@ class TargetGeneration(unittest.TestCase):
     def test_private_deadline_refuses_before_effect_and_bounds_write_drain(self):
         conn = mock.Mock()
         with mock.patch.object(peer, "IS_WINDOWS", False), \
+                mock.patch.object(peer.socket, "AF_UNIX", 1, create=True), \
                 mock.patch.object(peer.socket, "socket", return_value=conn), \
                 mock.patch.object(peer.time, "monotonic", side_effect=[0, 0, 10]):
             with self.assertRaises(peer.CcPeerError) as caught:
@@ -199,6 +200,7 @@ class TargetGeneration(unittest.TestCase):
         conn.close.assert_called_once()
         conn = mock.Mock()
         with mock.patch.object(peer, "IS_WINDOWS", False), \
+                mock.patch.object(peer.socket, "AF_UNIX", 1, create=True), \
                 mock.patch.object(peer.socket, "socket", return_value=conn), \
                 mock.patch.object(peer.time, "monotonic", side_effect=[0, 1, 2, 9]):
             peer.post_to_socket("fixture", "hello", effect_deadline=10, total_deadline=15)
@@ -209,6 +211,7 @@ class TargetGeneration(unittest.TestCase):
         conn = mock.Mock()
         conn.sendall.side_effect = OSError("synthetic partial write")
         with mock.patch.object(peer, "IS_WINDOWS", False), \
+                mock.patch.object(peer.socket, "AF_UNIX", 1, create=True), \
                 mock.patch.object(peer.socket, "socket", return_value=conn), \
                 mock.patch.object(peer.time, "monotonic", return_value=0):
             with self.assertRaises(peer.CcPeerError) as caught:
