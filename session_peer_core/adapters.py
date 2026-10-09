@@ -67,6 +67,11 @@ class AgentAdapter:
         return SessionIdentity(self.name, context.host, target[len(prefix):])
 
     def validate_send(self, args: argparse.Namespace, text: str | None = None) -> None:
+        expected = getattr(args, "target_generation", None)
+        validate_target_generation(expected)
+        if expected is not None and self.name != "claude":
+            raise generation_refused("unsupported_target_generation",
+                                     "This native transport cannot atomically bind an inbox incarnation; nothing sent")
         if not self.capabilities.send:
             raise AdapterError(self.name, "unsupported_capability", "Agent does not support send")
         if getattr(args, "wake", False) and not self.capabilities.wake:
@@ -127,11 +132,25 @@ class ClaudeAdapter(AgentAdapter):
 
     def submit(self, context: ExecutionContext, text: str) -> SubmissionResult:
         args = context.options
-        session = resolve_target(discover(include_unreachable=True), args.to)
+        expected = getattr(args, "target_generation", None)
+        try:
+            session = resolve_target(discover(include_unreachable=True), args.to)
+        except CcPeerError as exc:
+            if expected is not None:
+                raise generation_refused("stale_target", "Pinned target disappeared or became ambiguous; nothing sent",
+                                         expected_generation=expected) from exc
+            raise
+        if expected is not None:
+            require_claude_generation(session, expected)
         if not args.dry_run:
-            post_to_socket(session["socket"], text, pid=session["pid"])
+            if expected is not None:
+                post_to_socket(session["socket"], text, pid=session["pid"],
+                               generation_session=session, expected_generation=expected)
+            else:
+                post_to_socket(session["socket"], text, pid=session["pid"])
         return {"ok": True, "target": {"pid": session["pid"], "name": session["name"]},
-                "chars": len(text), "dryRun": args.dry_run}
+                "chars": len(text), "dryRun": args.dry_run,
+                **({"targetGeneration": expected} if expected is not None else {})}
 
     def diagnose(self, context: ExecutionContext) -> dict:
         return diagnose_claude()
@@ -158,6 +177,7 @@ class ClaudeAdapter(AgentAdapter):
 
     def remote_submission(self, result: dict, args: argparse.Namespace, text: str) -> dict:
         return {"target": result.get("target", {}), **ssh_metadata_from(result),
+                **({"targetGeneration": result["targetGeneration"]} if "targetGeneration" in result else {}),
                 "chars": result.get("chars", len(text)), "dryRun": args.dry_run}
 
 

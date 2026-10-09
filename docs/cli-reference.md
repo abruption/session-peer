@@ -80,6 +80,47 @@ installation path. See the [v0.9 release notes](releases/v0.9.0.md).
 
 ### Message input and result output
 
+#### Optional inbox generation precondition (development)
+
+`list --with-target-generation --json` adds `targetGeneration` and
+`generationStatus` to each row. For Claude inboxes with native process-creation
+evidence, copy the opaque `tg1:` token into `send --target-generation TOKEN`
+(including `--dry-run` or SSH). Keep the token with the original destination;
+it is a precondition, not a secret, permission, ACK, or retry/deduplication key.
+Unpinned commands keep their existing behavior and output.
+
+Pinned Claude sends recheck the registry, process creation and inbox endpoint,
+then verify the connected socket/pipe server PID before writing any message or
+Windows authentication line. Reused names/PIDs or changed endpoints are refused
+with `stale_target`; unprovable native identity is refused rather than guessed.
+The token does not authenticate the model or defend against a malicious process
+with the same OS account. OS process creation and connected-peer APIs are needed;
+unsupported platforms cannot use this mode. Same-generation process state/name
+updates do not by themselves invalidate the token.
+Native creation values have OS-specific granularity (Linux uses boot ID and
+start-time clock ticks); this is not a globally unique or clone-proof identity.
+The opaque token is also not cryptographic SSH host-key continuity.
+
+A `stale_target` refusal includes `lastSeenTarget` with the original requested
+Claude generation, not a fresh lookup of the successor. This bounded metadata
+does not include process creation values, paths, user names or host names:
+
+`{"status":"refused","reason":"stale_target","submitted":false,"retryAllowed":false,"lastSeenTarget":{"agent":"claude","targetGeneration":"tg1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`
+
+`target_generation_unavailable` means native identity could not be verified;
+`unsupported_target_generation` means the target does not support this
+precondition. Neither result includes `lastSeenTarget` or authorizes a retry.
+The source-streamed restart regression uses an owned protocol inbox and a local
+SSH stand-in; it is not evidence of a physical remote host or native agent test.
+
+Codex queue targets, Antigravity bridges and paired devices do **not** acquire
+this inbox-incarnation guarantee: they report an unsupported generation, and a
+generic pinned send to them is refused before queue/wake. In particular, a
+Codex writer recheck cannot atomically constrain which later writer consumes a
+persisted queue row. Their existing separate identity contracts remain intact.
+The broader cross-agent work in #180 remains open; this development feature is
+not shipped in v1.0.4 and adds no automatic fallback or resubmission.
+
 `--message TEXT` (short form `-m`) names the text sent to the destination.
 `--output-format text|json` selects the command result format, not the message
 format. It is available on `list`, `send`, `doctor`, and `update`; the default is

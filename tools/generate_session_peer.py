@@ -17,6 +17,7 @@ SEGMENTS = (
     "common.py",
     "codex.py",
     "claude.py",
+    "target_generation.py",
     "replies.py",
     "ssh.py",
     "output.py",

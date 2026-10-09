@@ -2,6 +2,39 @@
 
 [개요로 돌아가기](../../README.ko.md)
 
+## 수신 세션 세대 고정 조건 (개발 중)
+
+`list --with-target-generation --json`은 각 행에 `targetGeneration`과
+`generationStatus`를 추가합니다. 운영체제의 프로세스 생성 정보를 확인할 수 있는
+Claude 세션은 `tg1:` 토큰을 `send --target-generation TOKEN`에 전달할 수 있습니다.
+`--dry-run`과 SSH에서도 원래 대상의 토큰을 사용합니다. 토큰은 전송 조건이며 비밀정보,
+권한, ACK 또는 재전송·중복 방지 키가 아닙니다. 사용하지 않으면 기존 출력과 동작을 유지합니다.
+
+전송 직전에 세션 기록, 프로세스 생성 정보, 수신 경로를 재확인하고 실제 연결된 소켓·파이프의
+서버 PID를 확인한 뒤 메시지와 Windows 인증 줄을 씁니다. 이름·PID 재사용이나 경로 변경은
+`stale_target`으로 거부하며, 확인 불가능한 신원은 추정하지 않습니다. 같은 프로세스의 상태나
+이름 변경만으로 토큰이 바뀌지는 않습니다. 모델의 신원을 인증하거나 같은 OS 계정의 악성
+프로세스를 막는 기능은 아니며, 필요한 운영체제 API가 없으면 사용할 수 없습니다.
+생성 정보의 정밀도는 운영체제마다 다릅니다(Linux는 부팅 ID와 시작 시각의 clock tick 사용).
+전역적으로 고유하거나 복제를 방지하는 신원, 암호학적 SSH 호스트 키 연속성을 보장하지 않습니다.
+
+`stale_target` 거부에는 원래 요청한 Claude 세대를 담은 `lastSeenTarget`이 포함됩니다.
+새 수신 프로세스를 다시 조회한 결과가 아닙니다. 이 제한된 메타데이터에는 프로세스 생성값,
+경로, 사용자 이름이나 호스트 이름을 넣지 않습니다.
+
+`{"status":"refused","reason":"stale_target","submitted":false,"retryAllowed":false,"lastSeenTarget":{"agent":"claude","targetGeneration":"tg1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`
+
+`target_generation_unavailable`은 운영체제의 신원을 확인할 수 없다는 뜻이고,
+`unsupported_target_generation`은 대상이 이 전송 조건을 지원하지 않는다는 뜻입니다.
+두 결과에는 `lastSeenTarget`을 넣지 않으며 재전송 권한도 주지 않습니다.
+소스 전송·재시작 회귀 테스트는 전용 프로토콜 수신함과 로컬 SSH 대역을 사용합니다.
+실제 원격 장비나 실제 에이전트의 검증 근거는 아닙니다.
+
+Codex 큐, Antigravity와 페어링 기기는 이 수신 프로세스 세대 보장을 제공하지 않습니다.
+일반 세대 고정 요청은 큐 삽입·wake 전에 거부하고 각각의 기존 계약을 유지합니다.
+Codex의 작성자 재확인만으로 나중에 큐를 소비하는 작성자를 원자적으로 제한할 수는 없습니다.
+#180의 전체 작업은 아직 열려 있습니다. v1.0.4에 발행된 기능이 아니며 자동 대체 전송·재전송도 없습니다.
+
 명령어의 상세 동작, 설치 옵션, 전송 한계 및 과거 검증 내역은 아래와 같습니다.
 기계 소비자는 [v1 호환성 계약](compatibility-v1.md)도 따라야 합니다.
 

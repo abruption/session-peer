@@ -2,6 +2,35 @@
 
 [返回概览](../../README.zh-CN.md)
 
+## 固定接收会话代次的前置条件（开发中）
+
+`list --with-target-generation --json` 为每行添加 `targetGeneration` 和
+`generationStatus`。对于能核实操作系统进程创建信息的 Claude 接收端，可将 `tg1:`
+标记传给 `send --target-generation TOKEN`；`--dry-run` 和 SSH 也使用原目标的标记。
+它是发送前置条件，不是秘密、权限、ACK 或重发、去重凭据。不使用时保留现有输出和行为。
+
+发送前重新核实注册记录、进程创建信息和接收端，再核实已连接的套接字或管道服务器 PID，
+之后才写入消息和 Windows 认证行。名称、PID 被复用或接收端变化时以 `stale_target`
+拒绝；无法证明身份时不作猜测。同一进程的状态或名称更新本身不会改变代次。
+此功能不认证模型身份，也不防范同一 OS 账户的恶意进程；缺少所需 OS API 时不可使用。
+创建信息的精度取决于 OS（Linux 使用启动 ID 和开始时间的 clock tick），并不保证全局唯一、
+防克隆的身份或密码学上的 SSH 主机密钥连续性。
+
+`stale_target` 拒绝结果包含 `lastSeenTarget`，记录原请求指定的 Claude 代次，
+不是重新查找后继进程的结果。这一有限元数据不包含进程创建值、路径、用户名或主机名。
+
+`{"status":"refused","reason":"stale_target","submitted":false,"retryAllowed":false,"lastSeenTarget":{"agent":"claude","targetGeneration":"tg1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`
+
+`target_generation_unavailable` 表示无法核实操作系统身份；
+`unsupported_target_generation` 表示目标不支持该前置条件。
+这两种结果均不包含 `lastSeenTarget`，也不授权重发。
+源码传输与重启回归测试使用专用协议收件箱和本地 SSH 替身，
+不代表实际远程主机或原生代理的验证。
+
+Codex 队列、Antigravity 和配对设备不具备此接收进程代次保证。通用代次固定请求会在入队、
+wake 前拒绝，并保留各自既有契约。重新核实 Codex 写入进程，不能原子地限制之后消费
+持久队列的进程。#180 的完整工作仍未完成；该功能尚未在 v1.0.4 发布，不会自动回退或重发。
+
 以下是详细的命令行为、安装选项、传输限制和历史验证记录。
 机器consumer还应遵循[v1兼容性契约](compatibility-v1.md)。
 

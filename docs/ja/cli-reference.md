@@ -2,6 +2,39 @@
 
 [概要に戻る](../../README.ja.md)
 
+## 受信セッションの世代を固定する条件（開発中）
+
+`list --with-target-generation --json` は各行に `targetGeneration` と
+`generationStatus` を追加します。OS のプロセス生成情報を確認できる Claude の受信先では、
+`tg1:` トークンを `send --target-generation TOKEN` に指定できます。`--dry-run` と SSH でも
+元の宛先のトークンを使います。これは送信の前提条件であり、秘密情報、権限、ACK、再送や
+重複排除のキーではありません。指定しない場合、既存の出力と動作は変わりません。
+
+送信直前に登録情報、プロセス生成情報と受信先を再確認し、接続したソケット・パイプの
+サーバー PID を確認してから、メッセージや Windows の認証行を書き込みます。
+名前・PID の再利用や受信先の変更は `stale_target` で拒否し、確認できない身元は推測しません。
+同一プロセスの状態・名前の更新だけでは世代は変わりません。モデルの身元を認証したり、
+同じ OS アカウントの悪意あるプロセスを防いだりする保証はなく、必要な OS API がなければ利用できません。
+生成情報の粒度は OS に依存します（Linux は起動 ID と開始時刻の clock tick を使用）。
+世界的に一意・複製不能な身元や、暗号学的な SSH ホスト鍵の連続性は保証しません。
+
+`stale_target` の拒否には、元の要求で指定した Claude 世代の `lastSeenTarget` を含めます。
+後継プロセスを再検索した結果ではありません。この限定的なメタデータには、プロセス生成値、
+パス、ユーザー名やホスト名を含めません。
+
+`{"status":"refused","reason":"stale_target","submitted":false,"retryAllowed":false,"lastSeenTarget":{"agent":"claude","targetGeneration":"tg1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`
+
+`target_generation_unavailable` は OS の身元を検証できないこと、
+`unsupported_target_generation` は対象がこの前提条件に対応していないことを示します。
+どちらも `lastSeenTarget` を含めず、再送を許可しません。
+ソース転送・再起動の回帰テストは専用のプロトコル受信先とローカルの SSH 代替を使います。
+実際の遠隔ホストやネイティブエージェントの検証を示すものではありません。
+
+Codex キュー、Antigravity とペアリング済み機器には、この受信プロセス世代の保証はありません。
+一般の世代固定要求はキュー投入・wake 前に拒否し、それぞれの既存契約を維持します。
+Codex の書き込みプロセスを再確認しても、後からキューを消費するプロセスを原子的に制限できません。
+#180 全体は未完了です。v1.0.4 の公開機能ではなく、自動フォールバックや再送も追加しません。
+
 コマンドの詳細な動作、インストールオプション、トランスポートの制限、および過去の検証結果について以下に説明します。
 機械consumerは[v1互換性契約](compatibility-v1.md)にも従ってください。
 
