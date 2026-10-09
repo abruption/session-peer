@@ -1,4 +1,6 @@
 def cmd_list(args: argparse.Namespace) -> int:
+    if getattr(args, "device", None) and getattr(args, "with_target_generation", False):
+        raise generation_refused("unsupported_target_generation", "Paired devices use a separate generation contract")
     if getattr(args, "device", None):
         return optional_relay().invoke_core(args)
     selected = getattr(args, "agent", None)
@@ -16,6 +18,8 @@ def cmd_list(args: argparse.Namespace) -> int:
             transport = SshTransport(requested_host, args, tailnet_status)
             host, ssh_opts = transport.host, transport.ssh_opts
             argv = ["list", "--no-update-notice"] + (["--all"] if args.all else [])
+            if getattr(args, "with_target_generation", False):
+                argv.append("--with-target-generation")
             if selected:
                 argv += ["--agent", selected]
             argv += agent_remote_options(args, selected)
@@ -25,7 +29,12 @@ def cmd_list(args: argparse.Namespace) -> int:
             remote_version = None
             version_probe = None
             try:
-                remote_version = remote_installed_version(requested_host, ssh_opts, ssh_info)
+                if transport.identity_requested:
+                    # The optional installed-version probe is another SSH
+                    # connection and cannot reuse this verified-key receipt.
+                    version_probe = {"status": "unsupported", "reason": "separate_identity_probe"}
+                else:
+                    remote_version = remote_installed_version(requested_host, ssh_opts, ssh_info)
             except Exception as exc:
                 # This second connection is advisory. Keep discovery and its
                 # identity metadata; never copy probe process/host diagnostics.
