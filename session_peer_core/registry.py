@@ -106,8 +106,12 @@ class SshTransport:
         self.requested_host = requested_host
         self.host = resolve_ssh_destination(requested_host, status)
         self.ssh_opts = tailscale_ssh_options(requested_host, self.host) + args.ssh_opt
+        self.expected_host_key = getattr(args, "require_ssh_host_key", None)
+        self.identity_requested = bool(self.expected_host_key is not None or getattr(args, "ssh_identity", False))
 
     def execute(self, argv: list[str]) -> dict:
+        if self.identity_requested:
+            return run_remote_with_identity(self.requested_host, argv, self.ssh_opts, self.expected_host_key)
         return run_remote(self.requested_host, argv, self.ssh_opts)
 
 

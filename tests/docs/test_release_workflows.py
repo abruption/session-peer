@@ -102,6 +102,16 @@ class ReleaseWorkflows(unittest.TestCase):
         self.assertLess(matrix.index(install), matrix.index("- name: Distribution source tests"))
         self.assertLess(matrix.index(install), matrix.index("- name: Complete default discovery contract"))
 
+    def test_ssh_handshake_dependency_is_test_only_and_scoped(self):
+        requirements = ROOT / ".github/requirements"
+        declared = [line for line in (requirements / "ssh-test.txt").read_text().splitlines()
+                    if line and not line.startswith("#")]
+        self.assertEqual(declared, ["paramiko==4.0.0"])
+        text = (ROOT / ".github/workflows/ci.yml").read_text()
+        self.assertIn("if: matrix.os != 'windows-latest' && matrix.python == '3.13'", text)
+        self.assertIn("run: python -m pip install --requirement .github/requirements/ssh-test.txt", text)
+        self.assertNotIn("paramiko", (ROOT / "pyproject.toml").read_text())
+
     def test_every_release_checkout_uses_the_immutable_event_commit(self):
         for name, count in (("prepare-release.yml", 4), ("publish.yml", 6)):
             text = (ROOT / ".github/workflows" / name).read_text()

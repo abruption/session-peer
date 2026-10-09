@@ -918,3 +918,45 @@ list/send/wake/wait/ack support; it does not grant permission or prove readiness
 SSH validates the final shell-quoted remote command as UTF-8 bytes before starting any SSH subprocess. The conservative limit is 131071 bytes, including base64 message expansion, envelope, options and quoting. Oversized commands fail locally with `ssh_command_too_large` and `submitted: false`; character-count validation alone is insufficient for Unicode. Local delivery limits are unchanged. This per-command guard cannot guarantee that every remote operating system has enough total environment/argument space.
 
 At native delivery, session-peer quotes every peer-body line and marks sender/session claims and reply routes as unverified. Codex and Antigravity also receive an explicit warning that peer text is not user permission; Claude Code already provides that warning, so it is not repeated. The `--no-from` and `--no-reply-to` options suppress sender metadata, not this receiving-side frame. Reply-To remains inert routing data: verify the surrounding frame and confirm a third-party destination with the session owner before replying. Framing reduces ambiguity, not all prompt injection. The frame and escaped control characters count toward message limits; `chars` describes the delivered framed text. Submission and consumption/ACK meanings do not change.
+
+## Connection-bound SSH key identity (development)
+
+The opt-in `--ssh-identity` flag reports `sshIdentity` for `list`, `send`,
+and `doctor --host`. Only the fingerprint and key algorithm come from the
+actual OpenSSH host-key callback followed by a complete validated remote result.
+The destination, port and key-lookup name are **preflight SSH configuration**,
+not independent proof of the final network endpoint. An offered key without a
+completed remote result is only `observed`, not `verified`.
+
+```sh
+session-peer list --host workstation --ssh-identity --json
+session-peer send --host workstation --to reviewer --message="Review this change" \\
+  --require-ssh-host-key 'SHA256:<previously-verified-fingerprint>' --json
+```
+
+Copy the verified fingerprint from discovery; the placeholder above is not a
+valid key. The pin is checked on the **send connection**, before authentication
+and remote execution, rather than by a separate probe. A changed key is refused;
+key rotation requires explicit verification and a new pin. Connection reuse is
+disabled in this mode and strict host-key verification stays enabled. In report
+mode the user's known-hosts trust is retained; pin mode trusts only the supplied
+public-key fingerprint for that connection and writes no known-hosts entry.
+A server key can be reused by multiple hosts, so it is not a unique machine,
+account, session-generation or message-consumption identity.
+
+This development path is POSIX-only and supports ordinary Ed25519, RSA and
+ECDSA keys, not host certificates or security-key algorithms. It refuses a
+user-configured `KnownHostsCommand` instead of silently replacing that trust
+policy. Existing SSH configuration and jump-host trust remain operator-owned.
+The optional second installed-version probe is omitted for identity-mode
+listing because its separate connection is not covered by the receipt. Missing
+receipt after a complete native response preserves that submission evidence,
+never permits automatic retry, and cannot satisfy a required key pin.
+
+Default output and SSH behavior are unchanged without opt-in. These options
+are not part of published v1.0.4. Local tests cover the native callback helper,
+read-only configuration, fake transports and actual OpenSSH handshakes against
+an owned loopback fixture. A mismatched key caused zero authentication and
+remote-exec requests. Fixture host private keys remain in memory, never files.
+This is not a real remote-host or live-agent acceptance test; platform CI must
+also pass.
