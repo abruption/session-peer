@@ -276,3 +276,5 @@ session-peer device enroll --state /private/device-state --name laptop --operati
 ```
 
 按上方schema创建receiver policy，启动 `session-peer` `device serve --state /private/device-state --policy /private/receiver-policy.json --relay wss://relay.abruption.dev/v1/connect --login --seconds 3600`。在另一终端运行 `session-peer` `device invite --state /private/device-state --relay wss://relay.abruption.dev/v1/connect --out /private/invite.json`，安全转交邀请。已登录并注册的client须在10分钟内运行 `session-peer` `device pair --state /private/client-state --invite /private/invite.json --route relay --login`，然后 `session-peer list --device RECEIVER-ID --device-state /private/client-state --device-route relay --relay-login --json`。保持receiver运行。注册、配对和native权限互不等同。发送前先dry-run；queued不是ACK。引导不会自动安装、登录或重试。一般403/404或 `no_authenticated_route` 不能证明receiver已停止。仅按证据区分登录缺失/过期和设备查询失败，不确定的发送须核对而非重发。
+
+配对接收端会在引用正文之外显示已认证的 TLS 证书指纹。它识别的是配对设备的密钥，而不是人员或原生代理会话；正文中的 From 或 Reply-To 声明不能替换它。最终的引用正文、指纹和警告必须在开始记录或原生投递之前满足 32 KiB 限制。Reply-To 的可信度不会超过其外围标记的可信度；第三方路由应由会话所有者确认。此机制不绕过审批，也不保证完全抵御提示注入。

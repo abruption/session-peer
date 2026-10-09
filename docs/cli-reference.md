@@ -145,6 +145,32 @@ are ordinary command errors (JSON when requested, exit 1). No messages are
 submitted in either case. JSON results still describe submission rather than
 receipt; these flags introduce no structured JSON message-input protocol.
 
+## Optional interactive shorthand
+
+For releases containing these assets, Bash/zsh and PowerShell users can opt in to a shell-local alias named `sp`. It invokes the currently selected `session-peer` command with the same arguments, stdin, output, exit codes and permissions. It is not a separate parser or a Python/TypeScript selector. Keep the canonical command in scripts, SSH requests and generated reply instructions. Do not install both implementations simultaneously; switch with the original installation manager and verify which command your shell resolves first.
+
+The wheel and source distribution include passive activation files in `session_peer_shorthand`; installation does not activate them or edit profiles or PATH. Use the Python interpreter belonging to the selected installation to locate a file: an activated pip virtual environment's interpreter, or the interpreter inside the tool environment reported by `pipx environment --value PIPX_LOCAL_VENVS` or `uv tool dir`. On Unix those tool environments normally contain `session-peer/bin/python`; Windows uses `session-peer/Scripts/python.exe`. Inspect the actual environment instead of assuming its location. The module only prints the asset's path; read the file before sourcing it.
+
+```bash
+asset=$("/path/to/tool/python" -I -m session_peer_shorthand bash)
+source "$asset"
+sp --version
+source "${asset%/*}/sp-remove.sh"
+```
+
+```powershell
+$asset = & 'C:\path\to\tool\Scripts\python.exe' -I -m session_peer_shorthand powershell
+. $asset
+sp --version
+. $asset -Remove
+```
+
+Activation refuses an existing `sp` executable, alias or function without replacing it. PowerShell normally already defines `sp` as `Set-ItemProperty`, so activation refuses by default; continue using the canonical command unless you deliberately manage that collision yourself. Bash/zsh must source the file, and PowerShell must dot-source it. These assets do not support cmd.exe. Shell aliases require the shell's normal alias expansion; Bash disables it in non-interactive scripts, which should use the canonical command instead.
+
+Repeated activation of this unchanged owned alias succeeds without further changes. Removal affects only the alias created in the same shell; it refuses if you replaced it with another alias or command. Closing the shell removes the alias. An upgrade through the original manager keeps the alias pointing at the canonical command, not a copied runtime. Remove the alias before uninstalling or switching implementations; uninstall does not modify a running shell. Do not add these files to profiles unless you intentionally take responsibility for persistent setup and removal.
+
+Standalone installation remains unchanged and does not install these files automatically. To use the shorthand with standalone, obtain the files from a reviewed checkout or extract `session_peer_shorthand` from the corresponding verified release source distribution. Follow [release verification](../RELEASING.md) rather than sourcing an unverified download. Source the reviewed local file directly, keeping the canonical command on PATH. Updating or removing this manually selected file is your responsibility; it does not change standalone, pipx, uv or pip ownership. Alias collision detection covers only commands visible to the current shell and PATH, not other shells or future PATH changes.
+
 ## Install
 
 Python 3.9+, standard library only — no external dependencies.
@@ -454,6 +480,16 @@ Saved sessions are not necessarily active. `--all` includes archived threads.
 remote paths. Sending requires a Codex executable with the `queue` command and
 the appropriate saved thread/rollout in that home; a listing alone does not
 prove the queue can accept it.
+
+### SQLite storage boundary
+
+The 2026-10-09 source investigation examined native Codex [0.154.0](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/core/src/config/mod.rs) and [0.159.0](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/core/src/config/mod.rs). Both resolve SQLite storage from configured `sqlite_home`, then nonempty `CODEX_SQLITE_HOME`, then `CODEX_HOME`; relative environment paths use the native resolved working directory. [Managed requirements](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/core/src/config/requirements.rs) can replace configured storage, including command-line overrides. The [native queue path](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/tui/src/session_queue_commands.rs) can reuse a running shared server, whose storage is not established by the new client's environment. These are source findings, not new live-delivery or platform validation.
+
+session-peer refuses a nonempty inherited `CODEX_SQLITE_HOME` or a root `sqlite_home` setting in any inspected home's configuration before discovery, dry-run, or queue submission. This includes quoted/escaped root keys and root dotted/table forms, even when the configured path equals the selected home. Unselected nested keys are not root storage settings. Empty environment overrides are removed from native child environments; environment names are case-sensitive on POSIX and case-insensitive on Windows. The guard retains the selected native-home translation where already supported and does not add relocated-storage support.
+
+The home's `config.toml` must be a regular, non-symlink UTF-8 file of at most 1 MiB; missing files are allowed. Unreadable, changed, oversized, or lexically unclassifiable files are refused without printing their contents. The dependency-free key classifier supports Python 3.9 and is not a general TOML/schema validator; native Codex still validates other values. Queue and wake recheck this boundary before starting a child. A refusal has `status=refused`, `submitted=false`, and `retryAllowed=false`; valid ordinary outputs and writer-ownership checks remain unchanged. SSH performs this check on the destination, not on the sender's environment.
+
+This is bounded hardening, not proof of effective native storage for every configuration. Project/system/profile layers, managed requirements, and an existing shared server are not resolved or attested by this guard; configuration can also change after the final check. Do not infer storage agreement from a successful check alone. [#268](https://github.com/abruption/session-peer/issues/268) remains open for that evidence gate and version/platform acceptance. Fake-child fixtures show refusal and environment behavior only; they do not establish actual wrong-target delivery, a security exploit, or new native compatibility. The wake version matrix remains unchanged.
 
 ### Orca and multiple Codex homes
 
@@ -918,3 +954,5 @@ list/send/wake/wait/ack support; it does not grant permission or prove readiness
 `install.sh` stages local and SSH runtime updates in the destination filesystem, downloads both runtime and skill first, and validates the staged CLI version before atomically replacing the runtime. Download or validation failure leaves the installed runtime, launcher and skill intact. This is not a transaction across all installation files, a signature check, or rollback after a later skill-manager failure. Existing skill-manager ownership is unchanged.
 
 SSH validates the final shell-quoted remote command as UTF-8 bytes before starting any SSH subprocess. The conservative limit is 131071 bytes, including base64 message expansion, envelope, options and quoting. Oversized commands fail locally with `ssh_command_too_large` and `submitted: false`; character-count validation alone is insufficient for Unicode. Local delivery limits are unchanged. This per-command guard cannot guarantee that every remote operating system has enough total environment/argument space.
+
+At native delivery, session-peer quotes every peer-body line and marks sender/session claims and reply routes as unverified. Codex and Antigravity also receive an explicit warning that peer text is not user permission; Claude Code already provides that warning, so it is not repeated. The `--no-from` and `--no-reply-to` options suppress sender metadata, not this receiving-side frame. Reply-To remains inert routing data: verify the surrounding frame and confirm a third-party destination with the session owner before replying. Framing reduces ambiguity, not all prompt injection. The frame and escaped control characters count toward message limits; `chars` describes the delivered framed text. Submission and consumption/ACK meanings do not change.

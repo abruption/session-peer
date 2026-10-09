@@ -91,6 +91,32 @@ session-peer list --output-format json
 `--json --output-format json` 是合法的；无论先后顺序，将 `--json` 与 `--output-format text` 组合都会报错。无效或矛盾的输出选项属于 argparse 用法错误（stderr，退出码 2）；消息来源冲突属于普通命令错误（请求时为 JSON，退出码 1）。无论哪种情况均不会提交任何消息。JSON 结果仍然描述提交情况而非接收情况；这些标志并未引入结构化的 JSON 消息输入协议。
 
 <a id="install"></a>
+## 可选的交互式短命令
+
+在包含这些文件的版本中，Bash/zsh 和 PowerShell 用户可以自行启用仅在当前 shell 生效的 `sp` 别名。它调用当前选中的 `session-peer` 命令，保持参数、标准输入、输出、退出码和权限不变。它不是独立的参数解析器，也不是 Python/TypeScript 选择器。脚本、SSH 请求和自动生成的回复指令仍应使用正式命令。不要同时安装两个实现；切换时使用原安装管理工具，并确认 shell 优先找到哪个命令。
+
+wheel 和源码发行包在 `session_peer_shorthand` 中包含启用脚本。安装不会自动启用，也不会修改配置文件或 PATH。请使用所选安装对应的 Python 解释器定位文件：已激活的 pip 虚拟环境解释器，或通过 `pipx environment --value PIPX_LOCAL_VENVS`、`uv tool dir` 查到的工具环境解释器。Unix 工具环境通常包含 `session-peer/bin/python`，Windows 使用 `session-peer/Scripts/python.exe`。请查看实际环境，不要猜测位置。模块只输出文件路径；在 shell 中加载前请先审阅文件。
+
+```bash
+asset=$("/path/to/tool/python" -I -m session_peer_shorthand bash)
+source "$asset"
+sp --version
+source "${asset%/*}/sp-remove.sh"
+```
+
+```powershell
+$asset = & 'C:\path\to\tool\Scripts\python.exe' -I -m session_peer_shorthand powershell
+. $asset
+sp --version
+. $asset -Remove
+```
+
+如果已有 `sp` 可执行文件、别名或函数，脚本会拒绝启用而不会覆盖。PowerShell 通常已将 `sp` 定义为 `Set-ItemProperty` 的别名，因此默认会拒绝启用；除非您明确决定自行处理冲突，否则请继续使用正式命令。Bash/zsh 必须通过 source 加载，PowerShell 必须通过 dot-source 加载。不支持 cmd.exe。别名遵循 shell 的正常展开规则；Bash 在非交互脚本中默认关闭别名展开，因此脚本应使用正式命令。
+
+如果此方式创建的别名没有被修改，重复启用会成功且不产生额外变更。移除操作只针对同一 shell 中创建的别名；若已被替换成其他别名或命令，则拒绝移除。关闭 shell 也会清除别名。通过原管理工具升级后，别名仍指向正式命令，而非复制的运行时。在卸载或切换实现前请先移除别名；包卸载不会修改正在运行的 shell。除非您愿意自行负责持久配置及其移除，否则不要把这些文件加入 shell 配置文件。
+
+standalone 安装方式不变，不会自动安装这些文件。如果要搭配 standalone 使用，请从已审阅的检出目录取得文件，或从对应版本经过验证的源码发行包提取 `session_peer_shorthand`。遵循[发行验证](../../RELEASING.zh-CN.md)流程，不要直接加载未经验证的下载。确保 PATH 能找到正式命令，再直接加载审阅后的本地文件。手动选择文件的更新和移除由您负责，不会改变 standalone、pipx、uv 或 pip 的管理归属。冲突检查仅覆盖当前 shell 和 PATH 中可见的命令，不覆盖其他 shell 或将来的 PATH 变更。
+
 ## 安装
 
 Python 3.9+，仅限标准库 —— 无外部依赖。
@@ -307,6 +333,16 @@ Codex 发现使用只读 SQLite 连接读取 `state_5.sqlite`。此内部模式�
 
 `--codex-home` 覆盖目标端的 `CODEX_HOME`（默认为 `~/.codex`）。`--codex-bin` 覆盖用于发送的 `codex` PATH 查找。在 SSH 上，这些是远程路径。发送需要具备 `queue` 命令的 Codex 可执行文件以及该目录下相应的已保存线程/rollout；仅凭列表并不能证明队列可以接受它。
 
+### SQLite 存储边界
+
+2026-10-09 的源代码调查核对了 native Codex [0.154.0](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/core/src/config/mod.rs) 和 [0.159.0](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/core/src/config/mod.rs)。两版都依次从已配置的 `sqlite_home`、非空的 `CODEX_SQLITE_HOME`、`CODEX_HOME` 选择 SQLite 存储。环境变量中的相对路径以 native 解析后的工作目录为基准。[管理员要求](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/core/src/config/requirements.rs) 可以替换存储设置，包括命令行覆盖。[native 队列路径](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/tui/src/session_queue_commands.rs) 可能复用正在运行的共享服务器，因此新客户端的环境不能证明服务器使用的存储。这些是源码调查结果，并非新的实际投递或平台验证。
+
+如果继承的 `CODEX_SQLITE_HOME` 非空，或任何被检查目录的配置中存在根级 `sqlite_home`，session-peer 会在发现、预检或队列提交之前拒绝。即使配置路径等于所选目录也会拒绝，包括带引号或转义的根级键以及根级点分键和表。未选中的嵌套键不被视为根级存储设置。空环境变量覆盖会从 native 子进程环境中移除；POSIX 区分环境变量名称的大小写，Windows 不区分。现有的 native 目录路径转换保持不变，不新增迁移存储位置的支持。
+
+目录中的 `config.toml` 必须是不超过 1 MiB 的 UTF-8 常规文件，不能是符号链接；文件不存在时允许继续。无法读取、发生变化、超出大小限制或键语法无法分类的文件会被拒绝，且不会输出其内容。不依赖外部库的键分类器支持 Python 3.9，但不是完整的 TOML 或模式验证器；其他值仍由 native Codex 验证。队列和 wake 会在启动子进程前重新检查该边界。拒绝结果包含 `status=refused`、`submitted=false` 和 `retryAllowed=false`；正常的既有输出及写入进程所有权检查保持不变。SSH 在目标端检查，而不是检查发送端的环境。
+
+这只是有限的防护增强，不能证明所有配置下的 native 存储一致。该检查不会解析或证明项目、系统、配置档层、管理员要求及现有共享服务器的有效存储；最后一次检查后配置仍可能变化。不要仅凭检查成功推断存储一致。[#268](https://github.com/abruption/session-peer/issues/268) 保持开放，等待此证据门槛和版本、平台验收。伪子进程测试只说明拒绝和环境处理，不能证明实际误投递、安全利用或新的 native 兼容性。wake 的版本支持范围保持不变。
+
 ### Orca 与多个 Codex 目录
 
 由 Orca 启动的会话可以使用按账户划分的目录，而单独的终端或 SSH 命令则使用 `~/.codex`。同一个 UUID 可能同时存在于两者之中。向其中一个副本成功提交队列并不能证明目标会话正在使用该目录。
@@ -519,3 +555,5 @@ MIT
 `install.sh` 在目标文件系统暂存本地和SSH更新，先下载runtime和skill并验证暂存CLI版本，再原子替换runtime。下载或验证失败时保留现有runtime、launcher和skill。这不表示全部安装文件的事务、签名验证或后续skill-manager失败的回滚；原有安装管理器归属不变。
 
 SSH在启动子进程前检查最终shell引用命令的UTF-8字节数。保守上限131071字节包含base64展开、envelope、选项及引用。超限在本地返回 `ssh_command_too_large` 和 `submitted: false`；Unicode不能仅按字符数判断。本地传输限制不变，也不保证所有远端OS的参数与环境总空间。
+
+在向原生会话投递时，session-peer 会引用对方正文的每一行，并将发送会话和回复地址标记为未经验证的声明。Codex 和 Antigravity 还会收到明确警告：对方文字不是用户授权。Claude Code 已提供此警告，因此不再重复。`--no-from` 和 `--no-reply-to` 仅省略发送方元数据，不能移除接收侧的这层标记。Reply-To 只是没有执行权限的路由数据。请检查其所在的标记，并在回复第三方之前向会话所有者确认目的地。此机制减少歧义，但不能阻止所有提示注入。标记和转义后的控制字符也计入消息限制；`chars` 表示实际投递的引用后文本长度。提交与消费、ACK 的含义保持不变。

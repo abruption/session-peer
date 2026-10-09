@@ -80,7 +80,7 @@ class Contracts(unittest.TestCase):
         code, result = self.invoke(["send", "--to", uri, "-m", "hello\nworld",
                                     "--no-from", "--no-reply-to", "--json"])
         self.assertEqual(code, 0)
-        self.assertEqual(result["body"], "hello\nworld")
+        self.assertEqual(result["body"], peer.peer_delivery_message("hello\nworld", "fixture"))
         self.assertFalse(result["consumptionConfirmed"])
         self.assertEqual(result["addressResolution"]["transport"], "local")
 
@@ -178,7 +178,7 @@ class Contracts(unittest.TestCase):
             sent = transport.execute(["send", "--to", "fixture:one", "--message", "a 'quote'\n$(literal)",
                                       "--no-from", "--no-reply-to", "--no-update-notice"])
         self.assertEqual(listed["sessions"][0]["agent"], "fixture")
-        self.assertEqual(sent["body"], "a 'quote'\n$(literal)")
+        self.assertEqual(sent["body"], peer.peer_delivery_message("a 'quote'\n$(literal)", "fixture"))
         self.assertEqual(len(calls), 2)
 
     def test_remote_partial_failure_keeps_not_installed_diagnostic(self):
