@@ -18,6 +18,18 @@ Claude 세션은 `tg1:` 토큰을 `send --target-generation TOKEN`에 전달할 
 생성 정보의 정밀도는 운영체제마다 다릅니다(Linux는 부팅 ID와 시작 시각의 clock tick 사용).
 전역적으로 고유하거나 복제를 방지하는 신원, 암호학적 SSH 호스트 키 연속성을 보장하지 않습니다.
 
+`stale_target` 거부에는 원래 요청한 Claude 세대를 담은 `lastSeenTarget`이 포함됩니다.
+새 수신 프로세스를 다시 조회한 결과가 아닙니다. 이 제한된 메타데이터에는 프로세스 생성값,
+경로, 사용자 이름이나 호스트 이름을 넣지 않습니다.
+
+`{"status":"refused","reason":"stale_target","submitted":false,"retryAllowed":false,"lastSeenTarget":{"agent":"claude","targetGeneration":"tg1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`
+
+`target_generation_unavailable`은 운영체제의 신원을 확인할 수 없다는 뜻이고,
+`unsupported_target_generation`은 대상이 이 전송 조건을 지원하지 않는다는 뜻입니다.
+두 결과에는 `lastSeenTarget`을 넣지 않으며 재전송 권한도 주지 않습니다.
+소스 전송·재시작 회귀 테스트는 전용 프로토콜 수신함과 로컬 SSH 대역을 사용합니다.
+실제 원격 장비나 실제 에이전트의 검증 근거는 아닙니다.
+
 Codex 큐, Antigravity와 페어링 기기는 이 수신 프로세스 세대 보장을 제공하지 않습니다.
 일반 세대 고정 요청은 큐 삽입·wake 전에 거부하고 각각의 기존 계약을 유지합니다.
 Codex의 작성자 재확인만으로 나중에 큐를 소비하는 작성자를 원자적으로 제한할 수는 없습니다.

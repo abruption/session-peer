@@ -137,7 +137,8 @@ class ClaudeAdapter(AgentAdapter):
             session = resolve_target(discover(include_unreachable=True), args.to)
         except CcPeerError as exc:
             if expected is not None:
-                raise generation_refused("stale_target", "Pinned target disappeared or became ambiguous; nothing sent") from exc
+                raise generation_refused("stale_target", "Pinned target disappeared or became ambiguous; nothing sent",
+                                         expected_generation=expected) from exc
             raise
         if expected is not None:
             require_claude_generation(session, expected)

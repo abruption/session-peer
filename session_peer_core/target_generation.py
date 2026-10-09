@@ -1,8 +1,14 @@
 # Optional discovery-to-inbox preconditions. These are not ACK or dedup keys.
 
-def generation_refused(reason: str, message: str) -> CcPeerError:
-    return CcPeerError(message, {"status": "refused", "reason": reason,
-                                "submitted": False, "retryAllowed": False})
+def generation_refused(reason: str, message: str, *, expected_generation=None) -> CcPeerError:
+    details = {"status": "refused", "reason": reason,
+               "submitted": False, "retryAllowed": False}
+    # Original discovery precondition only: never reflect a successor's name,
+    # PID, host, path or native creation evidence as "last seen" metadata.
+    if (reason == "stale_target" and isinstance(expected_generation, str)
+            and re.fullmatch(r"tg1:[0-9a-f]{64}", expected_generation)):
+        details["lastSeenTarget"] = {"agent": "claude", "targetGeneration": expected_generation}
+    return CcPeerError(message, details)
 
 
 def process_generation(pid: int) -> str | None:
@@ -81,7 +87,8 @@ def require_claude_generation(session: dict, expected: str) -> None:
     if current is None:
         raise generation_refused("target_generation_unavailable", "Cannot prove the selected inbox generation; nothing sent")
     if current != expected:
-        raise generation_refused("stale_target", "The selected inbox generation changed; nothing sent")
+        raise generation_refused("stale_target", "The selected inbox generation changed; nothing sent",
+                                 expected_generation=expected)
 
 
 def connected_inbox_pid(conn) -> int | None:
@@ -116,5 +123,6 @@ def verify_connected_generation(session: dict, expected: str, server_pid: int | 
     if server_pid is None:
         raise generation_refused("target_generation_unavailable", "Connected inbox identity unavailable; nothing sent")
     if server_pid != session["pid"]:
-        raise generation_refused("stale_target", "Connected inbox belongs to another process; nothing sent")
+        raise generation_refused("stale_target", "Connected inbox belongs to another process; nothing sent",
+                                 expected_generation=expected)
     require_claude_generation(session, expected)

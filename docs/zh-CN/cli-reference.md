@@ -16,6 +16,17 @@
 创建信息的精度取决于 OS（Linux 使用启动 ID 和开始时间的 clock tick），并不保证全局唯一、
 防克隆的身份或密码学上的 SSH 主机密钥连续性。
 
+`stale_target` 拒绝结果包含 `lastSeenTarget`，记录原请求指定的 Claude 代次，
+不是重新查找后继进程的结果。这一有限元数据不包含进程创建值、路径、用户名或主机名。
+
+`{"status":"refused","reason":"stale_target","submitted":false,"retryAllowed":false,"lastSeenTarget":{"agent":"claude","targetGeneration":"tg1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`
+
+`target_generation_unavailable` 表示无法核实操作系统身份；
+`unsupported_target_generation` 表示目标不支持该前置条件。
+这两种结果均不包含 `lastSeenTarget`，也不授权重发。
+源码传输与重启回归测试使用专用协议收件箱和本地 SSH 替身，
+不代表实际远程主机或原生代理的验证。
+
 Codex 队列、Antigravity 和配对设备不具备此接收进程代次保证。通用代次固定请求会在入队、
 wake 前拒绝，并保留各自既有契约。重新核实 Codex 写入进程，不能原子地限制之后消费
 持久队列的进程。#180 的完整工作仍未完成；该功能尚未在 v1.0.4 发布，不会自动回退或重发。
