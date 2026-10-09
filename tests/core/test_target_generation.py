@@ -120,6 +120,43 @@ class TargetGeneration(unittest.TestCase):
         self.assertEqual(result["reason"], "unsupported_target_generation")
         native.run.assert_not_called()
 
+    def test_codex_restart_cannot_upgrade_unsupported_generation_or_start_effect(self):
+        # This tests the unsupported boundary, not atomic Codex queue pinning.
+        # Discovery before/after a synthetic writer restart must never mint a
+        # Claude inbox token for the saved Codex UUID. Neither dry-run, wake nor
+        # SSH may turn that unsupported request into a native submission.
+        thread_id = "11111111-1111-1111-1111-111111111111"
+        for owner in (41, 42):
+            row = {"agent": "codex", "id": thread_id, "name": "worker",
+                   "status": "active", "archived": False, "cwd": "/fixture", "codexHome": "/fixture/codex",
+                   "ownerPid": owner}
+            with mock.patch.object(peer.CodexAdapter, "list", return_value={
+                    "sessions": [row], "discovery": {"status": "ok"}}):
+                code, result = self.invoke("list", "--agent", "codex", "--with-target-generation")
+            self.assertEqual(code, 0)
+            self.assertIsNone(result["sessions"][0]["targetGeneration"])
+            self.assertEqual(result["sessions"][0]["generationStatus"], "unsupported")
+
+        for options in ([], ["--dry-run"], ["--wake"], ["--wake", "--dry-run"],
+                        ["--host", "test-host"], ["--host", "test-host", "--dry-run"],
+                        ["--host", "test-host", "--wake"]):
+            with self.subTest(options=options), \
+                    mock.patch.object(peer, "queue_codex") as queue, \
+                    mock.patch.object(peer, "run_codex_wake") as wake, \
+                    mock.patch.object(peer.SshTransport, "execute") as remote, \
+                    mock.patch.object(peer, "tailscale_status") as tailnet, \
+                    mock.patch.object(peer.subprocess, "run") as child:
+                code, result = self.invoke("send", "--to", "codex:" + thread_id,
+                                           "--target-generation", self.token(), "--message=x",
+                                           "--no-from", "--no-reply-to", *options)
+            self.assertEqual(code, 1)
+            self.assertEqual(result["reason"], "unsupported_target_generation")
+            self.assertEqual(result["status"], "refused")
+            self.assertFalse(result["submitted"])
+            self.assertFalse(result["retryAllowed"])
+            for effect in (queue, wake, remote, tailnet, child):
+                effect.assert_not_called()
+
     def test_malformed_and_paired_generation_rejected_before_effect(self):
         for token in ("bad", "tg1:" + "a" * 63, "tg1:" + "A" * 64):
             with mock.patch.object(peer, "post_to_socket") as post:
