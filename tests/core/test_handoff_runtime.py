@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shlex
 import socket
 import subprocess
 import sys
@@ -35,6 +36,19 @@ class HandoffRuntime(unittest.TestCase):
         self.epoch, self.record = self.ledger.prepare(self.binding, self.generation)
         self.correlation = self.record["id"]
         self.clock = str(peer.uuid.uuid4())
+        # Hosted CI interpreters may intentionally be group-writable. Keep the
+        # production protection rule: positive IPC fixtures use an owned 0700
+        # executable wrapper whose only action delegates to this test Python.
+        # This is fixture bootstrap, not certification of CI toolcache trust.
+        self.producer_executable = self.root / "owned-fixture-python"
+        self.producer_executable.write_text("#!/bin/sh\nexec " + shlex.quote(sys.executable) + ' "$@"\n')
+        self.producer_executable.chmod(0o700)
+        self.actual_producer_command = peer.handoff_producer_command
+
+    def protected_producer(self, ledger, deadline):
+        original = self.actual_producer_command
+        with mock.patch.object(peer.sys, "executable", str(self.producer_executable)):
+            return original(ledger, deadline)
 
     def mint(self):
         minted = peer.handoff_collect(self.ledger, self.clock, {"op": "mint", "ledgerEpoch": self.epoch,
@@ -116,7 +130,7 @@ class HandoffRuntime(unittest.TestCase):
     def test_late_receipt_never_rewrites_terminal_wait(self):
         self.mint()
         self.submitted()
-        deadline = time.monotonic() - 1
+        deadline = peer.handoff_now() - 1
         with self.ledger.transaction() as state:
             record = state["records"][self.correlation]
             peer.handoff_start_wait(record, "acknowledged", deadline, self.clock, initial_status="timed_out_unknown")
@@ -134,7 +148,7 @@ class HandoffRuntime(unittest.TestCase):
         self.mint()
         self.submitted()
         with self.ledger.transaction() as state:
-            peer.handoff_start_wait(state["records"][self.correlation], "acknowledged", time.monotonic() + 10, str(peer.uuid.uuid4()))
+            peer.handoff_start_wait(state["records"][self.correlation], "acknowledged", peer.handoff_now() + 10, str(peer.uuid.uuid4()))
         with self.assertRaises(peer.CcPeerError):
             peer.handoff_collect(self.ledger, self.clock, self.frame)
         confirm = {key: self.frame[key] for key in ("schemaVersion", "ledgerEpoch", "correlationId", "targetGeneration")}
@@ -147,7 +161,7 @@ class HandoffRuntime(unittest.TestCase):
     def test_manual_confirmation_is_new_attestation_after_timeout(self):
         self.submitted()
         with self.ledger.transaction() as state:
-            peer.handoff_start_wait(state["records"][self.correlation], "acknowledged", time.monotonic() - 1, None,
+            peer.handoff_start_wait(state["records"][self.correlation], "acknowledged", peer.handoff_now() - 1, None,
                                    initial_status="timed_out_unknown")
         confirm = {"schemaVersion": 1, "ledgerEpoch": self.epoch, "correlationId": self.correlation,
                    "targetGeneration": self.generation, "confirmed": True}
@@ -177,9 +191,9 @@ class HandoffRuntime(unittest.TestCase):
         with self.ledger.transaction() as state:
             record = state["records"][self.correlation]
             for _ in range(64):
-                peer.handoff_start_wait(record, "delivered", time.monotonic(), None)
+                peer.handoff_start_wait(record, "delivered", peer.handoff_now(), None)
             with self.assertRaises(peer.CcPeerError):
-                peer.handoff_start_wait(record, "delivered", time.monotonic(), None)
+                peer.handoff_start_wait(record, "delivered", peer.handoff_now(), None)
         self.assertEqual(len(self.record_now()["waits"]), 64)
 
     def test_strict_receipt_lexical_and_size_boundaries(self):
@@ -215,8 +229,8 @@ class HandoffRuntime(unittest.TestCase):
                 process.terminate()
             process.communicate(timeout=5)
         self.addCleanup(cleanup)
-        until = time.monotonic() + 3
-        while time.monotonic() < until:
+        until = peer.handoff_now() + 3
+        while peer.handoff_now() < until:
             if (self.ledger.root / "receipt.sock").exists():
                 return process
             if process.poll() is not None:
@@ -233,7 +247,7 @@ class HandoffRuntime(unittest.TestCase):
                  "correlationId": self.correlation, "targetGeneration": self.generation,
                  "receiptId": str(peer.uuid.uuid4()), "capability": minted["capability"]}
         with mock.patch.dict(os.environ, {"PATH": "/nonexistent/incompatible-canonical-cli"}):
-            command = peer.handoff_producer_command(self.ledger, time.monotonic() + 5)
+            command = self.protected_producer(self.ledger, peer.handoff_now() + 5)
             result = subprocess.run(command, input=peer.HandoffLedger.encode(frame),
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
         self.assertNotIn("session-peer", command)
@@ -269,8 +283,8 @@ class HandoffRuntime(unittest.TestCase):
         code = "import sys,pathlib; import session_peer as p; p.handoff_root=lambda:pathlib.Path(sys.argv[1]); sys.exit(p.main(['handoff','wait','--correlation-id',sys.argv[2],'--wait-for','acknowledged','--wait-timeout','6','--json']))"
         process = subprocess.Popen([sys.executable, "-c", code, str(self.ledger.root), self.correlation], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
-            until = time.monotonic() + 3
-            while not self.record_now()["waits"] and time.monotonic() < until:
+            until = peer.handoff_now() + 3
+            while not self.record_now()["waits"] and peer.handoff_now() < until:
                 time.sleep(0.01)
             process.send_signal(signal.SIGINT)
             stdout, stderr = process.communicate(timeout=5)
@@ -352,8 +366,8 @@ class HandoffRuntime(unittest.TestCase):
                         if pending.get("pending") is not True or self.ledger.record(frame["correlationId"])[1]["ack"] is not None:
                             raise AssertionError("early receipt was not retained unclassified")
                     connection.sendall(b"1")
-                until = time.monotonic() + 3
-                while self.ledger.record(frame["correlationId"])[1]["submission"] != "submitted" and time.monotonic() < until:
+                until = peer.handoff_now() + 3
+                while self.ledger.record(frame["correlationId"])[1]["submission"] != "submitted" and peer.handoff_now() < until:
                     time.sleep(0.01)
                 if not early:
                     peer.handoff_ipc(self.ledger.root, frame)
@@ -365,6 +379,7 @@ class HandoffRuntime(unittest.TestCase):
         with mock.patch.object(peer, "handoff_root", return_value=self.ledger.root), \
                 mock.patch.object(peer, "sessions_dir", return_value=sessions), \
                 mock.patch.object(peer, "discover", return_value=[row]), \
+                mock.patch.object(peer, "handoff_producer_command", side_effect=self.protected_producer), \
                 mock.patch.object(peer, "handoff_ensure_collector"), contextlib.redirect_stdout(out):
             status = peer.main(["send", "--to", "owned-fixture", "--message=hello", "--request-ack", "--wait-for", "acknowledged",
                                 "--wait-timeout", "6", "--json", "--no-from", "--no-reply-to", "--no-update-notice"])
@@ -429,7 +444,7 @@ class HandoffRuntime(unittest.TestCase):
             record["createdNs"] = 1
             record["historyBoot"] = "b" * 64
         with mock.patch.object(peer, "handoff_boot_clock", return_value="b" * 64), \
-                mock.patch.object(peer.time, "monotonic_ns", return_value=31 * 86400 * 1000000000):
+                mock.patch.object(peer, "handoff_now_ns", return_value=31 * 86400 * 1000000000):
             expired = self.record_now()
         self.assertEqual(expired["phase"], "tombstone")
         self.assertEqual(expired["binding"], self.binding)
@@ -470,7 +485,7 @@ class HandoffRuntime(unittest.TestCase):
 
     def test_expired_ipc_budget_never_connects_or_sends(self):
         with mock.patch.object(peer.socket, "socket") as connection, self.assertRaises(peer.CcPeerError):
-            peer.handoff_ipc(self.ledger.root, {"op": "clock"}, time.monotonic() - 1)
+            peer.handoff_ipc(self.ledger.root, {"op": "clock"}, peer.handoff_now() - 1)
         connection.assert_not_called()
 
     def test_slow_partial_frame_has_total_not_per_chunk_deadline(self):
@@ -486,9 +501,9 @@ class HandoffRuntime(unittest.TestCase):
             time.sleep(0.4)
             response = connection.recv(4096)
         self.assertFalse(json.loads(response)["ok"])
-        start = time.monotonic()
+        start = peer.handoff_now()
         self.assertIsNotNone(peer.handoff_channel_epoch(self.ledger))
-        self.assertLess(time.monotonic() - start, 0.5)
+        self.assertLess(peer.handoff_now() - start, 0.5)
 
     def test_sigint_during_effect_preserves_unknown_and_stops_explicit_wait(self):
         self.start_collector()
@@ -500,6 +515,7 @@ class HandoffRuntime(unittest.TestCase):
         with mock.patch.object(peer, "handoff_root", return_value=self.ledger.root), \
                 mock.patch.object(peer, "handoff_binding", return_value=(binding, self.generation, session)), \
                 mock.patch.object(peer, "handoff_ensure_collector"), mock.patch.object(peer, "require_claude_generation"), \
+                mock.patch.object(peer, "handoff_producer_command", side_effect=self.protected_producer), \
                 mock.patch.object(peer, "post_to_socket", side_effect=KeyboardInterrupt) as post, contextlib.redirect_stdout(output):
             code = peer.cmd_handoff_send(args)
         self.assertEqual(code, 130)
@@ -581,10 +597,10 @@ class HandoffRuntime(unittest.TestCase):
             with os.fdopen(read_fd, "rb", buffering=0) as stream:
                 fake_stdin = mock.Mock(buffer=stream)
                 os.write(write_fd, b'{')
-                start = time.monotonic()
+                start = peer.handoff_now()
                 with mock.patch.object(peer.sys, "stdin", fake_stdin), self.assertRaises(peer.CcPeerError):
                     peer.handoff_receipt_stdin(timeout=0.05)
-                self.assertLess(time.monotonic() - start, 0.5)
+                self.assertLess(peer.handoff_now() - start, 0.5)
         finally:
             os.close(write_fd)
 
@@ -650,3 +666,27 @@ class HandoffRuntime(unittest.TestCase):
         self.assertEqual(result["handoff"]["wait"]["reason"], "insufficient_budget")
         self.assertEqual(result["handoff"]["wait"]["status"], "failed")
         post.assert_not_called()
+
+    def test_group_writable_producer_executable_is_refused_before_probe(self):
+        self.producer_executable.chmod(0o770)
+        with mock.patch.object(peer.sys, "executable", str(self.producer_executable)), \
+                mock.patch.object(peer.subprocess, "run") as probe, self.assertRaises(peer.CcPeerError) as caught:
+            peer.handoff_producer_command(self.ledger, peer.handoff_now() + 5)
+        self.assertEqual(caught.exception.details["reason"], "receipt_handler_not_installed")
+        probe.assert_not_called()
+
+    def test_shared_clock_samples_are_ordered_across_actual_processes(self):
+        before = peer.handoff_now_ns()
+        code = "import session_peer as p; print(p.handoff_now_ns())"
+        child = subprocess.run([sys.executable, "-c", code], capture_output=True, timeout=5, check=True)
+        after = peer.handoff_now_ns()
+        observed = int(child.stdout)
+        self.assertLessEqual(before, observed)
+        self.assertLessEqual(observed, after)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin native provider")
+    def test_darwin_clock_does_not_use_process_relative_python_clock(self):
+        with mock.patch.object(peer.time, "monotonic_ns", side_effect=AssertionError("process-relative clock")):
+            value = peer.handoff_now_ns()
+        self.assertIs(type(value), int)
+        self.assertGreater(value, 0)

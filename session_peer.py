@@ -5134,12 +5134,52 @@ HANDOFF_RECORD_BYTES = 32768  # reserve all 64 waits, a receipt and native facts
 HANDOFF_FRAME_BYTES = 4096
 HANDOFF_COLLECTOR_ARG = "--_handoff-receipt-collector"
 HANDOFF_PRODUCER_ARG = "--_handoff-receipt-producer"
+_HANDOFF_MACH_CLOCK = None
 HANDOFF_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z")
 
 
 def handoff_error(reason):
     # Private frames, tokens, digests, paths and exception text never escape.
     return CcPeerError("Handoff operation refused", {"reason": reason, "retryAllowed": False})
+
+
+def handoff_now_ns():
+    """Shared native monotonic domain, including CPython 3.9 on Darwin.
+
+    CPython 3.9's Darwin monotonic clock subtracts a process-local t0. Never
+    compare that clock across the sender and independent receipt collector.
+    mach_absolute_time has a shared boot-relative tick domain; timebase_info
+    converts it to integer nanoseconds without float/UTC or invented offsets.
+    """
+    global _HANDOFF_MACH_CLOCK
+    if sys.platform != "darwin":
+        value = time.monotonic_ns()
+    else:
+        try:
+            import ctypes
+            if _HANDOFF_MACH_CLOCK is None:
+                class Timebase(ctypes.Structure):
+                    _fields_ = [("numer", ctypes.c_uint32), ("denom", ctypes.c_uint32)]
+                library = ctypes.CDLL(None)
+                absolute = library.mach_absolute_time
+                absolute.argtypes, absolute.restype = [], ctypes.c_uint64
+                timebase = library.mach_timebase_info
+                timebase.argtypes, timebase.restype = [ctypes.POINTER(Timebase)], ctypes.c_int
+                info = Timebase()
+                if timebase(ctypes.byref(info)) != 0 or not info.numer or not info.denom:
+                    raise handoff_error("handoff_clock_unavailable")
+                _HANDOFF_MACH_CLOCK = (absolute, int(info.numer), int(info.denom))
+            absolute, numer, denom = _HANDOFF_MACH_CLOCK
+            value = int(absolute()) * numer // denom
+        except (OSError, AttributeError, ValueError, TypeError) as exc:
+            raise handoff_error("handoff_clock_unavailable") from exc
+    if type(value) is not int or not 0 <= value <= 9223372036854775807:
+        raise handoff_error("handoff_clock_unavailable")
+    return value
+
+
+def handoff_now():
+    return handoff_now_ns() / 1000000000
 
 
 def handoff_uuid(value):
@@ -5312,7 +5352,10 @@ def handoff_boot_clock():
             raw = (str(value.sec) + ":" + str(value.usec)).encode("ascii")
         else:
             return None
-        return hashlib.sha256(sys.platform.encode("ascii") + b":" + raw).hexdigest()
+        # Namespace continuity proof by the shared clock provider. Earlier
+        # candidate process-relative metadata is not silently treated as this
+        # boot-relative domain after upgrade.
+        return hashlib.sha256(b"handoff-shared-native-clock-v1:" + sys.platform.encode("ascii") + b":" + raw).hexdigest()
     except (OSError, AttributeError, ValueError):
         return None
 
@@ -5402,15 +5445,15 @@ class HandoffLedger:
             after = os.fstat(fd)
             if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
                 raise handoff_error("unsafe_handoff_storage")
-            limit = deadline if deadline is not None else time.monotonic() + 5
+            limit = deadline if deadline is not None else handoff_now() + 5
             while True:
                 try:
                     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     break
                 except BlockingIOError:
-                    if time.monotonic() >= limit:
+                    if handoff_now() >= limit:
                         raise handoff_error("handoff_storage_busy")
-                    time.sleep(min(0.01, max(0, limit - time.monotonic())))
+                    time.sleep(min(0.01, max(0, limit - handoff_now())))
             path = self.root / "ledger.json"
             initial = handoff_private_stat(path)
             if initial.st_size > HANDOFF_LEDGER_BYTES:
@@ -5433,7 +5476,7 @@ class HandoffLedger:
                     self._validate_record(record)
             except (CcPeerError, ValueError, KeyError, TypeError) as exc:
                 raise handoff_error("handoff_ledger_corrupt") from exc
-            boot, now = handoff_boot_clock(), time.monotonic_ns()
+            boot, now = handoff_boot_clock(), handoff_now_ns()
             if boot is not None:
                 for record in state["records"].values():
                     if (record["phase"] != "tombstone" and record["historyBoot"] == boot
@@ -5466,7 +5509,7 @@ class HandoffLedger:
             correlation = str(uuid.uuid4())
             record = {"id": correlation, "binding": binding, "generation": generation,
                       "phase": "prepared", "submission": "not_attempted", "native": None,
-                      "waits": [], "ack": None, "createdNs": time.monotonic_ns(),
+                      "waits": [], "ack": None, "createdNs": handoff_now_ns(),
                       "createdUtcMs": int(time.time() * 1000), "capability": None, "pendingReceipt": None,
                       "historyBoot": handoff_boot_clock()}
             state["records"][correlation] = record
@@ -5631,7 +5674,7 @@ def handoff_collect(ledger, epoch_id, frame):
                     record["generation"] != frame["targetGeneration"] or record["phase"] != "prepared"
                     or record["capability"] is not None):
                 raise handoff_error("receipt_authority_unavailable")
-            now = time.monotonic_ns()
+            now = handoff_now_ns()
             if (record["historyBoot"] is None or record["historyBoot"] != handoff_boot_clock()
                     or now < record["createdNs"] or now >= record["createdNs"] + 86400 * 1000000000):
                 raise handoff_error("receipt_authority_expired")
@@ -5661,7 +5704,7 @@ def handoff_collect(ledger, epoch_id, frame):
                 raise handoff_error("receipt_conflict")
             # Even after expiry duplicates require original hash proof. Read-only.
             return {"ok": True, "duplicate": True, "pending": False}
-        if cap["clockEpoch"] != epoch_id or time.monotonic_ns() >= cap["expiresNs"]:
+        if cap["clockEpoch"] != epoch_id or handoff_now_ns() >= cap["expiresNs"]:
             raise handoff_error("receipt_authority_expired")
         pending = record["pendingReceipt"]
         if classify and pending is None:
@@ -5672,7 +5715,7 @@ def handoff_collect(ledger, epoch_id, frame):
         if record["submission"] != "submitted":
             if not classify and record["phase"] == "attempted" and pending is None:
                 record["pendingReceipt"] = {"receiptId": receipt["receiptId"], "clockEpoch": epoch_id,
-                        "receivedNs": time.monotonic_ns(), "receivedAtUtcMs": int(time.time() * 1000)}
+                        "receivedNs": handoff_now_ns(), "receivedAtUtcMs": int(time.time() * 1000)}
             if record["pendingReceipt"] is not None and record["phase"] == "attempted":
                 return {"ok": True, "duplicate": pending is not None, "pending": True}
             raise handoff_error("receipt_submission_unconfirmed")
@@ -5684,7 +5727,7 @@ def handoff_collect(ledger, epoch_id, frame):
             raise handoff_error("receipt_order_unprovable")
         # An early receipt is unclassified until this atomic acceptance. Its
         # arrival timestamp is retained privately, never backdated into ACK.
-        now = time.monotonic_ns()
+        now = handoff_now_ns()
         late = origin is not None and now >= origin["deadlineNs"]
         record["ack"] = {"status": "acknowledged", "assurance": "token_possession",
                          "receivedAtUtcMs": int(time.time() * 1000), "late": late,
@@ -5694,12 +5737,12 @@ def handoff_collect(ledger, epoch_id, frame):
             if wait["status"] == "pending" and wait["clockEpoch"] == epoch_id:
                 # Receipt arrival classifies lateness; a wait already terminal
                 # before classification stays terminal. No retroactive rewrite.
-                wait["status"] = "timed_out_unknown" if time.monotonic_ns() >= wait["deadlineNs"] else "satisfied"
+                wait["status"] = "timed_out_unknown" if handoff_now_ns() >= wait["deadlineNs"] else "satisfied"
         return {"ok": True, "duplicate": False, "pending": False}
 
 
 def handoff_ipc(root, frame, deadline=None):
-    if deadline is not None and time.monotonic() >= deadline:
+    if deadline is not None and handoff_now() >= deadline:
         raise handoff_error("receipt_channel_unavailable")
     root = Path(root)
     handoff_private_stat(root, True)
@@ -5708,13 +5751,13 @@ def handoff_ipc(root, frame, deadline=None):
         info = path.lstat()
         if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
             raise handoff_error("unsafe_receipt_channel")
-        remaining = min(2.0, deadline - time.monotonic()) if deadline is not None else 2.0
+        remaining = min(2.0, deadline - handoff_now()) if deadline is not None else 2.0
         if remaining <= 0:
             raise handoff_error("receipt_channel_unavailable")
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
             connection.settimeout(remaining)
             connection.connect(str(path))
-            if deadline is not None and time.monotonic() >= deadline:
+            if deadline is not None and handoff_now() >= deadline:
                 raise handoff_error("receipt_channel_unavailable")
             raw = HandoffLedger.encode(frame)
             if len(raw) > HANDOFF_FRAME_BYTES:
@@ -5724,9 +5767,9 @@ def handoff_ipc(root, frame, deadline=None):
             response = bytearray()
             while True:
                 if deadline is not None:
-                    if time.monotonic() >= deadline:
+                    if handoff_now() >= deadline:
                         raise handoff_error("receipt_channel_unavailable")
-                    connection.settimeout(min(2, deadline - time.monotonic()))
+                    connection.settimeout(min(2, deadline - handoff_now()))
                 chunk = connection.recv(min(4097 - len(response), 1024))
                 if not chunk:
                     break
@@ -5771,18 +5814,18 @@ def handoff_collector(root):
                 if record["capability"] and record["ack"] is None:
                     record["capability"]["revoked"] = True
         server.settimeout(1)
-        end = time.monotonic() + 86400
-        while time.monotonic() < end:
+        end = handoff_now() + 86400
+        while handoff_now() < end:
             try:
                 connection, _ = server.accept()
             except socket.timeout:
                 continue
             with connection:
-                frame_deadline = time.monotonic() + 1
+                frame_deadline = handoff_now() + 1
                 try:
                     raw = bytearray()
                     while True:
-                        remaining = frame_deadline - time.monotonic()
+                        remaining = frame_deadline - handoff_now()
                         if remaining <= 0:
                             raise handoff_error("invalid_receipt")
                         connection.settimeout(remaining)
@@ -5814,7 +5857,7 @@ def handoff_producer_command(ledger, deadline):
         info = path.lstat()
         if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o022 or info.st_uid not in (0, os.getuid()):
             raise handoff_error("receipt_handler_not_installed")
-    remaining = deadline - time.monotonic()
+    remaining = deadline - handoff_now()
     if remaining <= 0:
         raise handoff_error("receipt_handler_not_installed")
     try:
@@ -5823,13 +5866,13 @@ def handoff_producer_command(ledger, deadline):
                     timeout=min(2, remaining), check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise handoff_error("receipt_handler_not_installed") from exc
-    if probe.returncode or b"--receipt" not in probe.stdout or time.monotonic() >= deadline:
+    if probe.returncode or b"--receipt" not in probe.stdout or handoff_now() >= deadline:
         raise handoff_error("receipt_handler_not_installed")
     return [str(executable), "-I", str(script), HANDOFF_PRODUCER_ARG, str(ledger.root)]
 
 
 def handoff_ensure_collector(ledger, deadline):
-    if time.monotonic() >= deadline:
+    if handoff_now() >= deadline:
         raise handoff_error("receipt_channel_unavailable")
     path = ledger.root / "receipt.sock"
     if path.exists():
@@ -5845,13 +5888,13 @@ def handoff_ensure_collector(ledger, deadline):
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL, close_fds=True, start_new_session=True)
     try:
-        process.wait(timeout=min(2, max(0.001, deadline - time.monotonic())))
+        process.wait(timeout=min(2, max(0.001, deadline - handoff_now())))
     except subprocess.TimeoutExpired:
         process.terminate()
         process.wait(timeout=1)
         raise handoff_error("receipt_channel_unavailable")
-    until = min(deadline, time.monotonic() + 2)
-    while time.monotonic() < until:
+    until = min(deadline, handoff_now() + 2)
+    while handoff_now() < until:
         if path.exists():
             return
         time.sleep(0.01)
@@ -5882,7 +5925,7 @@ def handoff_public(epoch, record, active_clock=None):
         result["nextActions"] = ["reconcile"]
         if (record.get("ackRequested") and record["capability"] and not record["capability"]["revoked"] and not ack
                 and active_clock is not None and active_clock == record["capability"]["clockEpoch"]
-                and time.monotonic_ns() < record["capability"]["expiresNs"] and (not wait or wait["status"] != "unsupported")):
+                and handoff_now_ns() < record["capability"]["expiresNs"] and (not wait or wait["status"] != "unsupported")):
             result["nextActions"].append("keep_waiting")
         if wait and wait["status"] == "pending":
             result["nextActions"].append("stop_waiting")
@@ -5904,7 +5947,7 @@ def handoff_start_wait(record, goal, deadline, clock_epoch, *, initial_status=No
                  and record["capability"] is not None and not record["capability"]["revoked"])
     wait = {"for": goal, "status": initial_status or ("pending" if supported else "unsupported"),
             "operationId": str(uuid.uuid4()),
-            "deadlineAtUtcMs": int(time.time() * 1000 + max(0, deadline - time.monotonic()) * 1000),
+            "deadlineAtUtcMs": int(time.time() * 1000 + max(0, deadline - handoff_now()) * 1000),
             "deadlineNs": int(deadline * 1000000000), "clockEpoch": clock_epoch}
     if reason is not None:
         wait["reason"] = reason
@@ -5915,7 +5958,7 @@ def handoff_start_wait(record, goal, deadline, clock_epoch, *, initial_status=No
 
 
 def handoff_wait(ledger, correlation, goal, seconds, deadline=None, clock_epoch=None, operation=None, cleanup_deadline=None):
-    start = time.monotonic()
+    start = handoff_now()
     cleanup_deadline = cleanup_deadline if cleanup_deadline is not None else start + seconds
     deadline = deadline if deadline is not None else cleanup_deadline - 5
     verified_clock = handoff_channel_epoch(ledger, deadline) if seconds > 5 else None
@@ -5941,11 +5984,11 @@ def handoff_wait(ledger, correlation, goal, seconds, deadline=None, clock_epoch=
                     current["status"] = "satisfied"
                 elif verified_clock is None or current["clockEpoch"] != verified_clock:
                     current.update(status="failed", reason="history_unavailable")
-                elif time.monotonic() >= deadline:
+                elif handoff_now() >= deadline:
                     current["status"] = "timed_out_unknown"
                 if current["status"] != "pending":
                     break
-            time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+            time.sleep(min(0.05, max(0, deadline - handoff_now())))
     except KeyboardInterrupt:
         with ledger.transaction(cleanup_deadline) as state:
             record = state["records"][correlation]
@@ -5978,12 +6021,12 @@ def handoff_receipt_stdin(timeout=5):
     import select
     if IS_WINDOWS:
         raise handoff_error("receipt_channel_unsupported")
-    deadline = time.monotonic() + timeout
+    deadline = handoff_now() + timeout
     try:
         fd = sys.stdin.buffer.fileno()
         raw = bytearray()
         while True:
-            remaining = deadline - time.monotonic()
+            remaining = deadline - handoff_now()
             if remaining <= 0 or not select.select([fd], [], [], max(0, remaining))[0]:
                 raise handoff_error("invalid_receipt")
             chunk = os.read(fd, 4097 - len(raw))
@@ -6086,7 +6129,7 @@ def cmd_handoff_send(args):
     Remote source streaming and unproven Codex observation/cleanup are refused
     before effect, not silently converted to another transport or generic ACK.
     """
-    total = time.monotonic() + args.wait_timeout
+    total = handoff_now() + args.wait_timeout
     cutoff = total - 5
     if args.dry_run and (args.request_ack or args.observe_delivery or args.wait_for):
         raise NoTargetError("--dry-run cannot request observation, ACK or waiting")
@@ -6121,7 +6164,7 @@ def cmd_handoff_send(args):
         return 0
     capable = (not IS_WINDOWS and session is not None and generation is not None and
                not getattr(args, "wake", False) and not getattr(args, "host", None) and not getattr(args, "device", None))
-    reason = "insufficient_budget" if args.wait_timeout <= 5 else "deadline_before_effect" if time.monotonic() >= cutoff else "evidence_unsupported" if not capable or args.wait_for == "delivered" else None
+    reason = "insufficient_budget" if args.wait_timeout <= 5 else "deadline_before_effect" if handoff_now() >= cutoff else "evidence_unsupported" if not capable or args.wait_for == "delivered" else None
     wants_ack = args.request_ack or args.wait_for == "acknowledged"
     authority = None
     producer = None
@@ -6168,7 +6211,7 @@ def cmd_handoff_send(args):
             raise handoff_error("native_snapshot_capacity")
     except (CcPeerError, UnicodeError):
         return handoff_refuse_send(ledger, correlation, args, "evidence_failed", total)
-    if time.monotonic() >= cutoff:
+    if handoff_now() >= cutoff:
         return handoff_refuse_send(ledger, correlation, args, "deadline_before_effect", total)
     # Commit + fsync before the only native invocation. A crash now is unknown,
     # even if it occurred before socket creation. Recovery never re-invokes it.
@@ -6177,7 +6220,7 @@ def cmd_handoff_send(args):
         record = state["records"][correlation]
         if record["phase"] != "prepared":
             raise handoff_error("handoff_already_attempted")
-        if time.monotonic() >= cutoff:
+        if handoff_now() >= cutoff:
             raise handoff_error("deadline_before_effect")
         record.update(phase="attempted", submission="unknown", observe=args.observe_delivery, ackRequested=wants_ack)
         if args.wait_for:
@@ -6185,8 +6228,13 @@ def cmd_handoff_send(args):
     interrupted = False
     try:
         require_claude_generation(session, generation)
+        # The ordinary inbox adapter uses Python's current-process monotonic
+        # domain. Translate only the remaining duration, never pass persisted
+        # cross-process timestamps into that adapter or renew the total budget.
+        native_now, shared_now = time.monotonic(), handoff_now()
         post_to_socket(session["socket"], text, pid=session["pid"], generation_session=session,
-                       expected_generation=generation, effect_deadline=cutoff, total_deadline=total)
+                       expected_generation=generation, effect_deadline=native_now + cutoff - shared_now,
+                       total_deadline=native_now + total - shared_now)
         native = native_success
         submission = "submitted"
     except CcPeerError as exc:
