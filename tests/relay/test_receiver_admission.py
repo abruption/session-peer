@@ -373,6 +373,12 @@ class ReceiverAdmission(unittest.IsolatedAsyncioTestCase):
         self.assert_empty()
 
     async def test_saturation_counters_and_diagnostics_are_bounded_and_sanitized(self):
+        # Waiting-room registration is not a barrier for client lifecycle
+        # callbacks. Retire this unrelated observer before capturing the exact
+        # admission-only warning count; keep product diagnostics unchanged.
+        self.relay_listener.cancel()
+        await asyncio.wait_for(asyncio.gather(self.relay_listener, return_exceptions=True), wire.TIMEOUT)
+        self.assertTrue(self.relay_listener.cancelled())
         self.receiver.diagnostic_events = True
         async def blocked(raw):
             await asyncio.Future()
@@ -419,6 +425,37 @@ class ReceiverAdmission(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(counters['relayPreauthRefused'], 50)
         self.assertEqual(counters['abortFailed'], 100)
         self.assert_empty()
+
+    async def test_saturation_capture_waits_for_background_observer_to_retire(self):
+        # Replace the owned network listener with a controlled observer. A
+        # queued lifecycle callback must retire before exact admission-only
+        # log arithmetic starts, including when cancellation yields once.
+        self.relay_listener.cancel()
+        await asyncio.wait_for(asyncio.gather(self.relay_listener, return_exceptions=True), wire.TIMEOUT)
+        started, release, retired = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        async def observer():
+            started.set()
+            try:
+                await release.wait()
+            finally:
+                await asyncio.sleep(0)
+                self.receiver.lifecycle_event('websocket_open', elapsedMs=0, attemptId=None)
+                retired.set()
+
+        self.relay_listener = asyncio.create_task(observer())
+        await asyncio.wait_for(started.wait(), wire.TIMEOUT)
+        original_close = self.receiver.close
+
+        async def close_after_callback():
+            release.set()
+            await asyncio.wait_for(retired.wait(), wire.TIMEOUT)
+            await original_close()
+
+        with patch.object(self.receiver, 'close', new=close_after_callback):
+            await self.test_saturation_counters_and_diagnostics_are_bounded_and_sanitized()
+        self.assertTrue(retired.is_set())
+        self.assertTrue(self.relay_listener.cancelled())
 
     async def test_close_rejects_new_spawn_during_and_after_shutdown(self):
         entered, finish = asyncio.Event(), asyncio.Event()
