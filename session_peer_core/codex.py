@@ -4,6 +4,195 @@
 # --------------------------------------------------------------------------
 
 
+MAX_CODEX_CONFIG_BYTES = 1024 * 1024
+
+
+def codex_storage_refused(reason: str) -> CcPeerError:
+    # Never reflect configuration contents, environment values or paths here.
+    return CcPeerError(
+        "Cannot establish the selected Codex SQLite storage: " + reason +
+        "; nothing submitted. Relocated storage is not supported by session-peer.",
+        {"status": "refused", "submitted": False, "consumptionConfirmed": False,
+         "retryAllowed": False, "reason": reason})
+
+
+def _codex_config_tokens(text: str) -> list[tuple[str, str]]:
+    """Bounded lexical classification, NOT a general TOML parser.
+
+    Retain key spelling, including quoted keys, while ignoring comments and
+    string contents as possible assignments. Unclassifiable syntax fails closed.
+    Native Codex remains responsible for full TOML/schema validation.
+    """
+    tokens = []
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char in " \t\r":
+            index += 1
+        elif char == "\n":
+            tokens.append(("newline", char))
+            index += 1
+        elif char == "#":
+            end = text.find("\n", index)
+            index = len(text) if end < 0 else end
+        elif char in "\"'":
+            start = index
+            quote = char * (3 if text.startswith(char * 3, index) else 1)
+            index += len(quote)
+            while index < len(text):
+                if text.startswith(quote, index):
+                    index += len(quote)
+                    # TOML multiline endings can include one/two literal quotes.
+                    if len(quote) == 3:
+                        for _ in range(2):
+                            if index < len(text) and text[index] == char:
+                                index += 1
+                    tokens.append(("string", text[start:index]))
+                    break
+                if len(quote) == 1 and text[index] in "\r\n":
+                    raise ValueError("unterminated configuration string")
+                if char == '"' and text[index] == "\\":
+                    index += 2
+                else:
+                    index += 1
+            else:
+                raise ValueError("unterminated configuration string")
+        elif char in "[]=.{},":
+            tokens.append((char, char))
+            index += 1
+        else:
+            start = index
+            while index < len(text) and text[index] not in " \t\r\n#\"'[]=.{},":
+                if ord(text[index]) < 32 or ord(text[index]) == 127:
+                    raise ValueError("invalid configuration character")
+                index += 1
+            tokens.append(("bare", text[start:index]))
+    return tokens
+
+
+def _codex_config_key(tokens: list[tuple[str, str]]) -> list[str]:
+    keys = []
+    for index, (kind, value) in enumerate(tokens):
+        if index % 2:
+            if kind != ".":
+                raise ValueError("unclassifiable configuration key")
+            continue
+        if kind == "string" and value.startswith("'") and not value.startswith("'''"):
+            key = value[1:-1]
+        elif kind == "string" and value.startswith('"') and not value.startswith('"""'):
+            # JSON's basic string escapes match TOML's key escapes, except \U.
+            def unicode_escape(match):
+                number = int(match.group(1), 16)
+                if number > 0x10ffff or 0xd800 <= number <= 0xdfff:
+                    raise ValueError("invalid configuration key escape")
+                return chr(number)
+            converted = re.sub(r"(?<!\\)\\U([0-9a-fA-F]{8})", unicode_escape, value)
+            key = json.loads(converted)
+        elif kind == "bare" and re.fullmatch(r"[A-Za-z0-9_-]+", value):
+            key = value
+        else:
+            raise ValueError("unclassifiable configuration key")
+        if any(ord(char) < 32 or ord(char) == 127 for char in key):
+            raise ValueError("invalid configuration key")
+        key.encode("utf-8", errors="strict")
+        keys.append(key)
+    if not tokens or len(tokens) % 2 == 0:
+        raise ValueError("unclassifiable configuration key")
+    return keys
+
+
+def _codex_config_has_storage(text: str) -> bool:
+    table = []
+    statement = []
+    brackets = []
+    for kind, value in _codex_config_tokens(text) + [("newline", "\n")]:
+        if kind == "newline" and not brackets:
+            if not statement:
+                continue
+            if statement[0][0] == "[":
+                count = 2 if len(statement) > 1 and statement[1][0] == "[" else 1
+                if [item[0] for item in statement[-count:]] != ["]"] * count:
+                    raise ValueError("unclassifiable configuration table")
+                table = _codex_config_key(statement[count:-count])
+                if table[0] == "sqlite_home":
+                    return True
+            else:
+                split = next((i for i, token in enumerate(statement) if token[0] == "="), -1)
+                if split <= 0 or split == len(statement) - 1:
+                    raise ValueError("unclassifiable configuration assignment")
+                key = _codex_config_key(statement[:split])
+                if not table and key[0] == "sqlite_home":
+                    return True
+            statement = []
+            continue
+        if kind in ("[", "{"):
+            brackets.append(kind)
+        elif kind in ("]", "}"):
+            if not brackets or brackets.pop() != {"]": "[", "}": "{"}[kind]:
+                raise ValueError("unbalanced configuration brackets")
+        if kind != "newline":
+            statement.append((kind, value))
+    if brackets or statement:
+        raise ValueError("unterminated configuration value")
+    return False
+
+
+def check_codex_storage(root: Path) -> None:
+    """Reject known relocation without reading native accounts or transcripts.
+
+    This checks inherited SQLite overrides and this home's config only. It does
+    not pretend to resolve native project/system/managed requirement layers.
+    """
+    for name, value in os.environ.items():
+        match = name.upper() == "CODEX_SQLITE_HOME" if IS_WINDOWS else name == "CODEX_SQLITE_HOME"
+        if match and value.strip():
+            raise codex_storage_refused("sqlite_environment_override")
+    path = root / "config.toml"
+    try:
+        before = path.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise codex_storage_refused("storage_config_unreadable") from exc
+    descriptor = None
+    try:
+        if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_CODEX_CONFIG_BYTES:
+            raise ValueError("unbounded configuration file")
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        if not IS_WINDOWS:
+            flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        opened = os.fstat(descriptor)
+        if ((opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+                or not stat.S_ISREG(opened.st_mode)):
+            raise ValueError("configuration file replaced")
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = None
+            data = stream.read(MAX_CODEX_CONFIG_BYTES + 1)
+            after = os.fstat(stream.fileno())
+        current = path.lstat()
+        snapshot = lambda record: (record.st_dev, record.st_ino, record.st_size, record.st_mtime_ns)
+        if (len(data) > MAX_CODEX_CONFIG_BYTES or snapshot(before) != snapshot(after)
+                or snapshot(current) != snapshot(after)):
+            raise ValueError("configuration file changed or exceeded limit")
+        relocated = _codex_config_has_storage(data.decode("utf-8", errors="strict"))
+    except (OSError, ValueError, UnicodeError, RecursionError) as exc:
+        raise codex_storage_refused("storage_config_unverifiable") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    if relocated:
+        raise codex_storage_refused("sqlite_home_configuration")
+
+
+def codex_process_environment(root: Path, native_home: str | None = None) -> dict:
+    check_codex_storage(root)
+    env = {name: value for name, value in os.environ.items()
+           if (name.upper() if IS_WINDOWS else name) not in ("CODEX_HOME", "CODEX_SQLITE_HOME")}
+    env["CODEX_HOME"] = native_home or str(root)
+    return env
+
+
 def codex_home(args: argparse.Namespace) -> Path:
     return Path(getattr(args, "codex_home", None) or os.environ.get("CODEX_HOME")
                 or Path.home() / ".codex").expanduser().resolve()
@@ -84,6 +273,7 @@ def collect_codex_listing(args: argparse.Namespace) -> dict:
         item = {key: value for key, value in candidate.items() if key != "required"}
         db = Path(item["stateDb"])
         try:
+            check_codex_storage(Path(item["codexHome"]))
             try:
                 mode = db.stat().st_mode
             except (FileNotFoundError, NotADirectoryError):
@@ -521,6 +711,7 @@ def resolve_codex_home(args: argparse.Namespace, selected: Path,
         for home in homes
     ]
     for home, candidate in zip(homes, candidates):
+        check_codex_storage(home)
         db = home / "state_5.sqlite"
         if not db.is_file():
             candidate["savedThread"] = False
@@ -713,6 +904,7 @@ def codex_executable(args: argparse.Namespace) -> str:
 def discover_codex(args: argparse.Namespace) -> list[dict]:
     """Experimental saved-session discovery; never write Codex's internal DB."""
     root = codex_home(args)
+    check_codex_storage(root)
     db = root / "state_5.sqlite"
     if not db.is_file():
         raise CcPeerError(f"Codex state_5.sqlite not found in {root}; check --codex-home (tested with CLI 0.154.0)")
@@ -774,6 +966,7 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
                            "consumptionConfirmed": False})
     selected = codex_home(args)
     root, home_resolution = resolve_codex_home(args, selected, thread_id)
+    check_codex_storage(root)
     result = {"ok": True, "target": {"agent": "codex", "id": thread_id},
               "chars": len(text), "dryRun": args.dry_run,
               "codexHome": str(root), "submitted": not args.dry_run,
@@ -791,7 +984,7 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
     # spelling of that same home.  This private adapter value is derived from
     # operator policy; it is never accepted from a paired request.
     process_home = getattr(args, "codex_native_home", None) or str(root)
-    env = dict(os.environ, CODEX_HOME=process_home)
+    env = codex_process_environment(root, process_home)
     try:
         # Keep leading dashes inside the option value, including with --no-from.
         done = subprocess.run(argv,
@@ -825,6 +1018,7 @@ def wake_refused(reason: str, message: str) -> CcPeerError:
 
 
 def codex_wake_preflight(root: Path, thread_id: str, executable: str) -> dict:
+    check_codex_storage(root)
     if fcntl is None or sys.platform not in ("darwin", "linux"):
         raise wake_refused("unsupported_platform", "Codex wake supports macOS/Linux only")
     try:
@@ -928,7 +1122,7 @@ def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeou
         # into CLI JSON. Only lifecycle states and bounded error text escape.
         with tempfile.TemporaryFile() as diagnostics:
             process = subprocess.Popen([executable, "app-server"], cwd=cwd,
-                env=dict(os.environ, CODEX_HOME=str(root)), stdin=subprocess.PIPE,
+                env=codex_process_environment(root), stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=diagnostics, start_new_session=True)
             selector = selectors.DefaultSelector()
             selector.register(process.stdout, selectors.EVENT_READ)

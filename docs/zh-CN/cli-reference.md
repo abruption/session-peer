@@ -296,6 +296,16 @@ Codex 发现使用只读 SQLite 连接读取 `state_5.sqlite`。此内部模式�
 
 `--codex-home` 覆盖目标端的 `CODEX_HOME`（默认为 `~/.codex`）。`--codex-bin` 覆盖用于发送的 `codex` PATH 查找。在 SSH 上，这些是远程路径。发送需要具备 `queue` 命令的 Codex 可执行文件以及该目录下相应的已保存线程/rollout；仅凭列表并不能证明队列可以接受它。
 
+### SQLite 存储边界
+
+2026-10-09 的源代码调查核对了 native Codex [0.154.0](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/core/src/config/mod.rs) 和 [0.159.0](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/core/src/config/mod.rs)。两版都依次从已配置的 `sqlite_home`、非空的 `CODEX_SQLITE_HOME`、`CODEX_HOME` 选择 SQLite 存储。环境变量中的相对路径以 native 解析后的工作目录为基准。[管理员要求](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/core/src/config/requirements.rs) 可以替换存储设置，包括命令行覆盖。[native 队列路径](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/tui/src/session_queue_commands.rs) 可能复用正在运行的共享服务器，因此新客户端的环境不能证明服务器使用的存储。这些是源码调查结果，并非新的实际投递或平台验证。
+
+如果继承的 `CODEX_SQLITE_HOME` 非空，或任何被检查目录的配置中存在根级 `sqlite_home`，session-peer 会在发现、预检或队列提交之前拒绝。即使配置路径等于所选目录也会拒绝，包括带引号或转义的根级键以及根级点分键和表。未选中的嵌套键不被视为根级存储设置。空环境变量覆盖会从 native 子进程环境中移除；POSIX 区分环境变量名称的大小写，Windows 不区分。现有的 native 目录路径转换保持不变，不新增迁移存储位置的支持。
+
+目录中的 `config.toml` 必须是不超过 1 MiB 的 UTF-8 常规文件，不能是符号链接；文件不存在时允许继续。无法读取、发生变化、超出大小限制或键语法无法分类的文件会被拒绝，且不会输出其内容。不依赖外部库的键分类器支持 Python 3.9，但不是完整的 TOML 或模式验证器；其他值仍由 native Codex 验证。队列和 wake 会在启动子进程前重新检查该边界。拒绝结果包含 `status=refused`、`submitted=false` 和 `retryAllowed=false`；正常的既有输出及写入进程所有权检查保持不变。SSH 在目标端检查，而不是检查发送端的环境。
+
+这只是有限的防护增强，不能证明所有配置下的 native 存储一致。该检查不会解析或证明项目、系统、配置档层、管理员要求及现有共享服务器的有效存储；最后一次检查后配置仍可能变化。不要仅凭检查成功推断存储一致。[#268](https://github.com/abruption/session-peer/issues/268) 保持开放，等待此证据门槛和版本、平台验收。伪子进程测试只说明拒绝和环境处理，不能证明实际误投递、安全利用或新的 native 兼容性。wake 的版本支持范围保持不变。
+
 ### Orca 与多个 Codex 目录
 
 由 Orca 启动的会话可以使用按账户划分的目录，而单独的终端或 SSH 命令则使用 `~/.codex`。同一个 UUID 可能同时存在于两者之中。向其中一个副本成功提交队列并不能证明目标会话正在使用该目录。
