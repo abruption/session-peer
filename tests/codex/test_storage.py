@@ -115,12 +115,14 @@ class CodexStorage(unittest.TestCase):
                 self.assertNotIn("CODEX_SQLITE_HOME", env)
 
     def test_environment_case_is_platform_specific(self):
-        with mock.patch.dict(os.environ, {"codex_sqlite_home": "/private"}):
+        # Windows os.environ normalizes keys on insertion. Use a plain mapping
+        # when simulating POSIX on Windows, rather than silently changing input.
+        with mock.patch.object(peer.os, "environ", {"codex_sqlite_home": "/private"}):
             with mock.patch.object(peer, "IS_WINDOWS", False):
                 peer.check_codex_storage(self.root)
             with mock.patch.object(peer, "IS_WINDOWS", True):
                 self.refuses("sqlite_environment_override")
-        with mock.patch.dict(os.environ, {"codex_home": "unselected", "codex_sqlite_home": ""}), \
+        with mock.patch.object(peer.os, "environ", {"codex_home": "unselected", "codex_sqlite_home": ""}), \
              mock.patch.object(peer, "IS_WINDOWS", True):
             self.assertEqual(peer.codex_process_environment(self.root)["CODEX_HOME"], str(self.root))
             self.assertNotIn("codex_home", peer.codex_process_environment(self.root))
