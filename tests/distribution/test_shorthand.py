@@ -26,7 +26,7 @@ class ShorthandTests(unittest.TestCase):
                         SESSION_PEER_NO_UPDATE_NOTICE="1", PATH=str(self.bin) + os.pathsep + os.environ["PATH"])
         self.fixture = self.directory / "capture.py"
         self.fixture.write_text(
-            "import json,sys\nprint(json.dumps({'args':sys.argv[1:],'stdin':sys.stdin.read()},ensure_ascii=False))\n"
+            "import json,sys\nprint(json.dumps({'args':sys.argv[1:],'stdin':sys.stdin.buffer.read().decode('utf-8')}))\n"
             "sys.exit(7 if '--fail' in sys.argv else 0)\n", encoding="utf-8")
         self.canonical(self.fixture)
 
@@ -168,7 +168,7 @@ try { . $asset } catch { $refused = $true }
 Require $refused 'default alias was not refused'
 Require ((Get-Alias sp).Definition -eq 'Set-ItemProperty') 'default alias changed'
 Remove-Item Alias:sp -Force
-function session-peer { & '__PYTHON__' '__FIXTURE__' @args }
+function session-peer { $input | & '__PYTHON__' '__FIXTURE__' @args }
 Set-StrictMode -Version 2.0
 . $asset
 . $asset
@@ -178,6 +178,8 @@ Require ($LASTEXITCODE -eq 7) 'native exit code changed'
 Require ($result.args.Count -eq 6) 'argument count changed'
 Require ($result.args[1] -eq '--message=값 $;`literal`') 'argument changed'
 Require (($result | ConvertTo-Json -Compress) -eq ($expected | ConvertTo-Json -Compress)) 'alias changed native argument input'
+$result = 'stdin α' | sp input | ConvertFrom-Json
+Require ($result.stdin.Trim() -eq 'stdin α') 'pipeline stdin changed'
 function session-peer { 'updated implementation'; $global:LASTEXITCODE = 0 }
 Require ((sp --version) -eq 'updated implementation') 'canonical selection not followed after update'
 . $asset -Remove
