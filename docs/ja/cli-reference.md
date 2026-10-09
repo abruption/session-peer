@@ -18,6 +18,18 @@
 生成情報の粒度は OS に依存します（Linux は起動 ID と開始時刻の clock tick を使用）。
 世界的に一意・複製不能な身元や、暗号学的な SSH ホスト鍵の連続性は保証しません。
 
+`stale_target` の拒否には、元の要求で指定した Claude 世代の `lastSeenTarget` を含めます。
+後継プロセスを再検索した結果ではありません。この限定的なメタデータには、プロセス生成値、
+パス、ユーザー名やホスト名を含めません。
+
+`{"status":"refused","reason":"stale_target","submitted":false,"retryAllowed":false,"lastSeenTarget":{"agent":"claude","targetGeneration":"tg1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`
+
+`target_generation_unavailable` は OS の身元を検証できないこと、
+`unsupported_target_generation` は対象がこの前提条件に対応していないことを示します。
+どちらも `lastSeenTarget` を含めず、再送を許可しません。
+ソース転送・再起動の回帰テストは専用のプロトコル受信先とローカルの SSH 代替を使います。
+実際の遠隔ホストやネイティブエージェントの検証を示すものではありません。
+
 Codex キュー、Antigravity とペアリング済み機器には、この受信プロセス世代の保証はありません。
 一般の世代固定要求はキュー投入・wake 前に拒否し、それぞれの既存契約を維持します。
 Codex の書き込みプロセスを再確認しても、後からキューを消費するプロセスを原子的に制限できません。

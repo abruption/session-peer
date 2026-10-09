@@ -101,6 +101,18 @@ Native creation values have OS-specific granularity (Linux uses boot ID and
 start-time clock ticks); this is not a globally unique or clone-proof identity.
 The opaque token is also not cryptographic SSH host-key continuity.
 
+A `stale_target` refusal includes `lastSeenTarget` with the original requested
+Claude generation, not a fresh lookup of the successor. This bounded metadata
+does not include process creation values, paths, user names or host names:
+
+`{"status":"refused","reason":"stale_target","submitted":false,"retryAllowed":false,"lastSeenTarget":{"agent":"claude","targetGeneration":"tg1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`
+
+`target_generation_unavailable` means native identity could not be verified;
+`unsupported_target_generation` means the target does not support this
+precondition. Neither result includes `lastSeenTarget` or authorizes a retry.
+The source-streamed restart regression uses an owned protocol inbox and a local
+SSH stand-in; it is not evidence of a physical remote host or native agent test.
+
 Codex queue targets, Antigravity bridges and paired devices do **not** acquire
 this inbox-incarnation guarantee: they report an unsupported generation, and a
 generic pinned send to them is refused before queue/wake. In particular, a
