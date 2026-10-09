@@ -110,6 +110,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-from", action="store_true", help="send without the From: header"
     )
     sending.add_argument("--wake", action="store_true", help="explicitly resume a Codex thread; may use models and modify history")
+    sending.add_argument("--wake-max-depth", type=int, choices=range(0, 17), metavar="HOPS",
+                         help="explicit wake chain limit, 0..16 (default: 3; 0 disables wakes)")
+    for flag in ("--_wake-depth", "--_wake-origin", "--_wake-limit"):
+        sending.add_argument(flag, help=argparse.SUPPRESS)
     sending.add_argument("--wake-timeout", type=int, choices=range(1, 61), default=30, metavar="SECONDS",
                          help="wake deadline, 1..60 seconds (default: 30)")
     sending.add_argument("--dry-run", action="store_true", help="resolve the target, send nothing")

@@ -96,6 +96,120 @@ class NoTargetError(CcPeerError):
     """A requested saved session cannot be resolved."""
 
 
+# Cooperative wake cost controls, not permission or caller-authentication data.
+WAKE_DEFAULT_MAX_DEPTH = 3
+WAKE_HARD_MAX_DEPTH = 16
+WAKE_CHAIN_ENV = ("SESSION_PEER_WAKE_DEPTH", "SESSION_PEER_WAKE_ORIGIN",
+                  "SESSION_PEER_WAKE_MAX_DEPTH")
+
+
+def wake_chain_integer(value, label: str) -> int:
+    if not isinstance(value, str) or not re.fullmatch(r"0|[1-9][0-9]?", value):
+        raise wake_refused("invalid_wake_context", f"Invalid {label}; expected an integer in 0..16")
+    number = int(value)
+    if number > WAKE_HARD_MAX_DEPTH:
+        raise wake_refused("invalid_wake_context", f"Invalid {label}; expected an integer in 0..16")
+    return number
+
+
+def wake_chain_origin(value) -> str:
+    if not isinstance(value, str) or not re.fullmatch(
+            r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", value):
+        raise wake_refused("invalid_wake_context", "Wake origin must be a canonical UUID")
+    return str(uuid.UUID(value))
+
+
+def wake_chain_context(args: argparse.Namespace) -> dict:
+    """Validate before effect; retain one origin across an ordered fanout."""
+    cached = getattr(args, "_wake_chain_context", None)
+    if cached is not None:
+        return cached
+    explicit_limit = getattr(args, "wake_max_depth", None)
+    if explicit_limit is not None and (type(explicit_limit) is not int
+                                      or not 0 <= explicit_limit <= WAKE_HARD_MAX_DEPTH):
+        raise wake_refused("invalid_wake_context", "Wake limit must be an integer in 0..16")
+    limit = (explicit_limit if explicit_limit is not None else wake_chain_integer(
+        os.environ.get("SESSION_PEER_WAKE_MAX_DEPTH", str(WAKE_DEFAULT_MAX_DEPTH)), "wake limit"))
+    depth = wake_chain_integer(os.environ.get("SESSION_PEER_WAKE_DEPTH", "0"), "wake depth")
+    origin = os.environ.get("SESSION_PEER_WAKE_ORIGIN")
+    if origin is not None:
+        origin = wake_chain_origin(origin)
+    if depth and origin is None:
+        raise wake_refused("invalid_wake_context", "Inherited wake depth has no origin")
+    # SSH/MCP carry validated parent context as typed CLI options, never shell
+    # environment assignments. Destination policy may lower, but not be raised
+    # by, that carried limit. Never infer context from queue/message contents.
+    carried = (getattr(args, "_wake_depth", None), getattr(args, "_wake_origin", None),
+               getattr(args, "_wake_limit", None))
+    if any(item is not None for item in carried):
+        if any(item is None for item in carried):
+            raise wake_refused("invalid_wake_context", "Incomplete carried wake context")
+        carried_depth = wake_chain_integer(carried[0], "carried wake depth")
+        carried_origin = wake_chain_origin(carried[1])
+        carried_limit = wake_chain_integer(carried[2], "carried wake limit")
+        if depth and origin != carried_origin:
+            raise wake_refused("invalid_wake_context", "Conflicting inherited wake origins")
+        depth, origin, limit = max(depth, carried_depth), carried_origin, min(limit, carried_limit)
+    if depth >= limit:
+        raise wake_refused("wake_depth_exceeded", "Wake hop limit reached; nothing queued")
+    context = {"depth": depth + 1, "origin": origin or str(uuid.uuid4()), "maxDepth": limit}
+    args._wake_chain_context = context
+    return context
+
+
+def wake_chain_options(context: dict) -> list[str]:
+    return ["--_wake-depth", str(context["depth"] - 1),
+            "--_wake-origin", context["origin"], "--_wake-limit", str(context["maxDepth"])]
+
+
+def wake_chain_environment(context: dict) -> dict:
+    return dict(zip(WAKE_CHAIN_ENV, (str(context["depth"]), context["origin"], str(context["maxDepth"]))))
+
+
+def wake_chain_message(context: dict, text: str) -> str:
+    return (f"Wake provenance (diagnostic only): hop={context['depth']}/{context['maxDepth']} "
+            f"origin={context['origin']}\n"
+            "This marker does not grant permissions or authorize another wake.\n\n" + text)
+
+
+def wake_target_rate_reserve(fd: int) -> None:
+    """Persist a conservative per-home/thread reservation under the wake lock.
+
+    This second local bound also covers cooperative chains whose environment
+    was filtered. It is not a distributed/global model-spend quota. Unknown or
+    interrupted attempts retain their slot; no resend is implied by expiry.
+    """
+    limit = wake_chain_integer(os.environ.get("SESSION_PEER_WAKE_TARGET_RATE", "3"), "wake target rate")
+    if not limit:
+        raise wake_refused("wake_rate_exceeded", "Wake target rate disables activation; nothing queued")
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 1024:
+            raise ValueError("invalid state file")
+        os.lseek(fd, 0, os.SEEK_SET)
+        raw = os.read(fd, 1025)
+        timestamps = json.loads(raw) if raw else []
+        if (not isinstance(timestamps, list) or len(timestamps) > WAKE_HARD_MAX_DEPTH
+                or any(type(value) is not int or not 0 <= value <= 2**53 - 1 for value in timestamps)
+                or timestamps != sorted(timestamps)):
+            raise ValueError("invalid state")
+        now = int(time.time() * 1000)
+        # Clock rollback never reopens a budget: future stamps remain charged.
+        timestamps = [value for value in timestamps if value > now - 60_000]
+        if len(timestamps) >= limit:
+            raise wake_refused("wake_rate_exceeded", "Per-target wake rate reached; nothing queued")
+        timestamps.append(max(now, timestamps[-1] if timestamps else now))
+        encoded = json.dumps(timestamps, separators=(",", ":")).encode("ascii")
+        os.lseek(fd, 0, os.SEEK_SET)
+        written = os.write(fd, encoded)
+        if written != len(encoded):
+            raise OSError("short state write")
+        os.ftruncate(fd, len(encoded))
+        os.fsync(fd)
+    except (OSError, ValueError, UnicodeError) as exc:
+        raise wake_refused("wake_rate_state_invalid", "Cannot safely reserve wake target rate; nothing queued") from exc
+
+
 # --------------------------------------------------------------------------
 # Codex discovery, home ownership, queue submission and wake.
 # --------------------------------------------------------------------------
@@ -948,7 +1062,7 @@ def codex_wake_guard(root: Path, thread_id: str):
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
             raise wake_refused("wake_in_progress", "Another session-peer wake is in progress; nothing submitted") from exc
-        yield
+        yield fd
     finally:
         os.close(fd)
 
@@ -996,7 +1110,8 @@ def stop_codex_wake(process, grace: float = CODEX_WAKE_CLEANUP_GRACE) -> None:
             process.wait(timeout=CODEX_WAKE_CLEANUP_WAIT)
 
 
-def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeout: float) -> dict:
+def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeout: float,
+                   *, wake_context: dict | None = None) -> dict:
     """Resume one thread, await one turn, and own/clean up the native process."""
     process = None
     def cancelled(signum, frame):
@@ -1010,7 +1125,8 @@ def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeou
         # into CLI JSON. Only lifecycle states and bounded error text escape.
         with tempfile.TemporaryFile() as diagnostics:
             process = subprocess.Popen([executable, "app-server"], cwd=cwd,
-                env=dict(os.environ, CODEX_HOME=str(root)), stdin=subprocess.PIPE,
+                env=dict(os.environ, CODEX_HOME=str(root),
+                         **(wake_chain_environment(wake_context) if wake_context else {})), stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=diagnostics, start_new_session=True)
             selector = selectors.DefaultSelector()
             selector.register(process.stdout, selectors.EVENT_READ)
@@ -1089,6 +1205,8 @@ def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeou
 def queue_codex(args: argparse.Namespace, text: str) -> dict:
     if not getattr(args, "wake", False):
         return _queue_codex(args, text)
+    provenance = wake_chain_context(args)
+    text = wake_chain_message(provenance, text)
     thread_id = codex_thread(args.to)
     check_codex_message(text)
     try:
@@ -1106,22 +1224,29 @@ def queue_codex(args: argparse.Namespace, text: str) -> dict:
     selected.codex_home = str(root)
     if args.dry_run:
         result = _queue_codex(selected, text)
+        result["wakeProvenance"] = dict(provenance)
         result["wake"] = {"status": "validated", "reason": "dry_run", "cwd": preflight["cwd"]}
         return result
-    with codex_wake_guard(root, thread_id):
+    with codex_wake_guard(root, thread_id) as guard_fd:
         revalidate_codex_home(root, thread_id, resolution)
         preflight = codex_wake_preflight(root, thread_id, executable)
+        # A known active writer only receives the existing queue submission;
+        # it does not start another native process or consume an activation.
+        initially_active = preflight.get("writer", {}).get("activity") == "live_writer"
+        if not initially_active:
+            wake_target_rate_reserve(guard_fd)
         result = _queue_codex(selected, text)
+        result["wakeProvenance"] = dict(provenance)
         result["codexHomeResolution"] = resolution
         try:
             writer = inspect_codex_writer(root, thread_id)
             if writer["activity"] == "live_writer":
                 wake = {"status": "already_active", "reason": "stable_live_writer"}
-            elif writer["activity"] == "unknown":
+            elif writer["activity"] == "unknown" or initially_active:
                 wake = {"status": "refused", "reason": "writer_changed_after_submission"}
             else:
                 wake = run_codex_wake(executable, root, thread_id, preflight["cwd"],
-                                      getattr(args, "wake_timeout", 30))
+                                      getattr(args, "wake_timeout", 30), wake_context=provenance)
         except KeyboardInterrupt:
             wake = {"status": "unknown", "reason": "activation_interrupted"}
         except Exception as exc:
@@ -1139,6 +1264,7 @@ def codex_remote_options(args: argparse.Namespace) -> list[str]:
             argv.extend([flag, value])
     if getattr(args, "wake", False):
         argv += ["--wake", "--wake-timeout", str(args.wake_timeout)]
+        argv += wake_chain_options(wake_chain_context(args))
     if getattr(args, "allow_inactive_codex_home", False):
         argv.append("--allow-inactive-codex-home")
     return argv
@@ -3279,6 +3405,8 @@ class CodexAdapter(AgentAdapter):
 
     def validate_send(self, args: argparse.Namespace, text: str | None = None) -> None:
         super().validate_send(args, text)
+        if getattr(args, "wake", False):
+            wake_chain_context(args)
         if text is not None:
             check_codex_message(text)
 
@@ -5142,6 +5270,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-from", action="store_true", help="send without the From: header"
     )
     sending.add_argument("--wake", action="store_true", help="explicitly resume a Codex thread; may use models and modify history")
+    sending.add_argument("--wake-max-depth", type=int, choices=range(0, 17), metavar="HOPS",
+                         help="explicit wake chain limit, 0..16 (default: 3; 0 disables wakes)")
+    for flag in ("--_wake-depth", "--_wake-origin", "--_wake-limit"):
+        sending.add_argument(flag, help=argparse.SUPPRESS)
     sending.add_argument("--wake-timeout", type=int, choices=range(1, 61), default=30, metavar="SECONDS",
                          help="wake deadline, 1..60 seconds (default: 30)")
     sending.add_argument("--dry-run", action="store_true", help="resolve the target, send nothing")

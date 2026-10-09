@@ -1,5 +1,17 @@
 # 明示的なCodexの起動
 
+## 連鎖する wake の制限
+
+CLI と MCP は投入前に `SESSION_PEER_WAKE_DEPTH` と `SESSION_PEER_WAKE_ORIGIN` を読み、各 wake で段数を一つ増やして発生元 UUID を保持します。既定は 3 段で、超過時は何も投入せず `wake_depth_exceeded` を返します。運用者は `--wake-max-depth` または `SESSION_PEER_WAKE_MAX_DEPTH` で 0–16 の範囲で明示的に変更できます。0 は wake を無効にします。不正または不完全な文脈は投入前に `invalid_wake_context` で拒否します。通常の送信は従来どおりキューへの投入のみです。
+
+所有する app-server に増加後の文脈を渡します。SSH は環境転送に頼らず、型を検証した文脈を渡します。宛先は受け取った限度を下げられますが上げられません。複数宛先は発生元を共有しますが予算は独立です。MCP は起動時の環境を読み、呼び出したスレッドを認証しません。Wake はキューメッセージに診断表示を付け、投入後または正常な dry-run 後に `depth`、`origin`、`maxDepth` を含む `wakeProvenance` を追加します。表示も 32 KiB 制限に含まれます。表示や本文は権限を与えず、段数を復元するためにキュー・履歴・会話本文を読みません。
+
+非アクティブ対象の起動は正規化されたホームとスレッドごとに 60 秒間で 3 回が既定です。運用者が管理する `SESSION_PEER_WAKE_TARGET_RATE` は 0–16 を受け付け、0 は非アクティブ対象の起動を無効にします。予約は既存の wake ロック下に保存します。`wake_rate_exceeded` は投入前に拒否し、読めない・大きすぎる・不正な状態は `wake_rate_state_invalid` で拒否します。失敗や中断でも予約は残り、時計が戻っても保守的に保持します。Dry-run とアクティブだと確認したライターは起動枠を消費しません。既存の `wake_in_progress` と `already_active` は維持します。対象やホストの予算は独立し、運用者や同一ユーザーのプロセスは協調的な状態を初期化できるため、全体の費用上限や呼び出し元の認証ではありません。
+
+固定した Codex 0.154.0 ソースでは、シェルの `inherit="all"` は除外規則や `include_only` がなければ変数を保持し、`inherit="core"` と `inherit="none"` は明示的な設定がなければ除去します。既定の秘密名フィルターには該当しません。stdio MCP の既定の許可リストには含まれず、新しい MCP プロセスには `env_vars` 転送が必要です。既存・共有 MCP プロセスは後の呼び出し元の環境を受け取りません。静的な `env` 設定は文脈を初期化したり競合させたりします。文脈が失われると新しいローカル発生元になるため全体の段数上限は保証できず、ローカル起動制限は別の補助策です。承認・プロファイル・ネイティブ環境ポリシーは自動変更しません。
+
+隔離した子プロセスのテストは上流ソースの規則を模倣し、CLI・MCP・SSH の文脈と app-server 代替プロセスの環境を検証します。認証済みのネイティブシェル・MCP クライアント・モデルターンは実行せず、0.154.0 以外の wake サポートの根拠ではありません。出典: [固定したシェルポリシー](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/protocol/src/shell_environment.rs)、[固定した MCP 環境](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/rmcp-client/src/utils.rs)、[現在の設定資料](https://developers.openai.com/codex/config-reference/)。
+
 `session-peer send --to codex:<uuid> --wake --wake-timeout 30 "message"`
 
 通常のsendはキュー送信のみのままです。Wakeは、対象の既存の設定のもとでモデルの使用量を発生させ、セッション履歴やプロジェクトファイルを変更する可能性があります。これにはmacOS/Linuxおよびライフサイクルとネイティブライターの排他制御がテストされたバージョンである**Codex CLI 0.154.0**が必要です。他のバージョンは、個別に検証されるまで安全側に倒して失敗します。このバージョン境界はwakeにのみ適用されます。

@@ -15,6 +15,7 @@ SOURCE_DIRECTORY = ROOT / "session_peer_core"
 DEFAULT_OUTPUT = ROOT / "session_peer.py"
 SEGMENTS = (
     "common.py",
+    "wake_chain.py",
     "codex.py",
     "claude.py",
     "replies.py",

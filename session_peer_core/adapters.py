@@ -171,6 +171,8 @@ class CodexAdapter(AgentAdapter):
 
     def validate_send(self, args: argparse.Namespace, text: str | None = None) -> None:
         super().validate_send(args, text)
+        if getattr(args, "wake", False):
+            wake_chain_context(args)
         if text is not None:
             check_codex_message(text)
 
