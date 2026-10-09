@@ -65,17 +65,17 @@ rmdir() { capture rmdir "$@"; }
                 self.assertEqual(calls, [
                     ["git", "fetch", "origin", "main", "--tags"],
                     ["git", "rev-parse", "origin/main"],
-                    ["git", "tag", "v1.0.4", COMMIT],
-                    ["git", "push", "origin", "v1.0.4"],
-                    ["gh", "release", "create", "v1.0.4", "--repo", "abruption/session-peer",
-                     "--target", COMMIT, "--title", "session-peer v1.0.4",
-                     "--notes-file", "docs/releases/v1.0.4.md", "--draft", "--latest"],
+                    ["git", "tag", "v1.1.0", COMMIT],
+                    ["git", "push", "origin", "v1.1.0"],
+                    ["gh", "release", "create", "v1.1.0", "--repo", "abruption/session-peer",
+                     "--target", COMMIT, "--title", "session-peer v1.1.0",
+                     "--notes-file", "docs/releases/v1.1.0.md", "--draft", "--latest"],
                     ["gh", "workflow", "run", "prepare-release.yml", "--repo", "abruption/session-peer",
-                     "--ref", "main", "-f", "tag=v1.0.4"],
+                     "--ref", "main", "-f", "tag=v1.1.0"],
                 ])
                 publication_calls, _ = self.shell_calls(blocks[1])
                 self.assertEqual(publication_calls, [
-                    ["gh", "release", "edit", "v1.0.4", "--repo", "abruption/session-peer",
+                    ["gh", "release", "edit", "v1.1.0", "--repo", "abruption/session-peer",
                      "--draft=false", "--prerelease=false", "--latest"],
                 ])
 

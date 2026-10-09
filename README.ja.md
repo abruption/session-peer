@@ -38,6 +38,8 @@ Python 3.9以上が必要です。基本のローカル・SSH CLIに外部Python
 
 2026-10-07付のメンテナンス版の[リリースノート](docs/ja/releases/v1.0.4.md)を参照してください。パッケージ公開と本番環境への配備は別です。
 
+リリース候補 **1.1.0** を準備中で、まだ公開していません。予定される変更と残る検証条件は[候補ノート](docs/ja/releases/v1.1.0.md)を参照してください。
+
 ```bash
 pipx install session-peer
 session-peer --version

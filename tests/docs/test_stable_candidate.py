@@ -10,9 +10,28 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StableCandidate(unittest.TestCase):
+    def test_candidate_is_not_advertised_as_published_or_fully_supported(self):
+        for suffix in ("", ".ko", ".ja", ".zh-CN"):
+            text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
+            self.assertIn("**1.0.4**", text)
+            self.assertIn("**1.1.0**", text)
+            self.assertIn('<div align="center">', text)
+        for locale in ("", "ko/", "ja/", "zh-CN/"):
+            text = (ROOT / ("docs/" + locale + "releases/v1.1.0.md")).read_text(encoding="utf-8")
+            for marker in ("#261", "#283–#290", "#242", "#268", "#232", "#180", "#183",
+                           "#238", "#211", "#181", "#30", "1.0.4", "1.1.0", "0.154.0",
+                           "0.3.2", "0.9.1", "1.0.1", "32 KiB", "64 KiB", "256 KiB",
+                           "1 MiB", "131,071", "90,000", "20/21", "#161"):
+                with self.subTest(locale=locale, marker=marker):
+                    self.assertIn(marker, text)
+        english = (ROOT / "docs/releases/v1.1.0.md").read_text(encoding="utf-8")
+        for marker in ("not published", "correlation-only", "unsupported", "receipt",
+                       "Package publication does not include operational deployment"):
+            self.assertIn(marker, english)
+
     def test_package_and_generated_core_version_agree(self):
-        self.assertEqual(session_peer.__version__, "1.0.4")
-        self.assertIn('__version__ = "1.0.4"',
+        self.assertEqual(session_peer.__version__, "1.1.0")
+        self.assertIn('__version__ = "1.1.0"',
                       (ROOT / "session_peer_core/common.py").read_text(encoding="utf-8"))
 
     def test_all_current_readmes_and_runbooks_use_stable_version(self):
