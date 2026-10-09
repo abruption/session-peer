@@ -104,6 +104,40 @@ def binding_identity(store):
     return {'principal': store.device, 'generation': store.generation, 'keyFingerprint': store.key_id}
 
 
+def validate_existing_state(root):
+    """An approved setup is still not permission to reconstruct lost state/keys."""
+    present = [(root/name).exists() for name in ('identity.pem', 'identity.key', 'device.sqlite')]
+    if not any(present):
+        return False
+    if not all(present):
+        raise Rejected('setup_state_incomplete_manual_recovery_required')
+    # This live, read-only preflight runs only on an approved mutation, not
+    # inventory. Read current WAL metadata before Store could initialize a
+    # missing rotated identity directory. Never create/migrate a database here.
+    for name in ('device.sqlite-wal', 'device.sqlite-shm'):
+        if (root/name).exists() or (root/name).is_symlink():
+            private_path(root/name)
+    db = sqlite3.connect((root/'device.sqlite').as_uri()+'?mode=ro', uri=True)
+    try:
+        db.execute('PRAGMA query_only=ON')
+        row = db.execute('SELECT value FROM metadata WHERE key="identity_directory"').fetchone()
+    finally:
+        db.close()
+    if row:
+        relative = row[0]
+        if (not isinstance(relative, str) or not re.fullmatch(r'keys/[0-9a-f-]{36}', relative)
+                or str(uuid.UUID(relative[5:])) != relative[5:]):
+            raise Rejected('setup_state_incomplete_manual_recovery_required')
+        active = root/relative
+        if not all((active/name).exists() for name in ('identity.pem', 'identity.key')):
+            raise Rejected('setup_state_incomplete_manual_recovery_required')
+        private_path(root/'keys', True)
+        private_path(active, True)
+        private_path(active/'identity.pem')
+        private_path(active/'identity.key')
+    return True
+
+
 class Workflow:
     def __init__(self, root):
         self.root = root
@@ -234,12 +268,13 @@ async def execute(args):
     if args.action == 'init':
         # Existing files were checked above. Partial identity must never cause
         # silent regeneration; Store has the existing key-pair consistency gate.
+        had_identity = validate_existing_state(root)
         store = Store(root)
         try:
             with mutation(root) as work:
                 work.attach(store)
                 work.phase('init', 'complete')
-                return {'ok': True, 'device': store.device, 'state': str(root), 'preservedExistingIdentity': current['stateExists']}
+                return {'ok': True, 'device': store.device, 'state': str(root), 'preservedExistingIdentity': had_identity}
         finally:
             store.close()
     if not root.exists() or not (root/'identity.pem').exists() or not (root/'device.sqlite').exists():
@@ -250,6 +285,7 @@ async def execute(args):
             work.save()
             return {'ok': True, 'cancelled': True, 'operationCancelled': False,
                     'nextAction': 'No enrollment/send was rolled back. Resume the same enrollment intent explicitly; stop a foreground receiver with Ctrl-C.'}
+        validate_existing_state(root)
         store = Store(root)
         try:
             work.attach(store)

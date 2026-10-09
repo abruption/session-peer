@@ -94,6 +94,37 @@ class Setup(unittest.TestCase):
         args.state = str(link)
         self.assertFalse(setup.run(args)['ok'])
 
+    def test_preexisting_empty_directory_is_not_claimed_as_preserved_identity(self):
+        self.root.mkdir(mode=0o700)
+        self.assertFalse(self.initialize()['preservedExistingIdentity'])
+        self.assertTrue(self.initialize()['preservedExistingIdentity'])
+
+    def test_missing_database_or_rotated_key_requires_manual_recovery_without_init(self):
+        self.initialize()
+        old_key = (self.root/'identity.key').read_bytes()
+        (self.root/'device.sqlite').unlink()
+        with mock.patch.object(setup, 'Store') as store:
+            result = self.call('--action', 'init', '--apply')
+        self.assertEqual(result['reason'], 'setup_state_incomplete_manual_recovery_required')
+        store.assert_not_called()
+        self.assertFalse((self.root/'device.sqlite').exists())
+        self.assertEqual((self.root/'identity.key').read_bytes(), old_key)
+        # Separate state with current WAL metadata pointing to a lost rotated key.
+        self.root = self.base/'rotated'
+        self.defaults = ['setup', '--mode', 'relay', '--state', str(self.root)]
+        self.initialize()
+        relative = 'keys/01900000-0000-7000-8000-000000000001'
+        state = Store(self.root)
+        try:
+            state.db.execute('INSERT OR REPLACE INTO metadata VALUES("identity_directory",?)', (relative,))
+        finally:
+            state.close()
+        with mock.patch.object(setup, 'Store') as store:
+            result = self.call('--action', 'init', '--apply')
+        self.assertEqual(result['reason'], 'setup_state_incomplete_manual_recovery_required')
+        store.assert_not_called()
+        self.assertFalse((self.root/relative).exists())
+
     def test_headless_login_uses_existing_api_and_keeps_tokens_out_of_output(self):
         self.initialize()
         async def login(store, origin, no_browser):

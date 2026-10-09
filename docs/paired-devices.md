@@ -35,6 +35,8 @@ No existing service is changed. A policy is created as a new 0600 private file,
 or an identical file is reused; a different existing policy is never overwritten
 or broadened. Selection is rechecked before applying, not a permanent native
 session-incarnation guarantee.
+An incomplete existing identity/database or missing active rotated key requires
+manual recovery, even for approved initialization; setup will not reconstruct it.
 
 The private `setup.json` durably retains the original enrollment UUID, name,
 server, key identity and exact registration payload before the request. After interruption/lost response,
