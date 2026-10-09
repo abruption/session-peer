@@ -21,8 +21,11 @@ class SshIdentityCommands(unittest.TestCase):
                 example = re.search(r"^session-peer send --host workstation.*?\n```", source,
                                     re.MULTILINE | re.DOTALL)
                 self.assertIsNotNone(example)
-                block = example.group(0).removesuffix("```")
-                harness = 'session-peer() { printf "%s\\n" "$@"; }\n'
+                # POSIX function identifiers cannot contain a hyphen. Replace
+                # only the command word; shell argument/continuation syntax is
+                # still executed exactly as documented, with no client access.
+                block = example.group(0).removesuffix("```").replace("session-peer ", "capture ", 1)
+                harness = 'capture() { printf "%s\\n" "$@"; }\n'
                 result = subprocess.run(["/bin/sh", "-c", harness + block],
                                         capture_output=True, text=True,
                                         env={"PATH": os.defpath})
