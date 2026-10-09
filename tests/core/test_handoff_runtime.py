@@ -302,7 +302,9 @@ class HandoffRuntime(unittest.TestCase):
         self.assertEqual(peer.handoff_public(self.epoch, self.record_now())["wait"]["reason"], "stopped_by_operator")
 
     def test_unsupported_delivery_and_short_budget_never_run_native(self):
+        binding = {"agent": "codex", "destination": ["local"], "target": "11111111-1111-1111-1111-111111111111", "home": str(self.root), "payloadDigest": "a" * 64}
         with mock.patch.object(peer, "handoff_root", return_value=self.ledger.root), \
+                mock.patch.object(peer, "handoff_binding", return_value=(binding, None, None)), \
                 mock.patch.object(peer, "discover", return_value=[]), mock.patch.object(peer, "post_to_socket") as post:
             out = io.StringIO()
             with contextlib.redirect_stdout(out):

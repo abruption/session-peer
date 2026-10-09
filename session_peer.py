@@ -5638,9 +5638,26 @@ class HandoffLedger:
 
 
 def handoff_validate_native(native, record):
-    # This supported route is Python Claude, not normalized Codex or TS fields.
+    # Preserve the actual Python profiles; optional Claude facts stay absent.
     binding = record["binding"]
     target = native.get("target")
+    if binding["agent"] == "codex":
+        required = {"ok", "target", "chars", "dryRun", "codexHome", "submitted", "consumptionConfirmed", "status", "codexHomeResolution"}
+        if (binding["destination"] != ["local"] or type(target) is not dict or set(target) != {"agent", "id"}
+                or not required <= set(native) <= required | {"queueId"}
+                or target["agent"] != "codex" or type(target["id"]) is not str
+                or re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", target["id"]) is None
+                or target["id"].lower() != binding["target"]
+                or native["ok"] is not True or native["dryRun"] is not False
+                or native["status"] != "queued" or native["submitted"] is not True or native["consumptionConfirmed"] is not False
+                or type(native["chars"]) is not int or not 0 <= native["chars"] <= MAX_MESSAGE_CHARS
+                or type(native["codexHome"]) is not str or native["codexHome"] != binding["home"]
+                or type(native["codexHomeResolution"]) is not dict
+                or native["codexHomeResolution"].get("selected") != binding["home"]):
+            raise handoff_error("invalid_native_profile")
+        if "queueId" in native:
+            handoff_identifier(native["queueId"], 128)
+        return
     if (binding["agent"] != "claude" or binding["destination"] != ["local"] or type(target) is not dict
             or set(native) != {"ok", "target", "chars", "dryRun"} or set(target) != {"pid", "name"}
             or type(target["pid"]) is not int or target["pid"] <= 1 or str(target["pid"]) != binding["target"]
@@ -6098,11 +6115,147 @@ def handoff_binding(args, text):
         requested = getattr(args, "target_generation", None)
         if requested is not None:
             require_claude_generation(session, requested)
+    target = str(session["pid"]) if session else args.to
+    home = str(codex_home(args)) if adapter.name == "codex" else None
+    if not getattr(args, "host", None) and not getattr(args, "device", None) and adapter.name == "codex":
+        target = codex_thread(args.to)
+        root, resolution = resolve_codex_home(args, codex_home(args), target)
+        home = str(root)
+        # Internal preparation evidence only, never an invented incarnation.
+        args._handoff_codex_selection = (root, resolution)
     binding = {"agent": adapter.name, "destination": list(getattr(args, "host", []) or ["local"]),
-               "target": str(session["pid"]) if session else args.to,
-               "home": str(codex_home(args)) if adapter.name == "codex" else None,
+               "target": target, "home": home,
                "payloadDigest": hashlib.sha256(text.encode("utf-8")).hexdigest()}
     return binding, generation, session
+
+
+def handoff_child(argv, cutoff, total, env=None):
+    """Bounded metadata-only owned POSIX child; never inspect a transcript.
+
+    Keep the leader PID reserved until its owned group has been signalled.
+    No PID/group signal is sent after wait(), including timeout/SIGINT paths.
+    Blocking OS process creation/kill/fsync cannot be universally cancelled.
+    """
+    if IS_WINDOWS or handoff_now() >= cutoff:
+        raise handoff_error("deadline_before_effect")
+    process = None
+    selector = selectors.DefaultSelector()
+    output, diagnostics = bytearray(), bytearray()
+    reason = None
+    interrupted = False
+    try:
+        process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, env=env, start_new_session=True)
+        for stream, limit, destination in ((process.stdout, 1048576, output), (process.stderr, 65536, diagnostics)):
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream, selectors.EVENT_READ, (limit, destination))
+        while selector.get_map():
+            remaining = cutoff - handoff_now()
+            if remaining <= 0:
+                reason = "native_deadline"
+                break
+            for key, _ in selector.select(min(0.05, remaining)):
+                try:
+                    chunk = os.read(key.fd, 65536)
+                except BlockingIOError:
+                    continue
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                limit, destination = key.data
+                if len(destination) + len(chunk) > limit:
+                    reason = "native_output_capacity"
+                    break
+                destination.extend(chunk)
+            if reason:
+                break
+    except KeyboardInterrupt:
+        interrupted, reason = True, "native_interrupted"
+    except OSError:
+        reason = "native_process_failed"
+    finally:
+        selector.close()
+        if process is not None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                # Darwin can report EPERM for groups containing only zombies.
+                # Probe only the still-reserved owned group within cleanup.
+                try:
+                    remaining = total - handoff_now()
+                    if sys.platform != "darwin" or remaining <= 0:
+                        raise OSError()
+                    members = subprocess.run(["ps", "-o", "stat=", "-g", str(process.pid)],
+                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=remaining)
+                    if members.returncode not in (0, 1) or any(not line.strip().startswith(b"Z") for line in members.stdout.splitlines() if line.strip()):
+                        raise OSError()
+                except (OSError, subprocess.SubprocessError):
+                    reason = reason or "native_cleanup_failed"
+            try:
+                code = process.wait(timeout=max(0, total - handoff_now()))
+            except subprocess.TimeoutExpired:
+                reason, code = "native_cleanup_failed", None
+            for stream in (process.stdout, process.stderr):
+                stream.close()
+        else:
+            code = None
+    if interrupted:
+        raise KeyboardInterrupt
+    return {"returncode": code, "stdout": bytes(output), "stderr": bytes(diagnostics), "reason": reason}
+
+
+def handoff_codex_context(args, binding, cutoff, total):
+    root, resolution = args._handoff_codex_selection
+    if str(root) != binding["home"]:
+        raise handoff_error("native_context_changed")
+    executable = codex_executable(args)
+    # A bounded harmless version query proves the selected queue executable is
+    # callable. It does not certify all native versions or a writer generation.
+    probe = handoff_child([executable, "--version"], cutoff, total)
+    try:
+        version = probe["stdout"].decode("utf-8", errors="strict").strip()
+    except UnicodeError as exc:
+        raise handoff_error("native_version_unavailable") from exc
+    if probe["reason"] or probe["returncode"] not in (0, -signal.SIGKILL) or re.fullmatch(r"codex-cli [0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?", version) is None:
+        raise handoff_error("native_version_unavailable")
+    revalidate_codex_home(root, binding["target"], resolution)
+    return root, resolution, executable
+
+
+def handoff_codex_submit(args, text, binding, context, cutoff, total):
+    root, resolution, executable = context
+    check_codex_message(text)
+    # Reuse the original selected-home evidence, not a fresh auto-selection
+    # after durable intent. This remains a pre-queue guard, not atomic identity.
+    try:
+        revalidate_codex_home(root, binding["target"], resolution)
+    except CcPeerError as exc:
+        raise CcPeerError("Codex handoff refused before queue", {"status": "refused", "retryAllowed": False}) from exc
+    if handoff_now() >= cutoff:
+        raise CcPeerError("Codex handoff refused before queue", {"status": "refused", "retryAllowed": False})
+    env = dict(os.environ, CODEX_HOME=str(root))
+    done = handoff_child(codex_queue_argv(executable, binding["target"], text), cutoff, total, env)
+    # Overflow is never salvaged from an apparently valid retained prefix.
+    if done["reason"] == "native_output_capacity":
+        raise handoff_error("native_outcome_unknown")
+    try:
+        stdout = done["stdout"].decode("utf-8", errors="strict")
+    except UnicodeError as exc:
+        raise handoff_error("native_outcome_unknown") from exc
+    marker = re.fullmatch(r"Queued message ([^\s]+) for thread " + re.escape(binding["target"]) + r"\.\r?\n?", stdout)
+    # A matching complete native queue receipt is retained after disconnect or
+    # deadline; partial/wrong-target output never supplies submission evidence.
+    if not (done["reason"] is None and done["returncode"] == 0) and marker is None:
+        raise handoff_error("native_outcome_unknown")
+    result = {"ok": True, "target": {"agent": "codex", "id": binding["target"]}, "chars": len(text),
+              "dryRun": False, "codexHome": str(root), "submitted": True, "consumptionConfirmed": False,
+              "status": "queued", "codexHomeResolution": resolution}
+    if marker:
+        result["queueId"] = marker.group(1)
+    handoff_validate_native(result, {"binding": binding})
+    return result
 
 
 def handoff_refuse_send(ledger, correlation, args, reason, total):
@@ -6124,7 +6277,7 @@ def handoff_refuse_send(ledger, correlation, args, reason, total):
 
 
 def cmd_handoff_send(args):
-    """One fenced native attempt; same-machine POSIX Claude capability only.
+    """One fenced attempt; POSIX Claude receipt or Codex correlation-only.
 
     Remote source streaming and unproven Codex observation/cleanup are refused
     before effect, not silently converted to another transport or generic ACK.
@@ -6162,13 +6315,20 @@ def cmd_handoff_send(args):
         result["handoff"] = handoff_public(epoch, prepared)
         emit(args.json, result, "Handoff validated; nothing sent.", command="send")
         return 0
-    capable = (not IS_WINDOWS and session is not None and generation is not None and
-               not getattr(args, "wake", False) and not getattr(args, "host", None) and not getattr(args, "device", None))
-    reason = "insufficient_budget" if args.wait_timeout <= 5 else "deadline_before_effect" if handoff_now() >= cutoff else "evidence_unsupported" if not capable or args.wait_for == "delivered" else None
+    local_route = not IS_WINDOWS and not args.host and not getattr(args, "device", None) and not getattr(args, "wake", False)
+    receipt_capable = local_route and session is not None and generation is not None
+    effect_capable = local_route and (receipt_capable or adapter.name == "codex")
+    reason = "insufficient_budget" if args.wait_timeout <= 5 else "deadline_before_effect" if handoff_now() >= cutoff else "evidence_unsupported" if not effect_capable or args.wait_for == "delivered" or (args.wait_for == "acknowledged" and not receipt_capable) else None
     wants_ack = args.request_ack or args.wait_for == "acknowledged"
     authority = None
     producer = None
-    if reason is None and wants_ack:
+    codex_context = None
+    if reason is None and adapter.name == "codex":
+        try:
+            codex_context = handoff_codex_context(args, binding, cutoff, total)
+        except CcPeerError:
+            reason = "evidence_failed"
+    if reason is None and wants_ack and receipt_capable:
         try:
             producer = handoff_producer_command(ledger, cutoff)
             handoff_ensure_collector(ledger, cutoff)
@@ -6195,7 +6355,7 @@ def cmd_handoff_send(args):
     # This path performs a private bounded inbox call directly, so it must use
     # exactly the same untrusted-body boundary as LocalTransport. Native stdin,
     # --no-from/--no-reply-to and internal --b64 never bypass quoting.
-    text = peer_delivery_message(text, "claude")
+    text = peer_delivery_message(text, adapter.name)
     if authority is not None:
         receipt = {"schemaVersion": 1, "kind": "receipt", "ledgerEpoch": epoch,
                    "correlationId": correlation, "targetGeneration": generation,
@@ -6205,10 +6365,14 @@ def cmd_handoff_send(args):
                 " using this private JSON on stdin (never as argv):\n" + HandoffLedger.encode(receipt).decode("utf-8")
     try:
         check_message(text, remote=False)
-        native_success = {"ok": True, "target": {"pid": session["pid"], "name": session["name"]}, "chars": len(text), "dryRun": False}
-        handoff_validate_native(native_success, prepared)
-        if len(HandoffLedger.encode(native_success)) > 8192:
-            raise handoff_error("native_snapshot_capacity")
+        if adapter.name == "codex":
+            check_codex_message(text)
+            native_success = None  # A profile cannot be invented before queue.
+        else:
+            native_success = {"ok": True, "target": {"pid": session["pid"], "name": session["name"]}, "chars": len(text), "dryRun": False}
+            handoff_validate_native(native_success, prepared)
+            if len(HandoffLedger.encode(native_success)) > 8192:
+                raise handoff_error("native_snapshot_capacity")
     except (CcPeerError, UnicodeError):
         return handoff_refuse_send(ledger, correlation, args, "evidence_failed", total)
     if handoff_now() >= cutoff:
@@ -6227,15 +6391,16 @@ def cmd_handoff_send(args):
             operation = handoff_start_wait(record, args.wait_for, cutoff, authority["clockEpoch"] if authority else None)
     interrupted = False
     try:
-        require_claude_generation(session, generation)
-        # The ordinary inbox adapter uses Python's current-process monotonic
-        # domain. Translate only the remaining duration, never pass persisted
-        # cross-process timestamps into that adapter or renew the total budget.
-        native_now, shared_now = time.monotonic(), handoff_now()
-        post_to_socket(session["socket"], text, pid=session["pid"], generation_session=session,
-                       expected_generation=generation, effect_deadline=native_now + cutoff - shared_now,
-                       total_deadline=native_now + total - shared_now)
-        native = native_success
+        if adapter.name == "codex":
+            native = handoff_codex_submit(args, text, binding, codex_context, cutoff, total)
+        else:
+            require_claude_generation(session, generation)
+            # The ordinary inbox adapter uses Python's current-process clock.
+            native_now, shared_now = time.monotonic(), handoff_now()
+            post_to_socket(session["socket"], text, pid=session["pid"], generation_session=session,
+                           expected_generation=generation, effect_deadline=native_now + cutoff - shared_now,
+                           total_deadline=native_now + total - shared_now)
+            native = native_success
         submission = "submitted"
     except CcPeerError as exc:
         # Native explicit refusal is positive no-effect evidence, not a guess.
