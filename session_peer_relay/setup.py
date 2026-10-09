@@ -9,6 +9,7 @@ import contextlib
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -34,6 +35,38 @@ def document(path):
 
 def digest(path):
     return hashlib.sha256(private_read(path).encode()).hexdigest()
+
+
+def invitation_route(invitation, route, *, already_paired=False):
+    """Validate every locally knowable refusal before retaining effect intent."""
+    try:
+        if (type(invitation) is not dict or type(invitation.get('v')) is not int
+                or invitation['v'] not in (1, 2)
+                or not isinstance(invitation.get('device'), str)
+                or not re.fullmatch(r'[a-f0-9]{64}', invitation['device'])
+                or type(invitation.get('expires')) not in (int, float)
+                or not math.isfinite(invitation['expires'])
+                or not already_paired and invitation['expires'] < time.time()
+                or not isinstance(invitation.get('secret'), str)
+                or not re.fullmatch(r'[A-Za-z0-9_-]{43}', invitation['secret'])
+                or str(uuid.UUID(invitation['id'])) != invitation['id']
+                or fingerprint(invitation['certificate']) != invitation.get('keyFingerprint', invitation['device'])
+                or type(invitation.get('keyGeneration', 0)) is not int
+                or invitation.get('keyGeneration', 0) < 0):
+            raise ValueError()
+        routes = invitation['routes']
+        if type(routes) is not dict or not routes or set(routes) - {'direct', 'relay'}:
+            raise ValueError()
+        if 'direct' in routes:
+            direct_address(routes['direct'])
+        if 'relay' in routes:
+            validate_relay_url(routes['relay'])
+        selected = ('direct' if 'direct' in routes else 'relay') if route == 'auto' else route
+        if selected not in routes:
+            raise Rejected('setup_invitation_route_unavailable')
+        return selected
+    except (KeyError, TypeError, ValueError, OverflowError):
+        raise Rejected('invalid_invitation') from None
 
 
 def inventory(root, policy=None):
@@ -366,21 +399,25 @@ async def execute(args):
                 if not args.invite:
                     raise Rejected('setup_invitation_required')
                 path = Path(args.invite).expanduser().absolute()
-                invitation = document(path)
+                raw = private_read(path)
+                invitation = json.loads(raw)
                 saved = work.saved.get('pairing')
-                intent = {'invitationDigest': digest(path), 'device': invitation['device'], 'route': args.route}
+                existing = store.peer(invitation.get('device')) if isinstance(invitation, dict) and isinstance(invitation.get('device'), str) else None
+                selected_route = invitation_route(invitation, args.route,
+                       already_paired=bool(saved and existing and existing['status'] == 'paired'))
+                intent = {'invitationDigest': hashlib.sha256(raw.encode()).hexdigest(),
+                          'device': invitation['device'], 'route': selected_route}
                 if saved and saved != intent:
                     raise Rejected('setup_pairing_intent_changed')
                 work.saved['pairing'] = intent
                 work.phase('pair', 'pending')
-                existing = store.peer(invitation['device'])
                 if existing and existing['status'] == 'paired':
                     if fingerprint(existing['certificate']) != fingerprint(invitation['certificate']):
                         raise Rejected('setup_pairing_identity_changed')
                     result = {'ok': True, 'paired': True, 'resumed': True}
                 else:
                     credential = control.DeviceCredential(store, invitation['device'], 'client') if 'relay' in invitation['routes'] else None
-                    result = await pair(store, invitation, args.route, credential)
+                    result = await pair(store, invitation, selected_route, credential)
                 if result.get('ok') is True:
                     work.phase('pair', 'complete')
                 return result

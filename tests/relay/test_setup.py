@@ -346,6 +346,30 @@ class Setup(unittest.TestCase):
         finally:
             other.close()
 
+    def test_invalid_or_expired_invitation_and_missing_route_do_not_pin_intent(self):
+        self.initialize()
+        other = Store(self.base/'other')
+        self.addCleanup(other.close)
+        valid = other.invite({'direct': '127.0.0.1:3770'})
+        path = self.root/'received.json'
+        for invalid, route in (({'v': 1}, 'auto'),
+                               ({**valid, 'expires': time.time()-1}, 'auto'),
+                               (valid, 'relay')):
+            private_write(path, json.dumps(invalid))
+            with mock.patch.object(setup, 'pair') as pair:
+                self.assertFalse(self.call('--action', 'pair', '--invite', str(path),
+                    '--route', route, '--apply')['ok'])
+            pair.assert_not_called()
+            self.assertNotIn('pairing', json.loads((self.root/'setup.json').read_text()))
+        private_write(path, json.dumps(valid))
+        async def paired(store, invite, route, credential):
+            self.assertEqual(route, 'direct')
+            store.remember(invite)
+            return {'ok': True, 'paired': True}
+        with mock.patch.object(setup, 'pair', side_effect=paired):
+            self.assertTrue(self.call('--action', 'pair', '--invite', str(path), '--apply')['paired'])
+        self.assertEqual(json.loads((self.root/'setup.json').read_text())['pairing']['route'], 'direct')
+
     def test_interactive_cancel_and_eof_do_not_initialize(self):
         with mock.patch('builtins.input', side_effect=[str(self.root), 'no']), contextlib.redirect_stdout(io.StringIO()):
             self.assertTrue(setup.run(self.args('--interactive'))['cancelled'])
