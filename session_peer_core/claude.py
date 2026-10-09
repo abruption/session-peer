@@ -270,7 +270,8 @@ def _read_win_auth(pid: int) -> str | None:
     return None
 
 
-def _post_to_pipe(pipe_path: str, pid: int, text: str) -> None:
+def _post_to_pipe(pipe_path: str, pid: int, text: str, *, generation_session=None,
+                  expected_generation=None) -> None:
     """Write one message to a Windows named pipe inbox."""
     check_message(text, remote=False)
 
@@ -286,6 +287,8 @@ def _post_to_pipe(pipe_path: str, pid: int, text: str) -> None:
     import time
     try:
         with open(pipe_path, "wb") as pipe:
+            if expected_generation is not None:
+                verify_connected_generation(generation_session, expected_generation, connected_pipe_pid(pipe))
             pipe.write((auth_line + "\n").encode("utf-8"))
             pipe.write((payload + "\n").encode("utf-8"))
             pipe.flush()
@@ -294,7 +297,8 @@ def _post_to_pipe(pipe_path: str, pid: int, text: str) -> None:
         raise CcPeerError(f"cannot reach inbox at {pipe_path}: {exc}") from exc
 
 
-def post_to_socket(socket_path: str, text: str, pid: int = 0) -> None:
+def post_to_socket(socket_path: str, text: str, pid: int = 0, *, generation_session=None,
+                   expected_generation=None) -> None:
     """Write one message to a session's inbox socket.
 
     On macOS and Linux the {"type":"auth",...} line the docs describe is
@@ -305,7 +309,8 @@ def post_to_socket(socket_path: str, text: str, pid: int = 0) -> None:
     socket is opened.
     """
     if IS_WINDOWS and socket_path.startswith("\\\\.\\pipe\\"):
-        _post_to_pipe(socket_path, pid, text)
+        _post_to_pipe(socket_path, pid, text, generation_session=generation_session,
+                      expected_generation=expected_generation)
         return
 
     check_message(text, remote=False)
@@ -324,6 +329,8 @@ def post_to_socket(socket_path: str, text: str, pid: int = 0) -> None:
             raise CcPeerError(f"cannot reach inbox at {socket_path}: {exc}") from exc
 
         try:
+            if expected_generation is not None:
+                verify_connected_generation(generation_session, expected_generation, connected_inbox_pid(conn))
             conn.sendall((payload + "\n").encode("utf-8"))
             conn.shutdown(socket.SHUT_WR)
             conn.settimeout(DRAIN_TIMEOUT)

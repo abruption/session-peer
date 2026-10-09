@@ -65,6 +65,10 @@ class LocalTransport:
                 # destroy successful results from other adapters, even in JSON mode.
                 for row in result["sessions"]:
                     adapter.display_row(row)
+                    if getattr(args, "with_target_generation", False):
+                        value = claude_generation(row) if adapter.name == "claude" else None
+                        row["targetGeneration"] = value
+                        row["generationStatus"] = "available" if value else "unsupported"
                 return result
             if operation == "send":
                 adapter.validate_send(args, text)
