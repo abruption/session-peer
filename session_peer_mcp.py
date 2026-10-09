@@ -235,6 +235,13 @@ class Adapter:
             argv.append("--dry-run")
         if wake:
             argv += ["--wake", "--wake-timeout", str(wake_timeout)]
+            # Shared MCP startup context is only a cooperative cost hint, not
+            # authenticated identity of the calling thread. No model-supplied
+            # max-depth override; use the operator-owned process environment.
+            try:
+                argv += core.wake_chain_options(core.wake_chain_context(argparse.Namespace()))
+            except core.CcPeerError as exc:
+                return {"ok": False, "error": str(exc), **exc.details}
         # A shared MCP process cannot authenticate the invoking thread. Never
         # advertise the session that happened to launch it as the caller.
         return await self.invoke(argv, "From: session-peer MCP (caller session unavailable)\n\n" + message)

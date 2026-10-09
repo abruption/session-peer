@@ -257,7 +257,10 @@ class WakePolicy(unittest.IsolatedAsyncioTestCase):
         adapter=mcp_peer.Adapter({'local':{'agents':['codex'],'capabilities':['send','wake'],'codexHome':'/custom'}})
         adapter.invoke=AsyncMock(return_value={'ok':True})
         await adapter.send_message('local','codex:'+THREAD,'hello',wake=True,wake_timeout=12)
-        self.assertEqual(adapter.invoke.call_args.args[0][-3:],['--wake','--wake-timeout','12'])
+        argv = adapter.invoke.call_args.args[0]
+        self.assertEqual(argv[argv.index('--wake'):argv.index('--wake')+3],
+                         ['--wake','--wake-timeout','12'])
+        self.assertEqual(argv[argv.index('--_wake-depth')+1], '0')
         for timeout in (0,61):
             with self.assertRaises(mcp_peer.PolicyError):
                 await adapter.send_message('local','codex:'+THREAD,'hello',wake=True,wake_timeout=timeout)

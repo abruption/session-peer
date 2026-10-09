@@ -4,6 +4,10 @@ import os
 import sys
 import time
 
+if os.environ.get('WAKE_TEST_EXPECT_CHAIN'):
+    for key, expected in json.loads(os.environ['WAKE_TEST_EXPECT_CHAIN']).items():
+        assert os.environ.get(key) == expected
+
 for line in sys.stdin:
     value = json.loads(line)
     if value.get('method') == 'initialize':

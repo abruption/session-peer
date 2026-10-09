@@ -114,3 +114,10 @@ class PeerFraming(unittest.TestCase):
         self.assertNotEqual(result['chars'], len('hello'))
         self.assertNotIn('submitted', result)
         self.assertNotIn('consumptionConfirmed', result)
+        self.assertNotIn('targetGeneration', result)
+        native['targetGeneration'] = 'tg1:' + 'a' * 64
+        pinned = peer.AGENTS.get('claude').remote_submission(native, args, 'hello')
+        self.assertEqual(pinned['targetGeneration'], native['targetGeneration'])
+        self.assertEqual(pinned['chars'], native['chars'])
+        self.assertNotIn('submitted', pinned)
+        self.assertNotIn('consumptionConfirmed', pinned)
