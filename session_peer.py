@@ -5133,6 +5133,7 @@ HANDOFF_LEDGER_BYTES = 33554432
 HANDOFF_RECORD_BYTES = 32768  # reserve all 64 waits, a receipt and native facts
 HANDOFF_FRAME_BYTES = 4096
 HANDOFF_COLLECTOR_ARG = "--_handoff-receipt-collector"
+HANDOFF_PRODUCER_ARG = "--_handoff-receipt-producer"
 HANDOFF_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z")
 
 
@@ -5422,7 +5423,7 @@ class HandoffLedger:
                 raw = stream.read(HANDOFF_LEDGER_BYTES + 1)
             try:
                 state = handoff_json(raw, HANDOFF_LEDGER_BYTES)
-                if set(state) != {"schemaVersion", "epoch", "records"} or state["schemaVersion"] != 1 or type(state["records"]) is not dict:
+                if set(state) != {"schemaVersion", "epoch", "records"} or type(state["schemaVersion"]) is not int or state["schemaVersion"] != 1 or type(state["records"]) is not dict:
                     raise ValueError()
                 handoff_uuid(state["epoch"])
                 for key, record in state["records"].items():
@@ -5430,7 +5431,7 @@ class HandoffLedger:
                     if type(record) is not dict or record.get("id") != key:
                         raise ValueError()
                     self._validate_record(record)
-            except (CcPeerError, ValueError, KeyError) as exc:
+            except (CcPeerError, ValueError, KeyError, TypeError) as exc:
                 raise handoff_error("handoff_ledger_corrupt") from exc
             boot, now = handoff_boot_clock(), time.monotonic_ns()
             if boot is not None:
@@ -5495,7 +5496,7 @@ class HandoffLedger:
             raise ValueError()
         for key in ("createdNs", "createdUtcMs"):
             uint(record[key], 9007199254740991 if key == "createdUtcMs" else 9223372036854775807)
-        if record["historyBoot"] is not None and re.fullmatch(r"[0-9a-f]{64}", record["historyBoot"]) is None:
+        if record["historyBoot"] is not None and (type(record["historyBoot"]) is not str or re.fullmatch(r"[0-9a-f]{64}", record["historyBoot"]) is None):
             raise ValueError()
         if record["generation"] is not None:
             handoff_identifier(record["generation"])
@@ -5805,6 +5806,28 @@ def handoff_collector(root):
     return 0
 
 
+def handoff_producer_command(ledger, deadline):
+    """Prove the exact installed private handler; canonical PATH is not proof."""
+    script = Path(__file__).resolve()
+    executable = Path(sys.executable).resolve()
+    for path in (script, executable):
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o022 or info.st_uid not in (0, os.getuid()):
+            raise handoff_error("receipt_handler_not_installed")
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise handoff_error("receipt_handler_not_installed")
+    try:
+        probe = subprocess.run([str(executable), "-I", str(script), "ack", "--help"],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    timeout=min(2, remaining), check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise handoff_error("receipt_handler_not_installed") from exc
+    if probe.returncode or b"--receipt" not in probe.stdout or time.monotonic() >= deadline:
+        raise handoff_error("receipt_handler_not_installed")
+    return [str(executable), "-I", str(script), HANDOFF_PRODUCER_ARG, str(ledger.root)]
+
+
 def handoff_ensure_collector(ledger, deadline):
     if time.monotonic() >= deadline:
         raise handoff_error("receipt_channel_unavailable")
@@ -5950,6 +5973,29 @@ def handoff_confirm(ledger, frame):
                          "receiptId": None, "classifiedClockEpoch": None}
 
 
+def handoff_receipt_stdin(timeout=5):
+    """Read a private POSIX frame with one total deadline, not per-read timeouts."""
+    import select
+    if IS_WINDOWS:
+        raise handoff_error("receipt_channel_unsupported")
+    deadline = time.monotonic() + timeout
+    try:
+        fd = sys.stdin.buffer.fileno()
+        raw = bytearray()
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([fd], [], [], max(0, remaining))[0]:
+                raise handoff_error("invalid_receipt")
+            chunk = os.read(fd, 4097 - len(raw))
+            if not chunk:
+                return bytes(raw)
+            raw.extend(chunk)
+            if len(raw) > 4096:
+                raise handoff_error("invalid_receipt")
+    except (OSError, ValueError, AttributeError) as exc:
+        raise handoff_error("invalid_receipt") from exc
+
+
 def cmd_handoff(args):
     ledger = HandoffLedger()
     action = args.handoff_action
@@ -5964,7 +6010,7 @@ def cmd_handoff(args):
         emit(args.json, {"ok": True, "handoff": handoff_public(epoch, record)}, "Handoff intent prepared; nothing sent.", command="handoff")
         return 0
     if action == "confirm":
-        frame = handoff_private_wire(sys.stdin.buffer.read(4097), confirmation=True)
+        frame = handoff_private_wire(handoff_receipt_stdin(), confirmation=True)
         handoff_confirm(ledger, frame)
         args.correlation_id = frame["correlationId"]
     correlation = handoff_uuid(args.correlation_id)
@@ -5986,9 +6032,9 @@ def cmd_handoff(args):
     return code
 
 
-def cmd_ack(args):
-    frame = handoff_private_wire(sys.stdin.buffer.read(4097))
-    result = handoff_ipc(handoff_root(), frame)
+def cmd_ack(args, root=None):
+    frame = handoff_private_wire(handoff_receipt_stdin())
+    result = handoff_ipc(handoff_root() if root is None else root, frame)
     # Deliberately no token, digest, arbitrary body or generic query information.
     emit(args.json, {"ok": True, "duplicate": result["duplicate"], "classification": "pending" if result.get("pending") else "committed"}, "Receipt recorded.", command="ack")
     return 0
@@ -6049,13 +6095,22 @@ def cmd_handoff_send(args):
         raise NoTargetError("Handoff supports at most 32 destinations")
     if len(args.host) > 1:
         raise handoff_error("handoff_fanout_runtime_unsupported")
+    message = getattr(args, "message_option", None)
+    if message is None:
+        message = args.message
+    if args.b64 is None and getattr(args, "message_file", None) is None and (message is None or message == "-"):
+        # A producer may keep stdin open indefinitely. This candidate does not
+        # implement cancellable message input, so never begin an unbounded read
+        # inside the frozen total send budget. Receipt stdin is a separate API.
+        raise handoff_error("handoff_message_stdin_unsupported")
     text = read_message(args)
     check_message(text, remote=bool(args.host))
     adapter = AGENTS.for_target(args.to)
     validate_agent_send(adapter, args, text)
     binding, generation, session = handoff_binding(args, text)
     ledger = HandoffLedger()
-    epoch, prepared = ledger.prepare(binding, generation, args.correlation_id, cutoff)
+    epoch, prepared = ledger.prepare(binding, generation, args.correlation_id,
+                                     total if args.wait_timeout <= 5 else cutoff)
     correlation = prepared["id"]
     if args.dry_run:
         if args.host or getattr(args, "device", None):
@@ -6069,8 +6124,10 @@ def cmd_handoff_send(args):
     reason = "insufficient_budget" if args.wait_timeout <= 5 else "deadline_before_effect" if time.monotonic() >= cutoff else "evidence_unsupported" if not capable or args.wait_for == "delivered" else None
     wants_ack = args.request_ack or args.wait_for == "acknowledged"
     authority = None
+    producer = None
     if reason is None and wants_ack:
         try:
+            producer = handoff_producer_command(ledger, cutoff)
             handoff_ensure_collector(ledger, cutoff)
             authority = handoff_ipc(ledger.root, {"op": "mint", "ledgerEpoch": epoch,
                         "correlationId": correlation, "targetGeneration": generation}, cutoff)
@@ -6092,12 +6149,17 @@ def cmd_handoff_send(args):
         local_reply = configured is None or bool(identity and identity.get("host") and is_self_ssh_destination(str(identity["host"])))
         text = wrap_message(text, explicit_host=args.reply_to, with_from=not args.no_from,
                             with_reply=not args.no_reply_to, local_reply=local_reply, identity=identity)
+    # This path performs a private bounded inbox call directly, so it must use
+    # exactly the same untrusted-body boundary as LocalTransport. Native stdin,
+    # --no-from/--no-reply-to and internal --b64 never bypass quoting.
+    text = peer_delivery_message(text, "claude")
     if authority is not None:
         receipt = {"schemaVersion": 1, "kind": "receipt", "ledgerEpoch": epoch,
                    "correlationId": correlation, "targetGeneration": generation,
                    "receiptId": str(uuid.uuid4()), "capability": authority["capability"]}
         text += "\n\nReceipt-only delegated authority (not permission for other actions).\n" + \
-                "An explicit correlated receipt can be submitted with session-peer ack --receipt - using this private JSON on stdin:\n" + HandoffLedger.encode(receipt).decode("utf-8")
+                "An explicit correlated receipt can be submitted with the installed receipt-only handler " + shlex.join(producer) + \
+                " using this private JSON on stdin (never as argv):\n" + HandoffLedger.encode(receipt).decode("utf-8")
     try:
         check_message(text, remote=False)
         native_success = {"ok": True, "target": {"pid": session["pid"], "name": session["name"]}, "chars": len(text), "dryRun": False}
@@ -6134,28 +6196,36 @@ def cmd_handoff_send(args):
     except KeyboardInterrupt:
         interrupted = True
         native, submission = {"ok": False, "reason": "native_outcome_unknown", "retryAllowed": False}, "unknown"
-    with ledger.transaction(total) as state:
-        record = state["records"][correlation]
-        record.update(phase="terminal", native=native, submission=submission)
-        if submission != "submitted" and record["capability"]:
-            record["capability"]["revoked"] = True
-        if submission != "submitted" and operation is not None:
-            current = next(wait for wait in record["waits"] if wait["operationId"] == operation)
-            if current["status"] == "pending":
-                current.update(status="stopped" if interrupted else "failed",
-                               reason="stopped_by_operator" if interrupted else "evidence_failed")
-    if submission == "submitted" and authority is not None:
-        try:
-            handoff_ipc(ledger.root, {"op": "classify", "schemaVersion": 1, "ledgerEpoch": epoch,
-                     "correlationId": correlation, "targetGeneration": generation,
-                     "capability": authority["capability"]}, total)
-        except CcPeerError:
-            pass  # Known native submission survives observer/classification failure.
     code = 130 if interrupted else 0 if submission == "submitted" else 1
-    if args.wait_for and submission == "submitted":
-        code = handoff_wait(ledger, correlation, args.wait_for, args.wait_timeout, cutoff,
-                            authority["clockEpoch"] if authority else None, operation, total)
-    epoch, record = ledger.record(correlation, total)
+    try:
+        with ledger.transaction(total) as state:
+            record = state["records"][correlation]
+            record.update(phase="terminal", native=native, submission=submission)
+            if submission != "submitted" and record["capability"]:
+                record["capability"]["revoked"] = True
+            if submission != "submitted" and operation is not None:
+                current = next(wait for wait in record["waits"] if wait["operationId"] == operation)
+                if current["status"] == "pending":
+                    current.update(status="stopped" if interrupted else "failed",
+                                   reason="stopped_by_operator" if interrupted else "evidence_failed")
+        if submission == "submitted" and authority is not None:
+            try:
+                handoff_ipc(ledger.root, {"op": "classify", "schemaVersion": 1, "ledgerEpoch": epoch,
+                         "correlationId": correlation, "targetGeneration": generation,
+                         "capability": authority["capability"]}, total)
+            except CcPeerError:
+                pass  # Known native submission survives observer/classification failure.
+        if args.wait_for and submission == "submitted":
+            code = handoff_wait(ledger, correlation, args.wait_for, args.wait_timeout, cutoff,
+                                authority["clockEpoch"] if authority else None, operation, total)
+        epoch, record = ledger.record(correlation, total)
+    except (CcPeerError, OSError, ValueError, KeyError, TypeError):
+        # The durable effect fence already exists. A failed commit/query must
+        # not erase independently validated native facts or invent handoff/ACK.
+        result = dict(native)
+        result.update(ok=False, reason="handoff_history_unavailable", retryAllowed=False)
+        emit(args.json, result, "Native outcome retained; handoff history unavailable. Do not resend.", command="send")
+        return 130 if interrupted or code == 130 else 1
     result = dict(native)
     result.update(ok=code == 0, handoff=handoff_public(epoch, record, authority["clockEpoch"] if authority else None))
     emit(args.json, result, "Handoff " + result["handoff"]["state"] + "; submission is not consumption.", command="send")
@@ -6546,6 +6616,14 @@ def main(argv: list[str] | None = None) -> int:
     global _CLIENT_UPDATE_NOTICE, _SKILL_UPDATE_NOTICES
     cli_invocation = argv is None
     raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if len(raw_argv) == 2 and raw_argv[0] == HANDOFF_PRODUCER_ARG:
+        if IS_WINDOWS:
+            return 1
+        try:
+            return cmd_ack(argparse.Namespace(json=True), root=Path(raw_argv[1]))
+        except (CcPeerError, OSError, ValueError):
+            print('{"ok":false,"reason":"receipt_operation_refused"}')
+            return 1
     if len(raw_argv) == 2 and raw_argv[0] == HANDOFF_COLLECTOR_ARG:
         if IS_WINDOWS:
             return 1

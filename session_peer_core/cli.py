@@ -197,6 +197,14 @@ def main(argv: list[str] | None = None) -> int:
     global _CLIENT_UPDATE_NOTICE, _SKILL_UPDATE_NOTICES
     cli_invocation = argv is None
     raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if len(raw_argv) == 2 and raw_argv[0] == HANDOFF_PRODUCER_ARG:
+        if IS_WINDOWS:
+            return 1
+        try:
+            return cmd_ack(argparse.Namespace(json=True), root=Path(raw_argv[1]))
+        except (CcPeerError, OSError, ValueError):
+            print('{"ok":false,"reason":"receipt_operation_refused"}')
+            return 1
     if len(raw_argv) == 2 and raw_argv[0] == HANDOFF_COLLECTOR_ARG:
         if IS_WINDOWS:
             return 1

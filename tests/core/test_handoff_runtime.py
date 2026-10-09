@@ -232,9 +232,11 @@ class HandoffRuntime(unittest.TestCase):
         frame = {"schemaVersion": 1, "kind": "receipt", "ledgerEpoch": self.epoch,
                  "correlationId": self.correlation, "targetGeneration": self.generation,
                  "receiptId": str(peer.uuid.uuid4()), "capability": minted["capability"]}
-        code = "import sys,pathlib; import session_peer as p; p.handoff_root=lambda:pathlib.Path(sys.argv[1]); sys.exit(p.main(['ack','--receipt','-','--json']))"
-        result = subprocess.run([sys.executable, "-c", code, str(self.ledger.root)], input=peer.HandoffLedger.encode(frame),
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+        with mock.patch.dict(os.environ, {"PATH": "/nonexistent/incompatible-canonical-cli"}):
+            command = peer.handoff_producer_command(self.ledger, time.monotonic() + 5)
+            result = subprocess.run(command, input=peer.HandoffLedger.encode(frame),
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+        self.assertNotIn("session-peer", command)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(json.loads(result.stdout)["ok"])
         self.assertNotIn(frame["capability"].encode(), result.stdout + result.stderr)
@@ -341,6 +343,8 @@ class HandoffRuntime(unittest.TestCase):
                             break
                         raw.extend(chunk)
                     content = json.loads(raw)["message"]["content"]
+                    if "| hello\nEND QUOTED PEER BODY" not in content:
+                        raise AssertionError("native inbox body was not framed")
                     frame = json.loads(content.rsplit("\n", 1)[1])
                     receipt_cap.append(frame["capability"])
                     if early:
@@ -370,6 +374,7 @@ class HandoffRuntime(unittest.TestCase):
         self.assertEqual(status, 0, out.getvalue())
         result = json.loads(out.getvalue())
         self.assertEqual(result["target"]["pid"], pid)
+        self.assertGreater(result["chars"], len("hello"))
         for absent in ("status", "submitted", "consumptionConfirmed"):
             self.assertNotIn(absent, result)
         self.assertEqual(result["handoff"]["state"], "acknowledged")
@@ -505,3 +510,143 @@ class HandoffRuntime(unittest.TestCase):
         self.assertEqual(result["handoff"]["wait"]["reason"], "stopped_by_operator")
         self.assertFalse(result["retryAllowed"])
         self.assertNotIn("submitted", result)
+
+    def test_corrupt_receipt_wait_and_native_details_close_query_context(self):
+        import copy
+        original = (self.ledger.root / "ledger.json").read_bytes()
+        mutations = (
+            {"historyBoot": ["corrupt-clock"]},
+            {"ack": {"status": "acknowledged"}},
+            {"pendingReceipt": {"receiptId": str(peer.uuid.uuid4())}},
+            {"submission": "submitted", "phase": "terminal", "native": None},
+            {"waits": [{"for": "acknowledged", "status": "pending", "operationId": str(peer.uuid.uuid4()),
+                        "deadlineAtUtcMs": True, "deadlineNs": 1, "clockEpoch": None}]},
+            {"waits": [{"for": "acknowledged", "status": "pending", "operationId": str(peer.uuid.uuid4()),
+                        "deadlineAtUtcMs": 9007199254740992, "deadlineNs": 1, "clockEpoch": None}]},
+            {"waits": [{"for": "acknowledged", "status": "pending", "operationId": str(peer.uuid.uuid4()),
+                        "deadlineAtUtcMs": 1, "deadlineNs": 1, "clockEpoch": "unproven-clock"}]},
+            {"capability": {"hash": "a" * 64, "clockEpoch": str(peer.uuid.uuid4()), "expiresNs": True, "revoked": False}},
+        )
+        for mutation in mutations:
+            with self.subTest(mutation=list(mutation)):
+                state = json.loads(original)
+                state["records"][self.correlation].update(copy.deepcopy(mutation))
+                (self.ledger.root / "ledger.json").write_bytes(peer.HandoffLedger.encode(state))
+                output = io.StringIO()
+                with mock.patch.object(peer, "handoff_root", return_value=self.ledger.root), contextlib.redirect_stdout(output):
+                    code = peer.main(["handoff", "status", "--correlation-id", self.correlation, "--json"])
+                self.assertEqual(code, 1)
+                result = json.loads(output.getvalue())
+                self.assertEqual(result["handoffQuery"]["context"], "ledger_corrupt")
+                self.assertNotIn("handoff", result)
+                self.assertNotIn("ledgerEpoch", result)
+        (self.ledger.root / "ledger.json").write_bytes(original)
+        state = json.loads(original)
+        state["schemaVersion"] = True
+        (self.ledger.root / "ledger.json").write_bytes(peer.HandoffLedger.encode(state))
+        with self.assertRaises(peer.CcPeerError) as caught:
+            self.ledger.record(self.correlation)
+        self.assertEqual(caught.exception.details["reason"], "handoff_ledger_corrupt")
+        (self.ledger.root / "ledger.json").write_bytes(original)
+
+    def test_final_framed_message_limit_refuses_before_native_call(self):
+        session = {"pid": os.getpid(), "name": "fixture", "socket": "owned-test-endpoint"}
+        body = "x" * peer.MAX_MESSAGE_CHARS
+        args = peer.build_parser().parse_args(["send", "--to", "fixture", "--message=" + body,
+                                              "--observe-delivery", "--no-from", "--no-reply-to", "--json"])
+        output = io.StringIO()
+        binding = {**self.binding, "payloadDigest": "b" * 64}
+        with mock.patch.object(peer, "handoff_root", return_value=self.ledger.root), \
+                mock.patch.object(peer, "handoff_binding", return_value=(binding, self.generation, session)), \
+                mock.patch.object(peer, "post_to_socket") as post, contextlib.redirect_stdout(output):
+            code = peer.cmd_handoff_send(args)
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(output.getvalue())["handoff"]["submission"]["status"], "refused")
+        post.assert_not_called()
+
+    def test_handoff_message_stdin_refuses_before_read_or_native_effect(self):
+        for source in ([], ["-"], ["--message=-"]):
+            with self.subTest(source=source):
+                args = peer.build_parser().parse_args(["send", "--to", "fixture", "--request-ack", "--json"] + source)
+                with mock.patch.object(peer, "read_message") as read, mock.patch.object(peer, "post_to_socket") as post:
+                    with self.assertRaises(peer.CcPeerError) as caught:
+                        peer.cmd_handoff_send(args)
+                self.assertEqual(caught.exception.details["reason"], "handoff_message_stdin_unsupported")
+                read.assert_not_called()
+                post.assert_not_called()
+
+    def test_private_receipt_stdin_pipe_without_eof_has_one_deadline(self):
+        read_fd, write_fd = os.pipe()
+        try:
+            with os.fdopen(read_fd, "rb", buffering=0) as stream:
+                fake_stdin = mock.Mock(buffer=stream)
+                os.write(write_fd, b'{')
+                start = time.monotonic()
+                with mock.patch.object(peer.sys, "stdin", fake_stdin), self.assertRaises(peer.CcPeerError):
+                    peer.handoff_receipt_stdin(timeout=0.05)
+                self.assertLess(time.monotonic() - start, 0.5)
+        finally:
+            os.close(write_fd)
+
+    def test_post_effect_storage_failure_retains_native_facts_without_ack(self):
+        session = {"pid": os.getpid(), "name": "fixture", "socket": "owned-test-endpoint"}
+        args = peer.build_parser().parse_args(["send", "--to", "fixture", "--message=x", "--observe-delivery",
+                                              "--no-from", "--no-reply-to", "--json"])
+        completed = threading.Event()
+        original_transaction = peer.HandoffLedger.transaction
+        @contextlib.contextmanager
+        def transaction(ledger, deadline=None):
+            if completed.is_set():
+                raise peer.handoff_error("handoff_ledger_busy")
+            with original_transaction(ledger, deadline) as state:
+                yield state
+        output = io.StringIO()
+        binding = {**self.binding, "payloadDigest": "b" * 64}
+        with mock.patch.object(peer, "handoff_root", return_value=self.ledger.root), \
+                mock.patch.object(peer, "handoff_binding", return_value=(binding, self.generation, session)), \
+                mock.patch.object(peer, "require_claude_generation"), \
+                mock.patch.object(peer.HandoffLedger, "transaction", new=transaction), \
+                mock.patch.object(peer, "post_to_socket", side_effect=lambda *a, **k: completed.set()) as post, contextlib.redirect_stdout(output):
+            code = peer.cmd_handoff_send(args)
+        result = json.loads(output.getvalue())
+        self.assertEqual(code, 1)
+        self.assertEqual(post.call_count, 1)
+        self.assertEqual(result["target"], {"pid": os.getpid(), "name": "fixture"})
+        self.assertGreater(result["chars"], 1)
+        self.assertFalse(result["dryRun"])
+        self.assertFalse(result["retryAllowed"])
+        self.assertEqual(result["reason"], "handoff_history_unavailable")
+        for absent in ("status", "submitted", "consumptionConfirmed", "handoff", "handoffQuery"):
+            self.assertNotIn(absent, result)
+
+    def test_required_ack_handler_not_installed_refuses_without_effect(self):
+        session = {"pid": os.getpid(), "name": "fixture", "socket": "owned-test-endpoint"}
+        args = peer.build_parser().parse_args(["send", "--to", "fixture", "--message=x", "--wait-for", "acknowledged",
+                                              "--no-from", "--no-reply-to", "--json"])
+        output = io.StringIO()
+        binding = {**self.binding, "payloadDigest": "b" * 64}
+        with mock.patch.object(peer, "handoff_root", return_value=self.ledger.root), \
+                mock.patch.object(peer, "handoff_binding", return_value=(binding, self.generation, session)), \
+                mock.patch.object(peer, "handoff_producer_command", side_effect=peer.handoff_error("receipt_handler_not_installed")), \
+                mock.patch.object(peer, "post_to_socket") as post, contextlib.redirect_stdout(output):
+            code = peer.cmd_handoff_send(args)
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(output.getvalue())["handoff"]["submission"]["status"], "refused")
+        post.assert_not_called()
+
+    def test_cleanup_only_budget_records_definite_pre_effect_refusal(self):
+        session = {"pid": os.getpid(), "name": "fixture", "socket": "owned-test-endpoint"}
+        args = peer.build_parser().parse_args(["send", "--to", "fixture", "--message=x", "--wait-for", "acknowledged",
+                                              "--wait-timeout=1", "--no-from", "--no-reply-to", "--json"])
+        output = io.StringIO()
+        binding = {**self.binding, "payloadDigest": "b" * 64}
+        with mock.patch.object(peer, "handoff_root", return_value=self.ledger.root), \
+                mock.patch.object(peer, "handoff_binding", return_value=(binding, self.generation, session)), \
+                mock.patch.object(peer, "post_to_socket") as post, contextlib.redirect_stdout(output):
+            code = peer.cmd_handoff_send(args)
+        result = json.loads(output.getvalue())
+        self.assertEqual(code, 1)
+        self.assertEqual(result["handoff"]["submission"]["status"], "refused")
+        self.assertEqual(result["handoff"]["wait"]["reason"], "insufficient_budget")
+        self.assertEqual(result["handoff"]["wait"]["status"], "failed")
+        post.assert_not_called()
