@@ -1,5 +1,41 @@
 # 配对设备与私有中继 (v1.0)
 
+## 连接设置向导（明确选择）
+
+`session-peer setup` 不改变安装，只说明本地、SSH 与 Relay 选项。本地、SSH 使用标准
+库 CLI；Relay 需要 Unix Python 3.11 及以上版本与可选 `[relay]` 依赖，不需要 Node.js。
+缺少依赖时，向导说明原管理器命令或与独立 CLI 分离的环境，不执行安装或切换管理器。
+技能、插件不安装运行时或托管服务，也不保证公共服务可用。
+
+```bash
+session-peer setup
+session-peer setup --mode local
+session-peer setup --mode ssh --host worker
+session-peer setup --mode relay --interactive --role receiver
+session-peer setup --mode relay --interactive --role client --no-browser
+```
+
+在两端运行 Relay 向导，分别批准初始化、浏览器或代码授权登录、命名注册、策略与邀请
+生成、配对。明确选择信任客户端初始化结果中的标识，选择当前目标、可执行文件、主目录，
+并审阅策略。默认只向该设备、目标授予 `list`，`send` 另行选择。请在10分钟内安全传递
+私密邀请文件。注册不等于配对，配对不等于代理批准。设置不会发送测试消息。
+
+无界面环境用 `--action init|login|enroll|policy|invite|pair|ready` 和 `--apply` 批准各项
+操作，目标、设备、路径、路由参数见 `--help`。`plan`、`targets`、不带 `--apply` 的预览
+不构造 Store、不初始化密钥、数据库、设置日志，也不迁移状态。数据库列表只是已落盘
+检查点的诊断信息，不证明当前权限。向导报告接收锁和已知服务文件，但不保证发现所有
+服务，也不修改已有服务。策略只新建私密0600文件或复用完全相同的文件，不覆盖其他
+策略、不扩大权限。应用前重新检查目标，但不保证之后原生会话仍为同一实例。
+
+私密 `setup.json` 在请求前持久保存原注册 UUID、名称、服务器、密钥标识。中断、丢失
+响应后，用相同状态、名称明确恢复 `enroll`，现有 API 核对同一操作，不更换成新修改。
+意图、密钥变化会被拒绝。登录过期需重新 `login`，但 UUID 保留。邀请生成结果不明时，
+等待操作员核对。提示命令和 `--action receiver --apply` 在前台运行，直到 Ctrl-C 或
+`--seconds` 到期；不安装自动启动、服务、配置文件，已有 launchd、systemd 管理独立进行。
+`--action cancel --apply`、EOF、Ctrl-C 只停止设置等待，不撤销已提交注册或原消息。
+目录使用0700、文件使用0600，不共享日志、令牌、邀请秘密。认证后的 probe、列表只检查
+元数据，不证明消费、ACK、代理批准或可用性。结果不明的消息不重发，手动命令仍可使用。
+
 这一可选的 Unix/Python 3.11+ 传输方式将请求传递到操作员定义的
 Claude、Codex 或已注册的 Antigravity 端点。通常的本地/SSH 命令
 保持无外部依赖。这是一个显式的 CLI 工作流；不会安装移动端应用程序、

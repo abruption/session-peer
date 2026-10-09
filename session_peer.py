@@ -5030,6 +5030,35 @@ def cmd_optional_relay(args):
     return optional_relay().main(args.command, ["--help"] if args.relay_help else args.relay_args)
 
 
+def cmd_setup(args):
+    if args.interactive and not args.mode:
+        args.mode = input("Connection mode [local/ssh/relay]: ").strip()
+        if args.mode not in ('local', 'ssh', 'relay'):
+            raise CcPeerError('Choose local, ssh, or relay', {'reason': 'invalid_setup_mode'})
+    if args.mode in ('local', 'ssh') or not args.mode:
+        if args.action != 'plan' or args.apply:
+            raise CcPeerError('Local/SSH setup only inspects capabilities; use the existing CLI',
+                              {'reason': 'setup_action_unsupported'})
+        if args.mode == 'ssh' and not args.host:
+            result = {'ok': True, 'mode': 'ssh', 'nextAction': 'Choose --host, then use list and send --dry-run. The destination needs Python 3 and a POSIX-compatible shell; no Relay extra is needed.'}
+        elif args.mode:
+            # Existing list keeps its SSH option/response validation and partial
+            # discovery semantics. This path never imports optional Relay code.
+            return cmd_list(args)
+        else:
+            result = {'ok': True, 'choices': ['local', 'ssh', 'relay'],
+                      'nextAction': 'Choose --mode local/ssh for the standard-library CLI, or --mode relay for explicit paired-device setup.',
+                      'installation': relay_install_guidance(), 'changed': False}
+        emit(args.json, result, json.dumps(human_text(result), ensure_ascii=False, indent=2), command='setup')
+        return 0
+    optional_relay()
+    from session_peer_relay.setup import run
+    result = run(args)
+    exit_code = result.pop('_exit', 0 if result.get('ok') else 1)
+    emit(args.json, result, json.dumps(human_text(result), ensure_ascii=False, indent=2), command='setup')
+    return exit_code
+
+
 class MessageArgumentParser(argparse.ArgumentParser):
     def _get_values(self, action, arg_strings):
         # Python 3.9 strips '--' even from an already recognized option value.
@@ -5177,6 +5206,32 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument('--help', '-h', dest='relay_help', action='store_true')
         sub.add_argument('relay_args', nargs=argparse.REMAINDER)
         sub.set_defaults(func=cmd_optional_relay, json=True, no_update_notice=True)
+    setup = subparsers.add_parser('setup', help='explicit connection choices and guided paired-device setup')
+    add_common(setup)
+    setup.add_argument('--mode', choices=('local', 'ssh', 'relay'))
+    setup.add_argument('--interactive', action='store_true', help='ask before each setup mutation; EOF/Ctrl-C cancels')
+    setup.add_argument('--action', choices=('plan', 'init', 'login', 'enroll', 'targets', 'policy', 'invite', 'pair', 'ready', 'receiver', 'cancel'), default='plan')
+    setup.add_argument('--apply', action='store_true', help='explicitly approve the selected setup action, never a message send')
+    setup.add_argument('--state')
+    setup.add_argument('--server')
+    setup.add_argument('--name')
+    setup.add_argument('--no-browser', action='store_true')
+    setup.add_argument('--role', choices=('receiver', 'client'), default='receiver')
+    setup.add_argument('--policy')
+    setup.add_argument('--target', help='exact native target; Claude uses the selected PID, not an ambiguous name')
+    setup.add_argument('--alias', default='main')
+    setup.add_argument('--peer', help='explicit trusted paired-device principal (64 lowercase hexadecimal characters)')
+    setup.add_argument('--capability', action='append', choices=('list', 'send'), default=[])
+    setup.add_argument('--codex-home')
+    setup.add_argument('--codex-bin')
+    setup.add_argument('--antigravity-home')
+    setup.add_argument('--direct')
+    setup.add_argument('--relay', help='receiver WSS connect URL, not an account-login URL')
+    setup.add_argument('--invite', help='private existing invitation file for a client')
+    setup.add_argument('--out', help='new private invitation file for a receiver')
+    setup.add_argument('--route', choices=('auto', 'direct', 'relay'), default='auto')
+    setup.add_argument('--seconds', type=int, choices=range(1, 86401), default=3600, metavar='SECONDS')
+    setup.set_defaults(func=cmd_setup, json=False, no_update_notice=True, agent=None, all=False)
     return parser
 
 
