@@ -1173,16 +1173,16 @@ def handoff_codex_submit(args, text, binding, context, cutoff, total):
         stdout = done["stdout"].decode("utf-8", errors="strict")
     except UnicodeError as exc:
         raise handoff_error("native_outcome_unknown") from exc
-    marker = re.fullmatch(r"Queued message ([^\s]+) for thread " + re.escape(binding["target"]) + r"\.\r?\n?", stdout)
+    marker = re.fullmatch(r"Queued message ([^\s]+) for thread (?i:" + re.escape(binding["target"]) + r")\.\r?\n?", stdout)
     # A matching complete native queue receipt is retained after disconnect or
     # deadline; partial/wrong-target output never supplies submission evidence.
-    if not (done["reason"] is None and done["returncode"] == 0) and marker is None:
+    if marker is None:
         raise handoff_error("native_outcome_unknown")
+    handoff_identifier(marker.group(1), 128)
     result = {"ok": True, "target": {"agent": "codex", "id": binding["target"]}, "chars": len(text),
               "dryRun": False, "codexHome": str(root), "submitted": True, "consumptionConfirmed": False,
               "status": "queued", "codexHomeResolution": resolution}
-    if marker:
-        result["queueId"] = marker.group(1)
+    result["queueId"] = marker.group(1)
     handoff_validate_native(result, {"binding": binding})
     return result
 

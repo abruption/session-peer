@@ -118,6 +118,31 @@ class HandoffCodex(unittest.TestCase):
         self.assertFalse(result["retryAllowed"])
         self.assertNotIn("submitted", result)
 
+    def test_wrong_thread_queue_receipt_never_fabricates_original_target(self):
+        for exit_code in (0, 255):
+            with self.subTest(exit_code=exit_code):
+                self.make_queue("print('Queued message wrong-01 for thread 87654321-abcd-1234-abcd-123456789abc.', flush=True); raise SystemExit(" + str(exit_code) + ")", receipt=False)
+                code, result = self.invoke(["--request-ack"])
+                self.assertEqual(code, 1, result)
+                self.assertEqual(result["handoff"]["submission"]["status"], "unknown")
+                self.assertFalse(result["retryAllowed"])
+                for absent in ("submitted", "target", "queueId"):
+                    self.assertNotIn(absent, result)
+
+    def test_absent_multiple_and_malformed_queue_markers_are_unknown(self):
+        for queue_id in (None, "x" * 129, "bad\x01id", "bad id"):
+            with self.subTest(queue_id=queue_id):
+                ending = "raise SystemExit(0)" if queue_id is None else "print(" + repr("Queued message " + queue_id + " for thread " + self.thread + ".") + ", flush=True)"
+                self.make_queue(ending, receipt=False)
+                code, result = self.invoke(["--request-ack"])
+                self.assertEqual(code, 1, result)
+                self.assertEqual(result["handoff"]["submission"]["status"], "unknown")
+                self.assertFalse(result["retryAllowed"])
+        self.make_queue("print('extra banner', flush=True)")
+        code, result = self.invoke(["--request-ack"])
+        self.assertEqual(code, 1, result)
+        self.assertEqual(result["handoff"]["submission"]["status"], "unknown")
+
     def test_complete_receipt_timeout_retains_known_submission(self):
         self.make_queue("time.sleep(3)")
         started = peer.handoff_now()
