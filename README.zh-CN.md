@@ -38,6 +38,8 @@ session-peer使用各智能体自身的收件箱和队列；接收方智能体�
 
 请参阅2026-10-07维护版本的[发布说明](docs/zh-CN/releases/v1.0.4.md)。软件包发布与生产环境部署是两项独立操作。
 
+发布候选 **1.1.0** 正在准备，尚未发布。计划变更与剩余验收条件请参阅[候选说明](docs/zh-CN/releases/v1.1.0.md)。
+
 ```bash
 pipx install session-peer
 session-peer --version

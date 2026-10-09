@@ -1,18 +1,18 @@
 # Releasing session-peer
 
-Version 1.0.4 is the maintenance release after 1.0.3, dated 2026-10-07. Preparation-only authorization stops before tags, drafts, workflow dispatch or publication; an explicit instruction to complete this release authorizes those publication steps, not the required human PyPI environment review or operational deployment. Keep preparation, immutable GitHub publication, the human PyPI environment review and post-publication verification distinct. Protected main requires reviewed, up-to-date PRs and the aggregate release gate, including Python platform matrices, documentation, shell, package/standalone/MCP/Relay/Control tests, integrations and Python/Node dependency audits.
+Version 1.1.0 is an unpublished candidate prepared on 2026-10-09; the current published stable release remains 1.0.4. Preparation-only authorization stops before tags, drafts, workflow dispatch or publication; an explicit instruction to complete this release authorizes those publication steps, not the required human PyPI environment review or operational deployment. Keep preparation, immutable GitHub publication, the human PyPI environment review and post-publication verification distinct. Protected main requires reviewed, up-to-date PRs and the aggregate release gate, including Python platform matrices, documentation, shell, package/standalone/MCP/Relay/Control tests, integrations and Python/Node dependency audits.
 
 ## Historical evidence and current boundaries
 
-The five-host v1.0.0 RC4 rc4-rerun-02 campaign ran for 14,436.65 seconds: complete record, public health 241/241, probes 147/147, submissions 21/21 and Relay restart recovery in 3.182 seconds. Independent ACKs were 20/21. T120 Windows native Claude had no confirmed original ACK because its TUI closed; a distinct one-shot check later received an exact ACK. The owner accepted this exception in #164. Keep 20/21 unchanged; this historical evidence does not validate v1.0.4. #161 remains open with the external stall root cause unconfirmed.
+The five-host v1.0.0 RC4 rc4-rerun-02 campaign ran for 14,436.65 seconds: complete record, public health 241/241, probes 147/147, submissions 21/21 and Relay restart recovery in 3.182 seconds. Independent ACKs were 20/21. T120 Windows native Claude had no confirmed original ACK because its TUI closed; a distinct one-shot check later received an exact ACK. The owner accepted this exception in #164. Keep 20/21 unchanged; this historical evidence does not validate v1.0.4 or v1.1.0. #161 remains open with the external stall root cause unconfirmed.
 
-The Python/PyPI version is 1.0.4; the corresponding tag and GitHub release are v1.0.4. Make it stable and Latest only after authorized publication. The plugin version remains independent. Core requires Python 3.9+, MCP 3.10+, Relay receiver/server Unix or WSL and Python 3.11+. Service receivers need Codex on their service PATH or an operator-owned codexBin binding. Package publication does not establish hosted remediation, fleet installation, production restarts, live OAuth health or agent ACKs. Unknown outcomes never authorize automatic resend.
+The Python/PyPI candidate version is 1.1.0; the planned tag and GitHub release are v1.1.0, neither created by preparation. Make it stable and Latest only after authorized publication. The plugin version remains independent. Core requires Python 3.9+, MCP 3.10+, Relay receiver/server Unix or WSL and Python 3.11+. Service receivers need Codex on their service PATH or an operator-owned codexBin binding. Package publication does not establish hosted remediation, fleet installation, production restarts, live OAuth health or agent ACKs. Unknown outcomes never authorize automatic resend.
 
 ## Source and configuration gates
 
-1. Review the v1.0.4 changes against 1.0.3 and all four release notes. Require the six maintenance fixes #262, #263, #264, #265, #266 and #267 on integrated main. Preserve the published v1.0.3 security history and the independent skill version/minimum/full-coverage contract. Confirm package/generated version, four README stable-release notices and archive notes; keep legacy cc_peer.py frozen and excluded from distributions. Exclude credentials, keys, databases, replay state, browser profiles, local evidence and chats.
+1. Review the v1.1.0 candidate against published 1.0.4 and all four release notes. PR #261 and feature PRs #283–#290 are merged through normal protections at integrated base `3b328799b73b69e3640534ce229ec5ba565ca894`. Require exact preparation-head and final integrated-main checks; preserve both parser protections and frozen contract bytes, and reassess #180/#181/#268 unsupported gates and companion skill PR #30. Preserve published v1.0.3 security history and skill 0.3.2/minimum 0.9.1/full 1.0.1. Check package/generated versions, four README published/candidate distinctions and archives; keep legacy cc_peer.py frozen and excluded. Exclude credentials, keys, databases, replay state, browser profiles, local evidence and chats.
 2. Run the complete local suite and PR release gate. Require successful CI on exact integrated public main after merge; private advisory fork checks are not a substitute for that public release gate. Validate clean wheel/sdist installs, isolated installed imports, exact CLI version, initialized-home JSON list, extras and pip check. An explicit empty Codex home must fail closed with state_db_missing. Do not submit live messages for this gate.
-3. Verify PyPI has no 1.0.4 files. The 2026-10-07 preparation check returned HTTP 404 for its version JSON. Verify GitHub Immutable Releases and the v* tag ruleset: creation allowed, tag update/deletion blocked with no bypass. The owner enabled these on 2026-10-03 (ruleset 24408525); the 2026-10-05 check confirmed the strict main release gate. The 2026-10-07 GitHub API check reconfirmed Immutable Releases enabled and ruleset 24408525 active, covering refs/tags/v* with update/deletion blocked and no bypass. Historical v1.0.2 was nonimmutable with no assets and is not a verified standalone release; recheck current settings before publication.
+3. Verify PyPI has no 1.1.0 files. The 2026-10-07 preparation check returned HTTP 404 for the historical 1.0.4 version JSON. Verify GitHub Immutable Releases and the v* tag ruleset: creation allowed, tag update/deletion blocked with no bypass. The owner enabled these on 2026-10-03 (ruleset 24408525); the 2026-10-05 check confirmed the strict main release gate. The 2026-10-07 GitHub API check reconfirmed Immutable Releases enabled and ruleset 24408525 active, covering refs/tags/v* with update/deletion blocked and no bypass. Historical v1.0.2 was nonimmutable with no assets and is not a verified standalone release; recheck current settings before publication.
 4. Verify the Trusted Publisher maps session-peer to abruption/session-peer, publish.yml and pypi. A signed-in PyPI browser inspection on 2026-10-05 verified that mapping; it is historical evidence, not a new PyPI browser verification. The 2026-10-07 GitHub API check reconfirmed required reviewer `abruption`, self-review allowed (`prevent_self_review: false`) and `v*` tags accepted. Administrator bypass was enabled at the 2026-10-05 check (`can_admins_bypass: true`); do not treat that historical observation as a new bypass-policy check. The owner's earlier [2026-09-29 mapping check](https://github.com/abruption/session-peer/issues/235#issuecomment-5882178667) is historical evidence too. Recheck settings, use normal human review and never silently bypass it.
 
 ## Prepare the immutable draft
@@ -21,7 +21,7 @@ After the preparation PR is merged, record the exact main commit and create a li
 
 ```bash
 git fetch origin main --tags
-release_tag=v1.0.4
+release_tag=v1.1.0
 release_commit=$(git rev-parse origin/main)
 git tag "$release_tag" "$release_commit"
 git push origin "$release_tag"
@@ -39,7 +39,7 @@ prepare-release.yml verifies source/ref/version/ancestry, builds twice reproduci
 Publish only with the owner's explicit authorization for this version. An existing instruction to complete this release satisfies the procedural approval requirement; do not demand a second confirmation solely because of this runbook. It does not replace the required human pypi environment review. Publishing locks the tag and assets and starts publish.yml.
 
 ```bash
-gh release edit v1.0.4 --repo abruption/session-peer \
+gh release edit v1.1.0 --repo abruption/session-peer \
   --draft=false --prerelease=false --latest
 ```
 
@@ -54,9 +54,9 @@ publish.yml requires the repository owner, verifies exact tag/source/main ancest
 
 ## Verify publication or recover
 
-Verify publish.yml and its PyPI verification succeeded for the exact tag/commit. Download both PyPI files, compare the exact file set and hashes with locked candidates/provenance, and install each independently in fresh environments. Recheck isolated version, JSON list on an initialized home, extras and pip check. Confirm stable/Latest and normal update selection of v1.0.4. Record evidence before closing the milestone; retain #161 as monitoring.
+Verify publish.yml and its PyPI verification succeeded for the exact tag/commit. Download both PyPI files, compare the exact file set and hashes with locked candidates/provenance, and install each independently in fresh environments. Recheck isolated version, JSON list on an initialized home, extras and pip check. Confirm stable/Latest and normal update selection of v1.1.0. Record evidence before closing the milestone; retain #161 as monitoring.
 
-GitHub and PyPI publication are separate irreversible steps. An audit failure after GitHub publication can leave a locked release without PyPI files; preserve both runs and exact assets. Do not bypass audits, rerun uploads with modified artifacts, skip existing files or reuse versions. A partial 1.0.4 upload or mismatch stops promotion. Diagnose the first failed gate and fix forward through reviewed changes and a new version, normally 1.0.5. Yanking does not permit reuse.
+GitHub and PyPI publication are separate irreversible steps. An audit failure after GitHub publication can leave a locked release without PyPI files; preserve both runs and exact assets. Do not bypass audits, rerun uploads with modified artifacts, skip existing files or reuse versions. A partial 1.1.0 upload or mismatch stops promotion. Diagnose the first failed gate and fix forward through reviewed changes and a new version, normally 1.1.1. Yanking does not permit reuse.
 
 ## Verified standalone installation
 

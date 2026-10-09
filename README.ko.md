@@ -38,6 +38,8 @@ Python 3.9 이상이 필요합니다. 기본 로컬·SSH CLI는 외부 Python �
 
 2026-10-07 유지보수 릴리스의 [릴리스 노트](docs/ko/releases/v1.0.4.md)를 참고하십시오. 패키지 공개와 운영 배포는 별개입니다.
 
+릴리스 후보 **1.1.0**을 준비하고 있으며 아직 발행하지 않았습니다. 예정된 변경과 남은 검증 조건은 [후보 릴리스 노트](docs/ko/releases/v1.1.0.md)를 참고하십시오.
+
 ```bash
 pipx install session-peer
 session-peer --version

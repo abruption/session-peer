@@ -26,5 +26,6 @@
 - [Handoff ランタイム候補](handoff-runtime.md)は、未公開の非公開受領確認実装、対応経路、残る受け入れ条件を説明します。
 - [v1互換性契約](compatibility-v1.md)はstable、versioned、migrated、internal、experimentalなsurfaceを分類します。
 - [エージェント転送アーキテクチャ](architecture/agent-transports.md)と[リレー開発計画](relay-development-plan.md)は実装境界を説明します。
+- [v1.1.0候補ノート](releases/v1.1.0.md)は未公開の準備・依存順序・部分対応の境界を説明します。現在の公開安定版は1.0.4です。
 - [v1.0.4ノート](releases/v1.0.4.md)は2026-10-07付の現在のメンテナンス版を説明し、[v1.0.3ノート](releases/v1.0.3.md)は以前のセキュリティ版の履歴を、[検証記録](validation/69-rc.md)は範囲付きの証拠と制限を保存します。
 - 完了したrelay69プロトタイプのソースは、固有の回帰テストを製品リレースイートへ移した後に削除しました。旧プロトタイプコードはGit履歴に残ります。
