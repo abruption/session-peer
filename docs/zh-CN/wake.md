@@ -10,7 +10,7 @@ CLI 和 MCP 在入队前读取 `SESSION_PEER_WAKE_DEPTH` 和 `SESSION_PEER_WAKE_
 
 固定的 Codex 0.154.0 源码中，shell 的 `inherit="all"` 在没有排除规则或 `include_only` 过滤时保留这些变量；`inherit="core"` 和 `inherit="none"` 在没有显式设置时删除。默认敏感名称过滤不匹配它们。stdio MCP 默认允许列表不包含它们，新 MCP 进程需要显式 `env_vars` 转发。已有或共享 MCP 进程不会获得后来调用者的环境。静态 `env` 配置可能重置上下文或产生冲突。上下文丢失后创建新的本地来源，因而无法保证全局层数上限；本地激活速率是独立的补充防护。不自动修改审批、配置或原生环境策略。
 
-隔离子进程测试模拟上游源码规则，验证 CLI、MCP、SSH 上下文和 app-server 替代进程的环境，不运行已认证的原生 shell、MCP 客户端或模型轮次，不构成 0.154.0 之外的 wake 支持证据。来源：[固定 shell 策略](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/protocol/src/shell_environment.rs)、[固定 MCP 环境](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/rmcp-client/src/utils.rs)、[当前配置参考](https://developers.openai.com/codex/config-reference/)。
+隔离子进程测试验证 CLI、MCP、SSH 上下文及 app-server 替代进程的环境。另有需明确选择的原生测试，验证 macOS arm64 版 Codex 0.154.0 的实际环境构建路径：`command/exec` 的 6 种 shell 策略，以及通过 `mcpServerStatus/list` 启动专用 stdio MCP 测试服务器的 4 种情况。该服务器没有回执功能。仅检查合成环境信息，不使用用户凭据、线程、轮次、提示词、模型、MCP 工具调用或 wake。将单独准备的固定二进制文件指定为 `SESSION_PEER_CODEX154_ENV_BINARY`，然后运行 `python3 -m unittest tests.codex.test_wake_native_environment`。测试不下载或安装任何内容，并拒绝不匹配的二进制文件。未指定时跳过，不能视为原生执行证据。发行压缩包的 SHA-256 为 `344310a0a591c1b192e04feff304321a69907c9498baaac331ca7e16ebcef9d7`，解压后的二进制哈希也固定在测试中。这仅证明该平台和版本的环境路径，不证明模型轮次、实际 wake、其他平台或后续 Codex 版本。来源：[固定 shell 策略](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/protocol/src/shell_environment.rs)、[固定 MCP 环境](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/rmcp-client/src/utils.rs)、[当前配置参考](https://developers.openai.com/codex/config-reference/)。
 
 `session-peer send --to codex:<uuid> --wake --wake-timeout 30 "message"`
 
