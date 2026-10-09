@@ -528,6 +528,60 @@ class HandoffRemote(unittest.TestCase):
         ssh.assert_not_called()
         self.assertLessEqual(preflight.call_args.args[2] + 5, peer.handoff_now() + 10)
 
+    def test_large_prepared_ssh_self_uri_uses_local_limit_for_dry_run_and_send(self):
+        import hashlib
+        body = "x" * 100000
+        uri = "session-peer://v1/reply?agent=claude&session=4242&transport=ssh&host=operator%40fixture"
+        parsed = peer.parse_reply_address(uri)
+        binding = {"agent": "claude", "destination": ["local"], "target": "4242", "home": None,
+                   "payloadDigest": hashlib.sha256(body.encode()).hexdigest()}
+        metadata = {"to": parsed["target"], "host": [], "codexHome": None, "body": body, "tailnet": {},
+                    "address": {**parsed, "transport": "local", "normalizedFrom": "ssh_self"}, "routing": {}}
+        for dry_run in (True, False):
+            with self.subTest(dry_run=dry_run):
+                epoch, prepared = self.fixture.ledger.prepare(binding, self.generation)
+                argv = ["send", "--to=" + uri, "--message=" + body, "--correlation-id=" + prepared["id"],
+                        "--no-from", "--no-reply-to", "--no-update-notice", "--json"]
+                if dry_run:
+                    argv.append("--dry-run")
+                output = io.StringIO()
+                with mock.patch.object(peer, "handoff_root", return_value=self.fixture.ledger.root), \
+                        mock.patch.object(peer, "handoff_sender_preflight", return_value=metadata) as preflight, \
+                        mock.patch.object(peer, "discover", return_value=[self.session]), \
+                        mock.patch.object(peer, "claude_generation", return_value=self.generation), \
+                        mock.patch.object(peer, "require_claude_generation"), \
+                        mock.patch.object(peer, "post_to_socket") as post, \
+                        mock.patch.object(peer.SshTransport, "execute") as ssh, contextlib.redirect_stdout(output):
+                    code = peer.main(argv)
+                response = json.loads(output.getvalue())
+                self.assertEqual(code, 0, response)
+                self.assertEqual(response["dryRun"], dry_run)
+                self.assertEqual(response["handoff"]["correlationId"], prepared["id"])
+                self.assertEqual(self.fixture.ledger.record(prepared["id"])[1]["binding"]["payloadDigest"], binding["payloadDigest"])
+                self.assertEqual(preflight.call_count, 1)
+                ssh.assert_not_called()
+                self.assertEqual(post.call_count, 0 if dry_run else 1)
+                if not dry_run:
+                    self.assertEqual(post.call_args.args[1], peer.peer_delivery_message(body, "claude"))
+
+    def test_large_actual_remote_uri_refuses_before_ssh_or_intent(self):
+        body = "x" * 100000
+        uri = "session-peer://v1/reply?agent=claude&session=4242&transport=ssh&host=operator%40fixture"
+        metadata = {"to": "4242", "host": ["operator@fixture"], "codexHome": None, "body": body,
+                    "tailnet": {}, "address": peer.parse_reply_address(uri), "routing": {}}
+        output = io.StringIO()
+        with mock.patch.object(peer, "handoff_root", return_value=self.fixture.ledger.root), \
+                mock.patch.object(peer, "handoff_sender_preflight", return_value=metadata) as preflight, \
+                mock.patch.object(peer, "post_to_socket") as post, \
+                mock.patch.object(peer.SshTransport, "execute") as ssh, contextlib.redirect_stdout(output):
+            code = peer.main(["send", "--to=" + uri, "--message=" + body, "--request-ack", "--json", "--no-update-notice"])
+        self.assertEqual(code, 1)
+        self.assertFalse(json.loads(output.getvalue())["ok"])
+        preflight.assert_called_once()
+        ssh.assert_not_called()
+        post.assert_not_called()
+        self.assertFalse(json.loads((self.fixture.ledger.root / "ledger.json").read_text())["records"])
+
     def test_bounded_metadata_child_private_body_and_original_deadline(self):
         script = self.fixture.root / "owned-metadata-child.py"
         script.write_text("import sys\n"

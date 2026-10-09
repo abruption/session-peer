@@ -1214,8 +1214,8 @@ def handoff_refuse_send(ledger, correlation, args, reason, total, exit_code=1):
 def cmd_handoff_send(args):
     """One fenced attempt; POSIX Claude receipt or Codex correlation-only.
 
-    Remote source streaming and unproven Codex observation/cleanup are refused
-    before effect, not silently converted to another transport or generic ACK.
+    Remote receipt bootstrap and unproven native observation are unsupported,
+    not silently converted to another evidence channel or generic ACK.
     """
     total = getattr(args, "_handoff_fixed_total", None)
     total = handoff_now() + args.wait_timeout if total is None else total

@@ -7437,8 +7437,8 @@ def handoff_refuse_send(ledger, correlation, args, reason, total, exit_code=1):
 def cmd_handoff_send(args):
     """One fenced attempt; POSIX Claude receipt or Codex correlation-only.
 
-    Remote source streaming and unproven Codex observation/cleanup are refused
-    before effect, not silently converted to another transport or generic ACK.
+    Remote receipt bootstrap and unproven native observation are unsupported,
+    not silently converted to another evidence channel or generic ACK.
     """
     total = getattr(args, "_handoff_fixed_total", None)
     total = handoff_now() + args.wait_timeout if total is None else total
@@ -7849,7 +7849,9 @@ def cmd_handoff_remote_send(args, cutoff, total):
     except HandoffStdinError as exc:
         emit(args.json, {"ok": False, **exc.details}, "Handoff input refused before submission.", command="send")
         return exc.exit_code
-    check_message(text, remote=True)
+    # A structured SSH-self URI can normalize to the local transport.  Do not
+    # impose the SSH argv limit until its bounded normalizer confirms SSH.
+    check_message(text, remote=bool(args.host))
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     ledger = HandoffLedger()
     original = None
@@ -7898,6 +7900,7 @@ def cmd_handoff_remote_send(args, cutoff, total):
             # reuse the prebuilt envelope only immediately before framing.
             plain.message_option, plain.message, plain.message_file, plain.b64 = text, None, None, None
             return cmd_handoff_send(plain)
+    check_message(text, remote=True)
     if original is not None and original["binding"]["destination"] != plain.host:
         raise handoff_error("handoff_binding_conflict")
     if args.wait_for or args.wait_timeout <= 5 or handoff_now() >= cutoff:
