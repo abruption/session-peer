@@ -72,7 +72,7 @@ def check_ssh_options(options: list[str]) -> None:
             raise CcPeerError("invalid StrictHostKeyChecking value")
 
 
-SSH_METADATA_FIELDS = ("sshUser", "sshUserSource")
+SSH_METADATA_FIELDS = ("sshUser", "sshUserSource", "sshIdentity")
 
 
 def ssh_metadata_from(payload: dict) -> dict:
@@ -195,7 +195,7 @@ def parse_ssh_response(output, argv):
     return stdout, result, bool(stdout), valid
 
 
-def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
+def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, identity_options=()) -> dict:
     check_ssh_argument(host, "--host")
     check_ssh_options(ssh_opts)
 
@@ -219,7 +219,7 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str]) -> dict:
     # result to the remote *shell*, so an argv list is not the protection it
     # looks like: a metacharacter in any element executes over there. Build
     # the remote command as one already-quoted string instead.
-    command = ["ssh", *ssh_opts, host, remote]
+    command = ["ssh", *identity_options, *ssh_opts, host, remote]
 
     def incomplete_response_error(message: str, details: dict | None = None) -> CcPeerError:
         metadata = {**ssh_info, **(details or {})}

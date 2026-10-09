@@ -1,0 +1,2 @@
+# Test-only in-memory SSH server; never a runtime or build dependency.
+paramiko==4.0.0
