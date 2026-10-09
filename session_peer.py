@@ -5424,14 +5424,19 @@ class HandoffLedger:
 
     @staticmethod
     def _validate_record(record):
+        def uint(value, maximum=9223372036854775807):
+            if type(value) is not int or not 0 <= value <= maximum:
+                raise ValueError()
+        def clock(value):
+            if value is not None:
+                handoff_uuid(value)
         required = {"id", "binding", "generation", "phase", "submission", "native", "waits", "ack", "createdNs", "createdUtcMs", "capability", "historyBoot", "pendingReceipt"}
         if not required <= set(record) <= required | {"observe", "ackRequested"}:
             raise ValueError()
         if record["phase"] not in ("prepared", "attempted", "terminal", "tombstone", "quarantined") or record["submission"] not in ("not_attempted", "submitted", "refused", "unknown"):
             raise ValueError()
         for key in ("createdNs", "createdUtcMs"):
-            if type(record[key]) is not int or record[key] < 0:
-                raise ValueError()
+            uint(record[key], 9007199254740991 if key == "createdUtcMs" else 9223372036854775807)
         if record["historyBoot"] is not None and re.fullmatch(r"[0-9a-f]{64}", record["historyBoot"]) is None:
             raise ValueError()
         if record["generation"] is not None:
@@ -5457,9 +5462,14 @@ class HandoffLedger:
             if type(wait) is not dict or not required_wait <= set(wait) <= required_wait | {"reason"}:
                 raise ValueError()
             handoff_uuid(wait["operationId"])
-            if type(wait["deadlineNs"]) is not int or wait["deadlineNs"] < 0:
+            uint(wait["deadlineNs"])
+            uint(wait["deadlineAtUtcMs"], 9007199254740991)
+            clock(wait["clockEpoch"])
+            if wait["for"] not in ("delivered", "acknowledged") or wait["status"] not in ("pending", "satisfied", "timed_out_unknown", "stopped", "unsupported", "failed"):
                 raise ValueError()
-            if type(wait["deadlineAtUtcMs"]) is not int or not 0 <= wait["deadlineAtUtcMs"] <= 9007199254740991:
+            if "reason" in wait and wait["reason"] not in ("insufficient_budget", "deadline_before_effect", "evidence_unsupported", "evidence_failed", "history_unavailable", "stopped_by_operator", "invalid_handoff"):
+                raise ValueError()
+            if wait["status"] == "stopped" and wait.get("reason") != "stopped_by_operator":
                 raise ValueError()
         for key in ("observe", "ackRequested"):
             if key in record and type(record[key]) is not bool:
@@ -5468,8 +5478,44 @@ class HandoffLedger:
         if cap is not None:
             if type(cap) is not dict or set(cap) != {"hash", "clockEpoch", "expiresNs", "revoked"}:
                 raise ValueError()
-            if type(cap["hash"]) is not str or re.fullmatch(r"[0-9a-f]{64}", cap["hash"]) is None or type(cap["revoked"]) is not bool or type(cap["expiresNs"]) is not int:
+            if type(cap["hash"]) is not str or re.fullmatch(r"[0-9a-f]{64}", cap["hash"]) is None or type(cap["revoked"]) is not bool:
                 raise ValueError()
+            uint(cap["expiresNs"])
+            handoff_uuid(cap["clockEpoch"])
+        ack = record["ack"]
+        if ack is not None:
+            if type(ack) is not dict or set(ack) != {"status", "assurance", "receivedAtUtcMs", "late", "receiptId", "classifiedClockEpoch"}:
+                raise ValueError()
+            if ack["status"] != "acknowledged" or ack["assurance"] not in ("token_possession", "operator_confirmed") or type(ack["late"]) is not bool:
+                raise ValueError()
+            uint(ack["receivedAtUtcMs"], 9007199254740991)
+            if ack["assurance"] == "token_possession":
+                handoff_uuid(ack["receiptId"])
+                handoff_uuid(ack["classifiedClockEpoch"])
+            elif ack["receiptId"] is not None or ack["classifiedClockEpoch"] is not None:
+                raise ValueError()
+            if record["generation"] is None or record["submission"] != "submitted":
+                raise ValueError()
+        pending = record["pendingReceipt"]
+        if pending is not None:
+            if type(pending) is not dict or set(pending) != {"receiptId", "clockEpoch", "receivedNs", "receivedAtUtcMs"}:
+                raise ValueError()
+            handoff_uuid(pending["receiptId"])
+            handoff_uuid(pending["clockEpoch"])
+            uint(pending["receivedNs"])
+            uint(pending["receivedAtUtcMs"], 9007199254740991)
+            if record["generation"] is None or cap is None:
+                raise ValueError()
+        if record["phase"] == "prepared" and (record["submission"] != "not_attempted" or record["native"] is not None or ack is not None or pending is not None):
+            raise ValueError()
+        if record["phase"] == "attempted" and (record["submission"] != "unknown" or record["native"] is not None or ack is not None):
+            raise ValueError()
+        if record["phase"] in ("tombstone", "quarantined") and (record["submission"] != "unknown" or record["native"] is not None or ack is not None or pending is not None):
+            raise ValueError()
+        if record["phase"] == "tombstone" and cap is not None:
+            raise ValueError()
+        if record["submission"] == "submitted" and (record["phase"] != "terminal" or record["native"] is None):
+            raise ValueError()
         native = record["native"]
         if native is not None:
             if type(native) is not dict or len(HandoffLedger.encode(native)) > 8192 or type(native.get("ok")) is not bool:

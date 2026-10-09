@@ -34,7 +34,7 @@ class HandoffRuntime(unittest.TestCase):
         self.binding = {"agent": "claude", "destination": ["local"], "target": str(os.getpid()), "home": None, "payloadDigest": "a" * 64}
         self.epoch, self.record = self.ledger.prepare(self.binding, self.generation)
         self.correlation = self.record["id"]
-        self.clock = "collector-epoch"
+        self.clock = str(peer.uuid.uuid4())
 
     def mint(self):
         minted = peer.handoff_collect(self.ledger, self.clock, {"op": "mint", "ledgerEpoch": self.epoch,
@@ -134,7 +134,7 @@ class HandoffRuntime(unittest.TestCase):
         self.mint()
         self.submitted()
         with self.ledger.transaction() as state:
-            peer.handoff_start_wait(state["records"][self.correlation], "acknowledged", time.monotonic() + 10, "other-clock")
+            peer.handoff_start_wait(state["records"][self.correlation], "acknowledged", time.monotonic() + 10, str(peer.uuid.uuid4()))
         with self.assertRaises(peer.CcPeerError):
             peer.handoff_collect(self.ledger, self.clock, self.frame)
         confirm = {key: self.frame[key] for key in ("schemaVersion", "ledgerEpoch", "correlationId", "targetGeneration")}
