@@ -34,11 +34,11 @@ session-peer使用各智能体自身的收件箱和队列；接收方智能体�
 ### 安装
 
 需要Python 3.9或更高版本。核心本地与SSH CLI没有第三方Python依赖。
-当前稳定版：**1.0.4**。
+当前稳定版：**1.1.0**。
 
-请参阅2026-10-07维护版本的[发布说明](docs/zh-CN/releases/v1.0.4.md)。软件包发布与生产环境部署是两项独立操作。
+请参阅2026-10-09发布版本的[发布说明](docs/zh-CN/releases/v1.1.0.md)。软件包发布与生产环境部署是两项独立操作。
 
-发布候选 **1.1.0** 正在准备，尚未发布。计划变更与剩余验收条件请参阅[候选说明](docs/zh-CN/releases/v1.1.0.md)。
+实验性handoff需要明确选择启用：本地POSIX Claude支持收据ACK；Codex与SSH仅支持关联标识提交，不支持ACK观察。已发布范围与剩余验收条件请参阅[handoff指南](docs/zh-CN/handoff-runtime.md)。
 
 ```bash
 pipx install session-peer
@@ -84,7 +84,7 @@ pipx upgrade session-peer
 
 在本地安装中，`session-peer update` 会替换独立脚本的运行时文件；
 通过软件包管理器安装的版本只会显示升级指引。此命令不会更新智能体技能；
-请使用原安装工具（Skills CLI，或随附副本的 `install.sh`）。
+请使用原安装工具（Skills CLI，或仅针对安装脚本所拥有的兼容副本使用 `install.sh`）。兼容副本与独立发布的技能分开管理；由其他管理器拥有的现有技能会被保留。
 请参阅[更新详情与远程限制](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/cli-reference.md#updating)。
 
 <a id="documentation"></a>

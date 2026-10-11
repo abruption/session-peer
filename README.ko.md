@@ -34,11 +34,11 @@ session-peer 1.0.2를 사용해 실제 로컬 요청과 회신을 주고받았�
 ### 설치
 
 Python 3.9 이상이 필요합니다. 기본 로컬·SSH CLI는 외부 Python 패키지에 의존하지 않습니다.
-현재 안정판: **1.0.4**.
+현재 안정판: **1.1.0**.
 
-2026-10-07 유지보수 릴리스의 [릴리스 노트](docs/ko/releases/v1.0.4.md)를 참고하십시오. 패키지 공개와 운영 배포는 별개입니다.
+2026-10-09에 공개한 버전의 [릴리스 노트](docs/ko/releases/v1.1.0.md)를 참고하십시오. 패키지 공개와 운영 배포는 별개입니다.
 
-릴리스 후보 **1.1.0**을 준비하고 있으며 아직 발행하지 않았습니다. 예정된 변경과 남은 검증 조건은 [후보 릴리스 노트](docs/ko/releases/v1.1.0.md)를 참고하십시오.
+실험적 handoff는 명시적으로 선택해야 합니다. 로컬 POSIX Claude는 영수증 ACK를 지원하지만, Codex와 SSH는 상관 ID를 이용한 제출만 지원하며 ACK 관찰은 지원하지 않습니다. 공개된 범위와 남은 검증 조건은 [handoff 가이드](docs/ko/handoff-runtime.md)를 참고하십시오.
 
 ```bash
 pipx install session-peer
@@ -84,7 +84,7 @@ pipx upgrade session-peer
 
 로컬 설치에서 `session-peer update`는 독립형 런타임 파일을 교체하며,
 패키지 설치본에는 업그레이드 방법을 안내합니다. 이 명령은 에이전트 스킬을 갱신하지 않습니다.
-스킬을 업데이트할 때는 원래 설치 도구(Skills CLI 또는 동봉 사본의 `install.sh`)를 사용하십시오.
+스킬을 업데이트할 때는 원래 설치 도구(Skills CLI 또는 설치 스크립트 소유의 호환 사본에 한해 `install.sh`)를 사용하십시오. 호환 사본은 독립적으로 발행되는 스킬과 별개이며, 다른 설치 관리자가 소유한 기존 스킬은 보존합니다.
 [업데이트 상세와 원격 제약](https://github.com/abruption/session-peer/blob/main/docs/ko/cli-reference.md#updating)을 참고하십시오.
 
 <a id="documentation"></a>
