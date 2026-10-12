@@ -4,11 +4,35 @@
 
 以下从源码/配置门禁到发布验证/恢复的部分保留2026-10-09发布流程的历史记录，并非重新执行的请求。不要重新创建、移动或重用v1.1.0，也不要再次执行其发布示例。后续版本需采用新审核的版本、最新证据和明确授权，重新检查各项门禁。准备、不可变GitHub发布、必需的人工PyPI环境审核与生产环境部署相互独立。受保护的main要求PR经过审核并与main保持最新，同时通过汇总发布门禁；门禁涵盖Python平台测试矩阵、文档、shell、包/单文件/MCP/Relay/Control、集成测试以及Python/Node依赖审计。
 
+## 当前v1.1.1维护发布
+
+所有者于2026-10-12批准了此维护发布。它包含#297（开发用Paramiko 5.0.0测试）和#299（四种语言的文档修正），运行时行为与1.1.0相同。#298仍未解决，此补丁不修复该问题。需要重新执行准确最新提交的CI、全部本地测试、单文件重新生成检查、隔离wheel/sdist安装及最新依赖审计。创建前确认v1.1.1和PyPI 1.1.1尚未使用，不得移动或重用标签和版本。检查当前Trusted Publisher和必需的人工pypi审核。仅在准备PR合并且准确main的CI通过后执行命令。发布前检查不可变草稿的7个资产、哈希及证明。发布授权不能替代人工PyPI环境审批。分别验证GitHub和PyPI，不包含设备或Control/Relay部署。
+
+以下命令用于v1.1.1。下方v1.1.0流程仍保留为历史记录。
+
+```bash
+git fetch origin main --tags
+release_tag=v1.1.1
+release_commit=$(git rev-parse origin/main)
+git tag "$release_tag" "$release_commit"
+git push origin "$release_tag"
+gh release create "$release_tag" --repo abruption/session-peer \
+  --target "$release_commit" --title "session-peer $release_tag" \
+  --notes-file "docs/releases/$release_tag.md" --draft --latest
+gh workflow run prepare-release.yml --repo abruption/session-peer \
+  --ref main -f tag="$release_tag"
+```
+
+```bash
+gh release edit v1.1.1 --repo abruption/session-peer \
+  --draft=false --prerelease=false --latest
+```
+
 ## 历史证据与当前边界
 
 在5台主机上进行的v1.0.0 RC4 rc4-rerun-02测试持续了14,436.65秒。记录状态为complete，公开健康检查为241/241，探测为147/147，提交为21/21，Relay重启后的恢复时间为3.182秒。独立确认的ACK为20/21。在Windows原生Claude的T120测试中，TUI已关闭，因此无法确认原始ACK；之后另一次单独测试收到了准确的ACK。所有者在#164中接受了这一例外。请保留20/21这一结果；这段历史记录不能证明v1.0.4或v1.1.0已通过验证。#161仍未解决，外部停滞的根本原因也尚未确认。
 
-已发布Python/PyPI版本为1.1.0，标签与GitHub版本为v1.1.0。插件版本独立管理。核心CLI需要Python 3.9+，MCP需要3.10+，Relay接收端/服务器需要Unix或WSL及Python 3.11+。由服务管理器启动的接收端需要在服务PATH中找到Codex，或使用由运维人员管理的codexBin绑定。软件包发布不能证明托管服务的修复已部署、已安装到所有设备、生产服务已重启、线上OAuth运行正常或代理已发送ACK。未知结果不能作为自动重发的依据。
+2026-10-09的历史记录：已发布Python/PyPI版本为1.1.0，标签与GitHub版本为v1.1.0。插件版本独立管理。核心CLI需要Python 3.9+，MCP需要3.10+，Relay接收端/服务器需要Unix或WSL及Python 3.11+。由服务管理器启动的接收端需要在服务PATH中找到Codex，或使用由运维人员管理的codexBin绑定。软件包发布不能证明托管服务的修复已部署、已安装到所有设备、生产服务已重启、线上OAuth运行正常或代理已发送ACK。未知结果不能作为自动重发的依据。
 
 ## 源码与配置门禁
 

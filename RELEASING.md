@@ -4,11 +4,35 @@ Version 1.1.0 is published. GitHub published v1.1.0 on 2026-10-09 at 06:46:41 UT
 
 The sections from source/configuration gates through publication recovery below preserve the historical 2026-10-09 release procedure, not a request to run it again. Do not recreate, move or reuse v1.1.0 or rerun its publication examples. For a future version, use a new reviewed version and repeat the gates with fresh evidence and explicit authorization. Preparation, immutable GitHub publication, required human PyPI environment review and operational deployment remain separate. Protected main requires reviewed, up-to-date PRs and the aggregate release gate, including Python platform matrices, documentation, shell, package/standalone/MCP/Relay/Control tests, integrations and Python/Node dependency audits.
 
+## Current v1.1.1 maintenance release
+
+The owner authorized this maintenance release on 2026-10-12. It includes #297 (development-only Paramiko 5.0.0 fixture) and #299 (four-locale documentation corrections); runtime behavior remains unchanged from 1.1.0. #298 is open and is not fixed by this patch. Use fresh exact-head CI, full local tests, regenerated standalone verification, isolated wheel/sdist installs and current dependency audits. Verify that v1.1.1 and PyPI 1.1.1 are unused before creating them; never move or reuse a tag/version. Verify the current Trusted Publisher and required human pypi review. Run the commands only after the preparation PR is merged and exact main CI is green. Review all seven immutable draft assets, hashes and attestations before publication. Publication authorization does not replace the human PyPI environment gate. Verify GitHub and PyPI separately; no fleet or Control/Relay deployment is included.
+
+The following commands are for v1.1.1. The v1.1.0 procedure below remains historical.
+
+```bash
+git fetch origin main --tags
+release_tag=v1.1.1
+release_commit=$(git rev-parse origin/main)
+git tag "$release_tag" "$release_commit"
+git push origin "$release_tag"
+gh release create "$release_tag" --repo abruption/session-peer \
+  --target "$release_commit" --title "session-peer $release_tag" \
+  --notes-file "docs/releases/$release_tag.md" --draft --latest
+gh workflow run prepare-release.yml --repo abruption/session-peer \
+  --ref main -f tag="$release_tag"
+```
+
+```bash
+gh release edit v1.1.1 --repo abruption/session-peer \
+  --draft=false --prerelease=false --latest
+```
+
 ## Historical evidence and current boundaries
 
 The five-host v1.0.0 RC4 rc4-rerun-02 campaign ran for 14,436.65 seconds: complete record, public health 241/241, probes 147/147, submissions 21/21 and Relay restart recovery in 3.182 seconds. Independent ACKs were 20/21. T120 Windows native Claude had no confirmed original ACK because its TUI closed; a distinct one-shot check later received an exact ACK. The owner accepted this exception in #164. Keep 20/21 unchanged; this historical evidence does not validate v1.0.4 or v1.1.0. #161 remains open with the external stall root cause unconfirmed.
 
-The published Python/PyPI version is 1.1.0; its tag and GitHub release are v1.1.0. The plugin version remains independent. Core requires Python 3.9+, MCP 3.10+, Relay receiver/server Unix or WSL and Python 3.11+. Service receivers need Codex on their service PATH or an operator-owned codexBin binding. Package publication does not establish hosted remediation, fleet installation, production restarts, live OAuth health or agent ACKs. Unknown outcomes never authorize automatic resend.
+Historical snapshot on 2026-10-09: The published Python/PyPI version is 1.1.0; its tag and GitHub release are v1.1.0. The plugin version remains independent. Core requires Python 3.9+, MCP 3.10+, Relay receiver/server Unix or WSL and Python 3.11+. Service receivers need Codex on their service PATH or an operator-owned codexBin binding. Package publication does not establish hosted remediation, fleet installation, production restarts, live OAuth health or agent ACKs. Unknown outcomes never authorize automatic resend.
 
 ## Source and configuration gates
 

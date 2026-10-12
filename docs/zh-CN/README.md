@@ -22,9 +22,11 @@
 
 ## 开发与历史
 
+- [v1.1.1维护说明](releases/v1.1.1.md)介绍2026-10-12准备的文档与测试维护版本；运行时行为与1.1.0相同。软件包发布需单独确认。
+
 - [实验性Handoff运行时](handoff-runtime.md)说明1.1.0中已发布的有限私有收据功能、支持路径及剩余验收条件。
 - [v1兼容性契约](compatibility-v1.md)对stable、versioned、migrated、internal和experimental surface分类。
 - [代理传输架构](architecture/agent-transports.md)和[中继开发计划](relay-development-plan.md)介绍实现边界。
-- [v1.1.0发布说明](releases/v1.1.0.md)介绍发布依据、变更及部分支持范围；当前公开稳定版为1.1.0。
+- [v1.1.0发布说明](releases/v1.1.0.md)保留已发布1.1.0的证据、变更及部分支持范围。
 - [v1.0.4说明](releases/v1.0.4.md)描述2026-10-07的先前维护版本；[v1.0.3说明](releases/v1.0.3.md)保留先前安全版本历史；[验证记录](validation/69-rc.md)保留范围明确的证据及限制。
 - relay69原型完成后，其独有回归测试已迁移到产品中继测试套件，原型源代码已删除。废弃的原型代码仍保留在Git历史中。

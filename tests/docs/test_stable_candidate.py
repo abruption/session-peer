@@ -10,16 +10,32 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StableCandidate(unittest.TestCase):
+    def test_maintenance_notes_do_not_claim_runtime_remediation(self):
+        for locale in ("", "ko/", "ja/", "zh-CN/"):
+            note = (ROOT / ("docs/" + locale + "releases/v1.1.1.md")).read_text(encoding="utf-8")
+            for marker in ("#297", "#281", "#299", "#298", "Paramiko 5.0.0",
+                           "OpenSSH", "2026-10-12", "1.1.0", "20/21", "#161",
+                           "handoff-runtime.md", "Control/Relay",
+                           "https://github.com/abruption/session-peer/releases/tag/v1.1.1",
+                           "https://pypi.org/pypi/session-peer/1.1.1/json"):
+                with self.subTest(locale=locale, marker=marker):
+                    self.assertIn(marker, note)
+        english = (ROOT / "docs/releases/v1.1.1.md").read_text(encoding="utf-8")
+        self.assertIn("runtime behavior is unchanged", english)
+        self.assertIn("This patch does not fix that runtime defect", english)
+        self.assertIn("Paramiko is not a shipped runtime dependency", english)
+        self.assertIn("Package publication does not include operational deployment", english)
+
     def test_documentation_maps_keep_published_and_historical_status_distinct(self):
         profiles = (
             ("", "Experimental handoff runtime", "remaining acceptance gates",
-             "current published stable release is 1.1.0", "prior maintenance release"),
+             "published 1.1.0 evidence", "prior maintenance release"),
             ("ko/", "실험적 Handoff 런타임", "남은 수락 조건",
-             "현재 공개 안정판은 1.1.0입니다", "이전 유지보수 릴리스"),
+             "공개된 1.1.0 증거", "이전 유지보수 릴리스"),
             ("ja/", "実験的なHandoffランタイム", "残る受け入れ条件",
-             "現在の公開安定版は1.1.0です", "以前のメンテナンス版"),
+             "公開済み1.1.0の証拠", "以前のメンテナンス版"),
             ("zh-CN/", "实验性Handoff运行时", "剩余验收条件",
-             "当前公开稳定版为1.1.0", "先前维护版本"),
+             "已发布1.1.0的证据", "先前维护版本"),
         )
         for locale, handoff_label, gates, stable, historical in profiles:
             text = (ROOT / ("docs/" + locale + "README.md")).read_text(encoding="utf-8")
@@ -31,6 +47,10 @@ class StableCandidate(unittest.TestCase):
                 self.assertIn("1.1.0", handoff)
                 self.assertIn(gates, handoff)
                 self.assertIn(stable, current)
+                maintenance = next(line for line in text.splitlines()
+                                   if "(releases/v1.1.1.md)" in line)
+                self.assertIn("2026-10-12", maintenance)
+                self.assertIn("1.1.0", maintenance)
                 self.assertIn(historical, previous)
                 self.assertIn("2026-10-07", previous)
                 self.assertIn("releases/v1.0.3.md", previous)
@@ -66,8 +86,8 @@ class StableCandidate(unittest.TestCase):
     def test_published_release_keeps_experimental_acceptance_gates(self):
         for suffix in ("", ".ko", ".ja", ".zh-CN"):
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
-            self.assertIn("**1.1.0**", text)
-            self.assertIn("releases/v1.1.0.md", text)
+            self.assertIn("**1.1.1**", text)
+            self.assertIn("releases/v1.1.1.md", text)
             self.assertIn("handoff-runtime.md", text)
             self.assertIn("POSIX", text)
             self.assertNotIn("**1.0.4**", text)
@@ -86,8 +106,8 @@ class StableCandidate(unittest.TestCase):
             self.assertIn(marker, english)
 
     def test_package_and_generated_core_version_agree(self):
-        self.assertEqual(session_peer.__version__, "1.1.0")
-        self.assertIn('__version__ = "1.1.0"',
+        self.assertEqual(session_peer.__version__, "1.1.1")
+        self.assertIn('__version__ = "1.1.1"',
                       (ROOT / "session_peer_core/common.py").read_text(encoding="utf-8"))
 
     def test_all_current_readmes_and_runbooks_use_stable_version(self):
@@ -95,7 +115,7 @@ class StableCandidate(unittest.TestCase):
             for stem in ("README", "RELEASING"):
                 with self.subTest(stem=stem, suffix=suffix):
                     text = (ROOT / (stem + suffix + ".md")).read_text(encoding="utf-8")
-                    self.assertIn("1.1.0", text)
+                    self.assertIn("1.1.1", text)
                     self.assertNotIn("1.0.0rc4", text)
                     if stem == "RELEASING":
                         self.assertIn("--draft=false --prerelease=false --latest", text)
@@ -117,13 +137,13 @@ class StableCandidate(unittest.TestCase):
                     self.assertIn(marker, text)
 
     def test_stable_release_keeps_operational_deployment_separate(self):
-        self.assertIn("Current stable release: **1.1.0**.",
+        self.assertIn("Version covered by this README: **1.1.1**.",
                       (ROOT / "README.md").read_text(encoding="utf-8"))
         for suffix in ("", ".ko", ".ja", ".zh-CN"):
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
-            self.assertIn("**1.1.0**", text)
+            self.assertIn("**1.1.1**", text)
             self.assertNotIn("**1.0.3**", text)
-            self.assertIn("2026-10-09", text)
+            self.assertIn("2026-10-12", text)
         for locale in ("", "ko/", "ja/", "zh-CN/"):
             text = (ROOT / ("docs/" + locale + "README.md")).read_text(encoding="utf-8")
             self.assertIn("releases/v1.0.3.md", text)

@@ -4,11 +4,35 @@
 
 以下のソース・設定の確認から公開検証・復旧までは、2026-10-09のリリース手順の過去の記録であり、再実行の依頼ではありません。v1.1.0を再作成、移動、再利用せず、公開例を再実行しないでください。将来の版では、新しくレビューしたバージョン、最新の証拠、明示的な承認で各条件を再確認します。準備、不変のGitHub公開、必須の人手によるPyPI環境レビュー、本番環境への配備は別です。保護されたmainでは、レビュー済みで最新のPRと、Pythonのプラットフォーム別テストマトリクス、ドキュメント、シェル、パッケージ/単独ファイル/MCP/Relay/Control、統合テスト、Python/Nodeの依存関係監査を含む統合リリースゲートへの合格が必要です。
 
+## 現在のv1.1.1メンテナンスリリース
+
+所有者は2026-10-12にこのメンテナンスリリースを承認しました。#297（開発用Paramiko 5.0.0テスト）と#299（4言語のドキュメント修正）を含み、ランタイムの動作は1.1.0と同じです。#298は未解決で、このパッチでは修正しません。最新の正確なコミットのCI、全ローカルテスト、単独ファイルの再生成確認、隔離したwheel/sdistのインストール、最新の依存関係監査を実行します。作成前にv1.1.1とPyPI 1.1.1が未使用であることを確認し、タグやバージョンを移動・再利用しないでください。現在のTrusted Publisherと必須の人手によるpypiレビューを確認します。準備PRのマージ後、正確なmainのCIが成功してからコマンドを実行します。公開前に不変ドラフトの7個のアセット、ハッシュ、証明を確認します。公開承認は人手によるPyPI環境承認の代わりにはなりません。GitHubとPyPIを個別に検証し、各端末やControl/Relayの配備は含めません。
+
+次のコマンドはv1.1.1用です。以下のv1.1.0手順は過去の記録として残します。
+
+```bash
+git fetch origin main --tags
+release_tag=v1.1.1
+release_commit=$(git rev-parse origin/main)
+git tag "$release_tag" "$release_commit"
+git push origin "$release_tag"
+gh release create "$release_tag" --repo abruption/session-peer \
+  --target "$release_commit" --title "session-peer $release_tag" \
+  --notes-file "docs/releases/$release_tag.md" --draft --latest
+gh workflow run prepare-release.yml --repo abruption/session-peer \
+  --ref main -f tag="$release_tag"
+```
+
+```bash
+gh release edit v1.1.1 --repo abruption/session-peer \
+  --draft=false --prerelease=false --latest
+```
+
 ## 過去の証拠と現在の境界
 
 5台のホストで行ったv1.0.0 RC4 rc4-rerun-02キャンペーンは14,436.65秒間実行されました。記録はcomplete、公開ヘルスチェックは241/241、プローブは147/147、送信は21/21、Relay再起動後の復旧時間は3.182秒でした。独立して確認できたACKは20/21です。T120のWindowsネイティブClaudeでは、TUIが終了したため元のACKを確認できませんでした。後の別の単発テストでは正確なACKを受信し、所有者は#164でこの例外を受け入れています。20/21という値は変更しないでください。この過去の記録はv1.0.4またはv1.1.0の検証にはなりません。#161は未解決のままで、外部で発生した停滞の根本原因も未確認です。
 
-公開済みのPython/PyPI版は1.1.0で、タグとGitHubリリースはv1.1.0です。プラグインのバージョンは別管理です。コアCLIはPython 3.9以上、MCPは3.10以上、Relayの受信側/サーバーはUnixまたはWSLとPython 3.11以上が必要です。サービス管理下で起動する受信側には、サービスのPATH上にあるCodexか、運用者が管理するcodexBin設定が必要です。パッケージ公開は、ホスト型サービスへの修正適用、フリート全体への導入、本番環境の再起動、稼働中のOAuthの健全性、エージェントからのACKを証明するものではありません。不明な結果が自動再送を許可することはありません。
+2026-10-09時点の過去の記録：公開済みのPython/PyPI版は1.1.0で、タグとGitHubリリースはv1.1.0です。プラグインのバージョンは別管理です。コアCLIはPython 3.9以上、MCPは3.10以上、Relayの受信側/サーバーはUnixまたはWSLとPython 3.11以上が必要です。サービス管理下で起動する受信側には、サービスのPATH上にあるCodexか、運用者が管理するcodexBin設定が必要です。パッケージ公開は、ホスト型サービスへの修正適用、フリート全体への導入、本番環境の再起動、稼働中のOAuthの健全性、エージェントからのACKを証明するものではありません。不明な結果が自動再送を許可することはありません。
 
 ## ソースと設定のゲート
 

@@ -24,9 +24,11 @@ installation paths.
 
 ## Development and history
 
+- [v1.1.1 maintenance notes](releases/v1.1.1.md) cover the documentation/test maintenance target prepared on 2026-10-12; runtime behavior is unchanged from 1.1.0. Verify package publication separately.
+
 - [Experimental handoff runtime](handoff-runtime.md) describes the limited private-receipt support shipped in 1.1.0, supported routes and remaining acceptance gates.
 - [v1 compatibility contract](compatibility-v1.md) classifies stable, versioned, migrated, internal and experimental surfaces.
 - [Agent transport architecture](architecture/agent-transports.md) and the [relay development plan](relay-development-plan.md) explain implementation boundaries.
-- [v1.1.0 release notes](releases/v1.1.0.md) describe publication evidence, changes and partial support boundaries; the current published stable release is 1.1.0.
+- [v1.1.0 release notes](releases/v1.1.0.md) preserve the published 1.1.0 evidence, changes and partial support boundaries.
 - [v1.0.4 notes](releases/v1.0.4.md) describe the prior maintenance release dated 2026-10-07; [v1.0.3 notes](releases/v1.0.3.md) preserve the prior security release history; [validation records](validation/69-rc.md) preserve scoped evidence and limitations.
 - The completed relay69 prototype source was removed after its unique regressions moved to the product relay suite. Git history remains the source for obsolete prototype code.
