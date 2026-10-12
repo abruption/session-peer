@@ -23,6 +23,8 @@ gh workflow run prepare-release.yml --repo abruption/session-peer \
   --ref main -f tag="$release_tag"
 ```
 
+실행 요청 후 중단: `gh workflow run`은 준비가 끝나기 전에 반환합니다. 정확한 릴리스 커밋의 v1.1.1 실행을 확인하고 `gh run watch <prepare-run-id> --repo abruption/session-peer --exit-status`로 완료를 기다립니다. `attach-draft`를 포함한 해당 실행이 성공하기 전에는 아래 게시 명령을 실행하지 않습니다. 릴리스를 초안으로 유지한 채 첨부 자산이 정확히 7개인지 확인하고, SHA256SUMS, release-provenance.json 및 인증된 증명을 태그·커밋과 대조합니다. 실패, 누락 또는 미검증 자료가 있으면 게시하지 않고 중단합니다. 이 별도 검증을 완료한 후에만 아래 명령을 실행합니다.
+
 ```bash
 gh release edit v1.1.1 --repo abruption/session-peer \
   --draft=false --prerelease=false --latest

@@ -15,6 +15,17 @@ COMMIT = "a" * 40
 
 
 class ReleaseCommands(unittest.TestCase):
+    def test_current_publication_requires_completed_preparation_and_asset_review(self):
+        for name in ("RELEASING.md", "RELEASING.ko.md", "RELEASING.ja.md", "RELEASING.zh-CN.md"):
+            with self.subTest(document=name):
+                text = (ROOT / name).read_text(encoding="utf-8")
+                dispatch = text.index('  --ref main -f tag="$release_tag"')
+                publication = text.index("gh release edit v1.1.1")
+                gate = text[dispatch:publication]
+                for marker in ("gh run watch <prepare-run-id>", "--exit-status",
+                               "attach-draft", "SHA256SUMS", "release-provenance.json"):
+                    self.assertIn(marker, gate)
+
     def shell_calls(self, block):
         with tempfile.TemporaryDirectory() as temporary:
             log = Path(temporary) / "calls.jsonl"
