@@ -106,7 +106,7 @@ class ReleaseWorkflows(unittest.TestCase):
         requirements = ROOT / ".github/requirements"
         declared = [line for line in (requirements / "ssh-test.txt").read_text().splitlines()
                     if line and not line.startswith("#")]
-        self.assertEqual(declared, ["paramiko==4.0.0"])
+        self.assertEqual(declared, ["paramiko==5.0.0"])
         text = (ROOT / ".github/workflows/ci.yml").read_text()
         self.assertIn("if: matrix.os != 'windows-latest' && matrix.python == '3.13'", text)
         self.assertIn("run: python -m pip install --requirement .github/requirements/ssh-test.txt", text)
