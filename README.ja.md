@@ -34,11 +34,11 @@ session-peer 1.0.2による実際のローカル通信です。CodexがClaude Co
 ### インストール
 
 Python 3.9以上が必要です。基本のローカル・SSH CLIに外部Python依存パッケージはありません。
-現在の安定版：**1.0.4**。
+現在の安定版：**1.1.0**。
 
-2026-10-07付のメンテナンス版の[リリースノート](docs/ja/releases/v1.0.4.md)を参照してください。パッケージ公開と本番環境への配備は別です。
+2026-10-09に公開した版の[リリースノート](docs/ja/releases/v1.1.0.md)を参照してください。パッケージ公開と本番環境への配備は別です。
 
-リリース候補 **1.1.0** を準備中で、まだ公開していません。予定される変更と残る検証条件は[候補ノート](docs/ja/releases/v1.1.0.md)を参照してください。
+実験的なhandoffは明示的に選択する機能です。ローカルPOSIX Claudeは受領ACKに対応し、CodexとSSHは相関IDによる送信のみ対応してACKの観察には対応しません。公開済みの範囲と残る検証条件は[handoffガイド](docs/ja/handoff-runtime.md)を参照してください。
 
 ```bash
 pipx install session-peer
@@ -84,7 +84,7 @@ pipx upgrade session-peer
 
 ローカルのインストールでは、`session-peer update` は単独スクリプトのランタイムファイルを置き換えます。
 パッケージ管理ツールでインストールした場合、このコマンドは更新方法を案内するだけです。このコマンドはスキルを更新しません。
-スキルの更新には、インストール時に使用したツール（Skills CLI、または同梱コピーの `install.sh`）を使ってください。
+スキルの更新には、インストール時に使用したツール（Skills CLI、またはインストーラー所有の互換コピーに限り `install.sh`）を使ってください。互換コピーは独立して公開するスキルとは別であり、他の管理ツールが所有する既存スキルは保持します。
 [更新の詳細とリモートでの制約](https://github.com/abruption/session-peer/blob/main/docs/ja/cli-reference.md#updating)を参照してください。
 
 <a id="documentation"></a>

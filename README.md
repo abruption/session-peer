@@ -34,11 +34,11 @@ in this ~22-second animation, not a screen recording; send success alone is not 
 ### Install
 
 Python 3.9+. The core local/SSH CLI has no third-party Python dependencies.
-Current stable release: **1.0.4**.
+Current stable release: **1.1.0**.
 
-Maintenance release dated 2026-10-07; see the [release notes](docs/releases/v1.0.4.md). Package publication and operational deployment are separate.
+Released on 2026-10-09; see the [release notes](docs/releases/v1.1.0.md). Package publication and operational deployment are separate.
 
-Release candidate **1.1.0** is being prepared; it is not published. See the [candidate notes](docs/releases/v1.1.0.md) for planned changes and remaining acceptance gates.
+Experimental handoff is opt-in: local POSIX Claude supports receipt ACKs; Codex and SSH support correlation-only submission, not ACK observation. See the [handoff guide](docs/handoff-runtime.md) for the shipped scope and remaining acceptance gates.
 
 ```bash
 pipx install session-peer
@@ -84,7 +84,7 @@ pipx upgrade session-peer
 
 For local installations, `session-peer update` replaces standalone runtime files;
 package-managed installs receive upgrade guidance instead. It never updates agent skills:
-use their original installer (Skills CLI, or `install.sh` for its bundled copy).
+use their original installer (Skills CLI, or `install.sh` only for an installer-owned compatibility copy). The compatibility copy is separate from the independently released skill; existing manager-owned skills are preserved.
 See [update details and remote limitations](https://github.com/abruption/session-peer/blob/main/docs/cli-reference.md#updating).
 
 <a id="documentation"></a>
