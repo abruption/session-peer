@@ -19,7 +19,7 @@ class ReleaseCommands(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             log = Path(temporary) / "calls.jsonl"
             staging = str(Path(temporary) / "staging with spaces")
-            # Functions intercept every external command in all three examples.
+            # Functions intercept every external command in the documented examples.
             # A minimal environment supplies neither credentials nor user shell startup files.
             harness = r'''
 set -eu
@@ -60,31 +60,32 @@ rmdir() { capture rmdir "$@"; }
         for name in ("RELEASING.md", "RELEASING.ko.md", "RELEASING.ja.md", "RELEASING.zh-CN.md"):
             with self.subTest(document=name):
                 blocks = re.findall(r"```bash\n(.*?)```", (ROOT / name).read_text(), re.DOTALL)
-                self.assertEqual(len(blocks), 3, "preparation, owner publication and installer authentication remain distinct")
-                calls, _ = self.shell_calls(blocks[0])
-                self.assertEqual(calls, [
-                    ["git", "fetch", "origin", "main", "--tags"],
-                    ["git", "rev-parse", "origin/main"],
-                    ["git", "tag", "v1.1.0", COMMIT],
-                    ["git", "push", "origin", "v1.1.0"],
-                    ["gh", "release", "create", "v1.1.0", "--repo", "abruption/session-peer",
-                     "--target", COMMIT, "--title", "session-peer v1.1.0",
-                     "--notes-file", "docs/releases/v1.1.0.md", "--draft", "--latest"],
-                    ["gh", "workflow", "run", "prepare-release.yml", "--repo", "abruption/session-peer",
-                     "--ref", "main", "-f", "tag=v1.1.0"],
-                ])
-                publication_calls, _ = self.shell_calls(blocks[1])
-                self.assertEqual(publication_calls, [
-                    ["gh", "release", "edit", "v1.1.0", "--repo", "abruption/session-peer",
-                     "--draft=false", "--prerelease=false", "--latest"],
-                ])
+                self.assertEqual(len(blocks), 5, "current/historical preparation and publication plus installer remain distinct")
+                for offset, version in ((0, "v1.1.1"), (2, "v1.1.0")):
+                    calls, _ = self.shell_calls(blocks[offset])
+                    self.assertEqual(calls, [
+                        ["git", "fetch", "origin", "main", "--tags"],
+                        ["git", "rev-parse", "origin/main"],
+                        ["git", "tag", version, COMMIT],
+                        ["git", "push", "origin", version],
+                        ["gh", "release", "create", version, "--repo", "abruption/session-peer",
+                         "--target", COMMIT, "--title", "session-peer " + version,
+                         "--notes-file", "docs/releases/" + version + ".md", "--draft", "--latest"],
+                        ["gh", "workflow", "run", "prepare-release.yml", "--repo", "abruption/session-peer",
+                         "--ref", "main", "-f", "tag=" + version],
+                    ])
+                    publication_calls, _ = self.shell_calls(blocks[offset + 1])
+                    self.assertEqual(publication_calls, [
+                        ["gh", "release", "edit", version, "--repo", "abruption/session-peer",
+                         "--draft=false", "--prerelease=false", "--latest"],
+                    ])
 
     def test_installer_authentication_commands_preserve_argument_boundaries(self):
         query = ('if .immutable == true and .draft == false and .prerelease == false '
                  'then .tag_name else error("no immutable stable release") end')
         for name in ("RELEASING.md", "RELEASING.ko.md", "RELEASING.ja.md", "RELEASING.zh-CN.md"):
             with self.subTest(document=name):
-                block = re.findall(r"```bash\n(.*?)```", (ROOT / name).read_text(), re.DOTALL)[2]
+                block = re.findall(r"```bash\n(.*?)```", (ROOT / name).read_text(), re.DOTALL)[-1]
                 calls, staging = self.shell_calls(block)
                 installer = staging + "/install.sh"
                 self.assertEqual(calls, [

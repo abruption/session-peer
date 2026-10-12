@@ -34,9 +34,9 @@ session-peer使用各智能体自身的收件箱和队列；接收方智能体�
 ### 安装
 
 需要Python 3.9或更高版本。核心本地与SSH CLI没有第三方Python依赖。
-当前稳定版：**1.1.0**。
+本README说明的版本：**1.1.1**。
 
-请参阅2026-10-09发布版本的[发布说明](docs/zh-CN/releases/v1.1.0.md)。软件包发布与生产环境部署是两项独立操作。
+请参阅2026-10-12准备的维护版本的[发布说明](docs/zh-CN/releases/v1.1.1.md)。此补丁改进文档和开发用测试，不改变运行时行为。软件包发布与生产环境部署是两项独立操作。
 
 实验性handoff需要明确选择启用：本地POSIX Claude支持收据ACK；Codex与SSH仅支持关联标识提交，不支持ACK观察。已发布范围与剩余验收条件请参阅[handoff指南](docs/zh-CN/handoff-runtime.md)。
 

@@ -4,11 +4,35 @@
 
 아래 소스·설정 검사부터 공개 검증·복구까지는 2026-10-09 릴리스 절차의 역사 기록이며 재실행 요청이 아닙니다. v1.1.0을 다시 생성하거나 이동·재사용하지 말고 공개 예제를 다시 실행하지 마십시오. 후속 버전에서는 새로 검토한 버전, 새로운 검증 자료와 명시적 승인으로 각 조건을 다시 확인합니다. 준비, 불변 GitHub 공개, 사람이 수행하는 필수 PyPI 환경 검토와 운영 배포는 별개입니다. 보호된 main에 반영하려면 검토를 마치고 최신 main을 반영한 PR과, Python 플랫폼 매트릭스·문서·셸·패키지/독립 실행 파일/MCP/Relay/Control 테스트·통합 테스트·Python/Node 의존성 감사를 포함한 릴리스 게이트가 필요합니다.
 
+## 현재 v1.1.1 유지보수 릴리스
+
+소유자는 2026-10-12에 이번 유지보수 릴리스를 승인했습니다. #297(개발용 Paramiko 5.0.0 테스트)과 #299(네 언어 문서 수정)를 포함하며 런타임 동작은 1.1.0과 같습니다. #298은 열려 있으며 이번 패치에서 수정되지 않습니다. 정확한 최신 커밋의 CI, 전체 로컬 테스트, 독립 실행 파일 재생성 확인, 격리된 wheel/sdist 설치와 최신 의존성 감사를 수행합니다. 생성 전에 v1.1.1과 PyPI 1.1.1이 사용되지 않았는지 확인하며 태그·버전을 이동하거나 재사용하지 않습니다. 현재 Trusted Publisher와 필수 사람 pypi 검토를 확인합니다. 준비 PR을 병합하고 정확한 main의 CI가 통과한 후에만 명령을 실행합니다. 공개 전에 불변 초안 자산 7개, 해시와 증명을 검토합니다. 공개 승인은 사람의 PyPI 환경 승인 절차를 대신하지 않습니다. GitHub와 PyPI를 각각 검증하며 장비 또는 Control/Relay 배포는 포함하지 않습니다.
+
+다음 명령은 v1.1.1용입니다. 아래 v1.1.0 절차는 과거 기록으로 유지합니다.
+
+```bash
+git fetch origin main --tags
+release_tag=v1.1.1
+release_commit=$(git rev-parse origin/main)
+git tag "$release_tag" "$release_commit"
+git push origin "$release_tag"
+gh release create "$release_tag" --repo abruption/session-peer \
+  --target "$release_commit" --title "session-peer $release_tag" \
+  --notes-file "docs/releases/$release_tag.md" --draft --latest
+gh workflow run prepare-release.yml --repo abruption/session-peer \
+  --ref main -f tag="$release_tag"
+```
+
+```bash
+gh release edit v1.1.1 --repo abruption/session-peer \
+  --draft=false --prerelease=false --latest
+```
+
 ## 과거 증거와 현재 경계
 
 다섯 호스트에서 진행한 v1.0.0 RC4 rc4-rerun-02 캠페인은 14,436.65초 동안 실행됐습니다. 상태는 complete(완료)였고, 공개 health(서비스 상태) 점검 241/241, 프로브(연결 점검) 147/147, 제출 21/21, Relay 재시작 후 복구 시간 3.182초를 기록했습니다. 독립적으로 확인한 ACK(수신 확인)는 20/21입니다. T120 Windows 네이티브 Claude의 원래 ACK는 TUI가 종료되어 확인되지 않았지만, 별도의 단발 확인에서 정확한 ACK를 받았습니다. 소유자는 #164에서 이 예외를 수락했습니다. 집계는 20/21로 유지하십시오. 이 과거 증거는 v1.0.4 또는 v1.1.0을 검증하지 않습니다. #161은 계속 열려 있으며 외부 경로 정체의 근본 원인은 확인되지 않았습니다.
 
-공개된 Python/PyPI 버전은 1.1.0이며 태그와 GitHub 릴리스는 v1.1.0입니다. 플러그인 버전은 별도로 관리합니다. 코어에는 Python 3.9 이상, MCP에는 Python 3.10 이상이 필요합니다. Relay 수신기와 서버에는 Unix 또는 WSL 환경 및 Python 3.11 이상이 필요합니다. 서비스로 실행되는 수신기는 서비스 PATH에서 Codex를 찾을 수 있거나 운영자가 관리하는 codexBin 바인딩이 있어야 합니다. 패키지를 공개해도 호스팅 서비스에 대응 조치가 적용되거나, 전체 기기에 설치되거나, 운영 환경이 재시작되거나, 실시간 OAuth 상태가 확인되거나, 에이전트 ACK가 수신됐다는 뜻은 아닙니다. 결과가 불확실하면 자동으로 재전송하지 않습니다.
+2026-10-09 당시 기록: 공개된 Python/PyPI 버전은 1.1.0이며 태그와 GitHub 릴리스는 v1.1.0입니다. 플러그인 버전은 별도로 관리합니다. 코어에는 Python 3.9 이상, MCP에는 Python 3.10 이상이 필요합니다. Relay 수신기와 서버에는 Unix 또는 WSL 환경 및 Python 3.11 이상이 필요합니다. 서비스로 실행되는 수신기는 서비스 PATH에서 Codex를 찾을 수 있거나 운영자가 관리하는 codexBin 바인딩이 있어야 합니다. 패키지를 공개해도 호스팅 서비스에 대응 조치가 적용되거나, 전체 기기에 설치되거나, 운영 환경이 재시작되거나, 실시간 OAuth 상태가 확인되거나, 에이전트 ACK가 수신됐다는 뜻은 아닙니다. 결과가 불확실하면 자동으로 재전송하지 않습니다.
 
 ## 소스와 설정 게이트
 
