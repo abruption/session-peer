@@ -10,6 +10,32 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StableCandidate(unittest.TestCase):
+    def test_documentation_maps_keep_published_and_historical_status_distinct(self):
+        profiles = (
+            ("", "Experimental handoff runtime", "remaining acceptance gates",
+             "current published stable release is 1.1.0", "prior maintenance release"),
+            ("ko/", "실험적 Handoff 런타임", "남은 수락 조건",
+             "현재 공개 안정판은 1.1.0입니다", "이전 유지보수 릴리스"),
+            ("ja/", "実験的なHandoffランタイム", "残る受け入れ条件",
+             "現在の公開安定版は1.1.0です", "以前のメンテナンス版"),
+            ("zh-CN/", "实验性Handoff运行时", "剩余验收条件",
+             "当前公开稳定版为1.1.0", "先前维护版本"),
+        )
+        for locale, handoff_label, gates, stable, historical in profiles:
+            text = (ROOT / ("docs/" + locale + "README.md")).read_text(encoding="utf-8")
+            with self.subTest(locale=locale or "en"):
+                handoff = next(line for line in text.splitlines() if "(handoff-runtime.md)" in line)
+                current = next(line for line in text.splitlines() if "(releases/v1.1.0.md)" in line)
+                previous = next(line for line in text.splitlines() if "(releases/v1.0.4.md)" in line)
+                self.assertIn(handoff_label, handoff)
+                self.assertIn("1.1.0", handoff)
+                self.assertIn(gates, handoff)
+                self.assertIn(stable, current)
+                self.assertIn(historical, previous)
+                self.assertIn("2026-10-07", previous)
+                self.assertIn("releases/v1.0.3.md", previous)
+                self.assertIn("validation/69-rc.md", previous)
+
     def test_published_guides_share_exact_source_and_publication_evidence(self):
         source = "8ca77cf31254c8287a2593fe484bb30a7dba2727"
         for locale in ("", "ko/", "ja/", "zh-CN/"):
