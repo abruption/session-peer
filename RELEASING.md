@@ -23,6 +23,8 @@ gh workflow run prepare-release.yml --repo abruption/session-peer \
   --ref main -f tag="$release_tag"
 ```
 
+STOP after dispatch: `gh workflow run` returns before preparation finishes. Identify the run for v1.1.1 at the exact release commit and wait with `gh run watch <prepare-run-id> --repo abruption/session-peer --exit-status`. Do not execute the publication block unless that run succeeds, including `attach-draft`. Keep the release a draft while reviewing exactly seven attached assets, SHA256SUMS, release-provenance.json and their authenticated attestations against the tag and commit. Failure, missing assets or unverified evidence means stop without publishing. Only after this separate verification may the following publication command be executed.
+
 ```bash
 gh release edit v1.1.1 --repo abruption/session-peer \
   --draft=false --prerelease=false --latest
