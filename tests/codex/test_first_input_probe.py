@@ -28,6 +28,8 @@ class FakeWebSocket:
 
     def send(self, message):
         self.sent.append(json.loads(message))
+        if self.sent[-1]["method"] == "thread/queue/add" and self.queue_response == "send-error":
+            raise OSError("PRIVATE send details")
 
     def recv(self, timeout):
         request = self.sent[-1]
@@ -42,6 +44,10 @@ class FakeWebSocket:
             result = {"thread": {"cwd": self.home, "status": {"type": "idle"},
                                  "canAcceptDirectInput": True, "ephemeral": True}}
         else:
+            if isinstance(self.queue_response, BaseException):
+                raise self.queue_response
+            if isinstance(self.queue_response, str):
+                return self.queue_response
             return json.dumps(dict(self.queue_response, id=request["id"]))
         return json.dumps({"id": request["id"], "result": result})
 
@@ -73,7 +79,7 @@ class FirstInputProbeTests(unittest.TestCase):
             db.commit()
 
     def invoke(self, server_home, queue_response=None, supplied_home=None):
-        ws = FakeWebSocket(server_home, queue_response or {"result": {"queuedSubmission": {}}})
+        ws = FakeWebSocket(server_home, {"result": {"queuedSubmission": {}}} if queue_response is None else queue_response)
         args = ["--socket", str(self.endpoint), "--codex-home", supplied_home or str(self.home),
                 "--expected-cwd", str(self.home), "--mode", "queue", "--ack-marker", "ACK TEST"]
         output = io.StringIO()
@@ -84,8 +90,9 @@ class FirstInputProbeTests(unittest.TestCase):
     def test_missing_or_mismatched_home_refuses_before_thread_or_database(self):
         for server_home in (None, str(self.home.parent), "relative", ""):
             with self.subTest(server_home=server_home), mock.patch.object(
-                    self.probe.sqlite3, "connect", side_effect=AssertionError("DB must not open")):
+                    self.probe.sqlite3, "connect", side_effect=AssertionError("DB must not open")) as database:
                 exit_code, sent, output = self.invoke(server_home)
+                database.assert_not_called()
                 self.assertEqual(exit_code, 1)
                 self.assertEqual([item["method"] for item in sent], ["initialize"])
                 self.assertNotIn(str(self.home), output)
@@ -111,7 +118,55 @@ class FirstInputProbeTests(unittest.TestCase):
                 self.assertEqual(exit_code, 1)
                 self.assertEqual(sum(item["method"] == "thread/queue/add" for item in sent), 1)
                 self.assertEqual(json.loads(output.splitlines()[-1])["error"], "invalid_rpc_error")
+                self.assertIsNone(json.loads(output.splitlines()[-1])["accepted"])
+                self.assertEqual(json.loads(output.splitlines()[-1])["outcome"], "unknown")
                 self.assertNotIn("PRIVATE", output)
+
+    def test_uncertain_queue_failures_preserve_unknown_and_no_retry(self):
+        for response in (TimeoutError("PRIVATE timeout"), OSError("PRIVATE transport"),
+                         "send-error", "PRIVATE invalid JSON", {"result": []},
+                         {"result": {}}, {"error": {"code": -1}, "result": {}},
+                         KeyboardInterrupt()):
+            with self.subTest(response=type(response).__name__):
+                exit_code, sent, output = self.invoke(str(self.home), response)
+                self.assertEqual(exit_code, 130 if isinstance(response, KeyboardInterrupt) else 1)
+                self.assertEqual(sum(item["method"] == "thread/queue/add" for item in sent), 1)
+                failure = json.loads(output.splitlines()[-1])
+                self.assertIsNone(failure["accepted"])
+                self.assertEqual(failure["outcome"], "unknown")
+                self.assertFalse(failure["retryAllowed"])
+                self.assertNotIn("PRIVATE", output)
+                self.assertNotIn(str(self.home), output)
+
+    def test_preflight_exception_is_sanitized_without_queue(self):
+        for failure in (FileNotFoundError("PRIVATE path"), sqlite3.DatabaseError("PRIVATE DB"),
+                        AssertionError("PRIVATE assertion"), ValueError("PRIVATE value")):
+            with self.subTest(failure=type(failure).__name__), mock.patch.object(
+                    self.probe.sqlite3, "connect", side_effect=failure):
+                exit_code, sent, output = self.invoke(str(self.home))
+                self.assertEqual(exit_code, 1)
+                self.assertFalse(any(item["method"] == "thread/queue/add" for item in sent))
+                result = json.loads(output.splitlines()[-1])
+                self.assertIs(result["accepted"], False)
+                self.assertEqual(result["outcome"], "not_attempted")
+                self.assertNotIn("PRIVATE", output)
+
+    def test_invalid_ephemeral_is_not_reflected_or_submitted(self):
+        original = FakeWebSocket.recv
+
+        def malicious_metadata(ws, timeout):
+            raw = original(ws, timeout)
+            if ws.sent[-1]["method"] == "thread/read":
+                value = json.loads(raw)
+                value["result"]["thread"]["ephemeral"] = "PRIVATE"
+                return json.dumps(value)
+            return raw
+
+        with mock.patch.object(FakeWebSocket, "recv", malicious_metadata):
+            exit_code, sent, output = self.invoke(str(self.home))
+        self.assertEqual(exit_code, 1)
+        self.assertFalse(any(item["method"] == "thread/queue/add" for item in sent))
+        self.assertNotIn("PRIVATE", output)
 
 
 if __name__ == "__main__":

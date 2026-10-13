@@ -72,7 +72,8 @@ direct PTY observation. It does not implement this transport in session-peer.
 An initial read-only stdio-proxy probe timed out before initialization, with no
 queue attempt. It was discarded; the successful inspection/submission used the
 existing Unix-WebSocket harness with websockets 17.0 in a temporary isolated
-environment. The harness only gained an optional bounded ASCII test marker.
+environment. At that live-test stage the harness only gained an optional bounded
+ASCII test marker; subsequent review-driven guards are described below.
 No uncertain effect was retried.
 
 Both test TUIs and the foreground server exited zero; their PIDs were checked
@@ -116,10 +117,21 @@ The supplied Codex home is now canonicalized before SQLite URI construction and
 must match the absolute `codexHome` returned by `initialize` before any thread
 lookup or database inspection. Missing or mismatched server-home evidence
 refuses the probe without queuing. A queue RPC rejection returns exit 1; malformed
-error objects or non-integer codes also fail safely without reflecting native
-error text or retrying. The version guard remains exactly 0.162.1.
+error objects or non-integer codes yield an unknown outcome once queue submission
+has been attempted, without reflecting native error text or retrying. Timeout,
+invalid JSON, invalid results, and transport failures after that boundary also
+report `accepted:null`, `outcome:unknown`, and `retryAllowed:false`; after a queue
+attempt, a validated RPC rejection alone supplies `accepted:false`. Runtime
+preflight failures report `accepted:false`, `outcome:not_attempted`; argparse
+usage errors retain exit 2 and usage output. An interrupted probe returns exit 130 while preserving the
+same effect boundary. `ephemeral` is restricted to boolean/null; arbitrary result
+keys and native error details are not reflected. The version guard remains
+exactly 0.162.1, and Python optimization is refused up front.
 
-Four synthetic WebSocket/temporary-database tests cover these boundaries,
+Seven synthetic WebSocket/temporary-database tests cover these boundaries,
 including relative home paths and exactly one queue attempt on rejection.
 These are harness regression tests, not new native delivery, receipt, platform,
-or production-support evidence. SQLite handles are explicitly closed.
+or production-support evidence. None of these review-driven guards were exercised
+by another live native run. SQLite handles are explicitly closed. A failure during
+connection cleanup may return a nonzero exit while preserving an already observed
+acceptance or rejection; it never authorizes retry.

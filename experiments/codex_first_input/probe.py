@@ -33,7 +33,11 @@ def rpc_result(response):
     return result
 
 
-def main(argv=None):
+def main(argv=None, state=None):
+    if state is None:
+        state = {"attempted": False, "accepted": None}
+    if not __debug__:
+        raise ProbeError("optimization_not_supported")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--socket", required=True)
     parser.add_argument("--codex-home", required=True)
@@ -56,13 +60,19 @@ def main(argv=None):
         def call(method, params):
             nonlocal sequence
             sequence += 1
-            ws.send(json.dumps({"id": sequence, "method": method, "params": params}))
+            request = json.dumps({"id": sequence, "method": method, "params": params})
+            if method == "thread/queue/add":
+                # An exception from send cannot prove that no bytes reached the server.
+                state["attempted"] = True
+            ws.send(request)
             deadline = time.monotonic() + 15
             for _ in range(200):
                 message = json.loads(ws.recv(timeout=max(.01, deadline-time.monotonic())))
                 if not isinstance(message, dict):
                     raise ProbeError("invalid_rpc_response")
                 if message.get("id") == sequence:
+                    if ("error" in message) == ("result" in message):
+                        raise ProbeError("invalid_rpc_response")
                     return message
                 if "id" in message:
                     raise RuntimeError("unexpected server interaction; no approval supplied")
@@ -86,13 +96,16 @@ def main(argv=None):
         thread = rpc_result(call("thread/read", {"threadId": thread_id, "includeTurns": False}))["thread"]
         assert Path(thread["cwd"]).resolve() == Path(args.expected_cwd).resolve()
         assert thread["status"]["type"] == "idle" and thread["canAcceptDirectInput"] is True
+        ephemeral = thread.get("ephemeral")
+        if ephemeral is not None and type(ephemeral) is not bool:
+            raise ProbeError("invalid_thread_metadata")
         rows = 0
         dbs = list(codex_home.glob("state_*.sqlite"))
         assert dbs
         for db in dbs:
             with closing(sqlite3.connect(db.as_uri()+"?mode=ro", uri=True)) as connection:
                 rows += connection.execute("SELECT count(*) FROM threads WHERE id=?", (thread_id,)).fetchone()[0]
-        facts = {"version": "0.162.1", "loadedThreads": 1, "storedRowsBefore": rows, "idle": True, "directInput": True, "ephemeral": thread.get("ephemeral"), "mode": args.mode}
+        facts = {"version": "0.162.1", "loadedThreads": 1, "storedRowsBefore": rows, "idle": True, "directInput": True, "ephemeral": ephemeral, "mode": args.mode}
         print(json.dumps(facts), flush=True)
         if args.mode == "inspect":
             return 0
@@ -105,19 +118,37 @@ def main(argv=None):
             error = result["error"]
             if not isinstance(error, dict) or type(error.get("code")) is not int:
                 raise ProbeError("invalid_rpc_error")
+            state["accepted"] = False
             print(json.dumps({"method": method, "accepted": False, "errorCode": error["code"], "retryAllowed": False}), flush=True)
             return 1
         else:
-            print(json.dumps({"method": method, "accepted": True, "resultKeys": sorted(rpc_result(result)), "consumptionConfirmed": False}), flush=True)
+            queued = rpc_result(result)
+            if "queuedSubmission" not in queued:
+                raise ProbeError("invalid_queue_result")
+            state["accepted"] = True
+            print(json.dumps({"method": method, "accepted": True, "consumptionConfirmed": False}), flush=True)
             return 0
 
 
 def run(argv=None):
+    state = {"attempted": False, "accepted": None}
     try:
-        return main(argv)
-    except ProbeError as exc:
-        print(json.dumps({"accepted": False, "error": str(exc), "retryAllowed": False}), flush=True)
+        return main(argv, state)
+    except KeyboardInterrupt:
+        report_failure(state, "interrupted")
+        return 130
+    except Exception as exc:
+        # Do not reflect paths, server messages, JSON fragments, or exception text.
+        report_failure(state, str(exc) if isinstance(exc, ProbeError) else "probe_failed")
         return 1
+
+
+def report_failure(state, error):
+    accepted = state["accepted"] if state["attempted"] else False
+    outcome = ("unknown" if accepted is None else
+               "accepted" if accepted else "rejected" if state["attempted"] else "not_attempted")
+    print(json.dumps({"accepted": accepted, "outcome": outcome, "error": error,
+                      "retryAllowed": False}), flush=True)
 
 
 if __name__ == "__main__":
