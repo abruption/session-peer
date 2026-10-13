@@ -24,6 +24,8 @@ installation paths.
 
 ## Development and history
 
+- [v1.1.2 candidate notes](releases/v1.1.2.md) describe the unpublished #298 Claude PID-record and nondecimal Unicode-name fix prepared on 2026-10-13; CI and publication gates remain separate.
+
 - [v1.1.1 maintenance notes](releases/v1.1.1.md) cover the documentation/test maintenance target prepared on 2026-10-12; runtime behavior is unchanged from 1.1.0. Verify package publication separately.
 
 - [Experimental handoff runtime](handoff-runtime.md) describes the limited private-receipt support shipped in 1.1.0, supported routes and remaining acceptance gates.

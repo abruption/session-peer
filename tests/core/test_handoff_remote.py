@@ -88,6 +88,23 @@ class HandoffRemote(unittest.TestCase):
         for missing in ("status", "submitted", "consumptionConfirmed"):
             self.assertNotIn(missing, native)
 
+    def test_probe_nondecimal_claude_name_and_bounded_effect_pid(self):
+        self.session["name"] = "²"
+        context = self.context()
+        context["target"] = "²"
+        code, response, socket, _, _ = self.invoke(context)
+        self.assertEqual(code, 0, response)
+        socket.assert_not_called()
+        native = peer.handoff_validate_remote_response(response, context)
+        self.assertEqual(native["target"], {"pid": 4242, "name": "²"})
+        for target in ("²", "99999999999999999999", "0", "1"):
+            invalid = self.effect()
+            invalid["target"] = target
+            with self.subTest(target=target):
+                code, response, socket, _, _ = self.invoke(invalid)
+                self.assertEqual(code, 1, response)
+                socket.assert_not_called()
+
     def test_effect_claude_quotes_every_line_once_without_receipt_authority(self):
         context = self.effect()
         code, response, socket, _, generation = self.invoke(context)

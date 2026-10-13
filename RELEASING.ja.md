@@ -4,15 +4,15 @@
 
 以下のソース・設定の確認から公開検証・復旧までは、2026-10-09のリリース手順の過去の記録であり、再実行の依頼ではありません。v1.1.0を再作成、移動、再利用せず、公開例を再実行しないでください。将来の版では、新しくレビューしたバージョン、最新の証拠、明示的な承認で各条件を再確認します。準備、不変のGitHub公開、必須の人手によるPyPI環境レビュー、本番環境への配備は別です。保護されたmainでは、レビュー済みで最新のPRと、Pythonのプラットフォーム別テストマトリクス、ドキュメント、シェル、パッケージ/単独ファイル/MCP/Relay/Control、統合テスト、Python/Nodeの依存関係監査を含む統合リリースゲートへの合格が必要です。
 
-## 現在のv1.1.1メンテナンスリリース
+## v1.1.2パッチ候補 — 未公開
 
-所有者は2026-10-12にこのメンテナンスリリースを承認しました。#297（開発用Paramiko 5.0.0テスト）と#299（4言語のドキュメント修正）を含み、ランタイムの動作は1.1.0と同じです。#298は未解決で、このパッチでは修正しません。最新の正確なコミットのCI、全ローカルテスト、単独ファイルの再生成確認、隔離したwheel/sdistのインストール、最新の依存関係監査を実行します。作成前にv1.1.1とPyPI 1.1.1が未使用であることを確認し、タグやバージョンを移動・再利用しないでください。現在のTrusted Publisherと必須の人手によるpypiレビューを確認します。準備PRのマージ後、正確なmainのCIが成功してからコマンドを実行します。公開前に不変ドラフトの7個のアセット、ハッシュ、証明を確認します。公開承認は人手によるPyPI環境承認の代わりにはなりません。GitHubとPyPIを個別に検証し、各端末やControl/Relayの配備は含めません。
+公開済み1.1.1を基に2026-10-13に準備しました。候補は#298を修正し、不正なClaude PID記録が正常なセッションの検出を妨げないようにし、非十進Unicodeのセッション名を名前として解決します。準備はマージ、タグ作成、公開、配備の承認ではありません。正確な最新コミットのCI、全ローカルテスト、単独ファイルの再生成、隔離したwheel/sdistのインストール、最新の依存関係監査が必要です。v1.1.2とPyPI 1.1.2が未使用であることを再確認し、タグやバージョンを移動・再利用しないでください。現在のTrusted Publisherと必須の人手によるpypiレビューを確認します。別途のマージ・公開承認、正確なmain CIの成功、不変ドラフト資産7個のレビューを完了した後にのみ下記コマンドを使います。GitHubとPyPIの公開、人手による環境承認、Control/Relayや各端末の配備は別です。
 
-次のコマンドはv1.1.1用です。以下のv1.1.0手順は過去の記録として残します。
+次のコマンドはv1.1.2用です。以下のv1.1.0手順は過去の記録として残します。
 
 ```bash
 git fetch origin main --tags
-release_tag=v1.1.1
+release_tag=v1.1.2
 release_commit=$(git rev-parse origin/main)
 git tag "$release_tag" "$release_commit"
 git push origin "$release_tag"
@@ -23,10 +23,10 @@ gh workflow run prepare-release.yml --repo abruption/session-peer \
   --ref main -f tag="$release_tag"
 ```
 
-実行要求の後で停止してください。`gh workflow run`は準備の完了前に戻ります。正確なリリースコミットに対応するv1.1.1の実行を特定し、`gh run watch <prepare-run-id> --repo abruption/session-peer --exit-status`で完了を待ちます。`attach-draft`を含む実行が成功するまで、下の公開コマンドを実行しないでください。リリースを下書きのまま保ち、添付資産が正確に7個あること、SHA256SUMS、release-provenance.jsonと認証済み証明がタグ・コミットに一致することを確認します。失敗、欠落または未検証の証拠があれば、公開せず停止します。この独立した検証の完了後にのみ、下のコマンドを実行してください。
+実行要求の後で停止してください。`gh workflow run`は準備の完了前に戻ります。正確なリリースコミットに対応するv1.1.2の実行を特定し、`gh run watch <prepare-run-id> --repo abruption/session-peer --exit-status`で完了を待ちます。`attach-draft`を含む実行が成功するまで、下の公開コマンドを実行しないでください。リリースを下書きのまま保ち、添付資産が正確に7個あること、SHA256SUMS、release-provenance.jsonと認証済み証明がタグ・コミットに一致することを確認します。失敗、欠落または未検証の証拠があれば、公開せず停止します。この独立した検証の完了後にのみ、下のコマンドを実行してください。
 
 ```bash
-gh release edit v1.1.1 --repo abruption/session-peer \
+gh release edit v1.1.2 --repo abruption/session-peer \
   --draft=false --prerelease=false --latest
 ```
 
