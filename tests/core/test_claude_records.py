@@ -225,3 +225,86 @@ else:
             self.assertEqual(peer.read_claude_record(self.directory / '101.json'), self.healthy)
         flags = opened.call_args.args[1]
         self.assertEqual(flags, os.O_RDONLY | getattr(os, 'O_BINARY', 0))
+
+    def test_invalid_pid_filenames_preserve_healthy_cli_results(self):
+        for stem in ('²', '99999999999999999999', '0', '1', '-101'):
+            self.write(stem, json.dumps(self.healthy).encode())
+        self.assertEqual([row['pid'] for row in peer.discover(include_unreachable=True)], [101])
+        code, listing = self.invoke('list', '--agent', 'claude')
+        self.assertEqual(code, 0)
+        self.assertTrue(listing['ok'])
+        self.assertEqual([row['pid'] for row in listing['sessions']], [101])
+        code, doctor = self.invoke('doctor')
+        self.assertEqual(code, 0)
+        self.assertEqual(doctor['claude']['status'], 'available')
+        self.assertEqual(doctor['claude']['records'], 1)
+        self.assertEqual(doctor['claude']['availableInboxes'], 1)
+        with mock.patch.object(peer, 'post_to_socket') as post:
+            code, dry_run = self.invoke('send', '--to', 'worker', '--dry-run',
+                                        '--no-from', '--no-reply-to', '--message', 'hello')
+        self.assertEqual(code, 0)
+        self.assertTrue(dry_run['ok'])
+        self.assertEqual(dry_run['target'], {'pid': 101, 'name': 'worker'})
+        post.assert_not_called()
+
+    def test_nondecimal_unicode_session_name_is_not_parsed_as_pid(self):
+        self.healthy['name'] = '²'
+        self.write(101, json.dumps(self.healthy).encode())
+        with mock.patch.object(peer, 'post_to_socket') as post:
+            code, result = self.invoke('send', '--to', '²', '--dry-run',
+                                       '--no-from', '--no-reply-to', '--message', 'hello')
+        self.assertEqual(code, 0)
+        self.assertEqual(result['target'], {'pid': 101, 'name': '²'})
+        post.assert_not_called()
+
+    def test_decimal_pid_addressing_preserves_ascii_and_unicode_digits(self):
+        for target in ('101', '١٠١', '００１０１'):
+            with self.subTest(target=target), mock.patch.object(peer, 'post_to_socket') as post:
+                code, result = self.invoke('send', '--to', target, '--dry-run',
+                                           '--no-from', '--no-reply-to', '--message', 'hello')
+                self.assertEqual(code, 0)
+                self.assertEqual(result['target'], {'pid': 101, 'name': 'worker'})
+                post.assert_not_called()
+
+    def test_invalid_record_pids_are_rejected_before_process_inspection(self):
+        maximum = (2 ** 32 - 1) if peer.IS_WINDOWS else (2 ** 31 - 1)
+        for pid in (True, False, 0, 1, -1, maximum + 1, 10 ** 100):
+            with self.subTest(pid=pid):
+                path = self.write(200, json.dumps({**self.healthy, 'pid': pid}).encode())
+                with self.assertRaises(ValueError):
+                    peer.read_claude_record(path)
+        self.assertEqual([row['pid'] for row in peer.discover(include_unreachable=True)], [101])
+
+
+class ClaudePidBounds(unittest.TestCase):
+    def test_parser_bounds_native_pid_domain_and_decimal_lexemes(self):
+        for windows, maximum in ((False, 2 ** 31 - 1), (True, 2 ** 32 - 1)):
+            with self.subTest(windows=windows), mock.patch.object(peer, 'IS_WINDOWS', windows):
+                for value, expected in ((2, 2), (maximum, maximum), ('101', 101),
+                                        ('١٠١', 101), ('００１０１', 101), (str(maximum), maximum)):
+                    with self.subTest(value=value):
+                        self.assertEqual(peer.parse_claude_pid(value), expected)
+                for value in (None, True, False, 101.0, 0, 1, -1, maximum + 1,
+                              '', '²', '+101', '-101', ' 101', '101 ', '1e2',
+                              '99999999999999999999', '0' * 10000 + '101', str(maximum + 1)):
+                    with self.subTest(value=repr(value)[:80]):
+                        self.assertIsNone(peer.parse_claude_pid(value))
+
+    def test_invalid_pid_never_reaches_os_kill_or_windows_process_probe(self):
+        for windows, maximum in ((False, 2 ** 31 - 1), (True, 2 ** 32 - 1)):
+            with mock.patch.object(peer, 'IS_WINDOWS', windows), \
+                 mock.patch.object(peer.os, 'kill') as kill, \
+                 mock.patch.object(peer, 'windows_process_start_ms') as probe:
+                for value in (None, True, False, 101.0, '101', 0, 1, -1, maximum + 1, 10 ** 100):
+                    with self.subTest(windows=windows, value=value):
+                        self.assertFalse(peer.pid_alive(value))
+                kill.assert_not_called()
+                probe.assert_not_called()
+
+    def test_windows_process_helper_rejects_invalid_pid_before_ctypes(self):
+        with mock.patch.object(peer, 'IS_WINDOWS', True), \
+             mock.patch('ctypes.WinDLL', create=True) as loader:
+            for value in (None, True, False, 101.0, '101', 0, 1, -1, 2 ** 32, 10 ** 100):
+                with self.subTest(value=value):
+                    self.assertIsNone(peer.windows_process_start_ms(value))
+            loader.assert_not_called()

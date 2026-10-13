@@ -20,7 +20,7 @@ class ReleaseCommands(unittest.TestCase):
             with self.subTest(document=name):
                 text = (ROOT / name).read_text(encoding="utf-8")
                 dispatch = text.index('  --ref main -f tag="$release_tag"')
-                publication = text.index("gh release edit v1.1.1")
+                publication = text.index("gh release edit v1.1.2")
                 gate = text[dispatch:publication]
                 for marker in ("gh run watch <prepare-run-id>", "--exit-status",
                                "attach-draft", "SHA256SUMS", "release-provenance.json"):
@@ -72,7 +72,7 @@ rmdir() { capture rmdir "$@"; }
             with self.subTest(document=name):
                 blocks = re.findall(r"```bash\n(.*?)```", (ROOT / name).read_text(), re.DOTALL)
                 self.assertEqual(len(blocks), 5, "current/historical preparation and publication plus installer remain distinct")
-                for offset, version in ((0, "v1.1.1"), (2, "v1.1.0")):
+                for offset, version in ((0, "v1.1.2"), (2, "v1.1.0")):
                     calls, _ = self.shell_calls(blocks[offset])
                     self.assertEqual(calls, [
                         ["git", "fetch", "origin", "main", "--tags"],

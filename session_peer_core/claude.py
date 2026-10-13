@@ -23,6 +23,23 @@ IS_WINDOWS = sys.platform == "win32"
 MAX_CLAUDE_RECORD_BYTES = 1024 * 1024
 
 
+def parse_claude_pid(value) -> int | None:
+    """Parse a bounded native PID without confusing digit-like names with PIDs.
+
+    Decimal Unicode digits remain compatible with numeric addressing. Other
+    numeric characters (for example superscripts) are names, not decimal PIDs.
+    Reject invalid integers before signal inspection or Windows DWORD coercion.
+    """
+    if isinstance(value, str):
+        if len(value) > 10 or not value.isdecimal():
+            return None
+        value = int(value)
+    if type(value) is not int:
+        return None
+    maximum = (1 << 32) - 1 if IS_WINDOWS else (1 << 31) - 1
+    return value if 1 < value <= maximum else None
+
+
 def read_claude_record(path: Path) -> dict:
     """Read bounded regular-file metadata; leave permission errors to callers.
 
@@ -62,7 +79,8 @@ def read_claude_record(path: Path) -> dict:
         record = json.loads(b"".join(chunks).decode("utf-8", errors="strict"))
     except RecursionError as exc:
         raise ValueError("Claude session record is too deeply nested") from exc
-    if not isinstance(record, dict) or type(record.get("pid")) is not int:
+    if (not isinstance(record, dict) or type(record.get("pid")) is not int
+            or parse_claude_pid(record.get("pid")) is None):
         raise ValueError("Claude session record must be an object with an integer PID")
     for field in ("name", "cwd", "status", "messagingSocketPath"):
         value = record.get(field)
@@ -79,7 +97,7 @@ def read_claude_record(path: Path) -> dict:
 
 def windows_process_start_ms(pid: int) -> int | None:
     """Read a live Windows process creation time without trusting a stale PID."""
-    if pid <= 1:
+    if parse_claude_pid(pid) is None or type(pid) is not int:
         return None
     import ctypes
     from ctypes import wintypes
@@ -117,7 +135,7 @@ def windows_process_start_ms(pid: int) -> int | None:
 
 
 def pid_alive(pid: int) -> bool:
-    if pid <= 1:
+    if parse_claude_pid(pid) is None or type(pid) is not int:
         return False
     if IS_WINDOWS:
         return windows_process_start_ms(pid) is not None
@@ -133,7 +151,7 @@ def pid_alive(pid: int) -> bool:
 def claude_process_state(record: dict, record_pid: int) -> tuple[bool, str | None]:
     """Fail closed when a Windows session record outlives its process identity."""
     pid = record.get("pid")
-    if type(pid) is not int or pid != record_pid:
+    if type(pid) is not int or parse_claude_pid(pid) is None or pid != record_pid:
         return False, "record_pid_mismatch"
     if not IS_WINDOWS:
         return pid_alive(pid), None
@@ -164,7 +182,8 @@ def discover(include_unreachable: bool = False) -> list[dict]:
     except OSError as exc:
         raise CcPeerError(f"Cannot read Claude sessions at {directory}: {exc}") from exc
     for record_file in entries:
-        if not record_file.stem.isdigit():
+        record_pid = parse_claude_pid(record_file.stem)
+        if record_pid is None:
             continue
         try:
             record = read_claude_record(record_file)
@@ -176,7 +195,7 @@ def discover(include_unreachable: bool = False) -> list[dict]:
             continue
 
         sock = record.get("messagingSocketPath") or ""
-        alive, stale_reason = claude_process_state(record, int(record_file.stem))
+        alive, stale_reason = claude_process_state(record, record_pid)
         if IS_WINDOWS:
             has_inbox = bool(sock) and sock.startswith("\\\\.\\pipe\\")
         else:
@@ -207,8 +226,9 @@ def resolve_target(sessions: list[dict], target: str) -> dict:
     """Find one session by name, or by pid when the target is all digits."""
     reachable = [s for s in sessions if s["reachable"]]
 
-    if target.isdigit():
-        matches = [s for s in reachable if s["pid"] == int(target)]
+    if target.isdecimal():
+        target_pid = parse_claude_pid(target)
+        matches = [s for s in reachable if s["pid"] == target_pid]
     else:
         wanted = target.casefold()
         matches = [s for s in reachable if (s["name"] or "").casefold() == wanted]

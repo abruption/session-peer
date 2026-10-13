@@ -45,7 +45,7 @@ try:
 except ImportError:  # Native Windows uses its own read-only writer inspection.
     fcntl = None
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 GITHUB_REPO = "abruption/session-peer"
 
 # Claude Code refuses a same-machine message once its serialized form passes
@@ -1548,6 +1548,23 @@ IS_WINDOWS = sys.platform == "win32"
 MAX_CLAUDE_RECORD_BYTES = 1024 * 1024
 
 
+def parse_claude_pid(value) -> int | None:
+    """Parse a bounded native PID without confusing digit-like names with PIDs.
+
+    Decimal Unicode digits remain compatible with numeric addressing. Other
+    numeric characters (for example superscripts) are names, not decimal PIDs.
+    Reject invalid integers before signal inspection or Windows DWORD coercion.
+    """
+    if isinstance(value, str):
+        if len(value) > 10 or not value.isdecimal():
+            return None
+        value = int(value)
+    if type(value) is not int:
+        return None
+    maximum = (1 << 32) - 1 if IS_WINDOWS else (1 << 31) - 1
+    return value if 1 < value <= maximum else None
+
+
 def read_claude_record(path: Path) -> dict:
     """Read bounded regular-file metadata; leave permission errors to callers.
 
@@ -1587,7 +1604,8 @@ def read_claude_record(path: Path) -> dict:
         record = json.loads(b"".join(chunks).decode("utf-8", errors="strict"))
     except RecursionError as exc:
         raise ValueError("Claude session record is too deeply nested") from exc
-    if not isinstance(record, dict) or type(record.get("pid")) is not int:
+    if (not isinstance(record, dict) or type(record.get("pid")) is not int
+            or parse_claude_pid(record.get("pid")) is None):
         raise ValueError("Claude session record must be an object with an integer PID")
     for field in ("name", "cwd", "status", "messagingSocketPath"):
         value = record.get(field)
@@ -1604,7 +1622,7 @@ def read_claude_record(path: Path) -> dict:
 
 def windows_process_start_ms(pid: int) -> int | None:
     """Read a live Windows process creation time without trusting a stale PID."""
-    if pid <= 1:
+    if parse_claude_pid(pid) is None or type(pid) is not int:
         return None
     import ctypes
     from ctypes import wintypes
@@ -1642,7 +1660,7 @@ def windows_process_start_ms(pid: int) -> int | None:
 
 
 def pid_alive(pid: int) -> bool:
-    if pid <= 1:
+    if parse_claude_pid(pid) is None or type(pid) is not int:
         return False
     if IS_WINDOWS:
         return windows_process_start_ms(pid) is not None
@@ -1658,7 +1676,7 @@ def pid_alive(pid: int) -> bool:
 def claude_process_state(record: dict, record_pid: int) -> tuple[bool, str | None]:
     """Fail closed when a Windows session record outlives its process identity."""
     pid = record.get("pid")
-    if type(pid) is not int or pid != record_pid:
+    if type(pid) is not int or parse_claude_pid(pid) is None or pid != record_pid:
         return False, "record_pid_mismatch"
     if not IS_WINDOWS:
         return pid_alive(pid), None
@@ -1689,7 +1707,8 @@ def discover(include_unreachable: bool = False) -> list[dict]:
     except OSError as exc:
         raise CcPeerError(f"Cannot read Claude sessions at {directory}: {exc}") from exc
     for record_file in entries:
-        if not record_file.stem.isdigit():
+        record_pid = parse_claude_pid(record_file.stem)
+        if record_pid is None:
             continue
         try:
             record = read_claude_record(record_file)
@@ -1701,7 +1720,7 @@ def discover(include_unreachable: bool = False) -> list[dict]:
             continue
 
         sock = record.get("messagingSocketPath") or ""
-        alive, stale_reason = claude_process_state(record, int(record_file.stem))
+        alive, stale_reason = claude_process_state(record, record_pid)
         if IS_WINDOWS:
             has_inbox = bool(sock) and sock.startswith("\\\\.\\pipe\\")
         else:
@@ -1732,8 +1751,9 @@ def resolve_target(sessions: list[dict], target: str) -> dict:
     """Find one session by name, or by pid when the target is all digits."""
     reachable = [s for s in sessions if s["reachable"]]
 
-    if target.isdigit():
-        matches = [s for s in reachable if s["pid"] == int(target)]
+    if target.isdecimal():
+        target_pid = parse_claude_pid(target)
+        matches = [s for s in reachable if s["pid"] == target_pid]
     else:
         wanted = target.casefold()
         matches = [s for s in reachable if (s["name"] or "").casefold() == wanted]
@@ -3783,7 +3803,10 @@ def diagnose_claude() -> dict:
 
     permission_failures = 0
     for record_file in entries:
-        if not record_file.stem.isdigit():
+        record_pid = parse_claude_pid(record_file.stem)
+        if record_pid is None:
+            if record_file.stem.isdigit():
+                result["invalidRecords"] += 1
             continue
         try:
             record = read_claude_record(record_file)
@@ -3798,7 +3821,7 @@ def diagnose_claude() -> dict:
             result["invalidRecords"] += 1
             continue
         result["records"] += 1
-        alive, stale_reason = claude_process_state(record, int(record_file.stem))
+        alive, stale_reason = claude_process_state(record, record_pid)
         if stale_reason:
             result["staleRecords"] += 1
         if alive:
@@ -8249,7 +8272,7 @@ def handoff_remote_request_semantics(context):
             raise handoff_error("invalid_remote_native_request")
         if context["generation"] is not None:
             validate_target_generation(context["generation"])
-        if context["phase"] == "effect" and (context["generation"] is None or not context["target"].isdigit() or int(context["target"]) <= 1):
+        if context["phase"] == "effect" and (context["generation"] is None or parse_claude_pid(context["target"]) is None):
             raise handoff_error("invalid_remote_native_request")
     elif context["generation"] is not None:
         raise handoff_error("invalid_remote_native_request")
@@ -8374,9 +8397,11 @@ def handoff_remote_context_native(context, native, native_context, generation):
         if type(native.get("target")) is not dict or type(native["target"].get("pid")) is not int:
             raise handoff_error("invalid_remote_native_profile")
         target, home = str(native["target"]["pid"]), None
+        if parse_claude_pid(native["target"]["pid"]) is None:
+            raise handoff_error("invalid_remote_native_profile")
         requested = context["target"]
-        if (requested.isdigit() and int(requested) != int(target) or
-                not requested.isdigit() and (native["target"].get("name") or "").casefold() != requested.casefold()):
+        if (requested.isdecimal() and parse_claude_pid(requested) != int(target) or
+                not requested.isdecimal() and (native["target"].get("name") or "").casefold() != requested.casefold()):
             raise handoff_error("invalid_remote_native_profile")
         if context["generation"] is not None and generation != context["generation"]:
             raise handoff_error("invalid_remote_native_profile")
