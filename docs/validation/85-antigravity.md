@@ -58,3 +58,57 @@ The earlier KR PoC demonstrated busy delivery, SSH disconnect, bridge and TUI
 restart with seven messages. Those results informed this implementation but are
 not counted as live executions of this branch. Product-level reconnect durability,
 long-running operation and pairing/relay integration remain separate v0.9/RC work.
+
+## 2026-10-13: CLI 1.3.3 acceptance campaign (#304)
+
+This update is separate from the historical 2026-09-17 branch evidence above.
+Baseline: published session-peer 1.1.1, commit b48144bdf2ad1569031562136f5a60e33780020e.
+Both native CLIs were 1.3.3; the dedicated TUIs used Gemini 3.8 Flash (Low).
+The adapter remains experimental. This campaign does not publish a release or
+establish general supported-version, Windows, sidecar-autostart or availability guarantees.
+
+### Observed evidence
+
+- macOS 27.0.1 arm64 / Python 3.15.0 and Ubuntu 24.04.5 arm64 / Python 3.12.3:
+  23 Antigravity adapter tests passed on each. Owner/native mocks and real Unix
+  socket/child-process fixtures are not native-model integration tests.
+- Installed CLI parser probe: seven cases passed on each platform, including
+  leading dashes, a delimiter, multiline Korean text and recipient/title preservation.
+  Empty HOME, a minimal environment and a bounded loopback stub ensured no
+  credentials or successful native delivery were used by this probe.
+- Dedicated owner TUIs registered the bounded bridge through their normal terminal
+  tool. macOS local, Linux local and macOS-to-Linux source-streamed SSH submissions
+  returned native exit zero; distinct exact reply markers were observed in the TUIs.
+- Additional sends were made while each TUI displayed a working state on a bounded
+  synthetic response. Their distinct replies were observed after that response.
+  This is a dated UI observation, not a scheduling/latency or all-busy-states guarantee.
+- macOS dry-run returned without native submission. Repeating the original ID/body
+  returned a cached duplicate; changed content with that ID was refused. An unrelated
+  generation on the SSH route was refused before native invocation.
+- Explicit bridge stop on both machines removed the registrations from discovery.
+  Re-registering from both still-live TUIs produced new generations; requests pinned
+  to the original generations were refused on local and SSH routes.
+  The fixture additionally exercises SIGTERM, SIGINT and SIGHUP cleanup, changed
+  generations on restart, and retention of the same lock inode.
+- JSON consumption confirmation stayed false throughout. An observed TUI reply is
+  separate evidence for that test message, not a new automatic ACK/wait facility.
+
+### Failures and remaining promotion gates
+
+An initial shell-background launch on macOS exited with the required-ancestor
+registration refusal. A foreground long-running terminal-tool invocation registered
+successfully. Do not detach a shell and assume the bridge preserves TUI ancestry.
+The first Linux fixture transfer omitted the MCP module and failed one import;
+after transferring that tracked source file, all 23 tests passed. This was test
+setup failure, not evidence of a product fix.
+
+The added tests cover cached launch failure without retry and the exact 32 KiB
+UTF-8 boundary. They do not establish durable deduplication or prove no effect
+from an unknown outcome; automatic resubmission remains forbidden.
+Long-duration soak, native TUI restart/owner-death and forced-crash acceptance,
+real transport-disconnect outcomes and bidirectional CLI return routing remain
+unexecuted promotion gates. Full Claude/Codex/Antigravity interoperability and
+paired Relay delivery were not rerun in this campaign.
+The official sidecar documentation describes managed startup, but compatibility
+with this ancestor-bound bridge must be investigated separately; no global
+sidecar configuration, authentication copying or production deployment was performed.
