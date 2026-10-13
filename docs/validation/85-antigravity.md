@@ -92,6 +92,28 @@ establish general supported-version, Windows, sidecar-autostart or availability 
   generations on restart, and retention of the same lock inode.
 - JSON consumption confirmation stayed false throughout. An observed TUI reply is
   separate evidence for that test message, not a new automatic ACK/wait facility.
+- Forced SIGKILL of each owned bridge left registration/socket residue that discovery
+  excluded. Re-registration from the still-live TUI used a new generation and the
+  same lock inode; the old generation was refused and fresh requests received replies.
+  Killing dedicated native TUI owners excluded dead registrations and removed their
+  sockets/registration files while preserving lock files. Native TUI restart on both
+  platforms produced a new owner/generation, refused old-generation requests and
+  received a distinct fresh reply.
+- Actual native terminal-tool invocations sent one request in each SSH direction
+  (macOS to Linux and Linux to macOS), with separate replies observed in the TUIs.
+- An isolated fault-injection harness used real SSH connections, delayed remote
+  shutdown and terminated only its owned SSH child after capturing either complete
+  JSON or a 12-byte prefix. Complete submission evidence was retained; the partial
+  response was unknown/no-retry even though the receiving TUI later replied. This
+  tests controlled connection interruption, not an organic network outage.
+- A private local MCP 1.30.0 stdio policy test discovered the registered TUI, refused
+  an agent outside its allowlist, performed a no-submission dry-run, then submitted
+  once and observed the exact reply in the native TUI. It does not validate remote
+  MCP, paired Relay or custom-home/generation pinning through MCP.
+- The isolated Python 3.13.7 default suite ran 876 tests, OK with 37 skipped for optional
+  dependencies/platforms; after adding MCP SDK, 880 tests ran, OK with 33 skipped,
+  including all 28 MCP integration tests. CI at `4087149` passed all 28 checks. Final documentation
+  changes require their own current-head checks.
 
 ### Failures and remaining promotion gates
 
@@ -105,10 +127,19 @@ setup failure, not evidence of a product fix.
 The added tests cover cached launch failure without retry and the exact 32 KiB
 UTF-8 boundary. They do not establish durable deduplication or prove no effect
 from an unknown outcome; automatic resubmission remains forbidden.
-Long-duration soak, native TUI restart/owner-death and forced-crash acceptance,
-real transport-disconnect outcomes and bidirectional CLI return routing remain
-unexecuted promotion gates. Full Claude/Codex/Antigravity interoperability and
-paired Relay delivery were not rerun in this campaign.
+The first soak was interrupted by the user's Tailscale service update/restart on
+the servers and is not a passing campaign or a session-peer defect. Fresh campaign
+B ran for 1,802.819 seconds from 04:23 UTC: 31 discovery and 31 dry-run checks per
+host all succeeded; four new submissions and four distinct TUI replies per host
+were observed, with no retries. Bridge RSS changed from 61,680 to 61,968 KiB on
+macOS and from 47,204 to 47,228 KiB on Linux. This bounded observation is not a
+long-term availability or memory-leak guarantee. Both test bridges and owned TUIs
+then stopped/exited; discovery was empty, registration/socket files were removed,
+lock files were retained, and the dedicated Linux source-transfer folder was removed.
+Fresh full Claude/Codex/Antigravity interoperability and paired Relay delivery were
+not rerun. These are separate integration cells, not evidence for this bounded
+manually registered macOS/Linux CLI 1.3.3 campaign. Windows native bridge support
+and other versions/architectures remain unverified; experimental status is retained.
 The official sidecar documentation describes managed startup, but compatibility
 with this ancestor-bound bridge must be investigated separately; no global
 sidecar configuration, authentication copying or production deployment was performed.
