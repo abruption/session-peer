@@ -4,15 +4,15 @@
 
 아래 소스·설정 검사부터 공개 검증·복구까지는 2026-10-09 릴리스 절차의 역사 기록이며 재실행 요청이 아닙니다. v1.1.0을 다시 생성하거나 이동·재사용하지 말고 공개 예제를 다시 실행하지 마십시오. 후속 버전에서는 새로 검토한 버전, 새로운 검증 자료와 명시적 승인으로 각 조건을 다시 확인합니다. 준비, 불변 GitHub 공개, 사람이 수행하는 필수 PyPI 환경 검토와 운영 배포는 별개입니다. 보호된 main에 반영하려면 검토를 마치고 최신 main을 반영한 PR과, Python 플랫폼 매트릭스·문서·셸·패키지/독립 실행 파일/MCP/Relay/Control 테스트·통합 테스트·Python/Node 의존성 감사를 포함한 릴리스 게이트가 필요합니다.
 
-## 현재 v1.1.1 유지보수 릴리스
+## v1.1.2 패치 후보 — 미공개
 
-소유자는 2026-10-12에 이번 유지보수 릴리스를 승인했습니다. #297(개발용 Paramiko 5.0.0 테스트)과 #299(네 언어 문서 수정)를 포함하며 런타임 동작은 1.1.0과 같습니다. #298은 열려 있으며 이번 패치에서 수정되지 않습니다. 정확한 최신 커밋의 CI, 전체 로컬 테스트, 독립 실행 파일 재생성 확인, 격리된 wheel/sdist 설치와 최신 의존성 감사를 수행합니다. 생성 전에 v1.1.1과 PyPI 1.1.1이 사용되지 않았는지 확인하며 태그·버전을 이동하거나 재사용하지 않습니다. 현재 Trusted Publisher와 필수 사람 pypi 검토를 확인합니다. 준비 PR을 병합하고 정확한 main의 CI가 통과한 후에만 명령을 실행합니다. 공개 전에 불변 초안 자산 7개, 해시와 증명을 검토합니다. 공개 승인은 사람의 PyPI 환경 승인 절차를 대신하지 않습니다. GitHub와 PyPI를 각각 검증하며 장비 또는 Control/Relay 배포는 포함하지 않습니다.
+공개된 1.1.1을 기준으로 2026-10-13에 준비했습니다. 후보는 #298을 수정합니다. 잘못된 Claude PID 기록이 정상 세션 검색을 방해하지 않도록 하고, 비십진 유니코드 세션 이름을 이름으로 선택합니다. 준비 작업은 병합·태그 생성·공개·운영 배포 승인이 아닙니다. 정확한 최신 커밋의 CI, 전체 로컬 테스트, 독립 실행 파일 재생성, 격리된 wheel/sdist 설치와 최신 의존성 감사를 수행합니다. v1.1.2와 PyPI 1.1.2가 사용되지 않았는지 재확인하고 태그·버전을 이동하거나 재사용하지 않습니다. 현재 Trusted Publisher와 필수 사람 pypi 검토를 확인합니다. 별도의 병합·공개 승인, 정확한 main CI 성공 및 불변 초안 자산 7개 검토를 완료한 후에만 아래 명령을 사용합니다. GitHub·PyPI 공개, 사람의 환경 승인과 Control/Relay 또는 장비 배포는 별개입니다.
 
-다음 명령은 v1.1.1용입니다. 아래 v1.1.0 절차는 과거 기록으로 유지합니다.
+다음 명령은 v1.1.2용입니다. 아래 v1.1.0 절차는 과거 기록으로 유지합니다.
 
 ```bash
 git fetch origin main --tags
-release_tag=v1.1.1
+release_tag=v1.1.2
 release_commit=$(git rev-parse origin/main)
 git tag "$release_tag" "$release_commit"
 git push origin "$release_tag"
@@ -23,10 +23,10 @@ gh workflow run prepare-release.yml --repo abruption/session-peer \
   --ref main -f tag="$release_tag"
 ```
 
-실행 요청 후 중단: `gh workflow run`은 준비가 끝나기 전에 반환합니다. 정확한 릴리스 커밋의 v1.1.1 실행을 확인하고 `gh run watch <prepare-run-id> --repo abruption/session-peer --exit-status`로 완료를 기다립니다. `attach-draft`를 포함한 해당 실행이 성공하기 전에는 아래 게시 명령을 실행하지 않습니다. 릴리스를 초안으로 유지한 채 첨부 자산이 정확히 7개인지 확인하고, SHA256SUMS, release-provenance.json 및 인증된 증명을 태그·커밋과 대조합니다. 실패, 누락 또는 미검증 자료가 있으면 게시하지 않고 중단합니다. 이 별도 검증을 완료한 후에만 아래 명령을 실행합니다.
+실행 요청 후 중단: `gh workflow run`은 준비가 끝나기 전에 반환합니다. 정확한 릴리스 커밋의 v1.1.2 실행을 확인하고 `gh run watch <prepare-run-id> --repo abruption/session-peer --exit-status`로 완료를 기다립니다. `attach-draft`를 포함한 해당 실행이 성공하기 전에는 아래 게시 명령을 실행하지 않습니다. 릴리스를 초안으로 유지한 채 첨부 자산이 정확히 7개인지 확인하고, SHA256SUMS, release-provenance.json 및 인증된 증명을 태그·커밋과 대조합니다. 실패, 누락 또는 미검증 자료가 있으면 게시하지 않고 중단합니다. 이 별도 검증을 완료한 후에만 아래 명령을 실행합니다.
 
 ```bash
-gh release edit v1.1.1 --repo abruption/session-peer \
+gh release edit v1.1.2 --repo abruption/session-peer \
   --draft=false --prerelease=false --latest
 ```
 

@@ -416,7 +416,7 @@ def handoff_remote_request_semantics(context):
             raise handoff_error("invalid_remote_native_request")
         if context["generation"] is not None:
             validate_target_generation(context["generation"])
-        if context["phase"] == "effect" and (context["generation"] is None or not context["target"].isdigit() or int(context["target"]) <= 1):
+        if context["phase"] == "effect" and (context["generation"] is None or parse_claude_pid(context["target"]) is None):
             raise handoff_error("invalid_remote_native_request")
     elif context["generation"] is not None:
         raise handoff_error("invalid_remote_native_request")
@@ -541,9 +541,11 @@ def handoff_remote_context_native(context, native, native_context, generation):
         if type(native.get("target")) is not dict or type(native["target"].get("pid")) is not int:
             raise handoff_error("invalid_remote_native_profile")
         target, home = str(native["target"]["pid"]), None
+        if parse_claude_pid(native["target"]["pid"]) is None:
+            raise handoff_error("invalid_remote_native_profile")
         requested = context["target"]
-        if (requested.isdigit() and int(requested) != int(target) or
-                not requested.isdigit() and (native["target"].get("name") or "").casefold() != requested.casefold()):
+        if (requested.isdecimal() and parse_claude_pid(requested) != int(target) or
+                not requested.isdecimal() and (native["target"].get("name") or "").casefold() != requested.casefold()):
             raise handoff_error("invalid_remote_native_profile")
         if context["generation"] is not None and generation != context["generation"]:
             raise handoff_error("invalid_remote_native_profile")

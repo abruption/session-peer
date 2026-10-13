@@ -4,15 +4,15 @@ Version 1.1.0 is published. GitHub published v1.1.0 on 2026-10-09 at 06:46:41 UT
 
 The sections from source/configuration gates through publication recovery below preserve the historical 2026-10-09 release procedure, not a request to run it again. Do not recreate, move or reuse v1.1.0 or rerun its publication examples. For a future version, use a new reviewed version and repeat the gates with fresh evidence and explicit authorization. Preparation, immutable GitHub publication, required human PyPI environment review and operational deployment remain separate. Protected main requires reviewed, up-to-date PRs and the aggregate release gate, including Python platform matrices, documentation, shell, package/standalone/MCP/Relay/Control tests, integrations and Python/Node dependency audits.
 
-## Current v1.1.1 maintenance release
+## v1.1.2 patch candidate — unpublished
 
-The owner authorized this maintenance release on 2026-10-12. It includes #297 (development-only Paramiko 5.0.0 fixture) and #299 (four-locale documentation corrections); runtime behavior remains unchanged from 1.1.0. #298 is open and is not fixed by this patch. Use fresh exact-head CI, full local tests, regenerated standalone verification, isolated wheel/sdist installs and current dependency audits. Verify that v1.1.1 and PyPI 1.1.1 are unused before creating them; never move or reuse a tag/version. Verify the current Trusted Publisher and required human pypi review. Run the commands only after the preparation PR is merged and exact main CI is green. Review all seven immutable draft assets, hashes and attestations before publication. Publication authorization does not replace the human PyPI environment gate. Verify GitHub and PyPI separately; no fleet or Control/Relay deployment is included.
+Prepared on 2026-10-13 against published 1.1.1. The candidate addresses #298: invalid Claude PID records must not disrupt healthy discovery, and nondecimal Unicode session names must resolve as names. This is preparation only, not approval to merge, create a tag, publish or deploy. Require exact-head CI, full local tests, standalone regeneration, isolated wheel/sdist installations and current dependency audits. Recheck that v1.1.2 and PyPI 1.1.2 are unused; never move or reuse a tag/version. Verify the current Trusted Publisher and required human pypi review. Only after separate merge and publication authorization, green exact-main CI and review of all seven immutable draft assets may the commands below be used. GitHub and PyPI publication, the human environment gate and Control/Relay or fleet deployment remain separate.
 
-The following commands are for v1.1.1. The v1.1.0 procedure below remains historical.
+The following commands are for v1.1.2. The v1.1.0 procedure below remains historical.
 
 ```bash
 git fetch origin main --tags
-release_tag=v1.1.1
+release_tag=v1.1.2
 release_commit=$(git rev-parse origin/main)
 git tag "$release_tag" "$release_commit"
 git push origin "$release_tag"
@@ -23,10 +23,10 @@ gh workflow run prepare-release.yml --repo abruption/session-peer \
   --ref main -f tag="$release_tag"
 ```
 
-STOP after dispatch: `gh workflow run` returns before preparation finishes. Identify the run for v1.1.1 at the exact release commit and wait with `gh run watch <prepare-run-id> --repo abruption/session-peer --exit-status`. Do not execute the publication block unless that run succeeds, including `attach-draft`. Keep the release a draft while reviewing exactly seven attached assets, SHA256SUMS, release-provenance.json and their authenticated attestations against the tag and commit. Failure, missing assets or unverified evidence means stop without publishing. Only after this separate verification may the following publication command be executed.
+STOP after dispatch: `gh workflow run` returns before preparation finishes. Identify the run for v1.1.2 at the exact release commit and wait with `gh run watch <prepare-run-id> --repo abruption/session-peer --exit-status`. Do not execute the publication block unless that run succeeds, including `attach-draft`. Keep the release a draft while reviewing exactly seven attached assets, SHA256SUMS, release-provenance.json and their authenticated attestations against the tag and commit. Failure, missing assets or unverified evidence means stop without publishing. Only after this separate verification may the following publication command be executed.
 
 ```bash
-gh release edit v1.1.1 --repo abruption/session-peer \
+gh release edit v1.1.2 --repo abruption/session-peer \
   --draft=false --prerelease=false --latest
 ```
 

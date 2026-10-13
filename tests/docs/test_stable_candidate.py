@@ -10,6 +10,18 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StableCandidate(unittest.TestCase):
+    def test_pid_patch_candidate_remains_unpublished_and_narrow(self):
+        for locale in ("", "ko/", "ja/", "zh-CN/"):
+            note = (ROOT / ("docs/" + locale + "releases/v1.1.2.md")).read_text(encoding="utf-8")
+            for marker in ("#298", "1.1.1", "1.1.2", "2026-10-13", "²",
+                           "Control/Relay", "20/21", "#161", "handoff-runtime.md"):
+                with self.subTest(locale=locale, marker=marker):
+                    self.assertIn(marker, note)
+        english = (ROOT / "docs/releases/v1.1.2.md").read_text(encoding="utf-8")
+        self.assertIn("candidate is unpublished", english)
+        self.assertIn("preparation does not authorize merge", english)
+        self.assertIn("Package publication does not include operational deployment", english)
+
     def test_maintenance_notes_do_not_claim_runtime_remediation(self):
         for locale in ("", "ko/", "ja/", "zh-CN/"):
             note = (ROOT / ("docs/" + locale + "releases/v1.1.1.md")).read_text(encoding="utf-8")
@@ -106,8 +118,8 @@ class StableCandidate(unittest.TestCase):
             self.assertIn(marker, english)
 
     def test_package_and_generated_core_version_agree(self):
-        self.assertEqual(session_peer.__version__, "1.1.1")
-        self.assertIn('__version__ = "1.1.1"',
+        self.assertEqual(session_peer.__version__, "1.1.2")
+        self.assertIn('__version__ = "1.1.2"',
                       (ROOT / "session_peer_core/common.py").read_text(encoding="utf-8"))
 
     def test_all_current_readmes_and_runbooks_use_stable_version(self):
