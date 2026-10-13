@@ -109,3 +109,17 @@ validation. Do not run it with Python optimization or against a shared server
 containing unrelated user work. The WebSocket dependency is test-only and is not
 added to the Python core runtime. `experiments/` remains excluded from release
 artifacts by the existing packaging rules.
+
+## Review-driven harness guards
+
+The supplied Codex home is now canonicalized before SQLite URI construction and
+must match the absolute `codexHome` returned by `initialize` before any thread
+lookup or database inspection. Missing or mismatched server-home evidence
+refuses the probe without queuing. A queue RPC rejection returns exit 1; malformed
+error objects or non-integer codes also fail safely without reflecting native
+error text or retrying. The version guard remains exactly 0.162.1.
+
+Four synthetic WebSocket/temporary-database tests cover these boundaries,
+including relative home paths and exactly one queue attempt on rejection.
+These are harness regression tests, not new native delivery, receipt, platform,
+or production-support evidence. SQLite handles are explicitly closed.
