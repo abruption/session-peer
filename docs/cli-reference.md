@@ -121,6 +121,8 @@ persisted queue row. Their existing separate identity contracts remain intact.
 The broader cross-agent work in #180 remains open; this development feature is
 not shipped in v1.0.4 and adds no automatic fallback or resubmission.
 
+The 2026-10-15 review of native Codex [0.162.1](https://github.com/openai/codex/tree/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs) found no per-incarnation identity and no atomic original-generation precondition. The thread writer lock file carries no content, a thread's `sessionId` survives resume, `thread/queue/add` accepts only the thread, input and a client message ID, and queued rows are consumed by whichever process currently has the thread loaded. `turn/steer` with `expectedTurnId` is atomic only for an active turn on one app-server and is not used as a generation. Writer PID, start-time and lock rechecks, queue IDs, `canAcceptDirectInput` and `sessionId` therefore never produce a Codex `targetGeneration`; Codex rows stay `unsupported` until native Codex exposes an incarnation token that its queue checks atomically.
+
 `--message TEXT` (short form `-m`) names the text sent to the destination.
 `--output-format text|json` selects the command result format, not the message
 format. It is available on `list`, `send`, `doctor`, and `update`; the default is
