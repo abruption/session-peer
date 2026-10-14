@@ -14,7 +14,7 @@ from unittest import mock
 
 import session_peer as peer
 
-from tests.codex.support import OTHER, THREAD
+from tests.codex.support import OTHER, THREAD, isolate_native_layers
 
 
 class CodexHomes(unittest.TestCase):
@@ -24,6 +24,7 @@ class CodexHomes(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.user = Path(directory.name).resolve()
+        isolate_native_layers(self, self.user)
         self.default = self.user / ".codex"
         self.account = self.user / "Library/Application Support/orca/codex-accounts/account-a/home"
         self.make_home(self.default)

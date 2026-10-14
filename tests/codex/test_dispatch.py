@@ -15,7 +15,7 @@ from unittest import mock
 
 import session_peer as peer
 
-from tests.codex.support import OTHER, THREAD
+from tests.codex.support import OTHER, THREAD, isolate_native_layers
 
 
 class Codex(unittest.TestCase):
@@ -23,6 +23,7 @@ class Codex(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
+        isolate_native_layers(self, self.root)
         self.db = self.root / "state_5.sqlite"
         conn = sqlite3.connect(self.db)
         conn.execute("CREATE TABLE threads (id TEXT, name TEXT, title TEXT, cwd TEXT, updated_at INTEGER, archived INTEGER, rollout_path TEXT)")

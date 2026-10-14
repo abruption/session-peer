@@ -13,7 +13,7 @@ import unittest
 from unittest import mock
 
 import session_peer as peer
-from tests.codex.support import THREAD
+from tests.codex.support import THREAD, isolate_native_layers
 
 
 @unittest.skipUnless(sys.platform in ('darwin', 'linux'), 'POSIX wake')
@@ -22,6 +22,7 @@ class Wake(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name).resolve()
+        isolate_native_layers(self, self.root)
         self.rollout = self.root / 'rollout.jsonl'
         self.rollout.write_text('initialized\n')
         with contextlib.closing(sqlite3.connect(self.root / 'state_5.sqlite')) as conn:

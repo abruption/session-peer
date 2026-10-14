@@ -11,7 +11,7 @@ import unittest
 from unittest import mock
 
 import session_peer as peer
-from tests.codex.support import THREAD
+from tests.codex.support import THREAD, isolate_native_layers
 
 
 class CodexStorage(unittest.TestCase):
@@ -28,10 +28,7 @@ class CodexStorage(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         # Machine-wide layers are covered by test_storage_layers with fixtures.
-        for name in ("codex_system_config_paths", "codex_managed_preference_paths"):
-            layer = mock.patch.object(peer, name, return_value=[])
-            layer.start()
-            self.addCleanup(layer.stop)
+        isolate_native_layers(self, self.root)
 
     def refuses(self, reason=None):
         with self.assertRaises(peer.CcPeerError) as caught:
@@ -208,8 +205,10 @@ class CodexStorage(unittest.TestCase):
         self.assertEqual(result["queueId"], "fixture-storage")
         self.assertIs(result["consumptionConfirmed"], False)
         recorded = json.loads((self.root / "fixture-environment.json").read_text(encoding="utf-8"))
+        # PWD is only aligned on POSIX, matching codex_process_environment.
         self.assertEqual(recorded, {"home": str(self.root), "sqliteOverridePresent": False,
-                                    "cwd": os.path.realpath(self.root), "pwd": str(self.root)})
+                                    "cwd": os.path.realpath(self.root),
+                                    "pwd": None if peer.IS_WINDOWS else str(self.root)})
 
 
 if __name__ == "__main__":

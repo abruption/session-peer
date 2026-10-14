@@ -318,22 +318,29 @@ def codex_process_environment(root: Path, native_home: str | None = None, *,
 
 
 def codex_thread_cwd(root: Path, thread_id: str) -> Path | None:
-    """The saved thread directory (metadata only), or None when unavailable.
+    """The saved thread directory (metadata only), or None when it has none.
 
     The consuming writer normally started there, so its project layers can
-    have selected storage that differs from the inspected home.
+    have selected storage that differs from the inspected home. Unreadable or
+    malformed metadata refuses; a missing row or a directory that no longer
+    exists has no layers to inspect.
     """
     try:
         with contextlib.closing(sqlite3.connect((root / "state_5.sqlite").as_uri() + "?mode=ro",
                                                 uri=True, timeout=3)) as conn:
             conn.execute("PRAGMA query_only=ON")
             row = conn.execute("SELECT cwd FROM threads WHERE id=?", (thread_id,)).fetchone()
-    except sqlite3.Error:
+    except sqlite3.Error as exc:
+        raise codex_storage_refused("consumer_directory_unverifiable") from exc
+    if row is None or row[0] is None or row[0] == "":
         return None
-    if not row or not isinstance(row[0], str) or not row[0]:
-        return None
+    if not isinstance(row[0], str) or "\0" in row[0] or not Path(row[0]).is_absolute():
+        raise codex_storage_refused("consumer_directory_unverifiable")
     path = Path(row[0])
-    return path if path.is_absolute() and path.is_dir() else None
+    try:
+        return path if path.is_dir() else None
+    except OSError as exc:
+        raise codex_storage_refused("consumer_directory_unverifiable") from exc
 
 
 def check_codex_consumer_storage(root: Path, thread_id: str) -> None:
@@ -347,9 +354,22 @@ def codex_queue_cwd(root: Path, native_home: str | None) -> Path:
 
     Native queue resolves project layers from its own working directory, so
     pin it to the inspected home. A translated native home (WSL relay receiver
-    to native Windows) keeps the inherited directory, whose layers are checked.
+    to native Windows) keeps the inherited directory; only its POSIX-visible
+    layers can be checked here, not the Windows-side configuration.
     """
     return Path(os.getcwd()) if native_home else root
+
+
+def codex_queue_storage_preflight(args: argparse.Namespace, root: Path, thread_id: str) -> Path:
+    """Every storage refusal a queue submission can raise, before any effect.
+
+    Callers that reserve shared budgets (wake) run this first, so a storage
+    refusal never consumes a reservation. Returns the queue working directory.
+    """
+    queue_cwd = codex_queue_cwd(root, getattr(args, "codex_native_home", None))
+    check_codex_storage(root, cwd=queue_cwd, native_submission=True)
+    check_codex_consumer_storage(root, thread_id)
+    return queue_cwd
 
 
 def codex_home(args: argparse.Namespace) -> Path:
@@ -1126,10 +1146,8 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
     selected = codex_home(args)
     root, home_resolution = resolve_codex_home(args, selected, thread_id)
     native_home = getattr(args, "codex_native_home", None)
-    queue_cwd = codex_queue_cwd(root, native_home)
     # Dry-run applies the same storage boundary as the real submission.
-    check_codex_storage(root, cwd=queue_cwd, native_submission=True)
-    check_codex_consumer_storage(root, thread_id)
+    queue_cwd = codex_queue_storage_preflight(args, root, thread_id)
     result = {"ok": True, "target": {"agent": "codex", "id": thread_id},
               "chars": len(text), "dryRun": args.dry_run,
               "codexHome": str(root), "submitted": not args.dry_run,
@@ -1411,6 +1429,8 @@ def queue_codex(args: argparse.Namespace, text: str) -> dict:
         # A known active writer only receives the existing queue submission;
         # it does not start another native process or consume an activation.
         initially_active = preflight.get("writer", {}).get("activity") == "live_writer"
+        # Storage refusals must not consume a wake reservation.
+        codex_queue_storage_preflight(selected, root, thread_id)
         if not initially_active:
             wake_target_rate_reserve(guard_fd)
         result = _queue_codex(selected, text)

@@ -17,6 +17,7 @@ from pathlib import Path
 import plistlib
 import shutil
 import socket
+import sys
 import sqlite3
 import tempfile
 import unittest
@@ -29,6 +30,7 @@ SECRET = "private-relocation-value"
 # Captured before each test replaces them with fixture paths.
 REAL_SYSTEM_PATHS = peer.codex_system_config_paths
 REAL_MANAGED_PATHS = peer.codex_managed_preference_paths
+REAL_PROJECT_PATHS = peer.codex_project_config_paths
 
 
 class StorageLayers(unittest.TestCase):
@@ -49,6 +51,10 @@ class StorageLayers(unittest.TestCase):
             mock.patch.dict(os.environ, {}, clear=True),
             mock.patch.object(peer, "codex_system_config_paths", return_value=self.system_paths),
             mock.patch.object(peer, "codex_managed_preference_paths", return_value=self.managed_paths),
+            # Never read the developer's real ancestor directories.
+            mock.patch.object(peer, "codex_project_config_paths", side_effect=lambda cwd: [
+                path for path in REAL_PROJECT_PATHS(cwd)
+                if os.path.abspath(path).startswith(str(self.base) + os.sep)]),
         )
         for patcher in patches:
             patcher.start()
@@ -195,7 +201,7 @@ class StorageLayers(unittest.TestCase):
 
     def test_project_paths_cover_every_ancestor(self):
         project = self.base / "a" / "b"
-        paths = peer.codex_project_config_paths(project)
+        paths = REAL_PROJECT_PATHS(project)
         self.assertEqual(paths[0], project / "config.toml")
         for directory in (project, project.parent, self.base, Path(self.base.anchor)):
             self.assertIn(directory / ".codex" / "config.toml", paths)
@@ -264,7 +270,7 @@ class StorageLayers(unittest.TestCase):
             result = peer.queue_codex(self.args, "fixture")
         self.assertEqual(result["queueId"], "q-1")
         self.assertEqual(run.call_args.kwargs["cwd"], str(self.root))
-        if os.name != "nt":
+        if not peer.IS_WINDOWS:
             self.assertEqual(run.call_args.kwargs["env"]["PWD"], str(self.root))
 
     def test_consumer_thread_directory_layers_refuse_dry_run_and_send(self):
@@ -322,6 +328,68 @@ class StorageLayers(unittest.TestCase):
                 peer.queue_codex(self.args, "fixture")
             run.assert_not_called()
         self.assertEqual(caught.exception.details["reason"], "sqlite_home_system_configuration")
+
+    @unittest.skipUnless(sys.platform in ("darwin", "linux"), "wake is macOS/Linux only")
+    def test_storage_refusal_does_not_consume_a_wake_reservation(self):
+        self.database()
+        socket_entry = self.root / "app-server-control" / "app-server-control.sock"
+        socket_entry.parent.mkdir()
+        socket_entry.write_text("", encoding="utf-8")
+        self.args.wake = True
+        self.args.wake_timeout = 1
+        self.args.allow_inactive_codex_home = False
+        version = mock.Mock(stdout=sorted(peer.CODEX_WAKE_VERSIONS)[0] + "\n")
+        state = self.root / "session-peer" / "wake-locks" / (THREAD + ".lock")
+        for attempt in range(4):
+            with self.subTest(attempt=attempt), \
+                    mock.patch.object(peer, "known_codex_homes", return_value=[self.root]), \
+                    mock.patch.object(peer, "codex_executable", return_value="fixture"), \
+                    mock.patch.object(peer.subprocess, "run", return_value=version) as run, \
+                    mock.patch.object(peer.subprocess, "Popen") as popen, \
+                    mock.patch.object(peer, "wake_target_rate_reserve",
+                                      wraps=peer.wake_target_rate_reserve) as reserve:
+                with self.assertRaises(peer.CcPeerError) as caught:
+                    peer.queue_codex(self.args, "fixture")
+                self.assertEqual(caught.exception.details["reason"],
+                                 "shared_server_storage_unverifiable")
+                reserve.assert_not_called()
+                popen.assert_not_called()
+                # Only the version probe ran; no queue child was started.
+                self.assertTrue(all(call.args[0][1:] == ["--version"] for call in run.call_args_list))
+            # The per-target budget file holds no reservation after any attempt.
+            self.assertEqual(state.read_bytes() if state.exists() else b"", b"")
+
+    def test_unreadable_or_malformed_consumer_metadata_refuses(self):
+        with contextlib.closing(sqlite3.connect(self.root / "state_5.sqlite")) as conn:
+            conn.execute("CREATE TABLE threads (id TEXT)")
+            conn.execute("INSERT INTO threads VALUES (?)", (THREAD,))
+            conn.commit()
+        with self.assertRaises(peer.CcPeerError) as caught:
+            peer.codex_thread_cwd(self.root, THREAD)
+        self.assertEqual(caught.exception.details["reason"], "consumer_directory_unverifiable")
+        (self.root / "state_5.sqlite").unlink()
+        for value in ("relative/project", 7):
+            with self.subTest(value=value):
+                path = self.root / "state_5.sqlite"
+                if path.exists():
+                    path.unlink()
+                with contextlib.closing(sqlite3.connect(path)) as conn:
+                    conn.execute("CREATE TABLE threads (id TEXT, cwd)")
+                    conn.execute("INSERT INTO threads VALUES (?, ?)", (THREAD, value))
+                    conn.commit()
+                with self.assertRaises(peer.CcPeerError) as caught:
+                    peer.check_codex_consumer_storage(self.root, THREAD)
+                self.assertEqual(caught.exception.details["reason"],
+                                 "consumer_directory_unverifiable")
+        for value in (None, ""):
+            with self.subTest(value=value):
+                path = self.root / "state_5.sqlite"
+                path.unlink()
+                with contextlib.closing(sqlite3.connect(path)) as conn:
+                    conn.execute("CREATE TABLE threads (id TEXT, cwd)")
+                    conn.execute("INSERT INTO threads VALUES (?, ?)", (THREAD, value))
+                    conn.commit()
+                self.assertIsNone(peer.codex_thread_cwd(self.root, THREAD))
 
     @unittest.skipIf(os.name == "nt", "wake is macOS/Linux only")
     def test_wake_checks_the_thread_directory_before_starting_app_server(self):
