@@ -21,6 +21,7 @@ import getpass
 from importlib import metadata
 import json
 import os
+import plistlib
 import re
 import selectors
 import signal

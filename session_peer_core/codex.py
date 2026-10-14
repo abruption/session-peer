@@ -137,23 +137,18 @@ def _codex_config_has_storage(text: str) -> bool:
     return False
 
 
-def check_codex_storage(root: Path) -> None:
-    """Reject known relocation without reading native accounts or transcripts.
+def _read_codex_config_bytes(path: Path, unreadable: str = "storage_config_unreadable") -> bytes | None:
+    """Return one bounded regular file, None when absent, or refuse.
 
-    This checks inherited SQLite overrides and this home's config only. It does
-    not pretend to resolve native project/system/managed requirement layers.
+    The file is pinned by device/inode and size/mtime across the read so a
+    concurrent replacement fails closed instead of being half-classified.
     """
-    for name, value in os.environ.items():
-        match = name.upper() == "CODEX_SQLITE_HOME" if IS_WINDOWS else name == "CODEX_SQLITE_HOME"
-        if match and value.strip():
-            raise codex_storage_refused("sqlite_environment_override")
-    path = root / "config.toml"
     try:
         before = path.lstat()
-    except FileNotFoundError:
-        return
+    except (FileNotFoundError, NotADirectoryError):
+        return None
     except OSError as exc:
-        raise codex_storage_refused("storage_config_unreadable") from exc
+        raise codex_storage_refused(unreadable) from exc
     descriptor = None
     try:
         if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_CODEX_CONFIG_BYTES:
@@ -175,22 +170,186 @@ def check_codex_storage(root: Path) -> None:
         if (len(data) > MAX_CODEX_CONFIG_BYTES or snapshot(before) != snapshot(after)
                 or snapshot(current) != snapshot(after)):
             raise ValueError("configuration file changed or exceeded limit")
-        relocated = _codex_config_has_storage(data.decode("utf-8", errors="strict"))
-    except (OSError, ValueError, UnicodeError, RecursionError) as exc:
+        return data
+    except (OSError, ValueError) as exc:
         raise codex_storage_refused("storage_config_unverifiable") from exc
     finally:
         if descriptor is not None:
             os.close(descriptor)
-    if relocated:
-        raise codex_storage_refused("sqlite_home_configuration")
 
 
-def codex_process_environment(root: Path, native_home: str | None = None) -> dict:
-    check_codex_storage(root)
+def _codex_config_text_has_storage(data: bytes) -> bool:
+    try:
+        return _codex_config_has_storage(data.decode("utf-8", errors="strict"))
+    except (ValueError, UnicodeError, RecursionError) as exc:
+        raise codex_storage_refused("storage_config_unverifiable") from exc
+
+
+def _refuse_configured_storage(path: Path, reason: str) -> None:
+    data = _read_codex_config_bytes(path)
+    if data is not None and _codex_config_text_has_storage(data):
+        raise codex_storage_refused(reason)
+
+
+def codex_system_config_paths() -> list[Path]:
+    """System config and requirements layers that native Codex 0.162.1 reads.
+
+    Requirements (exact `sqlite_home`) outrank every config layer. Unix still
+    loads the legacy managed_config.toml as requirements.
+    """
+    if IS_WINDOWS:
+        base = Path(os.environ.get("ProgramData") or r"C:\ProgramData") / "OpenAI" / "Codex"
+        return [base / "config.toml", base / "requirements.toml"]
+    base = Path("/etc/codex")
+    return [base / "config.toml", base / "managed_config.toml", base / "requirements.toml"]
+
+
+CODEX_MANAGED_PREFERENCES_DOMAIN = "com.openai.codex"
+CODEX_MANAGED_PREFERENCES_KEYS = ("config_toml_base64", "requirements_toml_base64")
+
+
+def codex_managed_preference_paths() -> list[Path]:
+    """macOS managed-profile plists; other platforms have no MDM config layer."""
+    if sys.platform != "darwin":
+        return []
+    base = Path("/Library/Managed Preferences")
+    paths = [base / (CODEX_MANAGED_PREFERENCES_DOMAIN + ".plist")]
+    try:
+        import pwd
+        paths.insert(0, base / pwd.getpwuid(os.getuid()).pw_name /
+                     (CODEX_MANAGED_PREFERENCES_DOMAIN + ".plist"))
+    except (ImportError, KeyError, OSError):
+        pass
+    return paths
+
+
+def _refuse_managed_preference_storage() -> None:
+    for path in codex_managed_preference_paths():
+        data = _read_codex_config_bytes(path)
+        if data is None:
+            continue
+        try:
+            values = plistlib.loads(data)
+            if not isinstance(values, dict):
+                raise ValueError("managed preferences are not a dictionary")
+            for key in CODEX_MANAGED_PREFERENCES_KEYS:
+                if key not in values:
+                    continue
+                encoded = values[key]
+                if not isinstance(encoded, str) or len(encoded) > MAX_CODEX_CONFIG_BYTES * 2:
+                    raise ValueError("managed configuration is not bounded base64 text")
+                decoded = base64.b64decode(encoded.strip(), validate=True)
+                if len(decoded) > MAX_CODEX_CONFIG_BYTES:
+                    raise ValueError("managed configuration exceeds limit")
+                if _codex_config_text_has_storage(decoded):
+                    raise codex_storage_refused("sqlite_home_managed_configuration")
+        except CcPeerError:
+            raise
+        except (ValueError, TypeError, OverflowError, plistlib.InvalidFileException,
+                binascii.Error, UnicodeError) as exc:
+            raise codex_storage_refused("storage_config_unverifiable") from exc
+
+
+def codex_project_config_paths(cwd: Path) -> list[Path]:
+    """Native cwd/tree/repo project layers for a process started in `cwd`.
+
+    Native Codex loads `<cwd>/config.toml` and `.codex/config.toml` in each
+    ancestor (the git top level is one of those ancestors). Layers are only
+    enabled for trusted projects; this check deliberately ignores trust and
+    refuses whenever a candidate sets storage.
+    """
+    base = Path(os.path.abspath(cwd))
+    paths = [base / "config.toml"]
+    for directory in (base, *base.parents):
+        paths.append(directory / ".codex" / "config.toml")
+    return paths
+
+
+def codex_daemon_socket_path(root: Path) -> Path:
+    return root / "app-server-control" / "app-server-control.sock"
+
+
+def check_codex_storage(root: Path, *, cwd: Path | None = None,
+                        native_submission: bool = False) -> None:
+    """Reject storage the selected home cannot vouch for, before any effect.
+
+    Covered native layers (codex-cli 0.162.1): inherited CODEX_SQLITE_HOME,
+    this home's config, system config/requirements, macOS managed profiles,
+    and, when `cwd` is given, the project layers of a process started there.
+    A native submission also refuses when a shared app-server daemon is
+    present: `codex queue` would route through it, and its startup-captured
+    storage cannot be observed. Package defaults and enterprise cloud bundles
+    are not inspected. Message bodies, accounts and transcripts are never read.
+    """
+    for name, value in os.environ.items():
+        match = name.upper() == "CODEX_SQLITE_HOME" if IS_WINDOWS else name == "CODEX_SQLITE_HOME"
+        if match and value.strip():
+            raise codex_storage_refused("sqlite_environment_override")
+    _refuse_configured_storage(root / "config.toml", "sqlite_home_configuration")
+    for path in codex_system_config_paths():
+        _refuse_configured_storage(path, "sqlite_home_system_configuration")
+    _refuse_managed_preference_storage()
+    if cwd is not None:
+        user_config = os.path.normcase(os.path.abspath(root / "config.toml"))
+        for path in codex_project_config_paths(cwd):
+            if os.path.normcase(str(path)) != user_config:
+                _refuse_configured_storage(path, "sqlite_home_project_configuration")
+    if native_submission:
+        try:
+            codex_daemon_socket_path(root).lstat()
+        except (FileNotFoundError, NotADirectoryError):
+            return
+        except OSError as exc:
+            raise codex_storage_refused("storage_config_unreadable") from exc
+        raise codex_storage_refused("shared_server_storage_unverifiable")
+
+
+def codex_process_environment(root: Path, native_home: str | None = None, *,
+                              cwd: Path | None = None,
+                              native_submission: bool = False) -> dict:
+    check_codex_storage(root, cwd=cwd, native_submission=native_submission)
     env = {name: value for name, value in os.environ.items()
            if (name.upper() if IS_WINDOWS else name) not in ("CODEX_HOME", "CODEX_SQLITE_HOME")}
     env["CODEX_HOME"] = native_home or str(root)
+    if cwd is not None and not IS_WINDOWS:
+        # Keep a shell-style PWD consistent with the inspected project layers.
+        env["PWD"] = os.path.abspath(cwd)
     return env
+
+
+def codex_thread_cwd(root: Path, thread_id: str) -> Path | None:
+    """The saved thread directory (metadata only), or None when unavailable.
+
+    The consuming writer normally started there, so its project layers can
+    have selected storage that differs from the inspected home.
+    """
+    try:
+        with contextlib.closing(sqlite3.connect((root / "state_5.sqlite").as_uri() + "?mode=ro",
+                                                uri=True, timeout=3)) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            row = conn.execute("SELECT cwd FROM threads WHERE id=?", (thread_id,)).fetchone()
+    except sqlite3.Error:
+        return None
+    if not row or not isinstance(row[0], str) or not row[0]:
+        return None
+    path = Path(row[0])
+    return path if path.is_absolute() and path.is_dir() else None
+
+
+def check_codex_consumer_storage(root: Path, thread_id: str) -> None:
+    cwd = codex_thread_cwd(root, thread_id)
+    if cwd is not None:
+        check_codex_storage(root, cwd=cwd)
+
+
+def codex_queue_cwd(root: Path, native_home: str | None) -> Path:
+    """Working directory whose project config layers the queue process loads.
+
+    Native queue resolves project layers from its own working directory, so
+    pin it to the inspected home. A translated native home (WSL relay receiver
+    to native Windows) keeps the inherited directory, whose layers are checked.
+    """
+    return Path(os.getcwd()) if native_home else root
 
 
 def codex_home(args: argparse.Namespace) -> Path:
@@ -966,7 +1125,11 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
                            "consumptionConfirmed": False})
     selected = codex_home(args)
     root, home_resolution = resolve_codex_home(args, selected, thread_id)
-    check_codex_storage(root)
+    native_home = getattr(args, "codex_native_home", None)
+    queue_cwd = codex_queue_cwd(root, native_home)
+    # Dry-run applies the same storage boundary as the real submission.
+    check_codex_storage(root, cwd=queue_cwd, native_submission=True)
+    check_codex_consumer_storage(root, thread_id)
     result = {"ok": True, "target": {"agent": "codex", "id": thread_id},
               "chars": len(text), "dryRun": args.dry_run,
               "codexHome": str(root), "submitted": not args.dry_run,
@@ -983,11 +1146,12 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
     # mounted POSIX path, but the native codex.exe process needs the Windows
     # spelling of that same home.  This private adapter value is derived from
     # operator policy; it is never accepted from a paired request.
-    process_home = getattr(args, "codex_native_home", None) or str(root)
-    env = codex_process_environment(root, process_home)
+    process_home = native_home or str(root)
+    env = codex_process_environment(root, process_home, cwd=queue_cwd, native_submission=True)
+    check_codex_consumer_storage(root, thread_id)
     try:
         # Keep leading dashes inside the option value, including with --no-from.
-        done = subprocess.run(argv,
+        done = subprocess.run(argv, cwd=None if native_home else str(queue_cwd),
                               env=env, capture_output=True, encoding="utf-8", errors="replace",
                               timeout=CODEX_QUEUE_TIMEOUT)
     except subprocess.TimeoutExpired as exc:
@@ -1041,6 +1205,8 @@ def codex_wake_preflight(root: Path, thread_id: str, executable: str) -> dict:
         raise wake_refused("archived_thread", "Archived Codex threads cannot be woken")
     if not isinstance(cwd, str) or not Path(cwd).is_absolute() or not Path(cwd).is_dir():
         raise wake_refused("cwd_unavailable", "Original Codex working directory is unavailable")
+    # The wake app-server starts in the thread's directory and loads its layers.
+    check_codex_storage(root, cwd=Path(cwd))
     if not isinstance(rollout, str) or not Path(rollout).is_file() or Path(rollout).stat().st_size == 0:
         raise wake_refused("uninitialized_thread", "Codex wake requires an initialized rollout")
     writer = inspect_codex_writer(root, thread_id)
@@ -1137,7 +1303,7 @@ def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeou
         # into CLI JSON. Only lifecycle states and bounded error text escape.
         with tempfile.TemporaryFile() as diagnostics:
             process = subprocess.Popen([executable, "app-server"], cwd=cwd,
-                env={**codex_process_environment(root),
+                env={**codex_process_environment(root, cwd=Path(cwd)),
                      **(wake_chain_environment(wake_context) if wake_context else {})}, stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=diagnostics, start_new_session=True)
             selector = selectors.DefaultSelector()

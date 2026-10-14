@@ -27,6 +27,11 @@ class CodexStorage(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, {}, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # Machine-wide layers are covered by test_storage_layers with fixtures.
+        for name in ("codex_system_config_paths", "codex_managed_preference_paths"):
+            layer = mock.patch.object(peer, name, return_value=[])
+            layer.start()
+            self.addCleanup(layer.stop)
 
     def refuses(self, reason=None):
         with self.assertRaises(peer.CcPeerError) as caught:
@@ -203,7 +208,8 @@ class CodexStorage(unittest.TestCase):
         self.assertEqual(result["queueId"], "fixture-storage")
         self.assertIs(result["consumptionConfirmed"], False)
         recorded = json.loads((self.root / "fixture-environment.json").read_text(encoding="utf-8"))
-        self.assertEqual(recorded, {"home": str(self.root), "sqliteOverridePresent": False})
+        self.assertEqual(recorded, {"home": str(self.root), "sqliteOverridePresent": False,
+                                    "cwd": os.path.realpath(self.root), "pwd": str(self.root)})
 
 
 if __name__ == "__main__":
