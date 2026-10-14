@@ -1,10 +1,9 @@
 """Negative fixtures: weak Codex evidence is never promoted to a generation.
 
-Native Codex 0.162.1 (rust-v0.162.1, 092d3acd6bec) exposes no per-incarnation
-identity and no atomic original-generation precondition for queued input:
-the writer lock file is empty, `sessionId` survives resume, `thread/queue/add`
-takes only thread/input/client message ID, and queued rows are consumed by
-whichever process has the thread loaded. These offline tests prove that
+The reviewed queued-input paths in native Codex 0.162.1 (rust-v0.162.1,
+092d3acd6bec) did not establish a supported atomic original-incarnation
+precondition. This is not a proof about every native API or future version.
+These offline tests prove that
 session-peer keeps Codex generation `unsupported` whatever weak evidence is
 present. They are not evidence of native delivery or consumption.
 """
@@ -30,6 +29,11 @@ class CodexGenerationUnsupported(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name).resolve()
+        environment = mock.patch.dict(os.environ, {
+            "HOME": str(self.root), "USERPROFILE": str(self.root),
+            "CODEX_HOME": str(self.root)}, clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
         for name in ("codex_system_config_paths", "codex_managed_preference_paths"):
             if hasattr(peer, name):
                 layer = mock.patch.object(peer, name, return_value=[])
@@ -66,7 +70,7 @@ class CodexGenerationUnsupported(unittest.TestCase):
         self.assertEqual(listed["generationStatus"], "unsupported")
         minted.assert_not_called()
 
-    def test_real_discovery_with_stable_writer_and_lock_content_stays_unsupported(self):
+    def test_saved_discovery_with_arbitrary_lock_content_stays_unsupported(self):
         with contextlib.closing(sqlite3.connect(self.root / "state_5.sqlite")) as conn:
             conn.execute("CREATE TABLE threads (id TEXT, title TEXT, cwd TEXT, updated_at INTEGER, archived INTEGER, rollout_path TEXT)")
             conn.execute("INSERT INTO threads VALUES (?,?,?,?,?,?)",
@@ -78,11 +82,11 @@ class CodexGenerationUnsupported(unittest.TestCase):
         for content in (b"", b"pid=4242 generation=" + b"f" * 64, CLAUDE_SHAPED.encode()):
             with self.subTest(content=content[:16]):
                 (locks / f"{THREAD}.lock").write_bytes(content)
-                stable = {"activity": "live_writer", "writerLock": "held", "ownerPid": 4242,
-                          "ownerStable": True, "ownerStartTime": 1700000000.25,
-                          "reason": "stable_live_writer"}
-                with mock.patch.object(peer, "inspect_codex_writer", return_value=stable), \
-                        mock.patch.object(peer, "claude_generation") as minted:
+                # Saved-row listing does not call inspect_codex_writer. This
+                # case tests lock content only; stable writer fields are covered
+                # by the explicit adapter-row fixture above.
+                with mock.patch.object(peer, "claude_generation") as minted, \
+                        mock.patch.object(peer, "inspect_codex_writer", wraps=peer.inspect_codex_writer) as inspected:
                     code, result = self.invoke("list", "--agent", "codex", "--codex-home",
                                                str(self.root), "--with-target-generation")
                 self.assertEqual(code, 0)
@@ -91,9 +95,10 @@ class CodexGenerationUnsupported(unittest.TestCase):
                 self.assertIsNone(rows[0]["targetGeneration"])
                 self.assertEqual(rows[0]["generationStatus"], "unsupported")
                 minted.assert_not_called()
+                inspected.assert_not_called()
 
-    def test_writer_restart_between_list_and_send_cannot_upgrade_a_pin(self):
-        # A successor resuming the same thread is the race the issue describes.
+    def test_changed_writer_rows_stay_unsupported_and_arbitrary_pins_are_refused(self):
+        # Two synthetic listings and a separate pin refusal, not a live race.
         for owner in (4242, 4243):
             with mock.patch.object(peer.CodexAdapter, "list", return_value={
                     "sessions": [self.strongest_weak_row(ownerPid=owner)],
@@ -107,7 +112,7 @@ class CodexGenerationUnsupported(unittest.TestCase):
                         mock.patch.object(peer, "queue_codex") as queue, \
                         mock.patch.object(peer, "run_codex_wake") as wake, \
                         mock.patch.object(peer.SshTransport, "execute") as remote, \
-                        mock.patch.object(peer, "tailscale_status"), \
+                        mock.patch.object(peer, "tailscale_status") as network_discovery, \
                         mock.patch.object(peer.subprocess, "run") as child:
                     code, result = self.invoke("send", "--to", "codex:" + THREAD,
                                                "--target-generation", token, "--message=x",
@@ -117,7 +122,7 @@ class CodexGenerationUnsupported(unittest.TestCase):
                 self.assertIs(result["submitted"], False)
                 self.assertIs(result["retryAllowed"], False)
                 self.assertNotIn("lastSeenTarget", result)
-                for effect in (queue, wake, remote, child):
+                for effect in (queue, wake, remote, child, network_discovery):
                     effect.assert_not_called()
 
     def test_successful_queue_result_never_carries_a_generation(self):
@@ -125,10 +130,11 @@ class CodexGenerationUnsupported(unittest.TestCase):
                   "dryRun": False, "codexHome": str(self.root), "submitted": True,
                   "consumptionConfirmed": False, "status": "queued",
                   "queueId": "01900000-0000-7000-8000-0000000000aa"}
-        with mock.patch.object(peer, "queue_codex", return_value=queued):
+        with mock.patch.object(peer, "queue_codex", return_value=queued) as queue:
             code, result = self.invoke("send", "--to", "codex:" + THREAD, "--message=x",
                                        "--no-from", "--no-reply-to")
         self.assertEqual(code, 0)
+        queue.assert_called_once()
         self.assertEqual(result["status"], "queued")
         self.assertEqual(result["queueId"], queued["queueId"])
         self.assertNotIn("targetGeneration", result)

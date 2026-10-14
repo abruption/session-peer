@@ -31,7 +31,7 @@ Codex 队列、Antigravity 和配对设备不具备此接收进程代次保证�
 wake 前拒绝，并保留各自既有契约。重新核实 Codex 写入进程，不能原子地限制之后消费
 持久队列的进程。#180 的完整工作仍未完成；该功能尚未在 v1.0.4 发布，不会自动回退或重发。
 
-2026-10-15 对 native Codex [0.162.1](https://github.com/openai/codex/tree/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs) 的审查未发现按进程代次区分的标识，也未发现原子的原始代次前置条件。线程写入锁文件没有内容，线程的 `sessionId` 在恢复后保持不变，`thread/queue/add` 只接受线程、输入和客户端消息 ID，队列中保存的条目由当时加载该线程的进程消费。带 `expectedTurnId` 的 `turn/steer` 仅对单个 app-server 上的活动轮次是原子的，因此不将其用作代次。所以写入进程的 PID、启动时间和锁的复查、队列 ID、`canAcceptDirectInput` 以及 `sessionId` 都不会生成 Codex `targetGeneration`；在 native Codex 提供可在队列中原子检查的进程代次令牌之前，Codex 行保持 `unsupported`。
+2026-10-15 对 native Codex [0.162.1](https://github.com/openai/codex/tree/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs) 的队列输入路径进行了审查，但未找到可用的、原子检查原始写入进程代次的前置条件。在已检查的源码中，获取锁的路径不写入代次令牌，线程的 `sessionId` 在恢复后保持不变，而 `thread/queue/add` 接受线程、输入和客户端消息 ID，而非代次前置条件。已检查的 `turn/steer` 路径在活动轮次锁内检查 `expectedTurnId`，但 session-peer 不将这种轮次专用检查用作写入进程代次。这些结论仅限于固定的源码路径，并不证明所有 native API 或未来版本都不存在该功能。PID、启动时间和锁的复查、队列 ID、`canAcceptDirectInput`、`sessionId` 不能确立所需的原始代次保证，因此 Codex 的 `targetGeneration` 继续报告为 `unsupported`。#180 保持未完成，以等待另行验证的 native 契约。
 
 以下是详细的命令行为、安装选项、传输限制和历史验证记录。
 机器consumer还应遵循[v1兼容性契约](compatibility-v1.md)。

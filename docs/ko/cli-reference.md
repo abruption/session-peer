@@ -35,7 +35,7 @@ Codex 큐, Antigravity와 페어링 기기는 이 수신 프로세스 세대 보
 Codex의 작성자 재확인만으로 나중에 큐를 소비하는 작성자를 원자적으로 제한할 수는 없습니다.
 #180의 전체 작업은 아직 열려 있습니다. v1.0.4에 발행된 기능이 아니며 자동 대체 전송·재전송도 없습니다.
 
-2026-10-15 native Codex [0.162.1](https://github.com/openai/codex/tree/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs) 검토에서는 프로세스 세대별 식별자나 원자적 원본 세대 전제조건을 찾지 못했습니다. 스레드 쓰기 잠금 파일에는 내용이 없고, 스레드의 `sessionId`는 재개 후에도 유지되며, `thread/queue/add`는 스레드, 입력, 클라이언트 메시지 ID만 받습니다. 큐에 저장된 항목은 그 시점에 스레드를 불러온 프로세스가 소비합니다. `expectedTurnId`를 쓰는 `turn/steer`는 한 app-server의 활성 턴에 대해서만 원자적이므로 세대로 사용하지 않습니다. 따라서 쓰기 프로세스의 PID·시작 시각·잠금 재검사, 큐 ID, `canAcceptDirectInput`, `sessionId`로는 Codex `targetGeneration`을 만들지 않으며, native Codex가 큐에서 원자적으로 검사하는 프로세스 세대 토큰을 제공하기 전까지 Codex 행은 `unsupported`로 유지됩니다.
+2026-10-15 native Codex [0.162.1](https://github.com/openai/codex/tree/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs)의 큐 입력 경로를 검토했지만, 원래 쓰기 프로세스의 세대를 원자적으로 검사하는 지원 가능한 전제조건은 찾지 못했습니다. 확인한 소스에서 잠금 획득 경로는 세대 토큰을 기록하지 않고, 스레드의 `sessionId`는 재개 후에도 유지되며, `thread/queue/add`는 세대 전제조건 대신 스레드·입력·클라이언트 메시지 ID를 받습니다. 확인한 `turn/steer` 경로는 활성 턴 잠금 안에서 `expectedTurnId`를 검사하지만, session-peer는 이 턴 전용 검사를 쓰기 프로세스의 세대로 사용하지 않습니다. 이는 고정된 경로에 한정된 조사이며 모든 native API나 향후 버전의 기능 부재를 증명하지 않습니다. PID·시작 시각·잠금 재검사, 큐 ID, `canAcceptDirectInput`, `sessionId`로는 필요한 원본 세대 보장을 확립할 수 없으므로 Codex `targetGeneration`은 계속 `unsupported`로 보고합니다. #180은 별도로 검증된 native 계약을 위해 열린 상태로 유지합니다.
 
 명령어의 상세 동작, 설치 옵션, 전송 한계 및 과거 검증 내역은 아래와 같습니다.
 기계 소비자는 [v1 호환성 계약](compatibility-v1.md)도 따라야 합니다.

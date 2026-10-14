@@ -35,7 +35,7 @@ Codex キュー、Antigravity とペアリング済み機器には、この受�
 Codex の書き込みプロセスを再確認しても、後からキューを消費するプロセスを原子的に制限できません。
 #180 全体は未完了です。v1.0.4 の公開機能ではなく、自動フォールバックや再送も追加しません。
 
-2026-10-15 の native Codex [0.162.1](https://github.com/openai/codex/tree/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs) の確認では、プロセス世代ごとの識別子や原子的な元世代の前提条件は見つかりませんでした。スレッドの書き込みロックファイルには内容がなく、スレッドの `sessionId` は再開後も維持され、`thread/queue/add` が受け取るのはスレッド、入力、クライアントのメッセージ ID だけです。キューに保存された項目は、その時点でスレッドを読み込んでいるプロセスが消費します。`expectedTurnId` を伴う `turn/steer` は 1 つの app-server のアクティブなターンに対してのみ原子的なため、世代として使いません。そのため、書き込みプロセスの PID・開始時刻・ロックの再確認、キュー ID、`canAcceptDirectInput`、`sessionId` から Codex の `targetGeneration` を作ることはなく、native Codex がキューで原子的に検査するプロセス世代トークンを提供するまで、Codex の行は `unsupported` のままです。
+2026-10-15 に native Codex [0.162.1](https://github.com/openai/codex/tree/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs) のキュー入力経路を確認しましたが、元の書き込みプロセスの世代を原子的に検査する、利用可能な前提条件は見つかりませんでした。確認したソースでは、ロック取得経路は世代トークンを記録せず、スレッドの `sessionId` は再開後も維持され、`thread/queue/add` は世代の前提条件ではなくスレッド・入力・クライアントメッセージ ID を受け取ります。確認した `turn/steer` 経路はアクティブターンのロック内で `expectedTurnId` を検査しますが、session-peer はこのターン固有の検査を書き込みプロセスの世代として使いません。これは固定した経路に限った調査であり、すべての native API や将来のバージョンで機能が存在しないことを証明しません。PID・開始時刻・ロックの再確認、キュー ID、`canAcceptDirectInput`、`sessionId` は必要な元世代の保証を確立しないため、Codex の `targetGeneration` は引き続き `unsupported` と報告します。#180 は別途検証された native 契約のため未完了のままです。
 
 コマンドの詳細な動作、インストールオプション、トランスポートの制限、および過去の検証結果について以下に説明します。
 機械consumerは[v1互換性契約](compatibility-v1.md)にも従ってください。
