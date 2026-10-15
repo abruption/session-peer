@@ -5,7 +5,7 @@ https://github.com/abruption/session-peer/issues/307
 
 This directory curates observations made on **2026-10-13** in an isolated,
 owned macOS session. Nothing here is a new test, and nothing here is a live
-test of the v1.1.2 preparation on `main`. It does not promote any Antigravity
+test of the v1.1.2 runtime on `main`. It does not promote any Antigravity
 behavior to stable CLI support, does not claim first-input (pre-input)
 delivery support, and does not change runtime code, hooks, settings or
 permission policy. `experiments/` is excluded from the wheel and sdist.
@@ -107,7 +107,8 @@ ancestor/presence checks passed, it returned `ready: true`, and the
 registration was discoverable exactly once. The TUI visibly returned the
 `READY` marker.
 
-So the hook can act as a **post-first-input bootstrap**. The upstream wording
+In this historical run, the hook started the bridge **after the first input**.
+The upstream wording
 quoted in the 2026-10-13 report, "before first model invocation"
 ([Hooks](https://antigravity.google/docs/hooks/)) does not mean "before first
 user input". A listening bridge is not proof of delivery authority.
@@ -156,8 +157,8 @@ Reported send outcomes:
   test limitation). This is a direct-native control, not a full session-peer
   bridge round trip.
 
-Together these identify a practical environment/context boundary: the hook did
-not have the authority that the legitimate tool runner had. They do **not**
+Together these identify an observed environment/context boundary: the hook did
+not provide the working native-send context observed in the tool runner. They do **not**
 establish the internal authentication protocol, and they do not authorize
 copying or manufacturing the missing context. SessionStart cannot be described
 as a working first-input listener on this evidence.
@@ -193,7 +194,7 @@ do not attribute the initial records to this exact source.
 This is one macOS receiver-side round trip from the explicit-registration path,
 not a startup feature and not a Linux/Windows or long-term stability claim.
 
-### (e) Counterexample: direct agentapi from another TUI runs in the caller
+### (e) Counterexample: the direct agentapi invocation was parented by the caller
 
 A fresh receiver B2 was left idle with no bridge. A separate cooperating sender
 A invoked direct `agentapi send-message` from **A's** tool runner against B2's
@@ -217,8 +218,7 @@ So a matching conversation ID plus native exit zero does not prove execution in
 the already-open TUI. No target-owner receipt was observed within the bounded
 test; the invocation was parented by the caller's process. The later query
 returned `NONE`, which does not rule out unobserved late delivery or history
-effects. Native
-persistence, store-conflict and resume behavior were **not established**; no
+effects. Native persistence, store-conflict and resume behavior were **not established**; no
 database or history was modified directly. Creating a new agentapi execution in
 another process, or a new conversation, is not a substitute for reaching the
 owner of the target TUI. The [Sidecars](https://antigravity.google/docs/sidecars/)
@@ -235,7 +235,7 @@ that was not CLI sidecar-autostart evidence.
 - A complete session-peer bridge round trip on 1.3.4 started from a hook.
 - Structured receipt: all ACKs above are on-screen observations;
   `consumptionConfirmed` was always `false`.
-- Linux, Windows, later native versions, the v1.1.2 preparation, automatic
+- Linux, Windows, later native versions, the v1.1.2 runtime, automatic
   bridge recovery, long idle periods and long-term stability.
 - Exact initial-execution source custody for reconstructed probes; no missing
   original hash is inferred from a later snapshot comparison.
