@@ -2,14 +2,13 @@
 
 Requires websockets 17.x. Never starts a server or retries a submission.
 Prints sanitized facts, not conversation IDs, paths, or native text.
+Both modes require explicit opt-in to possible server history-DB initialization.
 """
 import argparse
-from contextlib import closing
 import json
 import os
 from pathlib import Path
 import re
-import sqlite3
 import stat
 import time
 import uuid
@@ -46,6 +45,16 @@ def require_empty_queue(result):
         raise ProbeError("queue_not_empty_or_unproven")
 
 
+def require_empty_turns(result):
+    if not isinstance(result.get("data"), list):
+        raise ProbeError("invalid_turns_snapshot")
+    for key in ("nextCursor", "backwardsCursor"):
+        if key not in result or (result[key] is not None and not isinstance(result[key], str)):
+            raise ProbeError("invalid_turns_snapshot")
+    if result["data"] or result["nextCursor"] is not None or result["backwardsCursor"] is not None:
+        raise ProbeError("server_turns_present_or_unproven")
+
+
 def validate_queued_submission(result, expected_input, client_message_id):
     queued = result.get("queuedSubmission")
     if (not isinstance(queued, dict) or not isinstance(queued.get("id"), str) or not queued["id"]
@@ -66,7 +75,11 @@ def main(argv=None, state=None):
     parser.add_argument("--expected-cwd", required=True)
     parser.add_argument("--mode", choices=("inspect", "queue"), default="inspect")
     parser.add_argument("--ack-marker", help="Harmless ASCII test receipt marker; no credentials")
+    parser.add_argument("--allow-server-history-db-init", action="store_true",
+                        help="Acknowledge that server history reads may initialize/migrate its history DB; owned test server only")
     args = parser.parse_args(argv)
+    if not args.allow_server_history_db_init:
+        raise ProbeError("server_history_read_requires_opt_in")
     if args.ack_marker is not None and not re.fullmatch(r"[A-Za-z0-9 _-]{1,100}", args.ack_marker):
         parser.error("invalid ACK marker")
     codex_home = Path(args.codex_home).resolve(strict=True)
@@ -113,34 +126,45 @@ def main(argv=None, state=None):
             raise ProbeError("server_home_mismatch")
         ws.send(json.dumps({"method": "initialized"}))
         loaded = rpc_result(call("thread/loaded/list", {"limit": 100}))
-        assert loaded.get("nextCursor") is None and len(loaded["data"]) == 1
+        if (not isinstance(loaded.get("data"), list) or len(loaded["data"]) != 1
+                or not isinstance(loaded["data"][0], str) or not loaded["data"][0]
+                or "nextCursor" not in loaded or loaded["nextCursor"] is not None):
+            raise ProbeError("invalid_loaded_snapshot")
         thread_id = loaded["data"][0]
-        thread = rpc_result(call("thread/read", {"threadId": thread_id, "includeTurns": False}))["thread"]
-        assert Path(thread["cwd"]).resolve() == Path(args.expected_cwd).resolve()
-        assert thread["status"]["type"] == "idle" and thread["canAcceptDirectInput"] is True
-        ephemeral = thread.get("ephemeral")
-        if ephemeral is not None and type(ephemeral) is not bool:
-            raise ProbeError("invalid_thread_metadata")
-        if args.mode == "queue" and ephemeral is not False:
-            # Ephemeral conversations can have prior turns without any stored
-            # row. Missing/null metadata cannot establish persistence either.
-            raise ProbeError("persistent_thread_required")
-        rows = 0
-        dbs = list(codex_home.glob("state_*.sqlite"))
-        assert dbs
-        for db in dbs:
-            with closing(sqlite3.connect(db.as_uri()+"?mode=ro", uri=True)) as connection:
-                rows += connection.execute("SELECT count(*) FROM threads WHERE id=?", (thread_id,)).fetchone()[0]
-        facts = {"version": "0.162.1", "loadedThreads": 1, "storedRowsBefore": rows, "idle": True, "directInput": True, "ephemeral": ephemeral, "mode": args.mode}
+        def check_server_snapshot():
+            # Use the connected server's store, never an account-home DB whose
+            # SQLite location may differ from the server's startup selection.
+            thread = rpc_result(call("thread/read", {"threadId": thread_id, "includeTurns": False}))["thread"]
+            if not isinstance(thread, dict) or thread.get("id") != thread_id:
+                raise ProbeError("invalid_thread_metadata")
+            assert Path(thread["cwd"]).resolve() == Path(args.expected_cwd).resolve()
+            assert thread["status"]["type"] == "idle" and thread["canAcceptDirectInput"] is True
+            ephemeral = thread.get("ephemeral")
+            if ephemeral is not None and type(ephemeral) is not bool:
+                raise ProbeError("invalid_thread_metadata")
+            if ephemeral is not False:
+                raise ProbeError("persistent_thread_required")
+            preview = thread.get("preview")
+            if not isinstance(preview, str):
+                raise ProbeError("invalid_thread_metadata")
+            if preview:
+                raise ProbeError("server_preview_present")
+            require_empty_turns(rpc_result(call("thread/turns/list", {
+                "threadId": thread_id, "limit": 1, "sortDirection": "desc", "itemsView": "notLoaded"})))
+
+        check_server_snapshot()
+        facts = {"version": "0.162.1", "loadedThreads": 1, "serverTurnsEmpty": True,
+                 "freshnessSource": "thread/turns/list", "idle": True, "directInput": True,
+                 "ephemeral": False, "mode": args.mode}
         print(json.dumps(facts), flush=True)
         if args.mode == "inspect":
             return 0
-        assert rows == 0, "requires fresh pre-first-input thread"
         marker = args.ack_marker or "ACK CODEX-FIRST-INPUT-306-" + args.mode.upper()
         message = "Owner-authorized one-shot transport test. Reply exactly " + marker + ". Do not run tools or modify files."
         # A point-in-time preflight, not an atomic expected-empty condition.
         # Only use the exclusively owned server with no other input producers.
         require_empty_queue(rpc_result(call("thread/queue/list", {"threadId": thread_id, "limit": 1})))
+        check_server_snapshot()
         expected_input = [{"type": "text", "text": message, "text_elements": []}]
         client_message_id = str(uuid.uuid4())
         method = "thread/queue/add"

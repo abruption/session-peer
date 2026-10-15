@@ -2,6 +2,12 @@
 
 ## Result
 
+This is a historical report, not a validation of the current harness. The
+account-home row count below was an observed diagnostic, not proof of the
+running server's effective SQLite location. Later review found that relocated
+storage can invalidate that inference. The harness now uses server-reported
+turn snapshots instead; those new guards have not had a fresh native run.
+
 For the subsequent **already-open ordinary TUI** negative/positive controls,
 see [ORDINARY_TUI.md](ORDINARY_TUI.md). An embedded blank TUI was unreachable
 through the external queue path, while a plain TUI already connected to a shared
@@ -45,10 +51,15 @@ first-input transport; it does not make the public `session-peer send` support i
 `probe.py` requires Python with websockets 17.x and an **exclusively owned** fresh
 server/TUI. It does not launch or discover an arbitrary server. Operators supply
 the private socket, the same account home used to launch that server, and the
-exact approved TUI cwd. `--mode inspect` is read-only; `--mode queue` sends once
-only after checking a zero-row precondition. Do not run it against an existing
-working conversation. Run without Python optimization because its experimental
-preconditions use assertions.
+exact approved TUI cwd. The current harness no longer opens local SQLite or
+uses account-home row counts. Both modes require
+`--allow-server-history-db-init`: even a non-submitting server history lookup
+can initialize or migrate the server's history database. `--mode inspect`
+reports an empty server-visible-turn snapshot without queuing; `--mode queue`
+rechecks the server metadata/turns after checking its pending queue, then sends
+once. These are non-atomic snapshots, not storage identity or never-used-thread
+attestations. Do not run it against an existing working conversation. Run
+without Python optimization because its experimental preconditions use assertions.
 
 The endpoint may be a native-created symlink to a shorter physical Unix socket;
 the harness checks both the logical and resolved private directories and socket

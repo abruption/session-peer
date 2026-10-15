@@ -113,9 +113,11 @@ artifacts by the existing packaging rules.
 
 ## Review-driven harness guards
 
-The supplied Codex home is now canonicalized before SQLite URI construction and
-must match the absolute `codexHome` returned by `initialize` before any thread
-lookup or database inspection. Missing or mismatched server-home evidence
+The supplied Codex home is canonicalized and must match the absolute
+`codexHome` returned by `initialize` before any thread lookup. This binds the
+account home, not the running server's effective SQLite location. The current
+harness makes no direct SQLite access and does not use account-home rows for
+freshness. Missing or mismatched server-home evidence
 refuses the probe without queuing. A queue RPC rejection returns exit 1; malformed
 error objects, non-integer codes or missing/non-string messages yield an unknown outcome once queue submission
 has been attempted, without reflecting native error text or retrying. Timeout,
@@ -124,11 +126,10 @@ report `accepted:null`, `outcome:unknown`, and `retryAllowed:false`; after a que
 attempt, a validated RPC rejection alone supplies `accepted:false`. Runtime
 preflight failures report `accepted:false`, `outcome:not_attempted`; argparse
 usage errors retain exit 2 and usage output. An interrupted probe returns exit 130 while preserving the
-same effect boundary. Queue mode requires explicit `ephemeral:false` before
-database inspection or submission: a previously used ephemeral conversation may
-still have no database row. True, null and missing values cannot establish this
-precondition. Inspection mode may report boolean/null metadata without queuing;
-that does not prove the conversation is unused. Arbitrary result keys and native
+same effect boundary. Both modes require explicit `ephemeral:false` before
+turn-history inspection: a previously used ephemeral conversation may still
+have no database row. True, null and missing values cannot establish this
+precondition. Arbitrary result keys and native
 error details are not reflected. The version guard remains
 exactly 0.162.1, and Python optimization is refused up front.
 
@@ -136,7 +137,7 @@ The pinned [0.162.1 Thread schema](https://github.com/openai/codex/blob/092d3acd
 declares `ephemeral` as a bool without an omission attribute. This is a static
 source basis for requiring explicit false, not a fresh native serialization test.
 
-Immediately before the one queue attempt, the probe requests the selected
+Before the one queue attempt, the probe requests the selected
 thread's `thread/queue/list` first page with `limit:1`. Only an explicit empty
 `data` array and `nextCursor:null` pass. Missing, malformed, nonempty or paginated
 responses refuse before any queue submission. This is a point-in-time check,
@@ -148,6 +149,55 @@ harness neither prints nor inspects them beyond refusing a nonempty list, but
 the parsed response exists in memory. It is not a body-free observation API and
 must not be used on a server containing unrelated work.
 
+### Server-owned turn evidence instead of local SQLite
+
+The current harness requires `--allow-server-history-db-init` before connecting
+in either mode. It checks the selected thread's metadata via
+`thread/read(includeTurns:false)` and requires an explicitly empty `preview`,
+the expected cwd, idle/direct-input state and persistent-thread flag. It then
+calls `thread/turns/list` on that same server/thread with first-page `limit:1`,
+`sortDirection:"desc"` and `itemsView:"notLoaded"`. Only explicit `data:[]`,
+`nextCursor:null` and `backwardsCursor:null` pass. It repeats both metadata and
+turn checks after the pending-queue check, before the single add attempt.
+Nonempty, missing, malformed or failed evidence refuses before add; there is
+no local-DB fallback or resubmission.
+
+This closes the stale-account-home DB inference: the evidence now comes from
+the connected server's own history path, independent of where its SQLite
+configuration points. The result reports `serverTurnsEmpty` and
+`freshnessSource:"thread/turns/list"`, not `storedRowsBefore`. It does not report
+or attest the server's startup SQLite identity or resolve its environment,
+profiles, overrides, managed/system/project settings or cloud layers. No new
+known-override parser or dependency on the unmerged #311 guard is introduced.
+
+The pinned [turn-list handler](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/app-server/src/request_processors/thread_processor.rs#L3073-L3286)
+does not request `persist_thread` in this path. This is **not a globally
+write-free operation**: the paginated history path can lazily open/create and
+migrate a history database ([lazy open](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/thread-store/src/local/mod.rs#L293-L306),
+[read-write initialization and migration](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/state/src/sqlite.rs#L296-L338)).
+`inspect` is non-submitting, not a promise of zero server writes. No new native
+history request was performed to test these guards. `includeTurns:true` is
+never requested; that separate read path can explicitly persist a thread.
+
+`itemsView:"notLoaded"` suppresses turn items rather than requesting the default
+summary with user/agent messages ([projection](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/app-server-protocol/src/protocol/turn_items_view.rs#L6-L31)).
+This is still not a universal body-free API: preview and turn error metadata
+can contain text in memory. They are never printed, and a nonempty preview or
+turn list is refused without item inspection. Use only the dedicated owned
+test conversation, never unrelated work or transcript files.
+
+An empty response means only that the connected server reports no visible
+turns at that instant. Rollback/compaction, server bugs or paginated live-event
+projection can limit that evidence; the paginated path does not merge the same
+active-turn overlay as the nonpaginated path. It is not proof of no historical
+input ever, an atomic expected-empty condition or a general first-input API.
+Idle/exclusive ownership and no competing producers remain mandatory, and the
+check-to-add race remains. The historical native observations above were not
+re-run with these revised guards.
+For rollout-backed history the server may replay the full rollout before
+pagination; `limit:1` is not a bound on server-side history work. The client has
+bounded receive frames/timeouts, not a general server resource guarantee.
+
 A successful queue reply must contain a structured `queuedSubmission` with a
 nonempty string ID and the exact submitted plain-text `input` and
 `clientUserMessageId`. The explicit `text_elements:[]` matches the pinned native
@@ -158,12 +208,12 @@ See the pinned [queue request/response schema](https://github.com/openai/codex/b
 and [plain-text input schema](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/app-server-protocol/src/protocol/v2/turn.rs#L436-L445).
 These checks were not retrospectively performed in the historical live runs.
 
-Fifteen synthetic WebSocket/temporary-database tests cover these boundaries,
+Twenty-five synthetic WebSocket/adversarial account-home fixtures cover these boundaries,
 including relative home paths, complete error validation on both RPC paths,
 ephemeral/missing/null refusal, empty-queue preflight, submission echo validation,
 exact RPC IDs and exactly one queue attempt on rejection or uncertain failure.
 These are harness regression tests, not new native delivery, receipt, platform,
 or production-support evidence. None of these review-driven guards were exercised
-by another live native run. SQLite handles are explicitly closed. A failure during
+by another live native run. A failure during
 connection cleanup may return a nonzero exit while preserving an already observed
 acceptance or rejection; it never authorizes retry.

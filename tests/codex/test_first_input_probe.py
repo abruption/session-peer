@@ -21,11 +21,16 @@ def successful_queue_reply(request):
 
 
 class FakeWebSocket:
-    def __init__(self, home, queue_response, queue_list_response=None):
+    def __init__(self, home, queue_response, queue_list_response=None, turns_responses=None,
+                 thread_snapshots=None):
         self.home = home
         self.queue_response = queue_response
         self.queue_list_response = queue_list_response
         self.sent = []
+        self.turns_responses = turns_responses
+        self.thread_snapshots = thread_snapshots
+        self.turns_count = 0
+        self.thread_count = 0
 
     def __enter__(self):
         return self
@@ -48,8 +53,17 @@ class FakeWebSocket:
         elif method == "thread/loaded/list":
             result = {"data": ["owned-thread"], "nextCursor": None}
         elif method == "thread/read":
-            result = {"thread": {"cwd": self.home, "status": {"type": "idle"},
-                                 "canAcceptDirectInput": True, "ephemeral": False}}
+            result = {"thread": {"id": "owned-thread", "cwd": self.home, "status": {"type": "idle"},
+                                 "canAcceptDirectInput": True, "ephemeral": False, "preview": ""}}
+            if self.thread_snapshots is not None:
+                result["thread"].update(self.thread_snapshots[min(self.thread_count, len(self.thread_snapshots)-1)])
+            self.thread_count += 1
+        elif method == "thread/turns/list":
+            response = {"result": {"data": [], "nextCursor": None, "backwardsCursor": None}}
+            if self.turns_responses is not None:
+                response = self.turns_responses[min(self.turns_count, len(self.turns_responses)-1)]
+            self.turns_count += 1
+            return self.encode_reply(request, response)
         elif method == "thread/queue/list":
             response = ({"result": {"data": [], "nextCursor": None}} if self.queue_list_response is None
                         else self.queue_list_response)
@@ -96,26 +110,39 @@ class FirstInputProbeTests(unittest.TestCase):
             db.execute("CREATE TABLE threads (id TEXT)")
             db.commit()
 
-    def invoke(self, server_home, queue_response=None, supplied_home=None, mode="queue", queue_list_response=None):
-        ws = FakeWebSocket(server_home, queue_response, queue_list_response)
+    def invoke(self, server_home, queue_response=None, supplied_home=None, mode="queue", queue_list_response=None,
+               turns_responses=None, thread_snapshots=None, allow_history=True):
+        ws = FakeWebSocket(server_home, queue_response, queue_list_response, turns_responses, thread_snapshots)
         args = ["--socket", str(self.endpoint), "--codex-home", supplied_home or str(self.home),
                 "--expected-cwd", str(self.home), "--mode", mode, "--ack-marker", "ACK TEST"]
+        if allow_history:
+            args.append("--allow-server-history-db-init")
         output = io.StringIO()
-        with mock.patch.object(self.probe, "unix_connect", return_value=ws), contextlib.redirect_stdout(output):
+        with mock.patch.object(self.probe, "unix_connect", return_value=ws) as connect, \
+                mock.patch.object(sqlite3, "connect", side_effect=AssertionError("No local DB reads")) as database, \
+                contextlib.redirect_stdout(output):
             exit_code = self.probe.run(args)
+        database.assert_not_called()
+        if not allow_history:
+            connect.assert_not_called()
+        for item in ws.sent:
+            self.assertNotIn(item["method"], ("thread/start", "thread/resume", "turn/start"))
+            if item["method"] == "thread/read":
+                self.assertIs(item["params"]["includeTurns"], False)
+            if item["method"] == "thread/turns/list":
+                self.assertEqual(item["params"], {"threadId": "owned-thread", "limit": 1,
+                                                "sortDirection": "desc", "itemsView": "notLoaded"})
         return exit_code, ws.sent, output.getvalue()
 
     def test_missing_or_mismatched_home_refuses_before_thread_or_database(self):
         for server_home in (None, str(self.home.parent), "relative", ""):
-            with self.subTest(server_home=server_home), mock.patch.object(
-                    self.probe.sqlite3, "connect", side_effect=AssertionError("DB must not open")) as database:
+            with self.subTest(server_home=server_home):
                 exit_code, sent, output = self.invoke(server_home)
-                database.assert_not_called()
                 self.assertEqual(exit_code, 1)
                 self.assertEqual([item["method"] for item in sent], ["initialize"])
                 self.assertNotIn(str(self.home), output)
 
-    def test_relative_home_is_canonical_before_sqlite_uri(self):
+    def test_relative_home_is_canonical_before_server_binding(self):
         relative = os.path.relpath(str(self.home), os.getcwd())
         exit_code, sent, output = self.invoke(str(self.home), supplied_home=relative)
         self.assertEqual(exit_code, 0)
@@ -131,7 +158,7 @@ class FirstInputProbeTests(unittest.TestCase):
         self.assertFalse(json.loads(output.splitlines()[-1])["retryAllowed"])
         self.assertNotIn("PRIVATE", output)
 
-    def test_queue_preflight_is_bound_and_immediately_precedes_the_only_add(self):
+    def test_queue_and_turn_preflights_are_bound_before_the_only_add(self):
         # Independent pinned-wire fixture, not an echo of the generated request.
         client_id = "00000000-0000-4000-8000-000000000001"
         expected_input = [{"type": "text", "text": "Owner-authorized one-shot transport test. Reply exactly ACK TEST. Do not run tools or modify files.",
@@ -141,8 +168,9 @@ class FirstInputProbeTests(unittest.TestCase):
         with mock.patch.object(self.probe.uuid, "uuid4", return_value=self.probe.uuid.UUID(client_id)):
             exit_code, sent, output = self.invoke(str(self.home), reply)
         self.assertEqual(exit_code, 0)
-        self.assertEqual([item["method"] for item in sent][-2:], ["thread/queue/list", "thread/queue/add"])
-        listed, added = sent[-2:]
+        self.assertEqual([item["method"] for item in sent][-4:],
+                         ["thread/queue/list", "thread/read", "thread/turns/list", "thread/queue/add"])
+        listed, added = sent[-4], sent[-1]
         self.assertEqual(listed["params"], {"threadId": "owned-thread", "limit": 1})
         self.assertEqual(added["params"]["threadId"], listed["params"]["threadId"])
         self.assertEqual(added["params"]["input"], expected_input)
@@ -219,7 +247,7 @@ class FirstInputProbeTests(unittest.TestCase):
 
     def test_response_ids_require_the_exact_integer_request_id(self):
         original = FakeWebSocket.recv
-        for phase in ("initialize", "thread/queue/list", "thread/queue/add"):
+        for phase in ("initialize", "thread/read", "thread/turns/list", "thread/queue/list", "thread/queue/add"):
             for kind in ("float", "bool", "missing"):
                 def metadata(ws, timeout):
                     raw = original(ws, timeout)
@@ -284,11 +312,9 @@ class FirstInputProbeTests(unittest.TestCase):
                     value["result"]["thread"].update(fields)
                     return json.dumps(value)
                 return raw
-            with self.subTest(case=label), mock.patch.object(FakeWebSocket, "recv", metadata), \
-                    mock.patch.object(self.probe.sqlite3, "connect", side_effect=AssertionError("DB must not open")) as db:
+            with self.subTest(case=label), mock.patch.object(FakeWebSocket, "recv", metadata):
                 exit_code, sent, output = self.invoke(str(self.home))
                 self.assertEqual(exit_code, 1)
-                self.assertEqual(db.call_count, 0)
                 self.assertFalse(any(item["method"] == "thread/queue/add" for item in sent))
                 result = json.loads(output.splitlines()[-1])
                 self.assertEqual(result["error"], "persistent_thread_required")
@@ -296,7 +322,7 @@ class FirstInputProbeTests(unittest.TestCase):
                 self.assertEqual(result["outcome"], "not_attempted")
                 self.assertFalse(result["retryAllowed"])
 
-    def test_inspection_does_not_claim_row_absence_proves_ephemeral_freshness(self):
+    def test_inspection_requires_proven_persistent_metadata_too(self):
         original = FakeWebSocket.recv
         for label, fields in (("ephemeral", {"ephemeral": True}), ("null", {"ephemeral": None}),
                               ("missing", {}), ("invalid", {"ephemeral": "PRIVATE"})):
@@ -316,8 +342,8 @@ class FirstInputProbeTests(unittest.TestCase):
                     self.assertEqual(result["error"], "invalid_thread_metadata")
                     self.assertNotIn("PRIVATE", output)
                 else:
-                    self.assertEqual(exit_code, 0)
-                    self.assertIs(result["ephemeral"], fields.get("ephemeral"))
+                    self.assertEqual(exit_code, 1)
+                    self.assertEqual(result["error"], "persistent_thread_required")
                 self.assertFalse(any(item["method"] == "thread/queue/add" for item in sent))
 
     def test_uncertain_queue_failures_preserve_unknown_and_no_retry(self):
@@ -340,7 +366,7 @@ class FirstInputProbeTests(unittest.TestCase):
         for failure in (FileNotFoundError("PRIVATE path"), sqlite3.DatabaseError("PRIVATE DB"),
                         AssertionError("PRIVATE assertion"), ValueError("PRIVATE value")):
             with self.subTest(failure=type(failure).__name__), mock.patch.object(
-                    self.probe.sqlite3, "connect", side_effect=failure):
+                    FakeWebSocket, "__enter__", side_effect=failure):
                 exit_code, sent, output = self.invoke(str(self.home))
                 self.assertEqual(exit_code, 1)
                 self.assertFalse(any(item["method"] == "thread/queue/add" for item in sent))
@@ -365,6 +391,163 @@ class FirstInputProbeTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertFalse(any(item["method"] == "thread/queue/add" for item in sent))
         self.assertNotIn("PRIVATE", output)
+
+    def assert_pre_effect_failure(self, code, sent, output):
+        self.assertEqual(code, 1)
+        self.assertFalse(any(item["method"] == "thread/queue/add" for item in sent))
+        result = json.loads(output.splitlines()[-1])
+        self.assertIs(result["accepted"], False)
+        self.assertEqual(result["outcome"], "not_attempted")
+        self.assertFalse(result["retryAllowed"])
+        self.assertNotIn("PRIVATE", output)
+
+    def test_history_read_opt_in_required_before_any_connection(self):
+        for mode in ("inspect", "queue"):
+            with self.subTest(mode=mode):
+                code, sent, output = self.invoke(str(self.home), mode=mode, allow_history=False)
+                self.assert_pre_effect_failure(code, sent, output)
+                self.assertEqual(sent, [])
+                self.assertEqual(json.loads(output)["error"], "server_history_read_requires_opt_in")
+
+    def test_stale_empty_account_database_cannot_override_server_turns(self):
+        (self.home / "config.toml").write_text('sqlite_home = "PRIVATE configured storage"\n')
+        with mock.patch.dict(os.environ, {"CODEX_SQLITE_HOME": "PRIVATE inherited storage"}):
+            code, sent, output = self.invoke(str(self.home), turns_responses=[{
+                "result": {"data": [{"id": "PRIVATE old turn"}], "nextCursor": None, "backwardsCursor": None}}])
+        self.assert_pre_effect_failure(code, sent, output)
+        self.assertEqual(json.loads(output.splitlines()[-1])["error"], "server_turns_present_or_unproven")
+        self.assertEqual(sum(item["method"] == "thread/turns/list" for item in sent), 1)
+        self.assertFalse(any(item["method"] == "thread/queue/list" for item in sent))
+
+    def test_empty_server_turns_do_not_consult_nonempty_or_missing_account_database(self):
+        with contextlib.closing(sqlite3.connect(self.home / "state_5.sqlite")) as db:
+            db.execute("INSERT INTO threads VALUES ('owned-thread')")
+            db.commit()
+        for missing in (False, True):
+            if missing:
+                (self.home / "state_5.sqlite").unlink()
+            with self.subTest(missing=missing):
+                code, sent, output = self.invoke(str(self.home))
+                self.assertEqual(code, 0)
+                self.assertEqual(sum(item["method"] == "thread/queue/add" for item in sent), 1)
+                facts = json.loads(output.splitlines()[0])
+                self.assertIs(facts["serverTurnsEmpty"], True)
+                self.assertEqual(facts["freshnessSource"], "thread/turns/list")
+                self.assertNotIn("storedRowsBefore", facts)
+
+    def test_probe_environment_and_root_configuration_are_not_server_storage_authority(self):
+        (self.home / "config.toml").write_text('sqlite_home = "PRIVATE fixture relocation"\n')
+        with mock.patch.dict(os.environ, {"CODEX_SQLITE_HOME": "PRIVATE fixture environment"}):
+            code, sent, output = self.invoke(str(self.home))
+        self.assertEqual(code, 0)
+        self.assertEqual(sum(item["method"] == "thread/queue/add" for item in sent), 1)
+        self.assertNotIn("PRIVATE", output)
+
+    def test_invalid_or_nonempty_server_turns_refuse_at_both_snapshots(self):
+        empty = {"result": {"data": [], "nextCursor": None, "backwardsCursor": None}}
+        values = [None, [], {}, {"data": []},
+                  {"data": None, "nextCursor": None, "backwardsCursor": None},
+                  {"data": {}, "nextCursor": None, "backwardsCursor": None},
+                  {"data": [], "nextCursor": "PRIVATE cursor", "backwardsCursor": None},
+                  {"data": [], "nextCursor": None, "backwardsCursor": "PRIVATE cursor"},
+                  {"data": [], "nextCursor": True, "backwardsCursor": None},
+                  {"data": [], "nextCursor": None, "backwardsCursor": False},
+                  {"data": [], "nextCursor": None},
+                  {"data": [], "backwardsCursor": None},
+                  {"data": [{"id": "PRIVATE turn"}], "nextCursor": None, "backwardsCursor": None}]
+        responses = [{"result": value} for value in values]
+        responses += [{"error": {"code": -1, "message": "PRIVATE"}},
+                      {"error": {"code": -1}}, TimeoutError("PRIVATE"), "PRIVATE invalid JSON"]
+        for phase in (0, 1):
+            for index, response in enumerate(responses):
+                with self.subTest(phase=phase, case=index):
+                    snapshots = [response] if phase == 0 else [empty, response]
+                    code, sent, output = self.invoke(str(self.home), turns_responses=snapshots)
+                    self.assert_pre_effect_failure(code, sent, output)
+                    self.assertEqual(sum(item["method"] == "thread/queue/list" for item in sent), phase)
+
+    def test_preview_must_be_explicit_empty_string_at_both_snapshots(self):
+        original = FakeWebSocket.recv
+        for phase in (0, 1):
+            for kind, preview in (("nonempty", "PRIVATE text"), ("null", None),
+                                  ("nonstring", 123), ("missing", None)):
+                def metadata(ws, timeout):
+                    raw = original(ws, timeout)
+                    if ws.sent[-1]["method"] == "thread/read" and ws.thread_count == phase + 1:
+                        value = json.loads(raw)
+                        thread = value["result"]["thread"]
+                        if kind == "missing":
+                            thread.pop("preview")
+                        else:
+                            thread["preview"] = preview
+                        return json.dumps(value)
+                    return raw
+                with self.subTest(phase=phase, case=kind), mock.patch.object(FakeWebSocket, "recv", metadata):
+                    code, sent, output = self.invoke(str(self.home))
+                    self.assert_pre_effect_failure(code, sent, output)
+                    self.assertEqual(sum(item["method"] == "thread/queue/list" for item in sent), phase)
+
+    def test_inspect_reports_only_server_snapshot_and_never_submits(self):
+        code, sent, output = self.invoke(str(self.home), mode="inspect")
+        self.assertEqual(code, 0)
+        self.assertEqual([item["method"] for item in sent],
+                         ["initialize", "initialized", "thread/loaded/list", "thread/read", "thread/turns/list"])
+        facts = json.loads(output)
+        self.assertEqual(facts, {"version": "0.162.1", "loadedThreads": 1, "serverTurnsEmpty": True,
+                                 "freshnessSource": "thread/turns/list", "idle": True,
+                                 "directInput": True, "ephemeral": False, "mode": "inspect"})
+
+    def test_thread_identity_and_idle_direct_input_constraints_hold_at_both_snapshots(self):
+        invalid = [{"id": "PRIVATE other thread"}, {"id": None},
+                   {"cwd": str(self.home.parent)}, {"status": {"type": "active"}},
+                   {"status": None}, {"canAcceptDirectInput": False},
+                   {"canAcceptDirectInput": 1}, {"ephemeral": True}]
+        for phase in (0, 1):
+            for index, fields in enumerate(invalid):
+                with self.subTest(phase=phase, case=index):
+                    snapshots = [fields] if phase == 0 else [{}, fields]
+                    code, sent, output = self.invoke(str(self.home), thread_snapshots=snapshots)
+                    self.assert_pre_effect_failure(code, sent, output)
+                    self.assertEqual(sum(item["method"] == "thread/queue/list" for item in sent), phase)
+
+    def test_exact_native_version_required_before_thread_queries(self):
+        original = FakeWebSocket.recv
+        for version in ("codex-tui/0.162.0 PRIVATE", "codex-tui/0.162.10 PRIVATE", None, True):
+            def metadata(ws, timeout):
+                raw = original(ws, timeout)
+                if ws.sent[-1]["method"] == "initialize":
+                    value = json.loads(raw)
+                    value["result"]["userAgent"] = version
+                    return json.dumps(value)
+                return raw
+            with self.subTest(kind=type(version).__name__), mock.patch.object(FakeWebSocket, "recv", metadata):
+                code, sent, output = self.invoke(str(self.home))
+                self.assert_pre_effect_failure(code, sent, output)
+                self.assertEqual([item["method"] for item in sent], ["initialize"])
+
+    def test_loaded_thread_snapshot_is_complete_and_unambiguous(self):
+        original = FakeWebSocket.recv
+        for data in ([], "x", [None], [True], [""], ["one", "two"]):
+            def metadata(ws, timeout):
+                raw = original(ws, timeout)
+                if ws.sent[-1]["method"] == "thread/loaded/list":
+                    value = json.loads(raw)
+                    value["result"]["data"] = data
+                    return json.dumps(value)
+                return raw
+            with self.subTest(kind=type(data).__name__), mock.patch.object(FakeWebSocket, "recv", metadata):
+                code, sent, output = self.invoke(str(self.home))
+                self.assert_pre_effect_failure(code, sent, output)
+                self.assertEqual(sent[-1]["method"], "thread/loaded/list")
+        for result in ({"data": ["owned-thread"]}, {"data": ["owned-thread"], "nextCursor": "PRIVATE cursor"}):
+            def metadata(ws, timeout):
+                if ws.sent[-1]["method"] == "thread/loaded/list":
+                    return json.dumps({"id": ws.sent[-1]["id"], "result": result})
+                return original(ws, timeout)
+            with self.subTest(keys=tuple(result)), mock.patch.object(FakeWebSocket, "recv", metadata):
+                code, sent, output = self.invoke(str(self.home))
+                self.assert_pre_effect_failure(code, sent, output)
+                self.assertEqual(sent[-1]["method"], "thread/loaded/list")
 
 
 if __name__ == "__main__":
