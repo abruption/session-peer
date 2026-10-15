@@ -101,8 +101,8 @@ ancestor/presence checks passed, it returned `ready: true`, and the
 registration was discoverable exactly once. The TUI visibly returned the
 `READY` marker.
 
-So the hook can act as a **post-first-input bootstrap**. Upstream's "before
-first model invocation" wording
+So the hook can act as a **post-first-input bootstrap**. The upstream wording
+quoted in the 2026-10-13 report, "before first model invocation"
 ([Hooks](https://antigravity.google/docs/hooks/)) does not mean "before first
 user input". A listening bridge is not proof of delivery authority.
 
@@ -205,8 +205,10 @@ the already-open TUI. The target owner did not receive the message. Native
 persistence, store-conflict and resume behavior were **not established**; no
 database or history was modified directly. Creating a new agentapi execution in
 another process, or a new conversation, is not a substitute for reaching the
-owner of the target TUI ([Sidecars](https://antigravity.google/docs/sidecars/)
-advertises Antigravity 2.0 availability, not CLI sidecar autostart).
+owner of the target TUI. The [Sidecars](https://antigravity.google/docs/sidecars/)
+page cited in the historical report described Antigravity 2.0 availability;
+that was not CLI sidecar-autostart evidence. These linked pages were not newly
+checked for current availability by this archive-only change.
 
 ## Not established / unverified
 
