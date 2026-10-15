@@ -344,6 +344,11 @@ class HandoffLifecycle(unittest.TestCase):
                                     ("current_boot_unknown", BOOT, None)):
             with self.subTest(case=name):
                 self.update(historyBoot=history)
+                # Isolate the boot check from the independent 24-hour expiry.
+                with self.clocks(created + 1, boot=boot):
+                    with self.assertRaises(peer.CcPeerError) as early:
+                        self.mint()
+                self.assert_private_equal(early.exception.details["reason"], "receipt_authority_expired")
                 with self.clocks(created + RETENTION_NS + DAY_NS, boot=boot):
                     self.assert_private_equal(self.record_now()["phase"], "prepared")
                     with self.assertRaises(peer.CcPeerError) as caught:
@@ -465,11 +470,11 @@ class HandoffLifecycle(unittest.TestCase):
         self.assert_private_equal(inbox.call_count, 0, "unexpected endpoint call")
         self.assert_private_equal(queue.call_count, 0, "unexpected endpoint call")
 
-    def test_explicit_known_restore_quarantine_clears_ack(self):
-        # Pinned current behavior: the operator's explicit known-restored-history
-        # quarantine (contract: restored history is unknown, old intents are
-        # quarantined) drops the committed ACK detail together with the native
-        # facts. This is not a restart/clock rule; see the positive control below.
+    def test_explicit_known_restore_quarantine_hides_ack_in_public_status(self):
+        # Pin only the public safety boundary, not private evidence destruction.
+        # The current implementation clears internal ACK/native detail, but
+        # retaining evidence for reconciliation is an unresolved design question
+        # under #181. That policy is not a normal restart/clock rule.
         frame = self.mint()
         self.submitted()
         peer.handoff_collect(self.ledger, self.clock, frame)
@@ -477,8 +482,7 @@ class HandoffLifecycle(unittest.TestCase):
         self.ledger.quarantine_restored()
         record = self.record_now()
         self.assert_private_equal(record["phase"], "quarantined")
-        self.assert_private_none(record["ack"])
-        self.assert_private_none(record["native"])
+        self.assertTrue(record["capability"]["revoked"])
         public = peer.handoff_public(self.epoch, record)
         self.assert_private_equal(public["state"], "unknown")
         self.assert_private_equal(public["ack"], {"status": "unsupported"})
@@ -551,25 +555,29 @@ class HandoffLifecycle(unittest.TestCase):
         self.assertFalse(self.channel.exists())
 
     def test_duplicate_receipt_refused_when_revoked_or_quarantined(self):
-        frame = self.mint()
-        self.submitted()
-        peer.handoff_collect(self.ledger, self.clock, frame)
         for name in ("revoked", "quarantined"):
             with self.subTest(case=name):
+                correlation = self.ledger.prepare({**self.binding, "payloadDigest": "e" * 64}, self.generation)[1]["id"]
+                frame = self.mint(correlation)
+                self.submitted(correlation)
+                peer.handoff_collect(self.ledger, self.clock, frame)
                 if name == "revoked":
                     with self.ledger.transaction() as state:
-                        state["records"][self.correlation]["capability"]["revoked"] = True
+                        state["records"][correlation]["capability"]["revoked"] = True
                 else:
                     self.ledger.quarantine_restored()
-                before = self.record_now()
+                before = self.record_now(correlation)
                 with self.assertRaises(peer.CcPeerError) as caught:
                     peer.handoff_collect(self.ledger, self.clock, frame)
                 self.assert_private_equal(caught.exception.details["reason"], "receipt_authority_unavailable")
-                self.assert_private_equal(self.record_now(), before)
+                self.assert_private_equal(self.record_now(correlation), before)
 
     # -- Positive control: intact history keeps a committed ACK ------------
 
     def test_committed_ack_survives_collector_restart_and_clock_change(self):
+        first = self.start_collector()
+        self.clock = peer.handoff_channel_epoch(self.ledger)
+        self.assertTrue(self.clock is not None, "initial collector clock unavailable")
         frame = self.mint()
         self.submitted()
         unused = self.ledger.prepare({**self.binding, "payloadDigest": "f" * 64}, self.generation)[1]["id"]
@@ -587,8 +595,17 @@ class HandoffLifecycle(unittest.TestCase):
         public = peer.handoff_public(self.epoch, committed)
         self.assert_private_equal(public["state"], "acknowledged")
 
-        # Plain collector restart: a new clock epoch over the same intact history.
+        self.stop_collector(first)
+        self.assertTrue(first.poll() is not None, "initial collector still executing")
+        # SIGTERM may leave the socket. Only the test harness removes its own
+        # entry after reaping its process. This is NOT automatic crash recovery.
+        if self.channel.exists():
+            info = self.channel.lstat()
+            self.assertTrue(stat.S_ISSOCK(info.st_mode) and info.st_uid == os.getuid(), "unsafe test channel cleanup")
+            self.channel.unlink()
+        # Restart over intact history and an explicitly cleared owned channel.
         self.start_collector()
+        self.assertTrue(peer.handoff_channel_epoch(self.ledger) != self.clock, "collector epoch reused")
         restarted = self.record_now()
         self.assert_private_equal(restarted["ack"], committed["ack"])
         self.assert_private_equal(restarted["waits"], committed["waits"])
@@ -599,8 +616,9 @@ class HandoffLifecycle(unittest.TestCase):
         self.assert_private_equal(self.record_now()["ack"], committed["ack"])
         # Unused new-receipt authority is expired separately by the restart.
         self.assertTrue(self.record_now(unused)["capability"]["revoked"])
-        with self.assertRaises(peer.CcPeerError):
+        with self.assertRaises(peer.CcPeerError) as rejected:
             peer.handoff_ipc(self.ledger.root, unused_frame)
+        self.assert_private_equal(rejected.exception.details["reason"], "receipt_operation_refused")
         self.assert_private_none(self.record_now(unused)["ack"])
 
         # A later wait is satisfied by the already committed late ACK; the
@@ -614,7 +632,9 @@ class HandoffLifecycle(unittest.TestCase):
         # Clock change within retention (beyond capability lifetime, UTC moved):
         # the stored classification is unchanged and a new wait still succeeds.
         jumped = committed["createdNs"] + 2 * DAY_NS
-        with mock.patch.object(peer, "handoff_now_ns", return_value=jumped), \
+        real_now_ns = peer.handoff_now_ns
+        anchor = real_now_ns()
+        with mock.patch.object(peer, "handoff_now_ns", side_effect=lambda: jumped + real_now_ns() - anchor), \
                 mock.patch.object(peer.time, "time", return_value=0.0):
             shifted = self.record_now()
             self.assert_private_equal(shifted["phase"], "terminal")
