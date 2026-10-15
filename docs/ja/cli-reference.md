@@ -472,6 +472,8 @@ Codex の検出は、読み取り専用の SQLite 接続を使用して `state_5
 
 ### SQLite ストレージの境界
 
+以下の macOS の強制設定だけを調べる方針は、調査した Codex 0.162.1 のキュー経路に適用されます。wake にはバージョン固有の例外があります。対応する Codex [0.154.0](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/config/src/loader/macos.rs) は `CFPreferencesCopyAppValue` で通常の設定と強制設定の両方を読みます。session-peer は wake のバージョンを確認した後、両方のストレージ変更と独自のプロジェクトマーカーを調べ、wake 予算の予約前とキュー・wake 子プロセスの起動直前に再確認します。稼働中の writer にキューだけを投入する場合も対象です。未対応の wake バージョンでは、この旧版の設定方針を有効にしません。通常のキュー専用経路は強制設定のみを調べ、wake の対応範囲も変わりません。キュー投入を確認した後の拒否でも投入の事実を保持し、再送しません。これはソースに基づく検査と模擬回帰テストであり、新たな native 設定や MDM の実験ではありません。
+
 native ローダーの層一覧コメントには `<cwd>/config.toml` とありますが、固定した[プロジェクト層の構成コード](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/config/src/loader/mod.rs#L1652)は `.codex/config.toml` を読み込みます。この検査は古いコメントではなく実装に従います。Windows Known Folder の取得が成功しても、返されたパスが不正または上限超過の場合、別のディレクトリへ黙って切り替えず拒否します。
 
 wake は予算予約前に既知のストレージ設定を調べますが、予約後に設定や書き込みプロセスの証拠が変わると、後続の再検査で拒否される場合があります。変換された native ホームの経路は継承した cwd を維持し、Windows の消費側ディレクトリは調べません。

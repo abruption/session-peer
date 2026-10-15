@@ -335,6 +335,8 @@ Codex 发现使用只读 SQLite 连接读取 `state_5.sqlite`。此内部模式�
 
 ### SQLite 存储边界
 
+下文仅检查 macOS 强制设置的策略适用于已审查的 Codex 0.162.1 队列路径。wake 有版本限定的例外：受支持的 Codex [0.154.0](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/config/src/loader/macos.rs) 通过 `CFPreferencesCopyAppValue` 读取普通设置和强制设置。session-peer 确认 wake 版本后，检查两类设置中的存储变更和自定义项目标记，并在预留 wake 额度之前以及启动队列和 wake 子进程之前重新检查。仅向活动 writer 提交队列的情况也适用。不受支持的 wake 版本不会启用旧版设置策略。普通队列专用路径仍仅检查强制设置，wake 支持范围不变。已确认队列提交之后发生拒绝时，保留已提交事实且不重发。这些是基于源码的检查和模拟回归测试，并非新的 native 设置或 MDM 实验。
+
 native 加载器的层级列表注释提到 `<cwd>/config.toml`，但固定版本的[项目层构建代码](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/config/src/loader/mod.rs#L1652)实际加载 `.codex/config.toml`。本检查遵循实现，而非过时注释。Windows Known Folder 查询成功后，如果返回路径无效或超出长度上限，将拒绝而不是静默改用其他目录。
 
 wake 在预留预算前检查已知存储设置，但如果预留后配置或写入进程证据发生变化，后续复查仍可能拒绝。转换后的 native 目录路径保持继承的 cwd，且不检查 Windows 消费端目录。

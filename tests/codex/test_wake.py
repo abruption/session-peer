@@ -1,5 +1,6 @@
 """Wake lifecycle, queue preservation and native process cleanup tests."""
 import argparse
+import base64
 import contextlib
 import io
 import json
@@ -73,6 +74,113 @@ class Wake(unittest.TestCase):
                     peer.queue_codex(self.args, 'test')
         self.assertEqual(error.exception.details['wake']['reason'], 'unsupported_version')
         queue.assert_not_called()
+
+    def ordinary_preferences(self, *, forced_only=True):
+        # Synthetic ordinary (not forced) preference; never access CF/user state.
+        return [] if forced_only else [base64.b64encode(b'sqlite_home="fixture"').decode('ascii')]
+
+    def test_wake154_ordinary_preference_refuses_before_queue_and_budget(self):
+        for dry_run in (False, True):
+            self.args.dry_run = dry_run
+            with self.subTest(dry_run=dry_run), \
+                 mock.patch.object(peer, 'codex_managed_preference_values', side_effect=self.ordinary_preferences), \
+                 mock.patch.object(peer.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'codex-cli 0.154.0', '')), \
+                 mock.patch.object(peer, '_queue_codex') as queue, \
+                 mock.patch.object(peer, 'wake_target_rate_reserve') as reserve, \
+                 mock.patch.object(peer.subprocess, 'Popen') as start:
+                with self.assertRaises(peer.CcPeerError) as caught:
+                    peer.queue_codex(self.args, 'fixture')
+                self.assertEqual(caught.exception.details['reason'], 'sqlite_home_managed_configuration')
+                self.assertNotIn('fixture', str(caught.exception))
+                queue.assert_not_called()
+                reserve.assert_not_called()
+                start.assert_not_called()
+
+    def test_unsupported_wake_never_reads_ordinary_preferences(self):
+        def read(*, forced_only=True):
+            self.assertTrue(forced_only)
+            return []
+        with mock.patch.object(peer, 'codex_managed_preference_values', side_effect=read), \
+             mock.patch.object(peer.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'codex-cli 0.999.0', '')):
+            with self.assertRaises(peer.CcPeerError) as caught:
+                peer.queue_codex(self.args, 'fixture')
+        self.assertEqual(caught.exception.details['wake']['reason'], 'unsupported_version')
+
+    def test_ordinary_preference_mode_is_wake_only_and_rechecked_before_budget(self):
+        with mock.patch.object(peer, 'codex_managed_preference_values', side_effect=self.ordinary_preferences):
+            peer.check_codex_storage(self.root, cwd=self.root)
+            peer.codex_process_environment(self.root, cwd=self.root)
+            with self.assertRaises(peer.CcPeerError):
+                peer.codex_queue_storage_preflight(self.args, self.root, THREAD)
+            self.args.wake = False
+            peer.codex_queue_storage_preflight(self.args, self.root, THREAD)
+
+    def test_wake_queue_effect_rechecks_new_ordinary_preference(self):
+        self.args.allow_inactive_codex_home = True
+        with mock.patch.object(peer, 'resolve_codex_home', return_value=(self.root, {})), \
+             mock.patch.object(peer, 'codex_queue_storage_preflight', return_value=self.root), \
+             mock.patch.object(peer, 'revalidate_codex_home'), \
+             mock.patch.object(peer, 'codex_managed_preference_values', side_effect=self.ordinary_preferences), \
+             mock.patch.object(peer.subprocess, 'run') as run:
+            with self.assertRaises(peer.CcPeerError) as caught:
+                peer._queue_codex(self.args, 'fixture')
+        self.assertEqual(caught.exception.details['reason'], 'sqlite_home_managed_configuration')
+        run.assert_not_called()
+
+    def test_active_wake_also_checks_154_queue_preferences(self):
+        active = {'activity': 'live_writer', 'ownerStable': True}
+        with mock.patch.object(peer, 'codex_managed_preference_values', side_effect=self.ordinary_preferences), \
+             mock.patch.object(peer, 'inspect_codex_writer', return_value=active), \
+             mock.patch.object(peer.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'codex-cli 0.154.0', '')), \
+             mock.patch.object(peer, '_queue_codex') as post, \
+             mock.patch.object(peer, 'wake_target_rate_reserve') as reserve:
+            with self.assertRaises(peer.CcPeerError) as caught:
+                peer.queue_codex(self.args, 'fixture')
+        self.assertEqual(caught.exception.details['reason'], 'sqlite_home_managed_configuration')
+        post.assert_not_called()
+        reserve.assert_not_called()
+
+    def test_ordinary_preference_appearing_after_guarded_preflight_does_not_reserve(self):
+        calls = {'n': 0}
+        def preflight(*unused):
+            calls['n'] += 1
+            if calls['n'] == 2:
+                reader.side_effect = self.ordinary_preferences
+            return {'cwd': str(self.root), 'writer': {'activity': 'inactive'}}
+        with mock.patch.object(peer, 'codex_wake_preflight', side_effect=preflight), \
+             mock.patch.object(peer, 'codex_managed_preference_values', return_value=[]) as reader, \
+             mock.patch.object(peer, '_queue_codex') as post, \
+             mock.patch.object(peer, 'wake_target_rate_reserve') as reserve:
+            with self.assertRaises(peer.CcPeerError) as caught:
+                peer.queue_codex(self.args, 'fixture')
+        self.assertEqual(caught.exception.details['reason'], 'sqlite_home_managed_configuration')
+        self.assertEqual(calls['n'], 2)
+        post.assert_not_called()
+        reserve.assert_not_called()
+
+    def test_wake154_allows_ordinary_preference_without_storage(self):
+        encoded = base64.b64encode(b'model="fixture"').decode('ascii')
+        with mock.patch.object(peer, 'codex_managed_preference_values', return_value=[encoded]):
+            result = self.preflight()
+            environment = peer.codex_process_environment(self.root, cwd=self.root, wake_preferences=True)
+        self.assertEqual(result['version'], 'codex-cli 0.154.0')
+        self.assertEqual(environment['CODEX_HOME'], str(self.root))
+
+    def test_ordinary_preference_appearing_after_queue_prevents_wake_child_without_resend(self):
+        def queue(*unused):
+            reader.side_effect = self.ordinary_preferences
+            return dict(self.submitted)
+        with mock.patch.object(peer, 'codex_wake_preflight', return_value={'cwd': str(self.root)}), \
+             mock.patch.object(peer, '_queue_codex', side_effect=queue) as post, \
+             mock.patch.object(peer, 'codex_managed_preference_values', return_value=[]) as reader, \
+             mock.patch.object(peer.subprocess, 'Popen') as start:
+            result = peer.queue_codex(self.args, 'fixture')
+        self.assertTrue(result['submitted'])
+        self.assertEqual(result['queueId'], 'queue-test')
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['wake']['status'], 'unknown')
+        post.assert_called_once()
+        start.assert_not_called()
 
     def test_guard_blocks_second_submission(self):
         with peer.codex_wake_guard(self.root, THREAD):

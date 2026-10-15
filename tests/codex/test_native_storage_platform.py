@@ -87,10 +87,18 @@ class NativeStoragePlatforms(unittest.TestCase):
         cf.CFStringGetCString.side_effect = get_string
         return cf
 
-    def read_cf(self, cf):
+    def read_cf(self, cf, **kwargs):
         with mock.patch.object(peer.sys, "platform", "darwin"), \
              mock.patch.object(ctypes, "CDLL", return_value=cf):
-            return peer.codex_managed_preference_values()
+            return peer.codex_managed_preference_values(**kwargs)
+
+    def test_wake154_reads_ordinary_preferences_without_forced_gate(self):
+        cf = self.cf_api(forced=())
+        self.assertEqual(len(self.read_cf(cf, forced_only=False)), 2)
+        cf.CFPreferencesAppValueIsForced.assert_not_called()
+        self.assertEqual(cf.CFPreferencesCopyAppValue.call_count, 2)
+        self.assertEqual(cf.CFRelease.call_args_list,
+                         [mock.call(30), mock.call(30), mock.call(21), mock.call(20), mock.call(10)])
 
     def test_cf_forced_string_read_and_owned_values_released(self):
         cf = self.cf_api()
@@ -207,6 +215,22 @@ class NativeProjectRoots(unittest.TestCase):
         self.assertIn(self.base / ".codex" / "config.toml", self.paths())
         (self.root / "config.toml").write_text('[profiles.unselected]\nproject_root_markers=["fixture"]')
         self.assertEqual(len(self.paths()), 1)
+
+    def test_wake154_ordinary_preference_custom_marker_keeps_superset(self):
+        encoded = base64.b64encode(b'project_root_markers=["fixture"]').decode('ascii')
+        def values(*, forced_only=True):
+            return [] if forced_only else [encoded]
+        with mock.patch.object(peer, "codex_managed_preference_values", side_effect=values):
+            self.assertEqual(len(self.paths()), 1)
+            paths = peer.codex_project_config_paths(self.cwd, root=self.root, wake_preferences=True)
+            self.assertIn(self.base / ".codex" / "config.toml", paths)
+            # The new mode reaches the classifier as well, not only path output.
+            (self.base / ".codex").mkdir()
+            (self.base / ".codex" / "config.toml").write_text('sqlite_home="fixture"')
+            peer.check_codex_storage(self.root, cwd=self.cwd)
+            with self.assertRaises(peer.CcPeerError) as caught:
+                peer.check_codex_storage(self.root, cwd=self.cwd, wake_preferences=True)
+            self.assertEqual(caught.exception.details["reason"], "sqlite_home_project_configuration")
 
     def test_symlink_marker_fails_closed(self):
         try:

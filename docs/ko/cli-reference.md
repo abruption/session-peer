@@ -469,6 +469,8 @@ Codex 검색은 읽기 전용 SQLite 연결을 사용하여 `state_5.sqlite`를 
 
 ### SQLite 저장소 경계
 
+아래의 macOS 강제 설정만 검사하는 정책은 조사한 Codex 0.162.1 큐 경로에 적용됩니다. wake에는 버전별 예외가 있습니다. 지원 버전인 Codex [0.154.0](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/config/src/loader/macos.rs)은 `CFPreferencesCopyAppValue`로 일반 설정과 강제 설정을 모두 읽습니다. session-peer는 wake 버전을 확인한 뒤 두 종류의 저장소 변경 및 사용자 지정 프로젝트 마커를 검사하며, wake 예산 예약 전과 큐·wake 자식 프로세스 시작 직전에 다시 확인합니다. 활성 writer에게 큐만 제출하는 경우에도 적용됩니다. 미지원 wake 버전에는 이 이전 설정 정책을 적용하지 않습니다. 일반 큐 전용 경로는 강제 설정만 검사하며 wake 지원 범위도 늘어나지 않습니다. 큐 제출이 확인된 뒤 거부되더라도 제출 사실을 유지하고 다시 보내지 않습니다. 이는 소스에 근거한 검사와 모의 회귀 테스트이며 새로운 native 설정이나 MDM 실험이 아닙니다.
+
 native 로더의 계층 목록 주석에는 `<cwd>/config.toml`이 있지만, 고정된 [프로젝트 계층 구성 코드](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/config/src/loader/mod.rs#L1652)는 `.codex/config.toml`을 불러옵니다. 이 검사는 오래된 주석이 아니라 실제 구현을 따릅니다. Windows Known Folder 조회가 성공했는데 반환 경로가 잘못됐거나 크기 제한을 넘으면 다른 디렉터리로 조용히 대체하지 않고 거부합니다.
 
 wake는 예산 예약 전에 알려진 저장소 설정을 검사하지만, 예약 후 설정이나 쓰기 프로세스 증거가 바뀌면 후속 재검사에서 거부될 수 있습니다. 변환된 native 홈 경로는 상속된 cwd를 유지하며 Windows 소비자 디렉터리는 검사하지 않습니다.

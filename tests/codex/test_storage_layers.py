@@ -63,7 +63,7 @@ class StorageLayers(unittest.TestCase):
             to="codex:" + THREAD, dry_run=False, all=False,
             allow_inactive_codex_home=True, wake=False)
 
-    def managed_values(self):
+    def managed_values(self, **kwargs):
         values = []
         for path in self.managed_paths:
             if path.exists():
