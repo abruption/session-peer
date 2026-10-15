@@ -22,14 +22,14 @@ class Codex(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
-        self.root = Path(self.directory.name)
+        self.root = Path(self.directory.name).resolve()
         isolate_native_layers(self, self.root)
         self.db = self.root / "state_5.sqlite"
         conn = sqlite3.connect(self.db)
         conn.execute("CREATE TABLE threads (id TEXT, name TEXT, title TEXT, cwd TEXT, updated_at INTEGER, archived INTEGER, rollout_path TEXT)")
         conn.executemany("INSERT INTO threads VALUES (?,?,?,?,?,?,?)", [
-            (THREAD, None, "title", "/project", 10, 0, "/missing-rollout"),
-            (OTHER, "named", "fallback", "/other", 20, 1, "/missing-rollout")])
+            (THREAD, None, "title", str(self.root / "missing-project"), 10, 0, "/missing-rollout"),
+            (OTHER, "named", "fallback", str(self.root / "missing-other"), 20, 1, "/missing-rollout")])
         conn.commit()
         conn.close()
         self.args = argparse.Namespace(codex_home=str(self.root), codex_bin=None, all=False,

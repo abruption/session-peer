@@ -47,7 +47,8 @@ class CodexHomes(unittest.TestCase):
         home.mkdir(parents=True, exist_ok=True)
         with contextlib.closing(sqlite3.connect(home / "state_5.sqlite")) as conn:
             conn.execute("CREATE TABLE threads (id TEXT, title TEXT, cwd TEXT, updated_at INTEGER, archived INTEGER, rollout_path TEXT)")
-            conn.execute("INSERT INTO threads VALUES (?, 'copy', '/project', 1, ?, '/missing-rollout')", (thread, archived))
+            conn.execute("INSERT INTO threads VALUES (?, 'copy', ?, 1, ?, '/missing-rollout')",
+                         (thread, str(self.user / "missing-project"), archived))
             conn.commit()
 
     def send(self, *options):
