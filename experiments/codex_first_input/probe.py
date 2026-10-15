@@ -21,11 +21,16 @@ class ProbeError(Exception):
     """Sanitized protocol/precondition failure, without native response text."""
 
 
+def rpc_error_code(error):
+    if (not isinstance(error, dict) or type(error.get("code")) is not int
+            or not isinstance(error.get("message"), str)):
+        raise ProbeError("invalid_rpc_error")
+    return error["code"]
+
+
 def rpc_result(response):
     if "error" in response:
-        error = response["error"]
-        if not isinstance(error, dict) or type(error.get("code")) is not int:
-            raise ProbeError("invalid_rpc_error")
+        rpc_error_code(response["error"])
         raise ProbeError("rpc_rejected")
     result = response.get("result")
     if not isinstance(result, dict):
@@ -99,6 +104,10 @@ def main(argv=None, state=None):
         ephemeral = thread.get("ephemeral")
         if ephemeral is not None and type(ephemeral) is not bool:
             raise ProbeError("invalid_thread_metadata")
+        if args.mode == "queue" and ephemeral is not False:
+            # Ephemeral conversations can have prior turns without any stored
+            # row. Missing/null metadata cannot establish persistence either.
+            raise ProbeError("persistent_thread_required")
         rows = 0
         dbs = list(codex_home.glob("state_*.sqlite"))
         assert dbs
@@ -115,11 +124,9 @@ def main(argv=None, state=None):
         method = "thread/queue/add"
         result = call(method, {"threadId": thread_id, "input": [{"type": "text", "text": message}], "clientUserMessageId": str(uuid.uuid4())})
         if "error" in result:
-            error = result["error"]
-            if not isinstance(error, dict) or type(error.get("code")) is not int:
-                raise ProbeError("invalid_rpc_error")
+            code = rpc_error_code(result["error"])
             state["accepted"] = False
-            print(json.dumps({"method": method, "accepted": False, "errorCode": error["code"], "retryAllowed": False}), flush=True)
+            print(json.dumps({"method": method, "accepted": False, "errorCode": code, "retryAllowed": False}), flush=True)
             return 1
         else:
             queued = rpc_result(result)

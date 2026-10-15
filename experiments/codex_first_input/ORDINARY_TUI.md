@@ -117,19 +117,24 @@ The supplied Codex home is now canonicalized before SQLite URI construction and
 must match the absolute `codexHome` returned by `initialize` before any thread
 lookup or database inspection. Missing or mismatched server-home evidence
 refuses the probe without queuing. A queue RPC rejection returns exit 1; malformed
-error objects or non-integer codes yield an unknown outcome once queue submission
+error objects, non-integer codes or missing/non-string messages yield an unknown outcome once queue submission
 has been attempted, without reflecting native error text or retrying. Timeout,
 invalid JSON, invalid results, and transport failures after that boundary also
 report `accepted:null`, `outcome:unknown`, and `retryAllowed:false`; after a queue
 attempt, a validated RPC rejection alone supplies `accepted:false`. Runtime
 preflight failures report `accepted:false`, `outcome:not_attempted`; argparse
 usage errors retain exit 2 and usage output. An interrupted probe returns exit 130 while preserving the
-same effect boundary. `ephemeral` is restricted to boolean/null; arbitrary result
-keys and native error details are not reflected. The version guard remains
+same effect boundary. Queue mode requires explicit `ephemeral:false` before
+database inspection or submission: a previously used ephemeral conversation may
+still have no database row. True, null and missing values cannot establish this
+precondition. Inspection mode may report boolean/null metadata without queuing;
+that does not prove the conversation is unused. Arbitrary result keys and native
+error details are not reflected. The version guard remains
 exactly 0.162.1, and Python optimization is refused up front.
 
-Seven synthetic WebSocket/temporary-database tests cover these boundaries,
-including relative home paths and exactly one queue attempt on rejection.
+Ten synthetic WebSocket/temporary-database tests cover these boundaries,
+including relative home paths, complete error validation on both RPC paths,
+ephemeral/missing/null refusal and exactly one queue attempt on rejection.
 These are harness regression tests, not new native delivery, receipt, platform,
 or production-support evidence. None of these review-driven guards were exercised
 by another live native run. SQLite handles are explicitly closed. A failure during

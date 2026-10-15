@@ -42,7 +42,7 @@ class FakeWebSocket:
             result = {"data": ["owned-thread"], "nextCursor": None}
         elif method == "thread/read":
             result = {"thread": {"cwd": self.home, "status": {"type": "idle"},
-                                 "canAcceptDirectInput": True, "ephemeral": True}}
+                                 "canAcceptDirectInput": True, "ephemeral": False}}
         else:
             if isinstance(self.queue_response, BaseException):
                 raise self.queue_response
@@ -78,10 +78,10 @@ class FirstInputProbeTests(unittest.TestCase):
             db.execute("CREATE TABLE threads (id TEXT)")
             db.commit()
 
-    def invoke(self, server_home, queue_response=None, supplied_home=None):
+    def invoke(self, server_home, queue_response=None, supplied_home=None, mode="queue"):
         ws = FakeWebSocket(server_home, {"result": {"queuedSubmission": {}}} if queue_response is None else queue_response)
         args = ["--socket", str(self.endpoint), "--codex-home", supplied_home or str(self.home),
-                "--expected-cwd", str(self.home), "--mode", "queue", "--ack-marker", "ACK TEST"]
+                "--expected-cwd", str(self.home), "--mode", mode, "--ack-marker", "ACK TEST"]
         output = io.StringIO()
         with mock.patch.object(self.probe, "unix_connect", return_value=ws), contextlib.redirect_stdout(output):
             exit_code = self.probe.run(args)
@@ -112,7 +112,10 @@ class FirstInputProbeTests(unittest.TestCase):
         self.assertNotIn("PRIVATE", output)
 
     def test_malformed_errors_fail_without_traceback_or_retry(self):
-        for error in (None, [], "PRIVATE", {"code": True}, {"code": "-32603"}, {}):
+        for error in (None, [], "PRIVATE", {"code": True, "message": "PRIVATE"},
+                      {"code": "-32603", "message": "PRIVATE"}, {}, {"code": -32603},
+                      {"code": -32603, "message": None}, {"code": -32603, "message": 1},
+                      {"code": -32603, "message": []}):
             with self.subTest(error=error):
                 exit_code, sent, output = self.invoke(str(self.home), {"error": error})
                 self.assertEqual(exit_code, 1)
@@ -120,7 +123,58 @@ class FirstInputProbeTests(unittest.TestCase):
                 self.assertEqual(json.loads(output.splitlines()[-1])["error"], "invalid_rpc_error")
                 self.assertIsNone(json.loads(output.splitlines()[-1])["accepted"])
                 self.assertEqual(json.loads(output.splitlines()[-1])["outcome"], "unknown")
+                self.assertFalse(json.loads(output.splitlines()[-1])["retryAllowed"])
                 self.assertNotIn("PRIVATE", output)
+
+    def test_rpc_result_uses_the_same_complete_error_validation(self):
+        for error in ({"code": -1}, {"code": -1, "message": None},
+                      {"code": -1, "message": 1}, {"code": True, "message": "PRIVATE"}):
+            with self.subTest(error=error), self.assertRaises(self.probe.ProbeError) as caught:
+                self.probe.rpc_result({"error": error})
+            self.assertEqual(str(caught.exception), "invalid_rpc_error")
+        for message in ("", "PRIVATE native text"):
+            with self.subTest(empty=not message), self.assertRaises(self.probe.ProbeError) as caught:
+                self.probe.rpc_result({"error": {"code": -1, "message": message}})
+            self.assertEqual(str(caught.exception), "rpc_rejected")
+
+    def test_ephemeral_or_unproven_threads_refuse_before_database_or_queue(self):
+        original = FakeWebSocket.recv
+        for label, fields in (("ephemeral", {"ephemeral": True}), ("null", {"ephemeral": None}),
+                              ("missing", {})):
+            def metadata(ws, timeout):
+                raw = original(ws, timeout)
+                if ws.sent[-1]["method"] == "thread/read":
+                    value = json.loads(raw)
+                    value["result"]["thread"].pop("ephemeral", None)
+                    value["result"]["thread"].update(fields)
+                    return json.dumps(value)
+                return raw
+            with self.subTest(case=label), mock.patch.object(FakeWebSocket, "recv", metadata), \
+                    mock.patch.object(self.probe.sqlite3, "connect", side_effect=AssertionError("DB must not open")) as db:
+                exit_code, sent, output = self.invoke(str(self.home))
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(db.call_count, 0)
+            self.assertFalse(any(item["method"] == "thread/queue/add" for item in sent))
+            result = json.loads(output.splitlines()[-1])
+            self.assertEqual(result["error"], "persistent_thread_required")
+            self.assertIs(result["accepted"], False)
+            self.assertEqual(result["outcome"], "not_attempted")
+            self.assertFalse(result["retryAllowed"])
+
+    def test_inspection_does_not_claim_row_absence_proves_ephemeral_freshness(self):
+        original = FakeWebSocket.recv
+        def metadata(ws, timeout):
+            raw = original(ws, timeout)
+            if ws.sent[-1]["method"] == "thread/read":
+                value = json.loads(raw)
+                value["result"]["thread"]["ephemeral"] = True
+                return json.dumps(value)
+            return raw
+        with mock.patch.object(FakeWebSocket, "recv", metadata):
+            exit_code, sent, output = self.invoke(str(self.home), mode="inspect")
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(json.loads(output.splitlines()[-1])["ephemeral"])
+        self.assertFalse(any(item["method"] == "thread/queue/add" for item in sent))
 
     def test_uncertain_queue_failures_preserve_unknown_and_no_retry(self):
         for response in (TimeoutError("PRIVATE timeout"), OSError("PRIVATE transport"),
