@@ -34,7 +34,10 @@ class CodexGenerationUnsupported(unittest.TestCase):
             "CODEX_HOME": str(self.root)}, clear=True)
         environment.start()
         self.addCleanup(environment.stop)
-        for name in ("codex_system_config_paths", "codex_managed_preference_paths"):
+        # Isolate both the older file-backed and newer forced-preference
+        # readers so these generation fixtures never inspect host MDM state.
+        for name in ("codex_system_config_paths", "codex_managed_preference_paths",
+                     "codex_managed_preference_values"):
             if hasattr(peer, name):
                 layer = mock.patch.object(peer, name, return_value=[])
                 layer.start()
