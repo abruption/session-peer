@@ -325,12 +325,19 @@ def codex_thread_cwd(root: Path, thread_id: str) -> Path | None:
         raise codex_storage_refused("consumer_directory_unverifiable")
     path = Path(row[0])
     try:
-        return path if path.is_dir() else None
+        return path if stat.S_ISDIR(path.stat().st_mode) else None
+    except (FileNotFoundError, NotADirectoryError):
+        return None
     except OSError as exc:
         raise codex_storage_refused("consumer_directory_unverifiable") from exc
 
 
-def check_codex_consumer_storage(root: Path, thread_id: str) -> None:
+def check_codex_consumer_storage(root: Path, thread_id: str, *, native_home: str | None = None) -> None:
+    if native_home and not IS_WINDOWS:
+        # A translated Windows receiver has Windows cwd metadata. POSIX
+        # paths cannot inspect its configuration; preserve the explicitly
+        # unverified legacy route rather than classifying that cwd as invalid.
+        return
     cwd = codex_thread_cwd(root, thread_id)
     if cwd is not None:
         check_codex_storage(root, cwd=cwd)
@@ -356,12 +363,13 @@ def codex_queue_storage_preflight(args: argparse.Namespace, root: Path, thread_i
     Dry-run checks this same plan without a native child; a real send repeats
     it immediately before the effect. Neither removes the time gap before the
     native process reads its configuration. Callers that reserve shared
-    budgets (wake) run this first, so a storage refusal never consumes a
-    reservation. Returns the queue working directory.
+    budgets (wake) run this first, so refusals detected here do not consume a
+    reservation. Later checks can still refuse after reservation if evidence
+    changes. Returns the queue working directory.
     """
     queue_cwd = codex_queue_cwd(root, getattr(args, "codex_native_home", None))
     check_codex_storage(root, cwd=queue_cwd)
-    check_codex_consumer_storage(root, thread_id)
+    check_codex_consumer_storage(root, thread_id, native_home=getattr(args, "codex_native_home", None))
     return queue_cwd
 
 
@@ -1159,7 +1167,7 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
     # operator policy; it is never accepted from a paired request.
     process_home = native_home or str(root)
     env = codex_process_environment(root, process_home, cwd=queue_cwd)
-    check_codex_consumer_storage(root, thread_id)
+    check_codex_consumer_storage(root, thread_id, native_home=native_home)
     try:
         # Keep leading dashes inside the option value, including with --no-from.
         done = subprocess.run(argv, cwd=None if native_home else str(queue_cwd),

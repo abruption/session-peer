@@ -346,6 +346,60 @@ class StorageLayers(unittest.TestCase):
             run.assert_not_called()
         self.assertEqual(caught.exception.details["reason"], "sqlite_home_project_configuration")
 
+    def test_consumer_directory_stat_errors_are_not_silently_absent(self):
+        self.database()
+        for error in (PermissionError("private"), OSError("private")):
+            with self.subTest(error=type(error).__name__), mock.patch.object(Path, "stat", side_effect=error):
+                with self.assertRaises(peer.CcPeerError) as caught:
+                    peer.codex_thread_cwd(self.root, THREAD)
+                self.assertEqual(caught.exception.details["reason"], "consumer_directory_unverifiable")
+                self.assertNotIn("private", str(caught.exception))
+        for error in (FileNotFoundError(), NotADirectoryError()):
+            with mock.patch.object(Path, "stat", side_effect=error):
+                self.assertIsNone(peer.codex_thread_cwd(self.root, THREAD))
+
+    @unittest.skipIf(peer.IS_WINDOWS, "translated route runs in POSIX Python")
+    def test_translated_windows_cwd_preserves_unverified_dry_run_and_queue(self):
+        self.database()
+        self.args.codex_native_home = r"C:\fixture\home"
+        for cwd in (r"C:\project", r"\\server\share\project"):
+            with self.subTest(cwd=cwd):
+                with contextlib.closing(sqlite3.connect(self.root / "state_5.sqlite")) as conn:
+                    conn.execute("UPDATE threads SET cwd=? WHERE id=?", (cwd, THREAD))
+                    conn.commit()
+                # The Windows consumer's directory is outside POSIX inspection.
+                with mock.patch.object(peer, "codex_thread_cwd", side_effect=AssertionError("not inspectable")):
+                    validated, dry = self.queue(dry_run=True)
+                    queued, sent = self.queue(dry_run=False)
+                dry.assert_not_called()
+                sent.assert_called_once()
+                self.assertEqual(validated["status"], "validated")
+                self.assertEqual(queued["status"], "queued")
+                self.assertIsNone(sent.call_args.kwargs["cwd"])
+                self.assertEqual(sent.call_args.kwargs["env"]["CODEX_HOME"], self.args.codex_native_home)
+                self.assertFalse(queued["consumptionConfirmed"])
+                self.assert_no_authority_claim(validated)
+                self.assert_no_authority_claim(queued)
+
+    @unittest.skipIf(peer.IS_WINDOWS, "translated route runs in POSIX Python")
+    def test_translated_windows_cwd_wake_still_refuses_before_budget_or_queue(self):
+        self.database(cwd=r"C:\project")
+        self.args.codex_native_home = r"C:\fixture\home"
+        self.args.wake = True
+        version = mock.Mock(stdout=sorted(peer.CODEX_WAKE_VERSIONS)[0] + "\n")
+        with mock.patch.object(peer, "known_codex_homes", return_value=[self.root]), \
+                mock.patch.object(peer, "codex_executable", return_value="fixture"), \
+                mock.patch.object(peer.subprocess, "run", return_value=version) as run, \
+                mock.patch.object(peer, "wake_target_rate_reserve") as reserve, \
+                mock.patch.object(peer.subprocess, "Popen") as start:
+            with self.assertRaises(peer.CcPeerError) as caught:
+                peer.queue_codex(self.args, "fixture")
+        self.assertEqual(caught.exception.details["wake"]["reason"], "cwd_unavailable")
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0], ["fixture", "--version"])
+        reserve.assert_not_called()
+        start.assert_not_called()
+
     def test_layer_change_at_effect_boundary_refuses_before_queue(self):
         self.database()
         def revalidate(*unused):
