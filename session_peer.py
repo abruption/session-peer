@@ -444,7 +444,7 @@ def codex_windows_program_data() -> str:
                 # directory when a Windows path contains an unpaired surrogate.
                 value = encoded.decode("utf-16-le", errors="surrogatepass")
                 import ntpath
-                if not value or not ntpath.isabs(value):
+                if not value or not ntpath.splitdrive(value)[0] or not ntpath.isabs(value):
                     raise ValueError("invalid native directory")
                 return value
             encoded.extend(unit.to_bytes(2, "little"))

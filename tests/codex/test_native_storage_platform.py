@@ -51,7 +51,7 @@ class NativeStoragePlatforms(unittest.TestCase):
                                  0 if options.get("null") or options.get("error") else 1)
 
     def test_known_folder_success_does_not_fallback_on_invalid_path(self):
-        for value in ("relative", "x" * 32768):
+        for value in ("", "relative", r"\NativeData", "x" * 32768):
             loader, ole = self.windows_api(value=value)
             with loader:
                 with self.assertRaises(peer.CcPeerError) as caught:
