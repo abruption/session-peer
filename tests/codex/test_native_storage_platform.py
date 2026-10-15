@@ -12,18 +12,22 @@ import session_peer as peer
 
 class NativeStoragePlatforms(unittest.TestCase):
     def windows_api(self, value=r"D:\NativeData", hr=0, null=False, error=False):
-        raw = value.encode("utf-16-le") + b"\x00\x00"
+        raw = value.encode("utf-16-le", errors="surrogatepass") + b"\x00\x00"
         buffer = ctypes.create_string_buffer(raw)
         shell, ole = mock.Mock(), mock.Mock()
         def lookup(guid, flags, token, output):
             self.assertEqual((flags, token), (0, None))
             self.assertEqual(guid._obj.Data1, 0x62AB5D82)
+            self.assertEqual((guid._obj.Data2, guid._obj.Data3), (0xFDC1, 0x4DC3))
+            self.assertEqual(tuple(guid._obj.Data4), (0xA9, 0xDD, 0x07, 0x0D, 0x1D, 0x49, 0x5D, 0x97))
             if error:
                 raise OSError("fixture")
             if not null:
                 ctypes.cast(output, ctypes.POINTER(ctypes.c_void_p))[0] = ctypes.addressof(buffer)
             return hr
         shell.SHGetKnownFolderPath.side_effect = lookup
+        ole.expected_pointer = ctypes.addressof(buffer)
+        ole.lookup = shell.SHGetKnownFolderPath
         loader = mock.patch.object(ctypes, "WinDLL", side_effect=[shell, ole], create=True)
         return loader, ole
 
@@ -32,16 +36,35 @@ class NativeStoragePlatforms(unittest.TestCase):
         with loader, mock.patch.dict(os.environ, {"ProgramData": "untrusted"}):
             self.assertEqual(peer.codex_windows_program_data(), r"D:\NativeData")
         ole.CoTaskMemFree.assert_called_once()
+        self.assertEqual(ole.CoTaskMemFree.call_args.args[0].value, ole.expected_pointer)
+        self.assertIs(ole.lookup.restype, ctypes.c_int32)
+        self.assertEqual(ole.lookup.argtypes[1:], [ctypes.c_uint32, ctypes.c_void_p,
+                                                 ctypes.POINTER(ctypes.c_void_p)])
 
-    def test_known_folder_failure_null_error_and_invalid_path_fallback(self):
-        for options in ({"hr": -1}, {"null": True}, {"error": True}, {"value": "relative"},
-                        {"value": "x" * 32768}):
+    def test_known_folder_failure_null_and_error_fallback(self):
+        for options in ({"hr": -1}, {"null": True}, {"error": True}):
             with self.subTest(options=list(options)):
                 loader, ole = self.windows_api(**options)
                 with loader:
                     self.assertEqual(peer.codex_windows_program_data(), r"C:\ProgramData")
                 self.assertEqual(ole.CoTaskMemFree.call_count,
                                  0 if options.get("null") or options.get("error") else 1)
+
+    def test_known_folder_success_does_not_fallback_on_invalid_path(self):
+        for value in ("relative", "x" * 32768):
+            loader, ole = self.windows_api(value=value)
+            with loader:
+                with self.assertRaises(peer.CcPeerError) as caught:
+                    peer.codex_windows_program_data()
+            self.assertEqual(caught.exception.details["reason"], "storage_config_unverifiable")
+            ole.CoTaskMemFree.assert_called_once()
+
+    def test_known_folder_preserves_native_utf16_path(self):
+        value = "D:\\Native-" + chr(0xd800)
+        loader, ole = self.windows_api(value=value)
+        with loader:
+            self.assertEqual(peer.codex_windows_program_data(), value)
+        ole.CoTaskMemFree.assert_called_once()
 
     @unittest.skipUnless(os.name == "nt", "Windows Known Folder API only")
     def test_windows_api_path_smoke_without_exposing_value(self):
@@ -114,6 +137,17 @@ class NativeStoragePlatforms(unittest.TestCase):
                     peer._refuse_managed_preference_storage()
                 self.assertEqual(caught.exception.details["reason"], "storage_config_unverifiable")
 
+    def test_cf_key_creation_failure_releases_existing_domain(self):
+        cf = self.cf_api()
+        cf.CFStringCreateWithCString.side_effect = [10, 0]
+        with mock.patch.object(peer.sys, "platform", "darwin"), \
+                mock.patch.object(ctypes, "CDLL", return_value=cf):
+            with self.assertRaises(peer.CcPeerError) as caught:
+                peer._refuse_managed_preference_storage()
+        self.assertEqual(caught.exception.details["reason"], "storage_config_unverifiable")
+        self.assertEqual(cf.CFRelease.call_args_list, [mock.call(10)])
+        cf.CFPreferencesCopyAppValue.assert_not_called()
+
 
 class NativeProjectRoots(unittest.TestCase):
     def setUp(self):
@@ -152,6 +186,16 @@ class NativeProjectRoots(unittest.TestCase):
         (self.base / ".codex" / "config.toml").write_text('sqlite_home="ignored-above-root"')
         (self.cwd / "config.toml").write_text('sqlite_home="ignored-cwd-config"')
         peer.check_codex_storage(self.root, cwd=self.cwd)
+        (self.repo / ".codex").mkdir()
+        (self.repo / ".codex" / "config.toml").write_text('sqlite_home="fixture"')
+        with self.assertRaises(peer.CcPeerError) as caught:
+            peer.check_codex_storage(self.root, cwd=self.cwd)
+        self.assertEqual(caught.exception.details["reason"], "sqlite_home_project_configuration")
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO marker fixture needs POSIX")
+    def test_non_directory_marker_is_recognized_without_opening_it(self):
+        os.mkfifo(self.repo / ".git")
+        self.assertEqual(len(self.paths()), 3)
         (self.repo / ".codex").mkdir()
         (self.repo / ".codex" / "config.toml").write_text('sqlite_home="fixture"')
         with self.assertRaises(peer.CcPeerError) as caught:

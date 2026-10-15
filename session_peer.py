@@ -418,6 +418,7 @@ def codex_windows_program_data() -> str:
                     ("Data3", ctypes.c_uint16), ("Data4", ctypes.c_ubyte * 8)]
     pointer = ctypes.c_void_p()
     free = None
+    lookup_succeeded = False
     try:
         shell = ctypes.WinDLL("shell32", use_last_error=True)
         ole = ctypes.WinDLL("ole32", use_last_error=True)
@@ -432,18 +433,25 @@ def codex_windows_program_data() -> str:
                           (ctypes.c_ubyte * 8)(0xA9, 0xDD, 0x07, 0x0D, 0x1D, 0x49, 0x5D, 0x97))
         if lookup(ctypes.byref(identifier), 0, None, ctypes.byref(pointer)) != 0 or not pointer.value:
             return r"C:\ProgramData"
+        lookup_succeeded = True
         # Windows WCHAR is UTF-16, independently of the host's wchar_t width.
         units = ctypes.cast(pointer, ctypes.POINTER(ctypes.c_uint16))
         encoded = bytearray()
         for index in range(32768):
             unit = units[index]
             if unit == 0:
-                value = encoded.decode("utf-16-le", errors="strict")
+                # Match native OsString::from_wide without substituting another
+                # directory when a Windows path contains an unpaired surrogate.
+                value = encoded.decode("utf-16-le", errors="surrogatepass")
                 import ntpath
-                return value if value and ntpath.isabs(value) else r"C:\ProgramData"
+                if not value or not ntpath.isabs(value):
+                    raise ValueError("invalid native directory")
+                return value
             encoded.extend(unit.to_bytes(2, "little"))
-    except (AttributeError, OSError, ValueError, UnicodeError):
-        pass
+        raise ValueError("unbounded native directory")
+    except (AttributeError, OSError, ValueError, UnicodeError) as exc:
+        if lookup_succeeded:
+            raise codex_storage_refused("storage_config_unverifiable") from exc
     finally:
         if pointer.value and free is not None:
             free(pointer)
@@ -584,7 +592,9 @@ def codex_project_config_paths(cwd: Path, *, root: Path | None = None) -> list[P
                     head_present = True
                 except (FileNotFoundError, NotADirectoryError):
                     pass
-            if stat.S_ISREG(info.st_mode) or head_present:
+            # Native accepts any existing non-directory marker by metadata;
+            # never open FIFO/device markers or silently scan less than native.
+            if not stat.S_ISDIR(info.st_mode) or head_present:
                 return candidates[:index + 1]
         except (FileNotFoundError, NotADirectoryError):
             continue

@@ -469,6 +469,8 @@ Codex 검색은 읽기 전용 SQLite 연결을 사용하여 `state_5.sqlite`를 
 
 ### SQLite 저장소 경계
 
+이전 개발 후보의 검사를 정정했습니다. native 로더의 계층 목록 주석에는 `<cwd>/config.toml`이 있지만, 고정된 [프로젝트 계층 구성 코드](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/config/src/loader/mod.rs#L1652)는 `.codex/config.toml`을 불러옵니다. 이 검사는 오래된 주석이 아니라 실제 구현을 따릅니다. Windows Known Folder 조회가 성공했는데 반환 경로가 잘못됐거나 크기 제한을 넘으면 다른 디렉터리로 조용히 대체하지 않고 거부합니다.
+
 wake는 예산 예약 전에 알려진 저장소 설정을 검사하지만, 예약 후 설정이나 쓰기 프로세스 증거가 바뀌면 후속 재검사에서 거부될 수 있습니다. 변환된 native 홈 경로는 상속된 cwd를 유지하며 Windows 소비자 디렉터리는 검사하지 않습니다.
 
 2026-10-09 소스 조사에서는 native Codex [0.154.0](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/core/src/config/mod.rs)과 [0.159.0](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/core/src/config/mod.rs)을 확인했습니다. 두 버전 모두 설정된 `sqlite_home`, 비어 있지 않은 `CODEX_SQLITE_HOME`, `CODEX_HOME` 순으로 SQLite 저장소를 선택합니다. 상대 환경 변수 경로의 기준은 native에서 결정한 작업 디렉터리입니다. [관리자 요구사항](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/core/src/config/requirements.rs)은 명령행 재정의를 포함한 저장소 설정을 바꿀 수 있습니다. [native 큐 경로](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/tui/src/session_queue_commands.rs)는 이미 실행 중인 공유 서버를 재사용할 수 있으므로 새 클라이언트의 환경만으로 서버의 저장소를 확인할 수 없습니다. 이는 소스 조사 결과이며 새로운 실제 전송이나 플랫폼 검증이 아닙니다.

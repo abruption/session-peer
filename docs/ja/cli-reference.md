@@ -472,6 +472,8 @@ Codex の検出は、読み取り専用の SQLite 接続を使用して `state_5
 
 ### SQLite ストレージの境界
 
+以前の開発候補の検査を訂正しました。native ローダーの層一覧コメントには `<cwd>/config.toml` とありますが、固定した[プロジェクト層の構成コード](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/config/src/loader/mod.rs#L1652)は `.codex/config.toml` を読み込みます。この検査は古いコメントではなく実装に従います。Windows Known Folder の取得が成功しても、返されたパスが不正または上限超過の場合、別のディレクトリへ黙って切り替えず拒否します。
+
 wake は予算予約前に既知のストレージ設定を調べますが、予約後に設定や書き込みプロセスの証拠が変わると、後続の再検査で拒否される場合があります。変換された native ホームの経路は継承した cwd を維持し、Windows の消費側ディレクトリは調べません。
 
 2026-10-09 のソース調査では native Codex [0.154.0](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/core/src/config/mod.rs) と [0.159.0](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/core/src/config/mod.rs) を確認しました。両版は設定済みの `sqlite_home`、空でない `CODEX_SQLITE_HOME`、`CODEX_HOME` の順で SQLite ストレージを選択します。相対的な環境変数のパスは native が解決した作業ディレクトリを基準にします。[管理要件](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/core/src/config/requirements.rs) はコマンドライン指定を含むストレージ設定を置き換えられます。[native のキュー経路](https://github.com/openai/codex/blob/687a119f0fcaace47e1f1abcc77cec6c813fd6da/codex-rs/tui/src/session_queue_commands.rs) は稼働中の共有サーバーを再利用できるため、新しいクライアントの環境だけではサーバーのストレージを確認できません。これはソース上の確認であり、新たな実送信やプラットフォーム検証ではありません。
