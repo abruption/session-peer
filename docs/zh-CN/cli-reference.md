@@ -335,9 +335,9 @@ Codex 发现使用只读 SQLite 连接读取 `state_5.sqlite`。此内部模式�
 
 ### SQLite 存储边界
 
-macOS 设置检查策略取决于选定的 native 可执行文件。已审查的 Codex 0.162.1 仅读取强制设置，而 Codex [0.154.0](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/config/src/loader/macos.rs) 通过 `CFPreferencesCopyAppValue` 也读取普通设置。macOS 上的普通队列发送和 dry-run 会在选定目录和工作目录中运行一次 `--version` 子进程：查询限3秒，清理限2秒，标准输出限1 MiB，诊断输出限64 KiB。不回显输出内容；版本格式错误、不可获取或尚未审查时，保守检查普通设置，而非仅因版本而拒绝。无法确定清理完成时在提交队列前拒绝，中断在清理后传播。仅精确匹配 `codex-cli 0.162.1` 时才只检查强制设置，不假定后续版本相同。handoff 重用现有版本查询和原始期限，并将所选策略保留到提交阶段。受支持的0.154.0 wake 路径即使仅向活动 writer 提交队列，也检查普通设置。在预留额度和启动子进程的边界再次检查存储和自定义标记。macOS 以外不新增版本查询，不缓存结果，也不扩大 wake 支持范围。已确认队列提交之后发生拒绝时保留已提交事实且不重发。这些是源码检查和模拟回归测试，并非新的 native 设置或 MDM 实测。
+macOS 设置检查策略取决于选定的 native 可执行文件。已审查的 Codex 0.162.1 仅读取强制设置，而 Codex [0.154.0](https://github.com/openai/codex/blob/6b9826e3aa83b1a5947db50f4332cb9c65f1b340/codex-rs/config/src/loader/macos.rs) 通过 `CFPreferencesCopyAppValue` 也读取普通设置。macOS 上的普通队列发送和 dry-run 会在选定目录和工作目录中运行一次 `--version` 子进程：查询限3秒，清理限2秒，标准输出限1 MiB，诊断输出限64 KiB。不回显输出内容；版本格式错误、不可获取或尚未审查时，保守检查普通设置，而非仅因版本而拒绝。无法确定清理完成时在提交队列前拒绝，中断在尝试限时清理后传播。仅精确匹配 `codex-cli 0.162.1` 时才只检查强制设置，不假定后续版本相同。handoff 重用现有版本查询和原始期限，并将所选策略保留到提交阶段。受支持的0.154.0 wake 路径即使仅向活动 writer 提交队列，也检查普通设置。在预留额度和启动子进程的边界再次检查存储和自定义标记。macOS 以外不新增版本查询，不缓存结果，也不扩大 wake 支持范围。已确认队列提交之后发生拒绝时保留已提交事实且不重发。这些是源码检查和模拟回归测试，并非新的 native 设置或 MDM 实测。
 
-自行启动的队列和 wake 子进程使用严格解析后确实存在的物理工作目录，包括解析所有上级路径中的别名。项目搜索、子进程 `cwd`、POSIX `PWD` 和 wake 的 `thread/resume.cwd` 使用该目录。已保存的 consumer 目录仍存在时，使用相同的标记边界和自定义标记回退规则检查物理路径以及不同的逻辑路径，因此可能保守拒绝别名配置。consumer 目录已不存在时，仍保持没有配置层可检查的现有处理。这不证明运行中 writer 的启动配置，检查后别名或配置仍可能变化。
+自行启动的队列和 wake 子进程使用严格解析后确实存在的物理工作目录，包括解析所有上级路径中的别名。项目搜索、子进程 `cwd`、POSIX `PWD` 和 wake 的 `thread/resume.cwd` 使用该目录。已保存的 consumer 目录仍存在时，使用相同的标记边界和自定义标记回退规则检查物理路径以及不同的逻辑路径，因此可能保守拒绝别名配置。consumer 目录已不存在时，仍保持没有配置层可检查的现有处理。这不证明运行中 writer 的启动配置，检查后别名或配置仍可能变化。 结果中的 `wake.cwd` 也采用该物理路径，因此可能不同于保存的别名。
 
 native 加载器的层级列表注释提到 `<cwd>/config.toml`，但固定版本的[项目层构建代码](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/config/src/loader/mod.rs#L1652)实际加载 `.codex/config.toml`。本检查遵循实现，而非过时注释。Windows Known Folder 查询成功后，如果返回路径无效或超出长度上限，将拒绝而不是静默改用其他目录。
 

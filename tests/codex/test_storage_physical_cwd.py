@@ -118,6 +118,29 @@ class PhysicalStorageCwd(unittest.TestCase):
         # parent's config is outside that root and must not be over-scanned.
         peer.check_codex_consumer_storage(self.root, THREAD)
 
+    def test_isolation_also_filters_consumer_lexical_configuration(self):
+        # The lexical alias is outside this test's configured fixture root,
+        # but remains in a separately owned temporary directory. Never use
+        # actual machine preferences or ancestor config values as a fixture.
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        lexical_root = Path(outside.name).resolve()
+        (lexical_root / ".git").mkdir()
+        (lexical_root / ".git" / "HEAD").write_text("fixture\n", encoding="utf-8")
+        (lexical_root / ".codex").mkdir()
+        (lexical_root / ".codex" / "config.toml").write_text(
+            'sqlite_home="outside-fixture"\n', encoding="utf-8")
+        alias = self.link(lexical_root / "alias", self.cwd)
+        self.database(alias)
+        actual_read = peer._read_codex_config_bytes
+        def read_only_fixture(path):
+            if not os.path.abspath(path).startswith(str(self.base) + os.sep):
+                raise AssertionError("outside-fixture configuration read")
+            return actual_read(path)
+        with mock.patch.object(peer, "_read_codex_config_bytes", side_effect=read_only_fixture), \
+             mock.patch("ctypes.CDLL", side_effect=AssertionError("native preferences read")):
+            peer.check_codex_consumer_storage(self.root, THREAD)
+
     def test_consumer_alias_refuses_dry_run_and_send_without_child(self):
         alias = self.link(self.base / "alias", self.cwd)
         self.database(alias)
@@ -193,7 +216,7 @@ class PhysicalStorageCwd(unittest.TestCase):
     def test_translated_consumer_keeps_the_explicit_unverified_contract(self):
         self.database(self.base / "missing-consumer")
         with mock.patch.object(peer, "IS_WINDOWS", False), \
-             mock.patch.object(peer, "codex_thread_cwd") as inspect:
+             mock.patch.object(peer, "_codex_thread_directory") as inspect:
             peer.check_codex_consumer_storage(self.root, THREAD, native_home=r"C:\fixture\home")
         inspect.assert_not_called()
 

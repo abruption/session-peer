@@ -51,6 +51,9 @@ class QueuePreferenceVersions(unittest.TestCase):
         cases = ((self.probe(), False), (self.probe(b"codex-cli 0.154.0"), True),
                  (self.probe(b"unexpected-fixture"), True), (self.probe(b"\xff"), True),
                  (self.probe(returncode=1), True), (self.probe(reason="process_deadline"), True),
+                 # Even complete reviewed-version output with abnormal exit
+                 # uses the conservative mode, not an unproven clean query.
+                 (self.probe(returncode=-9), True),  # POSIX SIGKILL, mocked on every OS
                  (self.probe(stdout_overflow=True), True), (self.probe(b"x" * 4097), True))
         for done, expected in cases:
             with self.subTest(expected=expected), mock.patch.object(peer.sys, "platform", "darwin"), \

@@ -788,14 +788,15 @@ def codex_queue_cwd(root: Path, native_home: str | None) -> Path:
 
 
 def codex_queue_storage_preflight(args: argparse.Namespace, root: Path, thread_id: str) -> Path:
-    """Every storage refusal a queue submission can raise, before any effect.
+    """Initial home, cwd and consumer checks for the selected queue plan.
 
-    Dry-run checks this same plan without a native child; a real send repeats
-    it immediately before the effect. Neither removes the time gap before the
-    native process reads its configuration. Callers that reserve shared
-    budgets (wake) run this first, so refusals detected here do not consume a
-    reservation. Later checks can still refuse after reservation if evidence
-    changes. Returns the queue working directory.
+    This helper starts no child. Ordinary macOS callers subsequently run the
+    bounded version query and apply its preference policy, including during
+    dry-run; dry-run never submits a queue item. Real submission repeats the
+    version-selected checks before its effect. Wake runs this initial guard
+    before reserving a budget, but later changes can still refuse after a
+    reservation. These checks do not remove the configuration-read time gap.
+    Returns the physical queue cwd (except the unverified translated route).
     """
     queue_cwd = codex_queue_cwd(root, getattr(args, "codex_native_home", None))
     include_ordinary_preferences = bool(getattr(args, "wake", False))
@@ -1649,8 +1650,8 @@ def codex_wake_preflight(root: Path, thread_id: str, executable: str) -> dict:
         raise wake_refused("version_unavailable", "Cannot establish native Codex wake support") from exc
     if version not in CODEX_WAKE_VERSIONS:
         raise wake_refused("unsupported_version", f"Codex wake is not validated for {version}")
-    # Only the validated 0.154.0 wake path includes ordinary CF preferences;
-    # do not impose its older loader semantics on queue-only 0.162.1 paths.
+    # Validated 0.154.0 wake always includes ordinary CF preferences. Ordinary
+    # queue paths select their own version policy; this does not expand wake.
     check_codex_storage(root, include_ordinary_preferences=True)
     try:
         with contextlib.closing(sqlite3.connect((root / "state_5.sqlite").as_uri() + "?mode=ro", uri=True, timeout=3)) as conn:
