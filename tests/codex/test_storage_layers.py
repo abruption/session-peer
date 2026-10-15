@@ -4,9 +4,10 @@ Native evidence (codex-cli 0.162.1, rust-v0.162.1): sqlite_home precedence is
 requirements > config layers > CODEX_SQLITE_HOME > CODEX_HOME. Config layers
 include system files, macOS managed profiles and the project layers of the
 process working directory; `codex queue` routes through a running app-server
-daemon when its control socket exists. These tests prove only that
-session-peer refuses before any process when it cannot vouch for storage.
-They are not evidence of native delivery, consumption or misrouting.
+daemon that accepts a connection. By user policy session-peer neither probes
+nor refuses on daemon presence. These tests prove only pre-effect refusal of
+known storage relocation; passing is not an attestation of effective storage
+and none of this is evidence of native delivery, consumption or misrouting.
 """
 import argparse
 import base64
@@ -206,49 +207,78 @@ class StorageLayers(unittest.TestCase):
         for directory in (project, project.parent, self.base, Path(self.base.anchor)):
             self.assertIn(directory / ".codex" / "config.toml", paths)
 
-    # -- shared app-server daemon ---------------------------------------
+    # -- shared app-server daemon (policy: no daemon-based refusal) -------
+    # The daemon's startup storage cannot be attested through the reviewed
+    # native APIs, and native TUIs start one by default. The user chose to
+    # leave daemon routing and embedded fallback to native Codex: an entry or
+    # a live socket must neither block nor be probed, and no authority is
+    # claimed. Known relocation in another layer still refuses.
 
-    def daemon_socket(self):
-        path = peer.codex_daemon_socket_path(self.root)
+    def daemon_entry(self):
+        path = self.root / "app-server-control" / "app-server-control.sock"
         path.parent.mkdir(parents=True)
         return path
 
+    def queue(self, dry_run):
+        self.args.dry_run = dry_run
+        completed = mock.Mock(returncode=0, stderr="",
+                              stdout="Queued message q-1 for thread %s.\n" % THREAD)
+        with mock.patch.object(peer, "known_codex_homes", return_value=[self.root]), \
+             mock.patch.object(peer, "codex_executable", return_value="fixture"), \
+             mock.patch.object(peer.subprocess, "run", return_value=completed) as run:
+            result = peer.queue_codex(self.args, "fixture")
+        return result, run
+
+    def assert_no_authority_claim(self, result):
+        for key in ("storageAuthority", "storageVerified", "daemon"):
+            self.assertNotIn(key, result)
+
     @unittest.skipIf(os.name == "nt" or not hasattr(socket, "AF_UNIX"), "POSIX socket fixture")
-    def test_present_daemon_socket_refuses_native_submission_only(self):
+    def test_live_daemon_socket_neither_blocks_nor_is_probed(self):
         # AF_UNIX paths are short; macOS per-user temp directories are not.
         short = Path(tempfile.mkdtemp(prefix="sp", dir="/tmp" if os.path.isdir("/tmp") else None))
         self.addCleanup(shutil.rmtree, short, True)
         self.root = short.resolve()
-        path = self.daemon_socket()
+        self.args.codex_home = str(self.root)
+        path = self.daemon_entry()
         if len(os.fsencode(str(path))) > 100:
             self.skipTest("temporary path too long for an AF_UNIX socket")
+        self.database()
         with contextlib.closing(socket.socket(socket.AF_UNIX)) as server:
             server.bind(str(path))
-            self.refuses("shared_server_storage_unverifiable", native_submission=True)
-            # Discovery and inventory read the home's own state, not the daemon.
-            peer.check_codex_storage(self.root)
-
-    def test_stale_or_nonsocket_daemon_entry_still_refuses(self):
-        # Presence is enough: the daemon's startup storage is never observable.
-        path = self.daemon_socket()
-        path.write_text("", encoding="utf-8")
-        self.refuses("shared_server_storage_unverifiable", native_submission=True)
-
-    def test_daemon_refusal_applies_to_dry_run_and_send_before_any_process(self):
-        self.database()
-        self.daemon_socket().write_text("", encoding="utf-8")
-        with mock.patch.object(peer, "known_codex_homes", return_value=[self.root]), \
-             mock.patch.object(peer, "codex_executable", return_value="fixture"), \
-             mock.patch.object(peer.subprocess, "run") as run, \
-             mock.patch.object(peer.subprocess, "Popen") as popen:
-            for dry_run in (False, True):
-                self.args.dry_run = dry_run
-                with self.assertRaises(peer.CcPeerError) as caught:
-                    peer.queue_codex(self.args, "fixture")
-                self.assertEqual(caught.exception.details["reason"],
-                                 "shared_server_storage_unverifiable")
+            server.listen(1)
+            server.setblocking(False)
+            validated, run = self.queue(dry_run=True)
             run.assert_not_called()
-            popen.assert_not_called()
+            queued, run = self.queue(dry_run=False)
+            run.assert_called_once()
+            # session-peer never connected: native Codex owns daemon selection.
+            with self.assertRaises(BlockingIOError):
+                server.accept()
+        self.assertEqual(validated["status"], "validated")
+        self.assertEqual(queued["status"], "queued")
+        for result in (validated, queued):
+            self.assert_no_authority_claim(result)
+
+    def test_stale_daemon_entry_does_not_block_dry_run_or_queue(self):
+        self.daemon_entry().write_text("", encoding="utf-8")
+        self.database()
+        self.assertEqual(self.queue(dry_run=True)[0]["status"], "validated")
+        result, run = self.queue(dry_run=False)
+        self.assertEqual(result["status"], "queued")
+        run.assert_called_once()
+        self.assert_no_authority_claim(result)
+
+    def test_daemon_entry_does_not_mask_another_unsupported_layer(self):
+        self.daemon_entry().write_text("", encoding="utf-8")
+        self.database()
+        self.system_paths[2].write_text('sqlite_home = "%s"\n' % SECRET, encoding="utf-8")
+        for dry_run in (True, False):
+            with self.subTest(dry_run=dry_run):
+                with self.assertRaises(peer.CcPeerError) as caught:
+                    self.queue(dry_run)
+                self.assertEqual(caught.exception.details["reason"],
+                                 "sqlite_home_system_configuration")
 
     # -- effect boundaries ----------------------------------------------
 
@@ -331,32 +361,50 @@ class StorageLayers(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform in ("darwin", "linux"), "wake is macOS/Linux only")
     def test_storage_refusal_does_not_consume_a_wake_reservation(self):
-        self.database()
-        socket_entry = self.root / "app-server-control" / "app-server-control.sock"
-        socket_entry.parent.mkdir()
-        socket_entry.write_text("", encoding="utf-8")
+        # Relocation that appears after the guarded wake preflight must still
+        # refuse before the per-target budget is reserved and before any child.
+        project = self.base / "thread-project"
+        project.mkdir()
+        cases = (
+            (self.system_paths[0], "sqlite_home_system_configuration"),
+            (project / ".codex" / "config.toml", "sqlite_home_project_configuration"),
+        )
+        self.database(cwd=project)
         self.args.wake = True
         self.args.wake_timeout = 1
         self.args.allow_inactive_codex_home = False
         version = mock.Mock(stdout=sorted(peer.CODEX_WAKE_VERSIONS)[0] + "\n")
         state = self.root / "session-peer" / "wake-locks" / (THREAD + ".lock")
-        for attempt in range(4):
-            with self.subTest(attempt=attempt), \
+        real_preflight = peer.codex_wake_preflight
+        for target, reason in cases:
+            calls = {"n": 0}
+
+            def preflight(*args, **kwargs):
+                result = real_preflight(*args, **kwargs)
+                calls["n"] += 1
+                if calls["n"] == 2:  # the re-check inside the wake guard
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text('sqlite_home = "%s"\n' % SECRET, encoding="utf-8")
+                return result
+
+            with self.subTest(reason=reason), \
                     mock.patch.object(peer, "known_codex_homes", return_value=[self.root]), \
                     mock.patch.object(peer, "codex_executable", return_value="fixture"), \
+                    mock.patch.object(peer, "codex_wake_preflight", side_effect=preflight), \
                     mock.patch.object(peer.subprocess, "run", return_value=version) as run, \
                     mock.patch.object(peer.subprocess, "Popen") as popen, \
                     mock.patch.object(peer, "wake_target_rate_reserve",
                                       wraps=peer.wake_target_rate_reserve) as reserve:
                 with self.assertRaises(peer.CcPeerError) as caught:
                     peer.queue_codex(self.args, "fixture")
-                self.assertEqual(caught.exception.details["reason"],
-                                 "shared_server_storage_unverifiable")
+                self.assertEqual(caught.exception.details["reason"], reason)
+                self.assertEqual(calls["n"], 2)
                 reserve.assert_not_called()
                 popen.assert_not_called()
-                # Only the version probe ran; no queue child was started.
+                # Only version probes ran; no queue child was started.
                 self.assertTrue(all(call.args[0][1:] == ["--version"] for call in run.call_args_list))
-            # The per-target budget file holds no reservation after any attempt.
+            target.unlink()
+            # The per-target budget file holds no reservation after the refusal.
             self.assertEqual(state.read_bytes() if state.exists() else b"", b"")
 
     def test_unreadable_or_malformed_consumer_metadata_refuses(self):

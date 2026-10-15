@@ -265,21 +265,17 @@ def codex_project_config_paths(cwd: Path) -> list[Path]:
     return paths
 
 
-def codex_daemon_socket_path(root: Path) -> Path:
-    return root / "app-server-control" / "app-server-control.sock"
+def check_codex_storage(root: Path, *, cwd: Path | None = None) -> None:
+    """Refuse known storage relocation before any effect.
 
-
-def check_codex_storage(root: Path, *, cwd: Path | None = None,
-                        native_submission: bool = False) -> None:
-    """Reject storage the selected home cannot vouch for, before any effect.
-
-    Covered native layers (codex-cli 0.162.1): inherited CODEX_SQLITE_HOME,
-    this home's config, system config/requirements, macOS managed profiles,
-    and, when `cwd` is given, the project layers of a process started there.
-    A native submission also refuses when a shared app-server daemon is
-    present: `codex queue` would route through it, and its startup-captured
-    storage cannot be observed. Package defaults and enterprise cloud bundles
-    are not inspected. Message bodies, accounts and transcripts are never read.
+    Covered native layers (codex-cli 0.162.1, rust-v0.162.1 092d3acd): an
+    inherited CODEX_SQLITE_HOME, this home's config, system config and
+    requirements, macOS managed profiles and, when `cwd` is given, the
+    project layers of a process started there. Passing is not an attestation
+    of effective storage: package defaults, enterprise cloud bundles and a
+    running shared app-server daemon (whose QueueStore keeps the database
+    chosen at its startup, while config/read rereads current disk layers) are
+    not inspected. Message bodies, accounts and transcripts are never read.
     """
     for name, value in os.environ.items():
         match = name.upper() == "CODEX_SQLITE_HOME" if IS_WINDOWS else name == "CODEX_SQLITE_HOME"
@@ -294,20 +290,11 @@ def check_codex_storage(root: Path, *, cwd: Path | None = None,
         for path in codex_project_config_paths(cwd):
             if os.path.normcase(str(path)) != user_config:
                 _refuse_configured_storage(path, "sqlite_home_project_configuration")
-    if native_submission:
-        try:
-            codex_daemon_socket_path(root).lstat()
-        except (FileNotFoundError, NotADirectoryError):
-            return
-        except OSError as exc:
-            raise codex_storage_refused("storage_config_unreadable") from exc
-        raise codex_storage_refused("shared_server_storage_unverifiable")
 
 
 def codex_process_environment(root: Path, native_home: str | None = None, *,
-                              cwd: Path | None = None,
-                              native_submission: bool = False) -> dict:
-    check_codex_storage(root, cwd=cwd, native_submission=native_submission)
+                              cwd: Path | None = None) -> dict:
+    check_codex_storage(root, cwd=cwd)
     env = {name: value for name, value in os.environ.items()
            if (name.upper() if IS_WINDOWS else name) not in ("CODEX_HOME", "CODEX_SQLITE_HOME")}
     env["CODEX_HOME"] = native_home or str(root)
@@ -354,8 +341,11 @@ def codex_queue_cwd(root: Path, native_home: str | None) -> Path:
 
     Native queue resolves project layers from its own working directory, so
     pin it to the inspected home. A translated native home (WSL relay receiver
-    to native Windows) keeps the inherited directory; only its POSIX-visible
-    layers can be checked here, not the Windows-side configuration.
+    to native Windows) keeps the inherited directory. Storage verification is
+    NOT supported for that path: this POSIX process cannot see the Windows
+    home spelling, case rules, environment, or system/managed/project layers,
+    so only POSIX-visible layers are checked and the submission contract is
+    otherwise unchanged.
     """
     return Path(os.getcwd()) if native_home else root
 
@@ -363,11 +353,14 @@ def codex_queue_cwd(root: Path, native_home: str | None) -> Path:
 def codex_queue_storage_preflight(args: argparse.Namespace, root: Path, thread_id: str) -> Path:
     """Every storage refusal a queue submission can raise, before any effect.
 
-    Callers that reserve shared budgets (wake) run this first, so a storage
-    refusal never consumes a reservation. Returns the queue working directory.
+    Dry-run checks this same plan without a native child; a real send repeats
+    it immediately before the effect. Neither removes the time gap before the
+    native process reads its configuration. Callers that reserve shared
+    budgets (wake) run this first, so a storage refusal never consumes a
+    reservation. Returns the queue working directory.
     """
     queue_cwd = codex_queue_cwd(root, getattr(args, "codex_native_home", None))
-    check_codex_storage(root, cwd=queue_cwd, native_submission=True)
+    check_codex_storage(root, cwd=queue_cwd)
     check_codex_consumer_storage(root, thread_id)
     return queue_cwd
 
@@ -1165,7 +1158,7 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
     # spelling of that same home.  This private adapter value is derived from
     # operator policy; it is never accepted from a paired request.
     process_home = native_home or str(root)
-    env = codex_process_environment(root, process_home, cwd=queue_cwd, native_submission=True)
+    env = codex_process_environment(root, process_home, cwd=queue_cwd)
     check_codex_consumer_storage(root, thread_id)
     try:
         # Keep leading dashes inside the option value, including with --no-from.
