@@ -10,7 +10,22 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StableCandidate(unittest.TestCase):
-    def test_pid_patch_candidate_remains_unpublished_and_narrow(self):
+    def test_v120_candidate_keeps_proposed_scope_and_open_gates(self):
+        for locale in ("", "ko/", "ja/", "zh-CN/"):
+            text = (ROOT / ("docs/" + locale + "releases/v1.2.0.md")).read_text(encoding="utf-8")
+            for marker in ("1.1.2", "1.2.0", "2026-10-15", "2026-10-18",
+                           "#305", "#308", "#310", "#311", "#313", "#314",
+                           "#180", "#181", "#268", "#304", "#306", "#307",
+                           "26", "20/21", "#161", "pypi", "Control/Relay"):
+                self.assertIn(marker, text)
+        english = (ROOT / "docs/releases/v1.2.0.md").read_text(encoding="utf-8")
+        for marker in ("candidate is unpublished", "not effective-storage attestation",
+                       "unmaterialized empty TUIs may be refused", "remain open",
+                       "not proof of general first-input support",
+                       "required human pypi environment approval"):
+            self.assertIn(marker, english)
+
+    def test_historical_pid_patch_preparation_remains_narrow(self):
         for locale in ("", "ko/", "ja/", "zh-CN/"):
             note = (ROOT / ("docs/" + locale + "releases/v1.1.2.md")).read_text(encoding="utf-8")
             for marker in ("#298", "1.1.1", "1.1.2", "2026-10-13", "²",
@@ -98,8 +113,8 @@ class StableCandidate(unittest.TestCase):
     def test_published_release_keeps_experimental_acceptance_gates(self):
         for suffix in ("", ".ko", ".ja", ".zh-CN"):
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
-            self.assertIn("**1.1.1**", text)
-            self.assertIn("releases/v1.1.1.md", text)
+            self.assertIn("**1.1.2**", text)
+            self.assertIn("releases/v1.1.2.md", text)
             self.assertIn("handoff-runtime.md", text)
             self.assertIn("POSIX", text)
             self.assertNotIn("**1.0.4**", text)
@@ -118,8 +133,8 @@ class StableCandidate(unittest.TestCase):
             self.assertIn(marker, english)
 
     def test_package_and_generated_core_version_agree(self):
-        self.assertEqual(session_peer.__version__, "1.1.2")
-        self.assertIn('__version__ = "1.1.2"',
+        self.assertEqual(session_peer.__version__, "1.2.0")
+        self.assertIn('__version__ = "1.2.0"',
                       (ROOT / "session_peer_core/common.py").read_text(encoding="utf-8"))
 
     def test_all_current_readmes_and_runbooks_use_stable_version(self):
@@ -127,7 +142,7 @@ class StableCandidate(unittest.TestCase):
             for stem in ("README", "RELEASING"):
                 with self.subTest(stem=stem, suffix=suffix):
                     text = (ROOT / (stem + suffix + ".md")).read_text(encoding="utf-8")
-                    self.assertIn("1.1.1", text)
+                    self.assertIn("1.1.2", text)
                     self.assertNotIn("1.0.0rc4", text)
                     if stem == "RELEASING":
                         self.assertIn("--draft=false --prerelease=false --latest", text)
@@ -149,13 +164,13 @@ class StableCandidate(unittest.TestCase):
                     self.assertIn(marker, text)
 
     def test_stable_release_keeps_operational_deployment_separate(self):
-        self.assertIn("Version covered by this README: **1.1.1**.",
+        self.assertIn("Version covered by this README: **1.1.2**.",
                       (ROOT / "README.md").read_text(encoding="utf-8"))
         for suffix in ("", ".ko", ".ja", ".zh-CN"):
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
-            self.assertIn("**1.1.1**", text)
+            self.assertIn("**1.1.2**", text)
             self.assertNotIn("**1.0.3**", text)
-            self.assertIn("2026-10-12", text)
+            self.assertIn("1.2.0", text)
         for locale in ("", "ko/", "ja/", "zh-CN/"):
             text = (ROOT / ("docs/" + locale + "README.md")).read_text(encoding="utf-8")
             self.assertIn("releases/v1.0.3.md", text)

@@ -4,13 +4,12 @@ Version 1.1.0 is published. GitHub published v1.1.0 on 2026-10-09 at 06:46:41 UT
 
 The sections from source/configuration gates through publication recovery below preserve the historical 2026-10-09 release procedure, not a request to run it again. Do not recreate, move or reuse v1.1.0 or rerun its publication examples. For a future version, use a new reviewed version and repeat the gates with fresh evidence and explicit authorization. Preparation, immutable GitHub publication, required human PyPI environment review and operational deployment remain separate. Protected main requires reviewed, up-to-date PRs and the aggregate release gate, including Python platform matrices, documentation, shell, package/standalone/MCP/Relay/Control tests, integrations and Python/Node dependency audits.
 
-## v1.1.2 patch candidate — unpublished
+## Published v1.1.2 — historical preparation
 
-Prepared on 2026-10-13 against published 1.1.1. The candidate addresses #298: invalid Claude PID records must not disrupt healthy discovery, and nondecimal Unicode session names must resolve as names. This is preparation only, not approval to merge, create a tag, publish or deploy. Require exact-head CI, full local tests, standalone regeneration, isolated wheel/sdist installations and current dependency audits. Recheck that v1.1.2 and PyPI 1.1.2 are unused; never move or reuse a tag/version. Verify the current Trusted Publisher and required human pypi review. Only after separate merge and publication authorization, green exact-main CI and review of all seven immutable draft assets may the commands below be used. GitHub and PyPI publication, the human environment gate and Control/Relay or fleet deployment remain separate.
-
-The following commands are for v1.1.2. The v1.1.0 procedure below remains historical.
+GitHub published v1.1.2 on 2026-10-13 at 06:39:11 UTC from f3993bf8988dd301b7e14402e63e8ac04e5e2300. The earlier unpublished-candidate wording is historical. Never recreate, move or reuse v1.1.2; the v1.1.0 commands below are historical examples only.
 
 ```bash
+# Historical v1.1.2 example: do not rerun or reuse this version.
 git fetch origin main --tags
 release_tag=v1.1.2
 release_commit=$(git rev-parse origin/main)
@@ -26,9 +25,17 @@ gh workflow run prepare-release.yml --repo abruption/session-peer \
 STOP after dispatch: `gh workflow run` returns before preparation finishes. Identify the run for v1.1.2 at the exact release commit and wait with `gh run watch <prepare-run-id> --repo abruption/session-peer --exit-status`. Do not execute the publication block unless that run succeeds, including `attach-draft`. Keep the release a draft while reviewing exactly seven attached assets, SHA256SUMS, release-provenance.json and their authenticated attestations against the tag and commit. Failure, missing assets or unverified evidence means stop without publishing. Only after this separate verification may the following publication command be executed.
 
 ```bash
+# Historical v1.1.2 example: do not rerun or reuse this version.
 gh release edit v1.1.2 --repo abruption/session-peer \
   --draft=false --prerelease=false --latest
 ```
+
+## v1.2.0 candidate — unpublished
+
+Prepared on 2026-10-15 against published 1.1.2. The milestone target is 2026-10-18, not a publication promise. This version/docs-only preparation does not include the six unmerged feature branches. Proposed scope: PR #305, #308, #310, #311, #313 and #314; consult the [candidate notes](docs/releases/v1.2.0.md). Issues #180, #181, #268, #304, #306 and #307 remain open.
+
+Before merge or publication, review each current head, integrate in dependency order, regenerate the standalone CLI and document hashes, and rerun complete tests, package installations and current dependency audits. Require green CI on the exact merged main commit. Recheck unused v1.2.0/PyPI 1.2.0, immutable-release/tag rules and Trusted Publisher settings. Explicit authorization is still required for merge, tag creation, draft creation, workflow dispatch and publication; the required human pypi environment review is not waived. After authorized preparation, stop after dispatch until attach-draft succeeds and all seven assets, SHA256SUMS, release-provenance.json and attestations match the exact commit. No release commands are supplied for execution by this preparation. Operational deployment remains separate.
+
 
 ## Historical evidence and current boundaries
 

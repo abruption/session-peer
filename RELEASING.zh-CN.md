@@ -4,13 +4,12 @@
 
 以下从源码/配置门禁到发布验证/恢复的部分保留2026-10-09发布流程的历史记录，并非重新执行的请求。不要重新创建、移动或重用v1.1.0，也不要再次执行其发布示例。后续版本需采用新审核的版本、最新证据和明确授权，重新检查各项门禁。准备、不可变GitHub发布、必需的人工PyPI环境审核与生产环境部署相互独立。受保护的main要求PR经过审核并与main保持最新，同时通过汇总发布门禁；门禁涵盖Python平台测试矩阵、文档、shell、包/单文件/MCP/Relay/Control、集成测试以及Python/Node依赖审计。
 
-## v1.1.2补丁候选版本 — 尚未发布
+## 已发布v1.1.2 — 历史准备记录
 
-于2026-10-13基于已发布的1.1.1准备。候选版本修复#298：无效的Claude PID记录不应妨碍正常会话发现，非十进制Unicode会话名称应按名称匹配。准备不代表批准合并、创建标签、发布或部署。必须完成准确最新提交的CI、完整本地测试、独立文件再生成、隔离的wheel/sdist安装和最新依赖审计。重新确认v1.1.2及PyPI 1.1.2未被使用，不得移动或重用标签与版本。确认当前Trusted Publisher和必要的人工pypi审核。只有另行获得合并和发布批准、准确main CI通过且审查全部7项不可变草稿资产后，才能使用下列命令。GitHub与PyPI发布、人工环境审批以及Control/Relay或各设备部署是独立步骤。
-
-以下命令用于v1.1.2。下方v1.1.0流程仍保留为历史记录。
+GitHub于2026-10-13 06:39:11 UTC发布了提交f3993bf8988dd301b7e14402e63e8ac04e5e2300的v1.1.2。此前的未发布候选描述属于历史记录。不得重新创建、移动或重用v1.1.2；下方v1.1.0命令也仅为历史示例。
 
 ```bash
+# Historical v1.1.2 example: do not rerun or reuse this version.
 git fetch origin main --tags
 release_tag=v1.1.2
 release_commit=$(git rev-parse origin/main)
@@ -26,9 +25,17 @@ gh workflow run prepare-release.yml --repo abruption/session-peer \
 提交执行请求后先停止：`gh workflow run`会在准备完成前返回。确认对应准确发布提交的v1.1.2运行，并使用`gh run watch <prepare-run-id> --repo abruption/session-peer --exit-status`等待完成。在包括`attach-draft`的运行成功前，不要执行下方发布命令。保持发布为草稿，检查附件恰好为7个，并对照标签和提交验证SHA256SUMS、release-provenance.json及其经过认证的证明。运行失败、资产缺失或证据未验证时，应停止且不发布。只有完成这项独立验证后，才能执行下方命令。
 
 ```bash
+# Historical v1.1.2 example: do not rerun or reuse this version.
 gh release edit v1.1.2 --repo abruption/session-peer \
   --draft=false --prerelease=false --latest
 ```
+
+## v1.2.0候选版本 — 尚未发布
+
+于2026-10-15基于已发布的1.1.2准备。里程碑目标为2026-10-18，并非发布承诺。本次仅版本和文档的准备不包含6个未合并的功能分支。拟议范围为PR #305、#308、#310、#311、#313、#314；参阅[候选说明](docs/zh-CN/releases/v1.2.0.md)。议题#180、#181、#268、#304、#306、#307仍保持开放。
+
+合并或发布前须审核每项最新提交，按依赖顺序集成，重新生成独立CLI和文档哈希，并重跑完整测试、软件包安装和最新依赖审计。必须通过准确已合并main提交的CI。重新检查v1.2.0/PyPI 1.2.0未使用、不可变发布/标签规则和Trusted Publisher设置。合并、创建标签和草稿、派发工作流、发布仍需明确授权；必需的人工pypi环境审核不可省略。获批准备并派发后，必须等待attach-draft成功，核对全部7项资产、SHA256SUMS、release-provenance.json及证明与准确提交一致。本准备不提供可执行的发布命令。生产部署是独立步骤。
+
 
 ## 历史证据与当前边界
 
