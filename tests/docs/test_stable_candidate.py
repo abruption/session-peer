@@ -11,18 +11,39 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class StableCandidate(unittest.TestCase):
     def test_v120_candidate_keeps_proposed_scope_and_open_gates(self):
-        for locale in ("", "ko/", "ja/", "zh-CN/"):
+        profiles = (
+            ("", "The 26 regression tests include unsupported API cases",
+             "Merge the release-preparation PR last", "not publishable release assets"),
+            ("ko/", "회귀 테스트 26개에는 미지원 API 사례",
+             "릴리스 준비 PR은 범위 내 PR 6개를 모두 병합한 뒤 마지막으로 병합",
+             "게시할 릴리스 자산이 아닙니다"),
+            ("ja/", "26件の回帰テストには未対応API例",
+             "リリース準備PRは対象6件のPRをすべてマージした後、最後にマージ",
+             "公開用リリース資産ではありません"),
+            ("zh-CN/", "26项回归测试包括不支持API的情况",
+             "发布准备PR必须在范围内全部6项PR合并后最后合并",
+             "不是可发布的版本资产"),
+        )
+        for locale, regression_scope, merge_order, artifact_boundary in profiles:
             text = (ROOT / ("docs/" + locale + "releases/v1.2.0.md")).read_text(encoding="utf-8")
             for marker in ("1.1.2", "1.2.0", "2026-10-15", "2026-10-18",
                            "#305", "#308", "#310", "#311", "#313", "#314",
                            "#180", "#181", "#268", "#304", "#306", "#307",
-                           "26", "20/21", "#161", "pypi", "Control/Relay"):
+                           regression_scope, merge_order, artifact_boundary,
+                           "20/21", "#161", "pypi", "Control/Relay"):
                 self.assertIn(marker, text)
+            suffix = "." + locale.rstrip("/") if locale else ""
+            runbook = (ROOT / ("RELEASING" + suffix + ".md")).read_text(encoding="utf-8")
+            self.assertIn(merge_order, runbook)
+            self.assertIn(artifact_boundary, runbook)
         english = (ROOT / "docs/releases/v1.2.0.md").read_text(encoding="utf-8")
         for marker in ("candidate is unpublished", "not effective-storage attestation",
                        "unmaterialized empty TUIs may be refused", "remain open",
                        "not proof of general first-input support",
-                       "required human pypi environment approval"):
+                       "required human pypi environment approval",
+                       "review its final head", "historical approvals do not authorize v1.2.0",
+                       "final protected-main CI", "rebuild and verify release assets",
+                       "At publication time", "actual publication evidence"):
             self.assertIn(marker, english)
 
     def test_historical_pid_patch_preparation_remains_narrow(self):

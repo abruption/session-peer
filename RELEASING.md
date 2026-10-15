@@ -36,6 +36,8 @@ Prepared on 2026-10-15 against published 1.1.2. The milestone target is 2026-10-
 
 Before merge or publication, review each current head, integrate in dependency order, regenerate the standalone CLI and document hashes, and rerun complete tests, package installations and current dependency audits. Require green CI on the exact merged main commit. Recheck unused v1.2.0/PyPI 1.2.0, immutable-release/tag rules and Trusted Publisher settings. Explicit authorization is still required for merge, tag creation, draft creation, workflow dispatch and publication; the required human pypi environment review is not waived. After authorized preparation, stop after dispatch until attach-draft succeeds and all seven assets, SHA256SUMS, release-provenance.json and attestations match the exact commit. No release commands are supplied for execution by this preparation. Operational deployment remains separate.
 
+Merge the release-preparation PR last, after all six scoped PRs. Update and review its final head against merged main; historical approvals do not authorize v1.2.0. Prep-only CI and local integration artifacts are rehearsal evidence, not publishable release assets. After final protected-main CI succeeds, rebuild and verify release assets through the authorized preparation workflow at that exact main commit, then review all seven immutable assets and attestations before publication. At publication time, recheck and update the four README stable/candidate notices and release notes from actual publication evidence; do not announce publication in advance.
+
 
 ## Historical evidence and current boundaries
 

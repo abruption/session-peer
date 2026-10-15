@@ -30,7 +30,10 @@ class ReleaseCommands(unittest.TestCase):
                     2,
                 )
                 candidate = text[text.index("## v1.2.0"):text.index("## ", text.index("## v1.2.0") + 4)]
+                self.assertNotIn("```", candidate)
+                self.assertNotRegex(candidate, r"(?m)^\s*(?:git\s+(?:tag|push)\b|gh\s+(?:release\b|workflow\s+run\b)|release_tag=)")
                 self.assertNotIn("gh release ", candidate)
+                self.assertNotIn("gh workflow run", candidate)
                 for marker in ("2026-10-15", "2026-10-18", "pypi", "attach-draft",
                                "SHA256SUMS", "release-provenance.json",
                                "#180", "#181", "#268", "#304", "#306", "#307"):
