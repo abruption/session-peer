@@ -26,6 +26,10 @@ repeated here.
 | Local experiment report, 2026-10-13 | Uncommitted operator report from the original experiment worktree; this README is a curated, sanitized restatement of it |
 | `hook_probe.py`, `native_probe.py`, `execution_probe.py` | Probe scaffolding copied byte-for-byte from that worktree (no personal paths or identifiers embedded) |
 
+The Hooks and Sidecars links below are historical references cited by the
+2026-10-13 reports. Neither page was newly checked for current availability by
+this archive-only change.
+
 Evidence classes used below:
 
 - **Reported result**: structured fields (exit code, `status`, `submitted`,
@@ -39,9 +43,11 @@ Evidence classes used below:
   `consumptionConfirmed` stayed `false` in every send.
 - **Body-free metadata**: hook-event records containing only event name,
   process/parent IDs, validated owner PID/start time, conversation ID and
-  timestamps (`execution_probe.py`), plus `lsof` presence-FD checks. No message
+  timestamps and owner-validation booleans (`execution_probe.py`), plus `lsof` presence-FD checks. No message
   bodies, hook payloads, environment values, credentials or transcripts were
   recorded. The private records themselves are not committed.
+  The private bridge manifest additionally stores bridge PID, generation and
+  local absolute paths; it must not be committed either.
 
 The private collaborator manifest explicitly identifies an initial probe as
 deleted and later reconstructed from the recorded command, with no original
@@ -92,7 +98,7 @@ observable at those idle checkpoints**. It does not show that the TUI has no
 internal conversation ID before input, and it is not a universal timing
 guarantee or a long-duration idle test.
 
-### (b) SessionStart runs after the first input, before model invocation
+### (b) SessionStart was observed after the first input
 
 After one harmless first prompt (requesting a fixed `READY` marker, no tools),
 SessionStart ran and supplied a valid conversation ID. The hook started the
@@ -105,6 +111,8 @@ So the hook can act as a **post-first-input bootstrap**. The upstream wording
 quoted in the 2026-10-13 report, "before first model invocation"
 ([Hooks](https://antigravity.google/docs/hooks/)) does not mean "before first
 user input". A listening bridge is not proof of delivery authority.
+The probes did not independently timestamp model invocation start; invocation
+ordering here is the upstream contract quoted in that historical report.
 
 ### (c) The hook lacks the normal language-server context
 
@@ -117,6 +125,11 @@ values):
 | `ANTIGRAVITY_TRAJECTORY_ID` | absent | present |
 | `ANTIGRAVITY_LS_ADDRESS` | absent | present |
 | `ANTIGRAVITY_CSRF_TOKEN` | absent | present |
+
+These are the retained booleans, not raw values. `hook_probe.py` checks whether a
+value is nonempty; `native_probe.py` checks whether the name exists. Empty-value
+state is not available from the native probe, so the two criteria must not be
+treated as identical authority checks.
 
 Reported send outcomes:
 
@@ -201,14 +214,16 @@ before execution and was not retried.)
   it; B2 answered `NONE`, and that query's hook events were parented by B2.
 
 So a matching conversation ID plus native exit zero does not prove execution in
-the already-open TUI. The target owner did not receive the message. Native
+the already-open TUI. No target-owner receipt was observed within the bounded
+test; the invocation was parented by the caller's process. The later query
+returned `NONE`, which does not rule out unobserved late delivery or history
+effects. Native
 persistence, store-conflict and resume behavior were **not established**; no
 database or history was modified directly. Creating a new agentapi execution in
 another process, or a new conversation, is not a substitute for reaching the
 owner of the target TUI. The [Sidecars](https://antigravity.google/docs/sidecars/)
 page cited in the historical report described Antigravity 2.0 availability;
-that was not CLI sidecar-autostart evidence. These linked pages were not newly
-checked for current availability by this archive-only change.
+that was not CLI sidecar-autostart evidence.
 
 ## Not established / unverified
 
