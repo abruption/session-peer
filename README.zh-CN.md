@@ -38,6 +38,8 @@ session-peer使用各智能体自身的收件箱和队列；接收方智能体�
 
 请参阅2026-10-12准备的维护版本的[发布说明](docs/zh-CN/releases/v1.1.1.md)。此补丁改进文档和开发用测试，不改变运行时行为。软件包发布与生产环境部署是两项独立操作。
 
+开发候选版本1.1.2尚未发布。[发布说明](docs/zh-CN/releases/v1.1.2.md)介绍#298的Claude登记记录和目标选择修复。在单独确认发布之前，上述已发布版本仍为1.1.1。
+
 实验性handoff需要明确选择启用：本地POSIX Claude支持收据ACK；Codex与SSH仅支持关联标识提交，不支持ACK观察。已发布范围与剩余验收条件请参阅[handoff指南](docs/zh-CN/handoff-runtime.md)。
 
 ```bash

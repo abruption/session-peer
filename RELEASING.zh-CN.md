@@ -4,15 +4,15 @@
 
 以下从源码/配置门禁到发布验证/恢复的部分保留2026-10-09发布流程的历史记录，并非重新执行的请求。不要重新创建、移动或重用v1.1.0，也不要再次执行其发布示例。后续版本需采用新审核的版本、最新证据和明确授权，重新检查各项门禁。准备、不可变GitHub发布、必需的人工PyPI环境审核与生产环境部署相互独立。受保护的main要求PR经过审核并与main保持最新，同时通过汇总发布门禁；门禁涵盖Python平台测试矩阵、文档、shell、包/单文件/MCP/Relay/Control、集成测试以及Python/Node依赖审计。
 
-## 当前v1.1.1维护发布
+## v1.1.2补丁候选版本 — 尚未发布
 
-所有者于2026-10-12批准了此维护发布。它包含#297（开发用Paramiko 5.0.0测试）和#299（四种语言的文档修正），运行时行为与1.1.0相同。#298仍未解决，此补丁不修复该问题。需要重新执行准确最新提交的CI、全部本地测试、单文件重新生成检查、隔离wheel/sdist安装及最新依赖审计。创建前确认v1.1.1和PyPI 1.1.1尚未使用，不得移动或重用标签和版本。检查当前Trusted Publisher和必需的人工pypi审核。仅在准备PR合并且准确main的CI通过后执行命令。发布前检查不可变草稿的7个资产、哈希及证明。发布授权不能替代人工PyPI环境审批。分别验证GitHub和PyPI，不包含设备或Control/Relay部署。
+于2026-10-13基于已发布的1.1.1准备。候选版本修复#298：无效的Claude PID记录不应妨碍正常会话发现，非十进制Unicode会话名称应按名称匹配。准备不代表批准合并、创建标签、发布或部署。必须完成准确最新提交的CI、完整本地测试、独立文件再生成、隔离的wheel/sdist安装和最新依赖审计。重新确认v1.1.2及PyPI 1.1.2未被使用，不得移动或重用标签与版本。确认当前Trusted Publisher和必要的人工pypi审核。只有另行获得合并和发布批准、准确main CI通过且审查全部7项不可变草稿资产后，才能使用下列命令。GitHub与PyPI发布、人工环境审批以及Control/Relay或各设备部署是独立步骤。
 
-以下命令用于v1.1.1。下方v1.1.0流程仍保留为历史记录。
+以下命令用于v1.1.2。下方v1.1.0流程仍保留为历史记录。
 
 ```bash
 git fetch origin main --tags
-release_tag=v1.1.1
+release_tag=v1.1.2
 release_commit=$(git rev-parse origin/main)
 git tag "$release_tag" "$release_commit"
 git push origin "$release_tag"
@@ -23,10 +23,10 @@ gh workflow run prepare-release.yml --repo abruption/session-peer \
   --ref main -f tag="$release_tag"
 ```
 
-提交执行请求后先停止：`gh workflow run`会在准备完成前返回。确认对应准确发布提交的v1.1.1运行，并使用`gh run watch <prepare-run-id> --repo abruption/session-peer --exit-status`等待完成。在包括`attach-draft`的运行成功前，不要执行下方发布命令。保持发布为草稿，检查附件恰好为7个，并对照标签和提交验证SHA256SUMS、release-provenance.json及其经过认证的证明。运行失败、资产缺失或证据未验证时，应停止且不发布。只有完成这项独立验证后，才能执行下方命令。
+提交执行请求后先停止：`gh workflow run`会在准备完成前返回。确认对应准确发布提交的v1.1.2运行，并使用`gh run watch <prepare-run-id> --repo abruption/session-peer --exit-status`等待完成。在包括`attach-draft`的运行成功前，不要执行下方发布命令。保持发布为草稿，检查附件恰好为7个，并对照标签和提交验证SHA256SUMS、release-provenance.json及其经过认证的证明。运行失败、资产缺失或证据未验证时，应停止且不发布。只有完成这项独立验证后，才能执行下方命令。
 
 ```bash
-gh release edit v1.1.1 --repo abruption/session-peer \
+gh release edit v1.1.2 --repo abruption/session-peer \
   --draft=false --prerelease=false --latest
 ```
 
