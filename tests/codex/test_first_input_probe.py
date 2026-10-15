@@ -109,6 +109,8 @@ class FirstInputProbeTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertEqual(sum(item["method"] == "thread/queue/add" for item in sent), 1)
         self.assertEqual(json.loads(output.splitlines()[-1])["errorCode"], -32603)
+        self.assertIs(json.loads(output.splitlines()[-1])["accepted"], False)
+        self.assertFalse(json.loads(output.splitlines()[-1])["retryAllowed"])
         self.assertNotIn("PRIVATE", output)
 
     def test_malformed_errors_fail_without_traceback_or_retry(self):
@@ -152,29 +154,38 @@ class FirstInputProbeTests(unittest.TestCase):
             with self.subTest(case=label), mock.patch.object(FakeWebSocket, "recv", metadata), \
                     mock.patch.object(self.probe.sqlite3, "connect", side_effect=AssertionError("DB must not open")) as db:
                 exit_code, sent, output = self.invoke(str(self.home))
-            self.assertEqual(exit_code, 1)
-            self.assertEqual(db.call_count, 0)
-            self.assertFalse(any(item["method"] == "thread/queue/add" for item in sent))
-            result = json.loads(output.splitlines()[-1])
-            self.assertEqual(result["error"], "persistent_thread_required")
-            self.assertIs(result["accepted"], False)
-            self.assertEqual(result["outcome"], "not_attempted")
-            self.assertFalse(result["retryAllowed"])
+                self.assertEqual(exit_code, 1)
+                self.assertEqual(db.call_count, 0)
+                self.assertFalse(any(item["method"] == "thread/queue/add" for item in sent))
+                result = json.loads(output.splitlines()[-1])
+                self.assertEqual(result["error"], "persistent_thread_required")
+                self.assertIs(result["accepted"], False)
+                self.assertEqual(result["outcome"], "not_attempted")
+                self.assertFalse(result["retryAllowed"])
 
     def test_inspection_does_not_claim_row_absence_proves_ephemeral_freshness(self):
         original = FakeWebSocket.recv
-        def metadata(ws, timeout):
-            raw = original(ws, timeout)
-            if ws.sent[-1]["method"] == "thread/read":
-                value = json.loads(raw)
-                value["result"]["thread"]["ephemeral"] = True
-                return json.dumps(value)
-            return raw
-        with mock.patch.object(FakeWebSocket, "recv", metadata):
-            exit_code, sent, output = self.invoke(str(self.home), mode="inspect")
-        self.assertEqual(exit_code, 0)
-        self.assertTrue(json.loads(output.splitlines()[-1])["ephemeral"])
-        self.assertFalse(any(item["method"] == "thread/queue/add" for item in sent))
+        for label, fields in (("ephemeral", {"ephemeral": True}), ("null", {"ephemeral": None}),
+                              ("missing", {}), ("invalid", {"ephemeral": "PRIVATE"})):
+            def metadata(ws, timeout):
+                raw = original(ws, timeout)
+                if ws.sent[-1]["method"] == "thread/read":
+                    value = json.loads(raw)
+                    value["result"]["thread"].pop("ephemeral", None)
+                    value["result"]["thread"].update(fields)
+                    return json.dumps(value)
+                return raw
+            with self.subTest(case=label), mock.patch.object(FakeWebSocket, "recv", metadata):
+                exit_code, sent, output = self.invoke(str(self.home), mode="inspect")
+                result = json.loads(output.splitlines()[-1])
+                if label == "invalid":
+                    self.assertEqual(exit_code, 1)
+                    self.assertEqual(result["error"], "invalid_thread_metadata")
+                    self.assertNotIn("PRIVATE", output)
+                else:
+                    self.assertEqual(exit_code, 0)
+                    self.assertIs(result["ephemeral"], fields.get("ephemeral"))
+                self.assertFalse(any(item["method"] == "thread/queue/add" for item in sent))
 
     def test_uncertain_queue_failures_preserve_unknown_and_no_retry(self):
         for response in (TimeoutError("PRIVATE timeout"), OSError("PRIVATE transport"),

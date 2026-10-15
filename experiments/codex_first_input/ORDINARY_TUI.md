@@ -132,6 +132,10 @@ that does not prove the conversation is unused. Arbitrary result keys and native
 error details are not reflected. The version guard remains
 exactly 0.162.1, and Python optimization is refused up front.
 
+The pinned [0.162.1 Thread schema](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/app-server-protocol/src/protocol/v2/thread_data.rs#L224-L225)
+declares `ephemeral` as a bool without an omission attribute. This is a static
+source basis for requiring explicit false, not a fresh native serialization test.
+
 Ten synthetic WebSocket/temporary-database tests cover these boundaries,
 including relative home paths, complete error validation on both RPC paths,
 ephemeral/missing/null refusal and exactly one queue attempt on rejection.
