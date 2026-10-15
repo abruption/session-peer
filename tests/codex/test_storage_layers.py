@@ -27,10 +27,9 @@ from unittest import mock
 import session_peer as peer
 from tests.codex.support import THREAD
 
-SECRET = "private-relocation-value"
+RELOCATED_STORAGE = "relocated-storage-fixture"
 # Captured before each test replaces them with fixture paths.
 REAL_SYSTEM_PATHS = peer.codex_system_config_paths
-REAL_MANAGED_PATHS = peer.codex_managed_preference_paths
 REAL_PROJECT_PATHS = peer.codex_project_config_paths
 
 
@@ -51,10 +50,10 @@ class StorageLayers(unittest.TestCase):
         patches = (
             mock.patch.dict(os.environ, {}, clear=True),
             mock.patch.object(peer, "codex_system_config_paths", return_value=self.system_paths),
-            mock.patch.object(peer, "codex_managed_preference_paths", return_value=self.managed_paths),
+            mock.patch.object(peer, "codex_managed_preference_values", side_effect=self.managed_values),
             # Never read the developer's real ancestor directories.
-            mock.patch.object(peer, "codex_project_config_paths", side_effect=lambda cwd: [
-                path for path in REAL_PROJECT_PATHS(cwd)
+            mock.patch.object(peer, "codex_project_config_paths", side_effect=lambda cwd, **kwargs: [
+                path for path in REAL_PROJECT_PATHS(cwd, **kwargs)
                 if os.path.abspath(path).startswith(str(self.base) + os.sep)]),
         )
         for patcher in patches:
@@ -63,6 +62,19 @@ class StorageLayers(unittest.TestCase):
         self.args = argparse.Namespace(codex_home=str(self.root), codex_bin="fixture",
             to="codex:" + THREAD, dry_run=False, all=False,
             allow_inactive_codex_home=True, wake=False)
+
+    def managed_values(self):
+        values = []
+        for path in self.managed_paths:
+            if path.exists():
+                try:
+                    record = plistlib.loads(path.read_bytes())
+                    if not isinstance(record, dict):
+                        raise ValueError("fixture preference shape")
+                    values.extend(record[key] for key in peer.CODEX_MANAGED_PREFERENCES_KEYS if key in record)
+                except plistlib.InvalidFileException as exc:
+                    raise ValueError("fixture preference shape") from exc
+        return values
 
     def refuses(self, reason, **kwargs):
         with self.assertRaises(peer.CcPeerError) as caught:
@@ -73,7 +85,7 @@ class StorageLayers(unittest.TestCase):
         self.assertIs(details["submitted"], False)
         self.assertIs(details["retryAllowed"], False)
         # Never reflect configuration contents or any inspected path.
-        self.assertNotIn(SECRET, str(caught.exception))
+        self.assertNotIn(RELOCATED_STORAGE, str(caught.exception))
         self.assertNotIn(str(self.base), str(caught.exception))
         return caught.exception
 
@@ -91,15 +103,15 @@ class StorageLayers(unittest.TestCase):
     def test_each_system_layer_with_root_storage_is_refused(self):
         for path in self.system_paths:
             with self.subTest(layer=path.name):
-                path.write_text('sqlite_home = "%s"\n' % SECRET, encoding="utf-8")
+                path.write_text('sqlite_home = "%s"\n' % RELOCATED_STORAGE, encoding="utf-8")
                 self.refuses("sqlite_home_system_configuration")
                 path.unlink()
         peer.check_codex_storage(self.root)
 
     def test_system_layers_reuse_root_only_classification(self):
         # Legacy [profiles.*] has no sqlite_home field in the native schema.
-        for text in ('[profiles.work]\nsqlite_home="%s"\n' % SECRET,
-                     '# sqlite_home="%s"\nmodel="fixture"\n' % SECRET):
+        for text in ('[profiles.work]\nsqlite_home="%s"\n' % RELOCATED_STORAGE,
+                     '# sqlite_home="%s"\nmodel="fixture"\n' % RELOCATED_STORAGE):
             with self.subTest(text=text):
                 self.system_paths[0].write_text(text, encoding="utf-8")
                 peer.check_codex_storage(self.root)
@@ -118,7 +130,8 @@ class StorageLayers(unittest.TestCase):
                                                    Path("/etc/codex/managed_config.toml"),
                                                    Path("/etc/codex/requirements.toml")])
         with mock.patch.object(peer, "IS_WINDOWS", True), \
-             mock.patch.dict(os.environ, {"ProgramData": "D:" + os.sep + "Data"}):
+             mock.patch.dict(os.environ, {"ProgramData": "untrusted-env"}), \
+             mock.patch.object(peer, "codex_windows_program_data", return_value="D:" + os.sep + "Data"):
             base = Path("D:" + os.sep + "Data") / "OpenAI" / "Codex"
             self.assertEqual(REAL_SYSTEM_PATHS(), [base / "config.toml", base / "requirements.toml"])
 
@@ -134,13 +147,13 @@ class StorageLayers(unittest.TestCase):
         for key in peer.CODEX_MANAGED_PREFERENCES_KEYS:
             for path in self.managed_paths:
                 with self.subTest(key=key, path=path.name):
-                    self.write_plist(path, {key: self.encoded('sqlite_home = "%s"\n' % SECRET)})
+                    self.write_plist(path, {key: self.encoded('sqlite_home = "%s"\n' % RELOCATED_STORAGE)})
                     self.refuses("sqlite_home_managed_configuration")
                     path.unlink()
 
     def test_managed_preferences_without_storage_are_allowed(self):
         self.write_plist(self.managed_paths[0], {
-            "config_toml_base64": self.encoded('model = "fixture"\n[profiles.x]\nsqlite_home="%s"\n' % SECRET),
+            "config_toml_base64": self.encoded('model = "fixture"\n[profiles.x]\nsqlite_home="%s"\n' % RELOCATED_STORAGE),
             "unrelated": "value"})
         self.write_plist(self.managed_paths[1], {"unrelated": 1})
         peer.check_codex_storage(self.root)
@@ -161,26 +174,18 @@ class StorageLayers(unittest.TestCase):
         self.managed_paths[0].write_bytes(plistlib.dumps(["not", "a", "dictionary"]))
         self.refuses("storage_config_unverifiable")
 
-    def test_managed_preference_paths_are_macos_only(self):
-        with mock.patch.object(peer.sys, "platform", "linux"):
-            self.assertEqual(REAL_MANAGED_PATHS(), [])
-        with mock.patch.object(peer.sys, "platform", "darwin"):
-            paths = REAL_MANAGED_PATHS()
-        self.assertEqual(paths[-1], Path("/Library/Managed Preferences/com.openai.codex.plist"))
-        self.assertTrue(all(path.name == "com.openai.codex.plist" for path in paths))
-
     # -- project layers of the native process working directory -----------
 
     def test_project_layers_of_the_process_directory_are_refused(self):
         project = self.base / "repo" / "nested" / "work"
         project.mkdir(parents=True)
-        candidates = (project / "config.toml",
-                      project / ".codex" / "config.toml",
+        (self.base / "repo" / ".git").write_text("gitdir: fixture")
+        candidates = (project / ".codex" / "config.toml",
                       self.base / "repo" / ".codex" / "config.toml")
         for path in candidates:
             with self.subTest(layer=str(path.relative_to(self.base))):
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text('sqlite_home = "%s"\n' % SECRET, encoding="utf-8")
+                path.write_text('sqlite_home = "%s"\n' % RELOCATED_STORAGE, encoding="utf-8")
                 self.refuses("sqlite_home_project_configuration", cwd=project)
                 # Without a process directory, project layers are not consulted.
                 peer.check_codex_storage(self.root)
@@ -191,21 +196,19 @@ class StorageLayers(unittest.TestCase):
         project = self.base / "untrusted"
         (project / ".codex").mkdir(parents=True)
         config = project / ".codex" / "config.toml"
-        config.write_text('[profiles.x]\nsqlite_home = "%s"\n' % SECRET, encoding="utf-8")
+        config.write_text('[profiles.x]\nsqlite_home = "%s"\n' % RELOCATED_STORAGE, encoding="utf-8")
         peer.check_codex_storage(self.root, cwd=project)
-        config.write_text('"sqlite_home" = "%s"\n' % SECRET, encoding="utf-8")
+        config.write_text('"sqlite_home" = "%s"\n' % RELOCATED_STORAGE, encoding="utf-8")
         self.refuses("sqlite_home_project_configuration", cwd=project)
 
     def test_home_as_working_directory_keeps_the_user_layer_reason(self):
-        (self.root / "config.toml").write_text('sqlite_home = "%s"\n' % SECRET, encoding="utf-8")
+        (self.root / "config.toml").write_text('sqlite_home = "%s"\n' % RELOCATED_STORAGE, encoding="utf-8")
         self.refuses("sqlite_home_configuration", cwd=self.root)
 
-    def test_project_paths_cover_every_ancestor(self):
+    def test_project_paths_without_marker_cover_only_cwd(self):
         project = self.base / "a" / "b"
         paths = REAL_PROJECT_PATHS(project)
-        self.assertEqual(paths[0], project / "config.toml")
-        for directory in (project, project.parent, self.base, Path(self.base.anchor)):
-            self.assertIn(directory / ".codex" / "config.toml", paths)
+        self.assertEqual(paths, [project / ".codex" / "config.toml"])
 
     # -- shared app-server daemon (policy: no daemon-based refusal) -------
     # The daemon's startup storage cannot be attested through the reviewed
@@ -272,7 +275,7 @@ class StorageLayers(unittest.TestCase):
     def test_daemon_entry_does_not_mask_another_unsupported_layer(self):
         self.daemon_entry().write_text("", encoding="utf-8")
         self.database()
-        self.system_paths[2].write_text('sqlite_home = "%s"\n' % SECRET, encoding="utf-8")
+        self.system_paths[2].write_text('sqlite_home = "%s"\n' % RELOCATED_STORAGE, encoding="utf-8")
         for dry_run in (True, False):
             with self.subTest(dry_run=dry_run):
                 with self.assertRaises(peer.CcPeerError) as caught:
@@ -288,7 +291,7 @@ class StorageLayers(unittest.TestCase):
         (elsewhere / ".codex").mkdir(parents=True)
         # The caller's own project layers are irrelevant once the queue is pinned.
         (elsewhere / ".codex" / "config.toml").write_text(
-            'sqlite_home = "%s"\n' % SECRET, encoding="utf-8")
+            'sqlite_home = "%s"\n' % RELOCATED_STORAGE, encoding="utf-8")
         completed = mock.Mock(returncode=0, stdout="Queued message q-1 for thread %s.\n" % THREAD,
                               stderr="")
         previous = os.getcwd()
@@ -309,7 +312,7 @@ class StorageLayers(unittest.TestCase):
         project = self.base / "thread-project"
         (project / ".codex").mkdir(parents=True)
         (project / ".codex" / "config.toml").write_text(
-            'sqlite_home = "%s"\n' % SECRET, encoding="utf-8")
+            'sqlite_home = "%s"\n' % RELOCATED_STORAGE, encoding="utf-8")
         self.database(cwd=project)
         with mock.patch.object(peer, "known_codex_homes", return_value=[self.root]), \
              mock.patch.object(peer, "codex_executable", return_value="fixture"), \
@@ -333,7 +336,7 @@ class StorageLayers(unittest.TestCase):
         caller = self.base / "caller"
         (caller / ".codex").mkdir(parents=True)
         (caller / ".codex" / "config.toml").write_text(
-            'sqlite_home = "%s"\n' % SECRET, encoding="utf-8")
+            'sqlite_home = "%s"\n' % RELOCATED_STORAGE, encoding="utf-8")
         previous = os.getcwd()
         os.chdir(caller)
         self.addCleanup(os.chdir, previous)
@@ -403,7 +406,7 @@ class StorageLayers(unittest.TestCase):
     def test_layer_change_at_effect_boundary_refuses_before_queue(self):
         self.database()
         def revalidate(*unused):
-            self.system_paths[1].write_text('sqlite_home = "%s"\n' % SECRET, encoding="utf-8")
+            self.system_paths[1].write_text('sqlite_home = "%s"\n' % RELOCATED_STORAGE, encoding="utf-8")
         with mock.patch.object(peer, "known_codex_homes", return_value=[self.root]), \
              mock.patch.object(peer, "codex_executable", return_value="fixture"), \
              mock.patch.object(peer, "revalidate_codex_home", side_effect=revalidate), \
@@ -438,7 +441,7 @@ class StorageLayers(unittest.TestCase):
                 calls["n"] += 1
                 if calls["n"] == 2:  # the re-check inside the wake guard
                     target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_text('sqlite_home = "%s"\n' % SECRET, encoding="utf-8")
+                    target.write_text('sqlite_home = "%s"\n' % RELOCATED_STORAGE, encoding="utf-8")
                 return result
 
             with self.subTest(reason=reason), \
@@ -498,7 +501,7 @@ class StorageLayers(unittest.TestCase):
         project = self.base / "thread-project"
         (project / ".codex").mkdir(parents=True)
         (project / ".codex" / "config.toml").write_text(
-            'sqlite_home = "%s"\n' % SECRET, encoding="utf-8")
+            'sqlite_home = "%s"\n' % RELOCATED_STORAGE, encoding="utf-8")
         self.database(cwd=project)
         version = mock.Mock(stdout=sorted(peer.CODEX_WAKE_VERSIONS)[0] + "\n")
         with mock.patch.object(peer.subprocess, "run", return_value=version), \

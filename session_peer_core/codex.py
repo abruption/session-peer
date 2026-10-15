@@ -101,7 +101,7 @@ def _codex_config_key(tokens: list[tuple[str, str]]) -> list[str]:
     return keys
 
 
-def _codex_config_has_storage(text: str) -> bool:
+def _codex_config_has_storage(text: str, root_key: str = "sqlite_home") -> bool:
     table = []
     statement = []
     brackets = []
@@ -114,14 +114,14 @@ def _codex_config_has_storage(text: str) -> bool:
                 if [item[0] for item in statement[-count:]] != ["]"] * count:
                     raise ValueError("unclassifiable configuration table")
                 table = _codex_config_key(statement[count:-count])
-                if table[0] == "sqlite_home":
+                if table[0] == root_key:
                     return True
             else:
                 split = next((i for i, token in enumerate(statement) if token[0] == "="), -1)
                 if split <= 0 or split == len(statement) - 1:
                     raise ValueError("unclassifiable configuration assignment")
                 key = _codex_config_key(statement[:split])
-                if not table and key[0] == "sqlite_home":
+                if not table and key[0] == root_key:
                     return True
             statement = []
             continue
@@ -191,6 +191,46 @@ def _refuse_configured_storage(path: Path, reason: str) -> None:
         raise codex_storage_refused(reason)
 
 
+def codex_windows_program_data() -> str:
+    """Native Known Folder lookup; never trust the ProgramData environment."""
+    import ctypes
+    class GUID(ctypes.Structure):
+        _fields_ = [("Data1", ctypes.c_uint32), ("Data2", ctypes.c_uint16),
+                    ("Data3", ctypes.c_uint16), ("Data4", ctypes.c_ubyte * 8)]
+    pointer = ctypes.c_void_p()
+    free = None
+    try:
+        shell = ctypes.WinDLL("shell32", use_last_error=True)
+        ole = ctypes.WinDLL("ole32", use_last_error=True)
+        lookup = shell.SHGetKnownFolderPath
+        lookup.argtypes = [ctypes.POINTER(GUID), ctypes.c_uint32, ctypes.c_void_p,
+                           ctypes.POINTER(ctypes.c_void_p)]
+        lookup.restype = ctypes.c_int32
+        free = ole.CoTaskMemFree
+        free.argtypes = [ctypes.c_void_p]
+        free.restype = None
+        identifier = GUID(0x62AB5D82, 0xFDC1, 0x4DC3,
+                          (ctypes.c_ubyte * 8)(0xA9, 0xDD, 0x07, 0x0D, 0x1D, 0x49, 0x5D, 0x97))
+        if lookup(ctypes.byref(identifier), 0, None, ctypes.byref(pointer)) != 0 or not pointer.value:
+            return r"C:\ProgramData"
+        # Windows WCHAR is UTF-16, independently of the host's wchar_t width.
+        units = ctypes.cast(pointer, ctypes.POINTER(ctypes.c_uint16))
+        encoded = bytearray()
+        for index in range(32768):
+            unit = units[index]
+            if unit == 0:
+                value = encoded.decode("utf-16-le", errors="strict")
+                import ntpath
+                return value if value and ntpath.isabs(value) else r"C:\ProgramData"
+            encoded.extend(unit.to_bytes(2, "little"))
+    except (AttributeError, OSError, ValueError, UnicodeError):
+        pass
+    finally:
+        if pointer.value and free is not None:
+            free(pointer)
+    return r"C:\ProgramData"
+
+
 def codex_system_config_paths() -> list[Path]:
     """System config and requirements layers that native Codex 0.162.1 reads.
 
@@ -198,7 +238,7 @@ def codex_system_config_paths() -> list[Path]:
     loads the legacy managed_config.toml as requirements.
     """
     if IS_WINDOWS:
-        base = Path(os.environ.get("ProgramData") or r"C:\ProgramData") / "OpenAI" / "Codex"
+        base = Path(codex_windows_program_data()) / "OpenAI" / "Codex"
         return [base / "config.toml", base / "requirements.toml"]
     base = Path("/etc/codex")
     return [base / "config.toml", base / "managed_config.toml", base / "requirements.toml"]
@@ -208,61 +248,130 @@ CODEX_MANAGED_PREFERENCES_DOMAIN = "com.openai.codex"
 CODEX_MANAGED_PREFERENCES_KEYS = ("config_toml_base64", "requirements_toml_base64")
 
 
-def codex_managed_preference_paths() -> list[Path]:
-    """macOS managed-profile plists; other platforms have no MDM config layer."""
+def codex_managed_preference_values() -> list[str]:
+    """Read only forced native preferences, with owned CF values released."""
     if sys.platform != "darwin":
         return []
-    base = Path("/Library/Managed Preferences")
-    paths = [base / (CODEX_MANAGED_PREFERENCES_DOMAIN + ".plist")]
+    import ctypes
+    cf = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+    def api(name, args, result):
+        function = getattr(cf, name)
+        function.argtypes, function.restype = args, result
+        return function
+    ptr = ctypes.c_void_p
+    create = api("CFStringCreateWithCString", [ptr, ctypes.c_char_p, ctypes.c_uint32], ptr)
+    release = api("CFRelease", [ptr], None)
+    sync = api("CFPreferencesAppSynchronize", [ptr], ctypes.c_ubyte)
+    forced = api("CFPreferencesAppValueIsForced", [ptr, ptr], ctypes.c_ubyte)
+    copy = api("CFPreferencesCopyAppValue", [ptr, ptr], ptr)
+    type_id = api("CFGetTypeID", [ptr], ctypes.c_ulong)
+    string_type = api("CFStringGetTypeID", [], ctypes.c_ulong)
+    extract = api("CFStringGetCString", [ptr, ptr, ctypes.c_long, ctypes.c_uint32], ctypes.c_ubyte)
+    owned = []
     try:
-        import pwd
-        paths.insert(0, base / pwd.getpwuid(os.getuid()).pw_name /
-                     (CODEX_MANAGED_PREFERENCES_DOMAIN + ".plist"))
-    except (ImportError, KeyError, OSError):
-        pass
-    return paths
+        domain = create(None, CODEX_MANAGED_PREFERENCES_DOMAIN.encode("ascii"), 0x08000100)
+        if not domain:
+            raise ValueError("missing domain")
+        owned.append(domain)
+        if not sync(domain):
+            raise ValueError("preference synchronization failed")
+        values = []
+        for name in CODEX_MANAGED_PREFERENCES_KEYS:
+            key = create(None, name.encode("ascii"), 0x08000100)
+            if not key:
+                raise ValueError("missing key")
+            owned.append(key)
+            if not forced(key, domain):
+                continue
+            value = copy(key, domain)
+            if not value:
+                continue
+            try:
+                if not forced(key, domain):
+                    continue
+                if type_id(value) != string_type():
+                    raise ValueError("non-string forced preference")
+                buffer = ctypes.create_string_buffer(MAX_CODEX_CONFIG_BYTES * 2 + 1)
+                if not extract(value, buffer, len(buffer), 0x08000100):
+                    raise ValueError("unbounded preference")
+                values.append(buffer.value.decode("utf-8", errors="strict"))
+            finally:
+                release(value)
+        return values
+    finally:
+        for value in reversed(owned):
+            release(value)
 
 
 def _refuse_managed_preference_storage() -> None:
-    for path in codex_managed_preference_paths():
-        data = _read_codex_config_bytes(path)
-        if data is None:
-            continue
-        try:
-            values = plistlib.loads(data)
-            if not isinstance(values, dict):
-                raise ValueError("managed preferences are not a dictionary")
-            for key in CODEX_MANAGED_PREFERENCES_KEYS:
-                if key not in values:
-                    continue
-                encoded = values[key]
-                if not isinstance(encoded, str) or len(encoded) > MAX_CODEX_CONFIG_BYTES * 2:
-                    raise ValueError("managed configuration is not bounded base64 text")
-                decoded = base64.b64decode(encoded.strip(), validate=True)
-                if len(decoded) > MAX_CODEX_CONFIG_BYTES:
-                    raise ValueError("managed configuration exceeds limit")
-                if _codex_config_text_has_storage(decoded):
-                    raise codex_storage_refused("sqlite_home_managed_configuration")
-        except CcPeerError:
-            raise
-        except (ValueError, TypeError, OverflowError, plistlib.InvalidFileException,
-                binascii.Error, UnicodeError) as exc:
-            raise codex_storage_refused("storage_config_unverifiable") from exc
+    try:
+        for encoded in codex_managed_preference_values():
+            if not isinstance(encoded, str) or len(encoded) > MAX_CODEX_CONFIG_BYTES * 2:
+                raise ValueError("unbounded preference")
+            decoded = base64.b64decode(encoded.strip(), validate=True)
+            if len(decoded) > MAX_CODEX_CONFIG_BYTES:
+                raise ValueError("unbounded preference")
+            if _codex_config_text_has_storage(decoded):
+                raise codex_storage_refused("sqlite_home_managed_configuration")
+    except CcPeerError:
+        raise
+    except (AttributeError, OSError, ValueError, TypeError, OverflowError, UnicodeError) as exc:
+        raise codex_storage_refused("storage_config_unverifiable") from exc
 
 
-def codex_project_config_paths(cwd: Path) -> list[Path]:
+def codex_project_config_paths(cwd: Path, *, root: Path | None = None) -> list[Path]:
     """Native cwd/tree/repo project layers for a process started in `cwd`.
 
-    Native Codex loads `<cwd>/config.toml` and `.codex/config.toml` in each
-    ancestor (the git top level is one of those ancestors). Layers are only
-    enabled for trusted projects; this check deliberately ignores trust and
-    refuses whenever a candidate sets storage.
+    Default markers stop at the closest .git root; without a marker only cwd
+    applies. A custom marker in any known layer retains a conservative superset.
     """
     base = Path(os.path.abspath(cwd))
-    paths = [base / "config.toml"]
-    for directory in (base, *base.parents):
-        paths.append(directory / ".codex" / "config.toml")
-    return paths
+    directories = (base, *base.parents)
+    if len(directories) > 256:
+        raise codex_storage_refused("storage_config_unverifiable")
+    candidates = [directory / ".codex" / "config.toml" for directory in directories]
+    selected = root or Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    known = [selected / "config.toml", *codex_system_config_paths()]
+    custom = False
+    for path in known:
+        data = _read_codex_config_bytes(path)
+        if data is not None:
+            try:
+                custom |= _codex_config_has_storage(data.decode("utf-8", errors="strict"), "project_root_markers")
+            except (ValueError, UnicodeError) as exc:
+                raise codex_storage_refused("storage_config_unverifiable") from exc
+    try:
+        for encoded in codex_managed_preference_values():
+            if not isinstance(encoded, str) or len(encoded) > MAX_CODEX_CONFIG_BYTES * 2:
+                raise ValueError("unbounded preference")
+            data = base64.b64decode(encoded.strip(), validate=True)
+            if len(data) > MAX_CODEX_CONFIG_BYTES:
+                raise ValueError("unbounded preference")
+            custom |= _codex_config_has_storage(data.decode("utf-8", errors="strict"), "project_root_markers")
+    except (AttributeError, OSError, ValueError, TypeError, UnicodeError) as exc:
+        raise codex_storage_refused("storage_config_unverifiable") from exc
+    if custom:
+        return candidates
+    for index, directory in enumerate(directories):
+        try:
+            marker = directory / ".git"
+            info = marker.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                raise codex_storage_refused("storage_config_unverifiable")
+            head_present = False
+            if stat.S_ISDIR(info.st_mode):
+                try:
+                    (marker / "HEAD").stat()
+                    head_present = True
+                except (FileNotFoundError, NotADirectoryError):
+                    pass
+            if stat.S_ISREG(info.st_mode) or head_present:
+                return candidates[:index + 1]
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except OSError as exc:
+            raise codex_storage_refused("storage_config_unverifiable") from exc
+    return candidates[:1]
 
 
 def check_codex_storage(root: Path, *, cwd: Path | None = None) -> None:
@@ -286,9 +395,16 @@ def check_codex_storage(root: Path, *, cwd: Path | None = None) -> None:
         _refuse_configured_storage(path, "sqlite_home_system_configuration")
     _refuse_managed_preference_storage()
     if cwd is not None:
-        user_config = os.path.normcase(os.path.abspath(root / "config.toml"))
-        for path in codex_project_config_paths(cwd):
-            if os.path.normcase(str(path)) != user_config:
+        try:
+            selected_home = os.path.normcase(str(root.resolve()))
+        except (OSError, RuntimeError) as exc:
+            raise codex_storage_refused("storage_config_unverifiable") from exc
+        for path in codex_project_config_paths(cwd, root=root):
+            try:
+                project_home = os.path.normcase(str(path.parent.resolve()))
+            except (OSError, RuntimeError) as exc:
+                raise codex_storage_refused("storage_config_unverifiable") from exc
+            if project_home != selected_home:
                 _refuse_configured_storage(path, "sqlite_home_project_configuration")
 
 

@@ -17,14 +17,14 @@ def isolate_native_layers(case, project_root=None):
     real_project_paths = peer.codex_project_config_paths
     base = None if project_root is None else os.path.abspath(project_root)
 
-    def contained(cwd):
+    def contained(cwd, **kwargs):
         if base is None:
             return []
-        return [path for path in real_project_paths(cwd)
+        return [path for path in real_project_paths(cwd, **kwargs)
                 if os.path.abspath(path).startswith(base + os.sep)]
 
     for patcher in (mock.patch.object(peer, "codex_system_config_paths", return_value=[]),
-                    mock.patch.object(peer, "codex_managed_preference_paths", return_value=[]),
+                    mock.patch.object(peer, "codex_managed_preference_values", return_value=[]),
                     mock.patch.object(peer, "codex_project_config_paths", side_effect=contained)):
         patcher.start()
         case.addCleanup(patcher.stop)
