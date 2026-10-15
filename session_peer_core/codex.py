@@ -29,10 +29,15 @@ def _check_codex_discovery_storage(root: Path, *, include_ordinary_preferences: 
         reason = exc.details.get("reason")
         if (sys.platform == "darwin" and include_ordinary_preferences and
                 reason in ("sqlite_home_managed_configuration", "storage_config_unverifiable")):
+            cause = ("macOS preference values contain an unsupported sqlite_home setting. "
+                     if reason == "sqlite_home_managed_configuration" else
+                     "A known storage configuration layer could not be classified; "
+                     "this need not originate in preferences. ")
             raise CcPeerError(
-                "Cannot establish the selected Codex SQLite storage: " + reason + ". "
-                "Metadata-only discovery does not determine the native Codex version and checks ordinary "
-                "as well as forced com.openai.codex preferences; this can conservatively refuse a 0.162.1 configuration. "
+                "Cannot establish the selected Codex SQLite storage: " + reason + ". " + cause +
+                "This discovery step performs no additional native version query. Standalone metadata-only "
+                "listing checks ordinary as well as forced com.openai.codex preferences without querying "
+                "Codex; it can conservatively refuse values ignored by a 0.162.1 configuration. "
                 "Ask the operator to review known configuration layers, including effective com.openai.codex "
                 "config_toml_base64 and requirements_toml_base64 preferences, and ensure the intended home and storage. "
                 "--codex-home alone does not resolve "

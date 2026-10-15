@@ -122,6 +122,35 @@ class ListingStoragePolicy(unittest.TestCase):
         self.assertNotIn("private-invalid-base64!", str(caught.exception))
         connect.assert_not_called()
 
+    def test_malformed_home_configuration_does_not_misidentify_preferences_as_cause(self):
+        (self.default / "config.toml").write_text(
+            'sqlite_home="private-listing-location\n', encoding="utf-8")
+        with self.no_native(), mock.patch.object(peer.sqlite3, "connect") as connect:
+            with self.assertRaises(peer.CcPeerError) as caught:
+                peer.discover_codex(self.args)
+        self.assertEqual(caught.exception.details["reason"], "storage_config_unverifiable")
+        self.assert_diagnostic(caught.exception)
+        self.assertIn("A known storage configuration layer could not be classified", str(caught.exception))
+        self.assertIn("this need not originate in preferences", str(caught.exception))
+        self.assertNotIn("macOS preference values contain an unsupported sqlite_home setting", str(caught.exception))
+        self.preferences.assert_not_called()
+        connect.assert_not_called()
+
+    def test_internal_true_policy_does_not_deny_an_enclosing_version_query(self):
+        self.ordinary = True
+        # Represents an enclosing send that already established a loader policy;
+        # this discovery step must not imply that the enclosing probe never ran.
+        self.args._codex_discovery_include_ordinary_preferences = True
+        with self.no_native(), mock.patch.object(peer.sqlite3, "connect") as connect:
+            with self.assertRaises(peer.CcPeerError) as caught:
+                peer.discover_codex(self.args)
+        self.assertEqual(caught.exception.details["reason"], "sqlite_home_managed_configuration")
+        self.assert_diagnostic(caught.exception)
+        self.assertIn("macOS preference values contain an unsupported sqlite_home setting", str(caught.exception))
+        self.assertIn("This discovery step performs no additional native version query", str(caught.exception))
+        self.assertNotIn("Metadata-only discovery does not determine the native Codex version", str(caught.exception))
+        connect.assert_not_called()
+
     def test_collect_does_not_accept_a_caller_supplied_internal_policy_override(self):
         self.ordinary = True
         self.args._codex_discovery_include_ordinary_preferences = False
@@ -161,6 +190,19 @@ class ListingStoragePolicy(unittest.TestCase):
         self.assertIn("discovery failed", output)
         self.assert_diagnostic(output + errors)
         connect.assert_not_called()
+
+    def test_explicit_codex_bin_does_not_enable_a_listing_version_probe(self):
+        self.ordinary = True
+        for output_options in (("--json",), ()):
+            with self.subTest(json_output=bool(output_options)), self.no_native(), \
+                 mock.patch.object(peer.sqlite3, "connect") as connect:
+                code, output, errors = self.cli("--agent", "codex", "--codex-bin",
+                                                "fixture-codex-0.162.1", *output_options)
+            self.assertEqual(code, 1)
+            self.assert_diagnostic(output + errors)
+            if output_options:
+                self.assertIs(json.loads(output)["ok"], False)
+            connect.assert_not_called()
 
     def test_failed_codex_discovery_preserves_healthy_claude_rows(self):
         self.ordinary = True
