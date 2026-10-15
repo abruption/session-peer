@@ -176,7 +176,7 @@ class HandoffLifecycle(unittest.TestCase):
                 pass
             process.communicate(timeout=5)
 
-    def test_collector_cleanup_escalates_and_reaps_without_argument_reflection(self):
+    def test_collector_cleanup_escalates_and_reaps(self):
         process = mock.Mock()
         process.poll.return_value = None
         process.communicate.side_effect = [subprocess.TimeoutExpired("fixture-collector", 5), (b"", b"")]
@@ -306,8 +306,11 @@ class HandoffLifecycle(unittest.TestCase):
                 create()
                 before = self.channel.lstat()
                 ledger_bytes = (self.ledger.root / "ledger.json").read_bytes()
-                with self.assertRaises(peer.CcPeerError) as caught:
-                    peer.handoff_collector(self.ledger.root)
+                # A regression that enters the long-lived loop must fail, not
+                # hang the test process for the collector's lifetime.
+                with mock.patch.object(peer.socket.socket, "accept", side_effect=AssertionError("unexpected collector accept loop")):
+                    with self.assertRaises(peer.CcPeerError) as caught:
+                        peer.handoff_collector(self.ledger.root)
                 self.assert_private_equal(caught.exception.details["reason"], "receipt_channel_exists")
                 self.assert_same_entry(self.channel, before)
                 self.assert_private_equal(target.read_bytes(), b"foreign")
@@ -471,10 +474,11 @@ class HandoffLifecycle(unittest.TestCase):
         self.assert_private_equal(queue.call_count, 0, "unexpected endpoint call")
 
     def test_explicit_known_restore_quarantine_hides_ack_in_public_status(self):
-        # Pin only the public safety boundary, not private evidence destruction.
-        # The current implementation clears internal ACK/native detail, but
-        # retaining evidence for reconciliation is an unresolved design question
-        # under #181. That policy is not a normal restart/clock rule.
+        # Assert the public safety boundary rather than an internal None value.
+        # Currently public ACK suppression depends on private ACK deletion;
+        # these policies are not independently implemented. If #181 retains
+        # private evidence, quarantine and handoff_public must be reconsidered
+        # together. This is not a normal restart/clock rule.
         frame = self.mint()
         self.submitted()
         peer.handoff_collect(self.ledger, self.clock, frame)
@@ -539,6 +543,8 @@ class HandoffLifecycle(unittest.TestCase):
         self.assertFalse(path.exists())
 
     def test_wait_on_quarantined_record_makes_no_native_call(self):
+        # This case deliberately has no live collector: history_unavailable is
+        # conditional on channel absence, not a unique quarantine diagnostic.
         self.receipt_capable_pending_wait()
         self.ledger.quarantine_restored()
         code, result, inbox, queue = self.status("--wait-for", "acknowledged", "--wait-timeout", "6", action="wait")
