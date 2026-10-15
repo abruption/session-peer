@@ -207,7 +207,8 @@ class StorageLayers(unittest.TestCase):
 
     def test_project_paths_without_marker_cover_only_cwd(self):
         project = self.base / "a" / "b"
-        paths = REAL_PROJECT_PATHS(project)
+        with mock.patch.object(Path, "home", side_effect=AssertionError("fixture must use its selected home")):
+            paths = REAL_PROJECT_PATHS(project, root=self.root)
         self.assertEqual(paths, [project / ".codex" / "config.toml"])
 
     # -- shared app-server daemon (policy: no daemon-based refusal) -------
