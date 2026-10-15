@@ -136,9 +136,32 @@ The pinned [0.162.1 Thread schema](https://github.com/openai/codex/blob/092d3acd
 declares `ephemeral` as a bool without an omission attribute. This is a static
 source basis for requiring explicit false, not a fresh native serialization test.
 
-Ten synthetic WebSocket/temporary-database tests cover these boundaries,
+Immediately before the one queue attempt, the probe requests the selected
+thread's `thread/queue/list` first page with `limit:1`. Only an explicit empty
+`data` array and `nextCursor:null` pass. Missing, malformed, nonempty or paginated
+responses refuse before any queue submission. This is a point-in-time check,
+not an atomic expected-empty precondition: the native add API exposes no such
+precondition. The exclusively owned server and no-other-input-producer setup
+remain mandatory. No preflight can establish first-input status if another
+producer races it. The queue-list API can return queued input bodies; this
+harness neither prints nor inspects them beyond refusing a nonempty list, but
+the parsed response exists in memory. It is not a body-free observation API and
+must not be used on a server containing unrelated work.
+
+A successful queue reply must contain a structured `queuedSubmission` with a
+nonempty string ID and the exact submitted plain-text `input` and
+`clientUserMessageId`. The explicit `text_elements:[]` matches the pinned native
+text schema. Missing, null, malformed or mismatched fields after an attempt
+remain unknown with no retry; merely finding the key is not acceptance. RPC
+response IDs must match the exact integer request ID, not a bool or float.
+See the pinned [queue request/response schema](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/app-server-protocol/src/protocol/v2/thread.rs#L913-L959)
+and [plain-text input schema](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/app-server-protocol/src/protocol/v2/turn.rs#L436-L445).
+These checks were not retrospectively performed in the historical live runs.
+
+Fifteen synthetic WebSocket/temporary-database tests cover these boundaries,
 including relative home paths, complete error validation on both RPC paths,
-ephemeral/missing/null refusal and exactly one queue attempt on rejection.
+ephemeral/missing/null refusal, empty-queue preflight, submission echo validation,
+exact RPC IDs and exactly one queue attempt on rejection or uncertain failure.
 These are harness regression tests, not new native delivery, receipt, platform,
 or production-support evidence. None of these review-driven guards were exercised
 by another live native run. SQLite handles are explicitly closed. A failure during

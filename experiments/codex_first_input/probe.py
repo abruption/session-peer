@@ -38,6 +38,23 @@ def rpc_result(response):
     return result
 
 
+def require_empty_queue(result):
+    if (not isinstance(result.get("data"), list) or "nextCursor" not in result
+            or (result["nextCursor"] is not None and not isinstance(result["nextCursor"], str))):
+        raise ProbeError("invalid_queue_snapshot")
+    if result["data"] or result["nextCursor"] is not None:
+        raise ProbeError("queue_not_empty_or_unproven")
+
+
+def validate_queued_submission(result, expected_input, client_message_id):
+    queued = result.get("queuedSubmission")
+    if (not isinstance(queued, dict) or not isinstance(queued.get("id"), str) or not queued["id"]
+            or not isinstance(queued.get("input"), list) or queued["input"] != expected_input
+            or not isinstance(queued.get("clientUserMessageId"), str)
+            or queued["clientUserMessageId"] != client_message_id):
+        raise ProbeError("invalid_queue_result")
+
+
 def main(argv=None, state=None):
     if state is None:
         state = {"attempted": False, "accepted": None}
@@ -75,7 +92,7 @@ def main(argv=None, state=None):
                 message = json.loads(ws.recv(timeout=max(.01, deadline-time.monotonic())))
                 if not isinstance(message, dict):
                     raise ProbeError("invalid_rpc_response")
-                if message.get("id") == sequence:
+                if type(message.get("id")) is int and message["id"] == sequence:
                     if ("error" in message) == ("result" in message):
                         raise ProbeError("invalid_rpc_response")
                     return message
@@ -121,17 +138,20 @@ def main(argv=None, state=None):
         assert rows == 0, "requires fresh pre-first-input thread"
         marker = args.ack_marker or "ACK CODEX-FIRST-INPUT-306-" + args.mode.upper()
         message = "Owner-authorized one-shot transport test. Reply exactly " + marker + ". Do not run tools or modify files."
+        # A point-in-time preflight, not an atomic expected-empty condition.
+        # Only use the exclusively owned server with no other input producers.
+        require_empty_queue(rpc_result(call("thread/queue/list", {"threadId": thread_id, "limit": 1})))
+        expected_input = [{"type": "text", "text": message, "text_elements": []}]
+        client_message_id = str(uuid.uuid4())
         method = "thread/queue/add"
-        result = call(method, {"threadId": thread_id, "input": [{"type": "text", "text": message}], "clientUserMessageId": str(uuid.uuid4())})
+        result = call(method, {"threadId": thread_id, "input": expected_input, "clientUserMessageId": client_message_id})
         if "error" in result:
             code = rpc_error_code(result["error"])
             state["accepted"] = False
             print(json.dumps({"method": method, "accepted": False, "errorCode": code, "retryAllowed": False}), flush=True)
             return 1
         else:
-            queued = rpc_result(result)
-            if "queuedSubmission" not in queued:
-                raise ProbeError("invalid_queue_result")
+            validate_queued_submission(rpc_result(result), expected_input, client_message_id)
             state["accepted"] = True
             print(json.dumps({"method": method, "accepted": True, "consumptionConfirmed": False}), flush=True)
             return 0
