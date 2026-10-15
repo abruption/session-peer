@@ -315,9 +315,9 @@ def codex_managed_preference_values(*, forced_only: bool = True) -> list[str]:
             release(value)
 
 
-def _refuse_managed_preference_storage(*, wake_preferences: bool = False) -> None:
+def _refuse_managed_preference_storage(*, include_ordinary_preferences: bool = False) -> None:
     try:
-        values = (codex_managed_preference_values(forced_only=False) if wake_preferences
+        values = (codex_managed_preference_values(forced_only=False) if include_ordinary_preferences
                   else codex_managed_preference_values())
         for encoded in values:
             if not isinstance(encoded, str) or len(encoded) > MAX_CODEX_CONFIG_BYTES * 2:
@@ -333,14 +333,31 @@ def _refuse_managed_preference_storage(*, wake_preferences: bool = False) -> Non
         raise codex_storage_refused("storage_config_unverifiable") from exc
 
 
+def codex_physical_cwd(cwd: Path) -> Path:
+    """The existing directory chdir will reach, not its lexical alias."""
+    try:
+        physical = Path(cwd).resolve(strict=True)
+        if not physical.is_dir():
+            raise ValueError("not a directory")
+        return physical
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise codex_storage_refused("storage_config_unverifiable") from exc
+
+
 def codex_project_config_paths(cwd: Path, *, root: Path | None = None,
-                               wake_preferences: bool = False) -> list[Path]:
+                               include_ordinary_preferences: bool = False) -> list[Path]:
     """Native cwd/tree/repo project layers for a process started in `cwd`.
 
     Default markers stop at the closest .git root; without a marker only cwd
     applies. A custom marker in any known layer retains a conservative superset.
     """
-    base = Path(os.path.abspath(cwd))
+    return _codex_project_config_paths_from(codex_physical_cwd(cwd), root=root,
+        include_ordinary_preferences=include_ordinary_preferences)
+
+
+def _codex_project_config_paths_from(base: Path, *, root: Path | None = None,
+                                     include_ordinary_preferences: bool = False) -> list[Path]:
+    """Apply the same marker boundary to an already selected spelling."""
     directories = (base, *base.parents)
     if len(directories) > 256:
         raise codex_storage_refused("storage_config_unverifiable")
@@ -356,7 +373,7 @@ def codex_project_config_paths(cwd: Path, *, root: Path | None = None,
             except (ValueError, UnicodeError) as exc:
                 raise codex_storage_refused("storage_config_unverifiable") from exc
     try:
-        values = (codex_managed_preference_values(forced_only=False) if wake_preferences
+        values = (codex_managed_preference_values(forced_only=False) if include_ordinary_preferences
                   else codex_managed_preference_values())
         for encoded in values:
             if not isinstance(encoded, str) or len(encoded) > MAX_CODEX_CONFIG_BYTES * 2:
@@ -394,7 +411,7 @@ def codex_project_config_paths(cwd: Path, *, root: Path | None = None,
 
 
 def check_codex_storage(root: Path, *, cwd: Path | None = None,
-                        wake_preferences: bool = False) -> None:
+                        include_ordinary_preferences: bool = False) -> None:
     """Refuse known storage relocation before any effect.
 
     Covered native layers (codex-cli 0.162.1, rust-v0.162.1 092d3acd): an
@@ -405,8 +422,8 @@ def check_codex_storage(root: Path, *, cwd: Path | None = None,
     running shared app-server daemon (whose QueueStore keeps the database
     chosen at its startup, while config/read rereads current disk layers) are
     not inspected. Message bodies, accounts and transcripts are never read.
-    Validated 0.154.0 wake additionally checks ordinary macOS preferences,
-    because that native loader did not require a forced value.
+    Version-selected queue paths additionally check ordinary macOS values
+    when the reviewed 0.162.1 forced-only loader has not been established.
     """
     for name, value in os.environ.items():
         match = name.upper() == "CODEX_SQLITE_HOME" if IS_WINDOWS else name == "CODEX_SQLITE_HOME"
@@ -415,34 +432,76 @@ def check_codex_storage(root: Path, *, cwd: Path | None = None,
     _refuse_configured_storage(root / "config.toml", "sqlite_home_configuration")
     for path in codex_system_config_paths():
         _refuse_configured_storage(path, "sqlite_home_system_configuration")
-    _refuse_managed_preference_storage(wake_preferences=wake_preferences)
+    _refuse_managed_preference_storage(include_ordinary_preferences=include_ordinary_preferences)
     if cwd is not None:
-        try:
-            selected_home = os.path.normcase(str(root.resolve()))
-        except (OSError, RuntimeError) as exc:
-            raise codex_storage_refused("storage_config_unverifiable") from exc
-        for path in codex_project_config_paths(cwd, root=root, wake_preferences=wake_preferences):
-            try:
-                project_home = os.path.normcase(str(path.parent.resolve()))
-            except (OSError, RuntimeError) as exc:
-                raise codex_storage_refused("storage_config_unverifiable") from exc
-            if project_home != selected_home:
+        _refuse_codex_project_paths(root, codex_project_config_paths(cwd, root=root,
+            include_ordinary_preferences=include_ordinary_preferences))
+
+
+def _refuse_codex_project_paths(root: Path, paths: list[Path]) -> None:
+    try:
+        selected_home = os.path.normcase(str(root.resolve()))
+        seen = set()
+        for path in paths:
+            project_home = os.path.normcase(str(path.parent.resolve()))
+            if project_home != selected_home and project_home not in seen:
+                seen.add(project_home)
                 _refuse_configured_storage(path, "sqlite_home_project_configuration")
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise codex_storage_refused("storage_config_unverifiable") from exc
 
 
 def codex_process_environment(root: Path, native_home: str | None = None, *,
-                              cwd: Path | None = None, wake_preferences: bool = False) -> dict:
-    check_codex_storage(root, cwd=cwd, wake_preferences=wake_preferences)
+                              cwd: Path | None = None, include_ordinary_preferences: bool = False) -> dict:
+    check_codex_storage(root, cwd=cwd, include_ordinary_preferences=include_ordinary_preferences)
     env = {name: value for name, value in os.environ.items()
            if (name.upper() if IS_WINDOWS else name) not in ("CODEX_HOME", "CODEX_SQLITE_HOME")}
     env["CODEX_HOME"] = native_home or str(root)
     if cwd is not None and not IS_WINDOWS:
         # Keep a shell-style PWD consistent with the inspected project layers.
-        env["PWD"] = os.path.abspath(cwd)
+        env["PWD"] = str(codex_physical_cwd(cwd))
     return env
 
 
-def codex_thread_cwd(root: Path, thread_id: str) -> Path | None:
+def codex_preferences_for_version(version: str | None) -> bool:
+    """Unknown loader semantics conservatively include ordinary preferences.
+
+    Only the exact reviewed 0.162.1 loader is known to require forced values;
+    do not infer the same semantics for an older, future or vendor build.
+    """
+    return version != "codex-cli 0.162.1"
+
+
+def codex_queue_preference_policy(executable: str, root: Path, queue_cwd: Path,
+                                   native_home: str | None = None) -> bool:
+    """One bounded, diagnostic-only macOS version query for this queue plan.
+
+    Reuse the owned-process primitive (1 MiB stdout/64 KiB stderr caps), with
+    three seconds for the query and two for cleanup. Unrecognized/unavailable
+    output selects a conservative preference scan, not a version refusal.
+    Output and diagnostics are never reflected. The helper is called only
+    after the generated runtime has loaded all of its source segments.
+    """
+    if sys.platform != "darwin":
+        return False
+    env = codex_process_environment(root, native_home, cwd=queue_cwd)
+    now = time.monotonic()
+    done = handoff_stream_child([executable, "--version"], b"", now + 3, now + 5,
+                                time.monotonic, env=env, cwd=queue_cwd)
+    if done.interrupted:
+        raise KeyboardInterrupt
+    if done.cleanup_failed or done.spawned is None:
+        raise codex_storage_refused("storage_config_unverifiable")
+    version = None
+    if not done.reason and done.returncode == 0 and not done.stdout_overflow and len(done.stdout) <= 4096:
+        try:
+            version = done.stdout.decode("utf-8", errors="strict").strip()
+        except UnicodeError:
+            pass
+    return codex_preferences_for_version(version)
+
+
+def _codex_thread_directory(root: Path, thread_id: str) -> Path | None:
     """The saved thread directory (metadata only), or None when it has none.
 
     The consuming writer normally started there, so its project layers can
@@ -470,16 +529,29 @@ def codex_thread_cwd(root: Path, thread_id: str) -> Path | None:
         raise codex_storage_refused("consumer_directory_unverifiable") from exc
 
 
+def codex_thread_cwd(root: Path, thread_id: str) -> Path | None:
+    path = _codex_thread_directory(root, thread_id)
+    return None if path is None else codex_physical_cwd(path)
+
+
 def check_codex_consumer_storage(root: Path, thread_id: str, *, native_home: str | None = None,
-                                 wake_preferences: bool = False) -> None:
+                                 include_ordinary_preferences: bool = False) -> None:
     if native_home and not IS_WINDOWS:
         # A translated Windows receiver has Windows cwd metadata. POSIX
         # paths cannot inspect its configuration; preserve the explicitly
         # unverified legacy route rather than classifying that cwd as invalid.
         return
-    cwd = codex_thread_cwd(root, thread_id)
-    if cwd is not None:
-        check_codex_storage(root, cwd=cwd, wake_preferences=wake_preferences)
+    saved = _codex_thread_directory(root, thread_id)
+    if saved is not None:
+        cwd = codex_physical_cwd(saved)
+        check_codex_storage(root, cwd=cwd, include_ordinary_preferences=include_ordinary_preferences)
+        lexical = Path(os.path.abspath(saved))
+        if lexical != cwd:
+            # A running consumer may have selected explicit lexical layers;
+            # check both spellings with native-style boundaries, not every
+            # lexical ancestor. This can conservatively over-refuse an alias.
+            _refuse_codex_project_paths(root, _codex_project_config_paths_from(lexical, root=root,
+                include_ordinary_preferences=include_ordinary_preferences))
 
 
 def codex_queue_cwd(root: Path, native_home: str | None) -> Path:
@@ -493,7 +565,7 @@ def codex_queue_cwd(root: Path, native_home: str | None) -> Path:
     so only POSIX-visible layers are checked and the submission contract is
     otherwise unchanged.
     """
-    return Path(os.getcwd()) if native_home else root
+    return Path(os.getcwd()) if native_home else codex_physical_cwd(root)
 
 
 def codex_queue_storage_preflight(args: argparse.Namespace, root: Path, thread_id: str) -> Path:
@@ -507,10 +579,10 @@ def codex_queue_storage_preflight(args: argparse.Namespace, root: Path, thread_i
     changes. Returns the queue working directory.
     """
     queue_cwd = codex_queue_cwd(root, getattr(args, "codex_native_home", None))
-    wake_preferences = bool(getattr(args, "wake", False))
-    check_codex_storage(root, cwd=queue_cwd, wake_preferences=wake_preferences)
+    include_ordinary_preferences = bool(getattr(args, "wake", False))
+    check_codex_storage(root, cwd=queue_cwd, include_ordinary_preferences=include_ordinary_preferences)
     check_codex_consumer_storage(root, thread_id, native_home=getattr(args, "codex_native_home", None),
-                                 wake_preferences=wake_preferences)
+                                 include_ordinary_preferences=include_ordinary_preferences)
     return queue_cwd
 
 
@@ -1290,6 +1362,11 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
     native_home = getattr(args, "codex_native_home", None)
     # Dry-run applies the same storage boundary as the real submission.
     queue_cwd = codex_queue_storage_preflight(args, root, thread_id)
+    include_ordinary_preferences = (True if getattr(args, "wake", False) else
+        codex_queue_preference_policy(executable, root, queue_cwd, native_home))
+    check_codex_storage(root, cwd=queue_cwd, include_ordinary_preferences=include_ordinary_preferences)
+    check_codex_consumer_storage(root, thread_id, native_home=native_home,
+                                 include_ordinary_preferences=include_ordinary_preferences)
     result = {"ok": True, "target": {"agent": "codex", "id": thread_id},
               "chars": len(text), "dryRun": args.dry_run,
               "codexHome": str(root), "submitted": not args.dry_run,
@@ -1307,10 +1384,9 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
     # spelling of that same home.  This private adapter value is derived from
     # operator policy; it is never accepted from a paired request.
     process_home = native_home or str(root)
-    wake_preferences = bool(getattr(args, "wake", False))
-    env = codex_process_environment(root, process_home, cwd=queue_cwd, wake_preferences=wake_preferences)
+    env = codex_process_environment(root, process_home, cwd=queue_cwd, include_ordinary_preferences=include_ordinary_preferences)
     check_codex_consumer_storage(root, thread_id, native_home=native_home,
-                                 wake_preferences=wake_preferences)
+                                 include_ordinary_preferences=include_ordinary_preferences)
     try:
         # Keep leading dashes inside the option value, including with --no-from.
         done = subprocess.run(argv, cwd=None if native_home else str(queue_cwd),
@@ -1356,7 +1432,7 @@ def codex_wake_preflight(root: Path, thread_id: str, executable: str) -> dict:
         raise wake_refused("unsupported_version", f"Codex wake is not validated for {version}")
     # Only the validated 0.154.0 wake path includes ordinary CF preferences;
     # do not impose its older loader semantics on queue-only 0.162.1 paths.
-    check_codex_storage(root, wake_preferences=True)
+    check_codex_storage(root, include_ordinary_preferences=True)
     try:
         with contextlib.closing(sqlite3.connect((root / "state_5.sqlite").as_uri() + "?mode=ro", uri=True, timeout=3)) as conn:
             conn.execute("PRAGMA query_only=ON")
@@ -1370,8 +1446,9 @@ def codex_wake_preflight(root: Path, thread_id: str, executable: str) -> dict:
         raise wake_refused("archived_thread", "Archived Codex threads cannot be woken")
     if not isinstance(cwd, str) or not Path(cwd).is_absolute() or not Path(cwd).is_dir():
         raise wake_refused("cwd_unavailable", "Original Codex working directory is unavailable")
+    cwd = str(codex_physical_cwd(Path(cwd)))
     # The wake app-server starts in the thread's directory and loads its layers.
-    check_codex_storage(root, cwd=Path(cwd), wake_preferences=True)
+    check_codex_storage(root, cwd=Path(cwd), include_ordinary_preferences=True)
     if not isinstance(rollout, str) or not Path(rollout).is_file() or Path(rollout).stat().st_size == 0:
         raise wake_refused("uninitialized_thread", "Codex wake requires an initialized rollout")
     writer = inspect_codex_writer(root, thread_id)
@@ -1456,6 +1533,7 @@ def stop_codex_wake(process, grace: float = CODEX_WAKE_CLEANUP_GRACE) -> None:
 def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeout: float,
                    *, wake_context: dict | None = None) -> dict:
     """Resume one thread, await one turn, and own/clean up the native process."""
+    cwd = str(codex_physical_cwd(Path(cwd)))
     process = None
     def cancelled(signum, frame):
         raise KeyboardInterrupt
@@ -1468,7 +1546,7 @@ def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeou
         # into CLI JSON. Only lifecycle states and bounded error text escape.
         with tempfile.TemporaryFile() as diagnostics:
             process = subprocess.Popen([executable, "app-server"], cwd=cwd,
-                env={**codex_process_environment(root, cwd=Path(cwd), wake_preferences=True),
+                env={**codex_process_environment(root, cwd=Path(cwd), include_ordinary_preferences=True),
                      **(wake_chain_environment(wake_context) if wake_context else {})}, stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=diagnostics, start_new_session=True)
             selector = selectors.DefaultSelector()

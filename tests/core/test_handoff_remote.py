@@ -320,7 +320,7 @@ class HandoffRemote(unittest.TestCase):
             # settings. This is not a live native CFPreferences/API test.
             + "assert all(n in scope for n in ('codex_system_config_paths','codex_managed_preference_values','codex_project_config_paths'))\n"
             + "scope['codex_system_config_paths']=lambda:[]\n"
-            + "scope['codex_managed_preference_values']=lambda:[]\n"
+            + "scope['codex_managed_preference_values']=lambda **kwargs:[]\n"
             + "project_paths=scope['codex_project_config_paths']\n"
             + "scope['codex_project_config_paths']=lambda *a,**k:[p for p in project_paths(*a,**k) if str(p).startswith(" + repr(str(self.fixture.root) + os.sep) + ")]\n"
             + "def forbidden(*a,**k): raise AssertionError('remote ledger/receipt authority forbidden')\n"

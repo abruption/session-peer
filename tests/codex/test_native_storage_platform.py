@@ -1,13 +1,111 @@
 """Mocked platform APIs and root discovery; no native delivery/MDM evidence."""
+import argparse
 import base64
+import contextlib
 import ctypes
 import os
 from pathlib import Path
 import tempfile
+import sqlite3
+import subprocess
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
 import session_peer as peer
+from tests.codex.support import THREAD, isolate_native_layers
+
+REAL_QUEUE_PREFERENCE_POLICY = peer.codex_queue_preference_policy
+
+
+class QueuePreferenceVersions(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name).resolve()
+        isolate_native_layers(self, self.root)
+        self.args = argparse.Namespace(to="codex:" + THREAD, codex_home=str(self.root),
+            codex_bin="fixture", dry_run=False, wake=False, all=False,
+            allow_inactive_codex_home=True)
+        with contextlib.closing(sqlite3.connect(self.root / "state_5.sqlite")) as db:
+            db.execute("CREATE TABLE threads(id TEXT,title TEXT,cwd TEXT,updated_at INTEGER,archived INTEGER,rollout_path TEXT)")
+            db.execute("INSERT INTO threads VALUES(?, 'fixture', ?, 1, 0, '')", (THREAD, str(self.root)))
+            db.commit()
+
+    def probe(self, stdout=b"codex-cli 0.162.1\n", **changes):
+        fields = dict(stdout=stdout, stderr=b"diagnostic-fixture", returncode=0, reason=None,
+            stdout_overflow=False, cleanup_failed=False, spawned=True, interrupted=False)
+        fields.update(changes)
+        return SimpleNamespace(**fields)
+
+    def ordinary_values(self, *, forced_only=True):
+        return [] if forced_only else [base64.b64encode(b'sqlite_home="ordinary-fixture"').decode("ascii")]
+
+    def test_policy_is_exact_reviewed_version_not_an_ordering_rule(self):
+        for version in ("codex-cli 0.154.0", "codex-cli 0.162.0", "codex-cli 0.162.2", "codex-cli 0.162.1-vendor", None):
+            with self.subTest(version=version):
+                self.assertTrue(peer.codex_preferences_for_version(version))
+        self.assertFalse(peer.codex_preferences_for_version("codex-cli 0.162.1"))
+
+    def test_mac_probe_uses_selected_plan_bounded_runner_and_never_echoes_output(self):
+        cases = ((self.probe(), False), (self.probe(b"codex-cli 0.154.0"), True),
+                 (self.probe(b"unexpected-fixture"), True), (self.probe(b"\xff"), True),
+                 (self.probe(returncode=1), True), (self.probe(reason="process_deadline"), True),
+                 (self.probe(stdout_overflow=True), True), (self.probe(b"x" * 4097), True))
+        for done, expected in cases:
+            with self.subTest(expected=expected), mock.patch.object(peer.sys, "platform", "darwin"), \
+                 mock.patch.object(peer.time, "monotonic", return_value=10), \
+                 mock.patch.object(peer, "handoff_stream_child", return_value=done) as child:
+                result = REAL_QUEUE_PREFERENCE_POLICY("fixture", self.root, self.root)
+            self.assertIs(result, expected)
+            self.assertEqual(child.call_args.args[:4], (["fixture", "--version"], b"", 13, 15))
+            self.assertEqual(child.call_args.kwargs["cwd"], self.root)
+            self.assertEqual(child.call_args.kwargs["env"]["CODEX_HOME"], str(self.root))
+
+    def test_unclean_probe_refuses_and_interruption_propagates(self):
+        for options in ({"cleanup_failed": True}, {"spawned": None}, {"interrupted": True}):
+            with self.subTest(options=options), mock.patch.object(peer.sys, "platform", "darwin"), \
+                 mock.patch.object(peer, "handoff_stream_child", return_value=self.probe(**options)):
+                with self.assertRaises(KeyboardInterrupt if options.get("interrupted") else peer.CcPeerError) as caught:
+                    REAL_QUEUE_PREFERENCE_POLICY("fixture", self.root, self.root)
+            self.assertNotIn("diagnostic-fixture", str(caught.exception))
+
+    def test_non_mac_does_not_probe(self):
+        with mock.patch.object(peer.sys, "platform", "linux"), mock.patch.object(peer, "handoff_stream_child") as child:
+            self.assertFalse(REAL_QUEUE_PREFERENCE_POLICY("fixture", self.root, self.root))
+        child.assert_not_called()
+
+    def test_queue_and_dry_run_use_version_policy_without_rejecting_unknown_version(self):
+        for version in (b"codex-cli 0.154.0", b"codex-cli 0.162.1", b"unknown-fixture"):
+            for dry_run in (True, False):
+                self.args.dry_run = dry_run
+                expected_refusal = version != b"codex-cli 0.162.1"
+                with self.subTest(version=version, dry_run=dry_run), \
+                     mock.patch.object(peer.sys, "platform", "darwin"), \
+                     mock.patch.object(peer, "codex_queue_preference_policy", wraps=REAL_QUEUE_PREFERENCE_POLICY), \
+                     mock.patch.object(peer, "codex_managed_preference_values", side_effect=self.ordinary_values), \
+                     mock.patch.object(peer, "handoff_stream_child", return_value=self.probe(version)) as probe, \
+                     mock.patch.object(peer, "resolve_codex_home", return_value=(self.root, {})), \
+                     mock.patch.object(peer, "revalidate_codex_home"), \
+                     mock.patch.object(peer, "codex_executable", return_value="fixture"), \
+                     mock.patch.object(peer.subprocess, "run", return_value=subprocess.CompletedProcess([], 0,
+                         "Queued message fixture-id for thread " + THREAD + ".\n", "")) as queue:
+                    if expected_refusal:
+                        with self.assertRaises(peer.CcPeerError) as caught:
+                            peer._queue_codex(self.args, "fixture")
+                        self.assertEqual(caught.exception.details["reason"], "sqlite_home_managed_configuration")
+                        queue.assert_not_called()
+                    else:
+                        result = peer._queue_codex(self.args, "fixture")
+                        self.assertEqual(result["status"], "validated" if dry_run else "queued")
+                        self.assertEqual(queue.call_count, 0 if dry_run else 1)
+                    probe.assert_called_once()
+        # An unknown version is not itself a refusal in the absence of a
+        # relevant ordinary setting; no new native compatibility is claimed.
+        with mock.patch.object(peer.sys, "platform", "darwin"), \
+             mock.patch.object(peer, "handoff_stream_child", return_value=self.probe(b"unknown-fixture")):
+            mode = REAL_QUEUE_PREFERENCE_POLICY("fixture", self.root, self.root)
+            peer.check_codex_storage(self.root, cwd=self.root, include_ordinary_preferences=mode)
 
 
 class NativeStoragePlatforms(unittest.TestCase):
@@ -222,14 +320,14 @@ class NativeProjectRoots(unittest.TestCase):
             return [] if forced_only else [encoded]
         with mock.patch.object(peer, "codex_managed_preference_values", side_effect=values):
             self.assertEqual(len(self.paths()), 1)
-            paths = peer.codex_project_config_paths(self.cwd, root=self.root, wake_preferences=True)
+            paths = peer.codex_project_config_paths(self.cwd, root=self.root, include_ordinary_preferences=True)
             self.assertIn(self.base / ".codex" / "config.toml", paths)
             # The new mode reaches the classifier as well, not only path output.
             (self.base / ".codex").mkdir()
             (self.base / ".codex" / "config.toml").write_text('sqlite_home="fixture"')
             peer.check_codex_storage(self.root, cwd=self.cwd)
             with self.assertRaises(peer.CcPeerError) as caught:
-                peer.check_codex_storage(self.root, cwd=self.cwd, wake_preferences=True)
+                peer.check_codex_storage(self.root, cwd=self.cwd, include_ordinary_preferences=True)
             self.assertEqual(caught.exception.details["reason"], "sqlite_home_project_configuration")
 
     def test_symlink_marker_fails_closed(self):

@@ -24,6 +24,7 @@ def isolate_native_layers(case, project_root=None):
                 if os.path.abspath(path).startswith(base + os.sep)]
 
     for patcher in (mock.patch.object(peer, "codex_system_config_paths", return_value=[]),
+                    mock.patch.object(peer, "codex_queue_preference_policy", return_value=False),
                     mock.patch.object(peer, "codex_managed_preference_values", return_value=[]),
                     mock.patch.object(peer, "codex_project_config_paths", side_effect=contained)):
         patcher.start()

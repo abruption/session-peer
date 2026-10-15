@@ -50,6 +50,7 @@ class StorageLayers(unittest.TestCase):
         patches = (
             mock.patch.dict(os.environ, {}, clear=True),
             mock.patch.object(peer, "codex_system_config_paths", return_value=self.system_paths),
+            mock.patch.object(peer, "codex_queue_preference_policy", return_value=False),
             mock.patch.object(peer, "codex_managed_preference_values", side_effect=self.managed_values),
             # Never read the developer's real ancestor directories.
             mock.patch.object(peer, "codex_project_config_paths", side_effect=lambda cwd, **kwargs: [
@@ -207,6 +208,7 @@ class StorageLayers(unittest.TestCase):
 
     def test_project_paths_without_marker_cover_only_cwd(self):
         project = self.base / "a" / "b"
+        project.mkdir(parents=True)
         with mock.patch.object(Path, "home", side_effect=AssertionError("fixture must use its selected home")):
             paths = REAL_PROJECT_PATHS(project, root=self.root)
         self.assertEqual(paths, [project / ".codex" / "config.toml"])

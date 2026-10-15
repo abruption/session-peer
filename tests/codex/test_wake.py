@@ -162,7 +162,7 @@ class Wake(unittest.TestCase):
         encoded = base64.b64encode(b'model="fixture"').decode('ascii')
         with mock.patch.object(peer, 'codex_managed_preference_values', return_value=[encoded]):
             result = self.preflight()
-            environment = peer.codex_process_environment(self.root, cwd=self.root, wake_preferences=True)
+            environment = peer.codex_process_environment(self.root, cwd=self.root, include_ordinary_preferences=True)
         self.assertEqual(result['version'], 'codex-cli 0.154.0')
         self.assertEqual(environment['CODEX_HOME'], str(self.root))
 

@@ -1,5 +1,6 @@
 """Owned SQLite/fake queue child tests, never a native Codex/model session."""
 import contextlib
+import base64
 import io
 import json
 import os
@@ -87,6 +88,38 @@ class HandoffCodex(unittest.TestCase):
         self.assertEqual(native["cwd"], str(self.home))
         self.assertEqual(native["pwd"], str(self.home))
         self.assertEqual(native["home"], str(self.home))
+
+    def test_handoff_existing_version_probe_selects_ordinary_preference_policy(self):
+        def values(*, forced_only=True):
+            return [] if forced_only else [base64.b64encode(b'sqlite_home="ordinary-fixture"').decode("ascii")]
+        for version, expected in (("codex-cli 0.154.0", 1), ("codex-cli 0.162.1", 0)):
+            self.make_queue(version=version)
+            if self.log.exists():
+                self.log.unlink()
+            with self.subTest(version=version), \
+                 mock.patch.object(peer, "codex_managed_preference_values", side_effect=values):
+                code, result = self.invoke(["--request-ack"])
+            self.assertEqual(code, expected, result)
+            self.assertEqual(self.log.exists(), expected == 0)
+            if expected:
+                self.assertEqual(result["handoff"]["submission"]["status"], "refused")
+                self.assertFalse(result["handoff"]["retry"]["allowed"])
+
+    def test_handoff_retains_154_policy_for_effect_boundary(self):
+        self.make_queue(version="codex-cli 0.154.0")
+        actual = peer.handoff_codex_context
+        def changed(*args):
+            context = actual(*args)
+            reader.side_effect = lambda *, forced_only=True: ([] if forced_only else
+                [base64.b64encode(b'sqlite_home="late-ordinary-fixture"').decode("ascii")])
+            return context
+        with mock.patch.object(peer, "codex_managed_preference_values", return_value=[]) as reader, \
+             mock.patch.object(peer, "handoff_codex_context", side_effect=changed):
+            code, result = self.invoke(["--request-ack"])
+        self.assertEqual(code, 1, result)
+        self.assertEqual(result["reason"], "native_submission_refused")
+        self.assertFalse(result["handoff"]["retry"]["allowed"])
+        self.assertFalse(self.log.exists())
 
     def test_consumer_storage_refusal_never_starts_native_or_attempts_intent(self):
         consumer = self.root / "consumer"
