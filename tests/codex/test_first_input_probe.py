@@ -132,13 +132,21 @@ class FirstInputProbeTests(unittest.TestCase):
         self.assertNotIn("PRIVATE", output)
 
     def test_queue_preflight_is_bound_and_immediately_precedes_the_only_add(self):
-        exit_code, sent, output = self.invoke(str(self.home))
+        # Independent pinned-wire fixture, not an echo of the generated request.
+        client_id = "00000000-0000-4000-8000-000000000001"
+        expected_input = [{"type": "text", "text": "Owner-authorized one-shot transport test. Reply exactly ACK TEST. Do not run tools or modify files.",
+                           "text_elements": []}]
+        reply = {"result": {"queuedSubmission": {"id": "fixture-submission", "input": expected_input,
+                                                  "clientUserMessageId": client_id}}}
+        with mock.patch.object(self.probe.uuid, "uuid4", return_value=self.probe.uuid.UUID(client_id)):
+            exit_code, sent, output = self.invoke(str(self.home), reply)
         self.assertEqual(exit_code, 0)
         self.assertEqual([item["method"] for item in sent][-2:], ["thread/queue/list", "thread/queue/add"])
         listed, added = sent[-2:]
         self.assertEqual(listed["params"], {"threadId": "owned-thread", "limit": 1})
         self.assertEqual(added["params"]["threadId"], listed["params"]["threadId"])
-        self.assertEqual(added["params"]["input"][0]["text_elements"], [])
+        self.assertEqual(added["params"]["input"], expected_input)
+        self.assertEqual(added["params"]["clientUserMessageId"], client_id)
         self.assertEqual(sum(item["method"] == "thread/queue/add" for item in sent), 1)
         self.assertTrue(json.loads(output.splitlines()[-1])["accepted"])
         self.assertFalse(json.loads(output.splitlines()[-1])["consumptionConfirmed"])
@@ -196,9 +204,22 @@ class FirstInputProbeTests(unittest.TestCase):
                 self.assertFalse(result["retryAllowed"])
                 self.assertNotIn("PRIVATE", output)
 
+        def missing_default(request):
+            reply = successful_queue_reply(request)
+            text = request["params"]["input"][0]["text"]
+            reply["result"]["queuedSubmission"]["input"] = [{"type": "text", "text": text}]
+            return reply
+        code, sent, output = self.invoke(str(self.home), missing_default)
+        self.assertEqual(code, 1)
+        self.assertEqual(sum(item["method"] == "thread/queue/add" for item in sent), 1)
+        result = json.loads(output.splitlines()[-1])
+        self.assertIsNone(result["accepted"])
+        self.assertEqual(result["outcome"], "unknown")
+        self.assertFalse(result["retryAllowed"])
+
     def test_response_ids_require_the_exact_integer_request_id(self):
         original = FakeWebSocket.recv
-        for phase in ("initialize", "thread/queue/add"):
+        for phase in ("initialize", "thread/queue/list", "thread/queue/add"):
             for kind in ("float", "bool", "missing"):
                 def metadata(ws, timeout):
                     raw = original(ws, timeout)
