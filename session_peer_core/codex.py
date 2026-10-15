@@ -16,6 +16,31 @@ def codex_storage_refused(reason: str) -> CcPeerError:
          "retryAllowed": False, "reason": reason})
 
 
+def _check_codex_discovery_storage(root: Path, *, include_ordinary_preferences: bool) -> None:
+    """Metadata-only discovery cannot verify the selected native loader.
+
+    Public listing conservatively checks ordinary macOS preferences without
+    launching a version child. A send dry-run can reuse its already established
+    preference policy privately; it must not run a second version query here.
+    """
+    try:
+        check_codex_storage(root, include_ordinary_preferences=include_ordinary_preferences)
+    except CcPeerError as exc:
+        reason = exc.details.get("reason")
+        if (sys.platform == "darwin" and include_ordinary_preferences and
+                reason in ("sqlite_home_managed_configuration", "storage_config_unverifiable")):
+            raise CcPeerError(
+                "Cannot establish the selected Codex SQLite storage: " + reason + ". "
+                "Metadata-only discovery does not determine the native Codex version and checks ordinary "
+                "as well as forced com.openai.codex preferences; this can conservatively refuse a 0.162.1 configuration. "
+                "Ask the operator to review known configuration layers, including effective com.openai.codex "
+                "config_toml_base64 and requirements_toml_base64 preferences, and ensure the intended home and storage. "
+                "--codex-home alone does not resolve "
+                "global preferences. Do not automatically remove preferences or switch databases. Nothing submitted.",
+                dict(exc.details)) from exc
+        raise
+
+
 def _codex_config_tokens(text: str) -> list[tuple[str, str]]:
     """Bounded lexical classification, NOT a general TOML parser.
 
@@ -663,11 +688,15 @@ def collect_codex_listing(args: argparse.Namespace) -> dict:
     homes, errors = codex_listing_candidates(args)
     sessions = []
     diagnostics = []
+    # Listing remains metadata-only: no executable/version query, even when
+    # --codex-bin is supplied. Never trust a caller's private send-policy flag.
+    include_ordinary_preferences = sys.platform == "darwin"
     for candidate in homes:
         item = {key: value for key, value in candidate.items() if key != "required"}
         db = Path(item["stateDb"])
         try:
-            check_codex_storage(Path(item["codexHome"]))
+            _check_codex_discovery_storage(Path(item["codexHome"]),
+                include_ordinary_preferences=include_ordinary_preferences)
             try:
                 mode = db.stat().st_mode
             except (FileNotFoundError, NotADirectoryError):
@@ -683,6 +712,7 @@ def collect_codex_listing(args: argparse.Namespace) -> dict:
                 continue
             home_args = argparse.Namespace(**vars(args))
             home_args.codex_home = item["codexHome"]
+            home_args._codex_discovery_include_ordinary_preferences = include_ordinary_preferences
             rows = discover_codex(home_args)
             if any(not isinstance(row["updatedAt"], (int, float)) or
                    not isinstance(row["id"], str) or not row["id"] for row in rows):
@@ -1298,7 +1328,9 @@ def codex_executable(args: argparse.Namespace) -> str:
 def discover_codex(args: argparse.Namespace) -> list[dict]:
     """Experimental saved-session discovery; never write Codex's internal DB."""
     root = codex_home(args)
-    check_codex_storage(root)
+    policy = getattr(args, "_codex_discovery_include_ordinary_preferences", None)
+    include_ordinary_preferences = policy if type(policy) is bool else sys.platform == "darwin"
+    _check_codex_discovery_storage(root, include_ordinary_preferences=include_ordinary_preferences)
     db = root / "state_5.sqlite"
     if not db.is_file():
         raise CcPeerError(f"Codex state_5.sqlite not found in {root}; check --codex-home (tested with CLI 0.154.0)")
@@ -1375,7 +1407,8 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
               "status": "validated" if args.dry_run else "queued",
               "codexHomeResolution": home_resolution}
     if args.dry_run:
-        discovery_args = argparse.Namespace(codex_home=str(root), all=True)
+        discovery_args = argparse.Namespace(codex_home=str(root), all=True,
+            _codex_discovery_include_ordinary_preferences=include_ordinary_preferences)
         if not any(s["id"] == thread_id for s in discover_codex(discovery_args)):
             raise NoTargetError(f"No saved Codex thread {thread_id} in {root}")
         return result
