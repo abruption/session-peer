@@ -43,10 +43,13 @@ Evidence classes used below:
   bodies, hook payloads, environment values, credentials or transcripts were
   recorded. The private records themselves are not committed.
 
-Whether any probe was deleted and later reconstructed is **unknown**: the
-source materials do not say so. What they do say is that the execution observer
-was revised during the receiver-side control (see below), so not every record
-was produced by the committed `execution_probe.py`.
+The private collaborator manifest explicitly identifies an initial probe as
+deleted and later reconstructed from the recorded command, with no original
+source hash. It separately identifies the joint sender probe as the exact source
+used in that joint run. Copying these three files unchanged from the review
+worktree establishes snapshot equality, not their identity with every historical
+execution. The execution observer was also revised during the receiver-side
+control (see below); not every record came from the committed version.
 
 ## Versions
 
@@ -217,8 +220,8 @@ advertises Antigravity 2.0 availability, not CLI sidecar autostart).
   `consumptionConfirmed` was always `false`.
 - Linux, Windows, later native versions, the v1.1.2 preparation, automatic
   bridge recovery, long idle periods and long-term stability.
-- Whether the initial probes were ever deleted and reconstructed (not stated in
-  the source materials).
+- Exact initial-execution source custody for reconstructed probes; no missing
+  original hash is inferred from a later snapshot comparison.
 
 ## Probe scaffolding
 
@@ -226,6 +229,13 @@ These scripts are reproduction scaffolding, not automated tests, not a
 production transport and not a general-purpose runner. Nothing in the test
 suite executes them. Running them requires an owned TUI, an explicitly approved
 workspace and an operator; do not install them as global hooks.
+
+These historical scripts are not a reviewed future-run recipe. In particular,
+native markers are fixed rather than fresh nonces, native output capture has no
+byte cap, and bridge readiness/cleanup and output-file handling are not hardened
+against every partial-output, symlink or same-user race. Do not rerun them to
+infer a fresh receipt without a separately reviewed, bounded harness and new
+operator authorization. No rerun was performed for this documentation change.
 
 | Script | Role | Notes |
 | --- | --- | --- |
@@ -236,16 +246,21 @@ workspace and an operator; do not install them as global hooks.
 The private results contain owned conversation and process IDs that are needed
 only for exact-target testing and cleanup and must never be committed. The
 request cap is not permission to retry an unknown result. Production ancestor,
-UID, presence and start-time checks are used unchanged; no credentials are read
-or copied.
+UID, presence and start-time checks are used unchanged. Legitimate context is
+inherited by the native child; availability checks retain booleans, not token
+values. This is not a claim that subprocess environment inheritance transfers no
+authority. Credential values are not intentionally logged, exported or persisted.
 
 ## Cleanup recorded in the source report
 
-Every owned bridge was stopped (`stopped: true` where reported), every owned TUI
-exited with status zero, owned PIDs were confirmed absent, and the temporary
-workspace hooks, their newly created empty parent directories, private result
-records and executable copies were removed. Native conversation history,
-unrelated sessions, global settings and the installed wrapper were not changed.
+The source reports cleanup of the owned bridges (`stopped: true` where reported),
+TUIs and disposable workspaces/hooks/executable copies, with owned PIDs checked
+absent at that time. Selected private metadata, manifests and reconstructed
+evidence were retained for review, not committed here; this is not a claim that
+all private records were deleted or that current processes were rechecked.
+Native conversation history and unrelated sessions were preserved. Any temporary
+workspace-trust change was reported restored; this documentation work did not
+change global settings or the installed wrapper.
 
 ## Next gates (from #307)
 
