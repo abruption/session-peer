@@ -7,6 +7,9 @@ account-home row count below was an observed diagnostic, not proof of the
 running server's effective SQLite location. Later review found that relocated
 storage can invalidate that inference. The harness now uses server-reported
 turn snapshots instead; those new guards have not had a fresh native run.
+Codex 0.162.1 may refuse that history RPC before the first user message. The
+current harness fails closed on such targets, so the historical positive must
+not be taken as evidence that the revised reproduction path is available.
 
 For the subsequent **already-open ordinary TUI** negative/positive controls,
 see [ORDINARY_TUI.md](ORDINARY_TUI.md). An embedded blank TUI was unreachable

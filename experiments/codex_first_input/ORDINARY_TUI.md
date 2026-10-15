@@ -162,7 +162,7 @@ turn checks after the pending-queue check, before the single add attempt.
 Nonempty, missing, malformed or failed evidence refuses before add; there is
 no local-DB fallback or resubmission.
 
-This closes the stale-account-home DB inference: the evidence now comes from
+This replaces the stale-account-home DB inference: the evidence now comes from
 the connected server's own history path, independent of where its SQLite
 configuration points. The result reports `serverTurnsEmpty` and
 `freshnessSource:"thread/turns/list"`, not `storedRowsBefore`. It does not report
@@ -198,6 +198,24 @@ For rollout-backed history the server may replay the full rollout before
 pagination; `limit:1` is not a bound on server-side history work. The client has
 bounded receive frames/timeouts, not a general server resource guarantee.
 
+**Unmaterialized first-input targets may be unavailable.** The pinned
+[history fallback](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/app-server/src/request_processors/thread_processor.rs#L3514-L3571)
+loads the live thread's history if no stored rollout is found, but missing
+rollout resolution can produce an explicit
+["unavailable before first user message" error](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/app-server/src/request_processors/thread_processor.rs#L5942-L5952).
+The harness refuses that response before add in either mode. It never converts
+unsupported history into an empty snapshot or falls back to an account-home
+DB. This safety correction may prevent reproduction of the original unsaved
+first-input positive; a synthetic empty-server reply is not native availability
+evidence. A supported empty-TUI proof route remains an open #306 gate. The
+historical successful sends do not validate this revised path.
+
+In queue mode the first JSON object describes only the initial snapshot.
+Consumers must check the final object and process exit, because the second
+snapshot can refuse while the earlier `serverTurnsEmpty:true` observation
+remains in stdout. Neither an initial snapshot nor inspect success authorizes
+a later submission without its own preflight.
+
 A successful queue reply must contain a structured `queuedSubmission` with a
 nonempty string ID and the exact submitted plain-text `input` and
 `clientUserMessageId`. The explicit `text_elements:[]` matches the pinned native
@@ -208,7 +226,7 @@ See the pinned [queue request/response schema](https://github.com/openai/codex/b
 and [plain-text input schema](https://github.com/openai/codex/blob/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs/app-server-protocol/src/protocol/v2/turn.rs#L436-L445).
 These checks were not retrospectively performed in the historical live runs.
 
-Twenty-five synthetic WebSocket/adversarial account-home fixtures cover these boundaries,
+Twenty-six synthetic WebSocket/adversarial account-home fixtures cover these boundaries,
 including relative home paths, complete error validation on both RPC paths,
 ephemeral/missing/null refusal, empty-queue preflight, submission echo validation,
 exact RPC IDs and exactly one queue attempt on rejection or uncertain failure.

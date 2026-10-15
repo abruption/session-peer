@@ -134,7 +134,7 @@ class FirstInputProbeTests(unittest.TestCase):
                                                 "sortDirection": "desc", "itemsView": "notLoaded"})
         return exit_code, ws.sent, output.getvalue()
 
-    def test_missing_or_mismatched_home_refuses_before_thread_or_database(self):
+    def test_missing_or_mismatched_home_refuses_before_thread_queries(self):
         for server_home in (None, str(self.home.parent), "relative", ""):
             with self.subTest(server_home=server_home):
                 exit_code, sent, output = self.invoke(server_home)
@@ -300,7 +300,7 @@ class FirstInputProbeTests(unittest.TestCase):
                 self.probe.rpc_result({"error": {"code": -1, "message": message}})
             self.assertEqual(str(caught.exception), "rpc_rejected")
 
-    def test_ephemeral_or_unproven_threads_refuse_before_database_or_queue(self):
+    def test_ephemeral_or_unproven_threads_refuse_before_history_or_queue(self):
         original = FakeWebSocket.recv
         for label, fields in (("ephemeral", {"ephemeral": True}), ("null", {"ephemeral": None}),
                               ("missing", {})):
@@ -363,7 +363,7 @@ class FirstInputProbeTests(unittest.TestCase):
                 self.assertNotIn(str(self.home), output)
 
     def test_preflight_exception_is_sanitized_without_queue(self):
-        for failure in (FileNotFoundError("PRIVATE path"), sqlite3.DatabaseError("PRIVATE DB"),
+        for failure in (FileNotFoundError("PRIVATE path"), RuntimeError("PRIVATE protocol state"),
                         AssertionError("PRIVATE assertion"), ValueError("PRIVATE value")):
             with self.subTest(failure=type(failure).__name__), mock.patch.object(
                     FakeWebSocket, "__enter__", side_effect=failure):
@@ -418,6 +418,18 @@ class FirstInputProbeTests(unittest.TestCase):
         self.assertEqual(json.loads(output.splitlines()[-1])["error"], "server_turns_present_or_unproven")
         self.assertEqual(sum(item["method"] == "thread/turns/list" for item in sent), 1)
         self.assertFalse(any(item["method"] == "thread/queue/list" for item in sent))
+
+    def test_unmaterialized_history_error_is_refused_without_fallback(self):
+        unavailable = {"error": {"code": -32602, "message":
+            "thread PRIVATE is not materialized yet; thread/turns/list is unavailable before first user message"}}
+        empty = {"result": {"data": [], "nextCursor": None, "backwardsCursor": None}}
+        for mode, snapshots in (("inspect", [unavailable]), ("queue", [unavailable]),
+                                ("queue", [empty, unavailable])):
+            with self.subTest(mode=mode, phase=len(snapshots)):
+                code, sent, output = self.invoke(str(self.home), mode=mode, turns_responses=snapshots)
+                self.assert_pre_effect_failure(code, sent, output)
+                self.assertEqual(json.loads(output.splitlines()[-1])["error"], "rpc_rejected")
+                self.assertEqual(sum(item["method"] == "thread/turns/list" for item in sent), len(snapshots))
 
     def test_empty_server_turns_do_not_consult_nonempty_or_missing_account_database(self):
         with contextlib.closing(sqlite3.connect(self.home / "state_5.sqlite")) as db:
@@ -496,6 +508,12 @@ class FirstInputProbeTests(unittest.TestCase):
         self.assertEqual(facts, {"version": "0.162.1", "loadedThreads": 1, "serverTurnsEmpty": True,
                                  "freshnessSource": "thread/turns/list", "idle": True,
                                  "directInput": True, "ephemeral": False, "mode": "inspect"})
+        for fields in ({"preview": "PRIVATE prior message"},):
+            code, sent, output = self.invoke(str(self.home), mode="inspect", thread_snapshots=[fields])
+            self.assert_pre_effect_failure(code, sent, output)
+        code, sent, output = self.invoke(str(self.home), mode="inspect", turns_responses=[{
+            "result": {"data": [{"id": "PRIVATE prior turn"}], "nextCursor": None, "backwardsCursor": None}}])
+        self.assert_pre_effect_failure(code, sent, output)
 
     def test_thread_identity_and_idle_direct_input_constraints_hold_at_both_snapshots(self):
         invalid = [{"id": "PRIVATE other thread"}, {"id": None},
