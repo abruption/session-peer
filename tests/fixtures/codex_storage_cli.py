@@ -10,6 +10,9 @@ root = Path(os.environ["CODEX_HOME"])
 (root / "fixture-environment.json").write_text(json.dumps({
     "home": os.environ["CODEX_HOME"],
     "sqliteOverridePresent": "CODEX_SQLITE_HOME" in os.environ,
+    # Native queue loads project config layers from its working directory.
+    "cwd": os.getcwd(),
+    "pwd": os.environ.get("PWD"),
 }), encoding="utf-8")
 thread = sys.argv[sys.argv.index("--thread") + 1]
 print("Queued message fixture-storage for thread " + thread + ".")

@@ -116,7 +116,7 @@ def handoff_group_zombies_only(pid, native_total):
     return valid
 
 
-def handoff_stream_child(argv, source_bytes, cutoff, total, clock, *, env=None):
+def handoff_stream_child(argv, source_bytes, cutoff, total, clock, *, env=None, cwd=None):
     """Stream trusted source on stdin and drain both output pipes concurrently.
 
     ``cutoff`` and ``total`` use the caller's original clock, including its
@@ -265,7 +265,7 @@ def handoff_stream_child(argv, source_bytes, cutoff, total, clock, *, env=None):
             return result(False)
         construction_started = True
         process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, env=env, close_fds=True,
+                                   stderr=subprocess.PIPE, env=env, cwd=cwd, close_fds=True,
                                    start_new_session=True)
         selector = selectors.DefaultSelector()
         for stream, events, kind in ((process.stdin, selectors.EVENT_WRITE, "stdin"),

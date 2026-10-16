@@ -14,7 +14,7 @@ from unittest import mock
 
 import session_peer as peer
 
-from tests.codex.support import OTHER, THREAD
+from tests.codex.support import OTHER, THREAD, isolate_native_layers
 
 
 class CodexHomes(unittest.TestCase):
@@ -24,6 +24,7 @@ class CodexHomes(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.user = Path(directory.name).resolve()
+        isolate_native_layers(self, self.user)
         self.default = self.user / ".codex"
         self.account = self.user / "Library/Application Support/orca/codex-accounts/account-a/home"
         self.make_home(self.default)
@@ -46,7 +47,8 @@ class CodexHomes(unittest.TestCase):
         home.mkdir(parents=True, exist_ok=True)
         with contextlib.closing(sqlite3.connect(home / "state_5.sqlite")) as conn:
             conn.execute("CREATE TABLE threads (id TEXT, title TEXT, cwd TEXT, updated_at INTEGER, archived INTEGER, rollout_path TEXT)")
-            conn.execute("INSERT INTO threads VALUES (?, 'copy', '/project', 1, ?, '/missing-rollout')", (thread, archived))
+            conn.execute("INSERT INTO threads VALUES (?, 'copy', ?, 1, ?, '/missing-rollout')",
+                         (thread, str(self.user / "missing-project"), archived))
             conn.commit()
 
     def send(self, *options):
