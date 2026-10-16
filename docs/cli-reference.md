@@ -121,6 +121,8 @@ persisted queue row. Their existing separate identity contracts remain intact.
 The broader cross-agent work in #180 remains open; this development feature is
 not shipped in v1.0.4 and adds no automatic fallback or resubmission.
 
+The 2026-10-15 review of the queued-input paths in native Codex [0.162.1](https://github.com/openai/codex/tree/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs) did not identify a supported precondition that atomically checks the original writer incarnation. In the inspected source, the lock-acquisition path does not write an incarnation token, a thread's `sessionId` survives resume, and `thread/queue/add` accepts a thread, input and a client message ID rather than a generation precondition. The inspected `turn/steer` path checks `expectedTurnId` under the active-turn lock; session-peer does not use that turn-specific check as a writer generation. These findings are limited to the pinned paths, not a proof about every native API or future version. Writer PID, start-time and lock rechecks, queue IDs, `canAcceptDirectInput` and `sessionId` do not establish the required original-incarnation guarantee; session-peer continues to report Codex `targetGeneration` as `unsupported`. #180 remains open for a separately validated native contract.
+
 `--message TEXT` (short form `-m`) names the text sent to the destination.
 `--output-format text|json` selects the command result format, not the message
 format. It is available on `list`, `send`, `doctor`, and `update`; the default is
