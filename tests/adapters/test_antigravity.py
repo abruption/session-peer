@@ -74,6 +74,31 @@ class Protocol(unittest.TestCase):
                 bridge.handle(req)
                 self.assertEqual(run.call_count, 1)
 
+    def test_native_launch_failure_is_cached_without_retry(self):
+        req = self.req()
+        with mock.patch.object(p.subprocess, 'run', side_effect=OSError('fixture launch failure')) as run:
+            result = self.bridge.handle(req)
+            duplicate = self.bridge.handle(req)
+        self.assertFalse(result['ok'])
+        self.assertEqual(result['status'], 'unknown')
+        self.assertFalse(result['retryAllowed'])
+        self.assertFalse(result['consumptionConfirmed'])
+        self.assertNotIn('nativeExitCode', result)
+        self.assertEqual(duplicate, {**result, 'duplicateSuppressed': True})
+        run.assert_called_once()
+
+    def test_utf8_byte_limit_not_character_limit(self):
+        # 10,922 Korean code points plus two ASCII bytes exactly fill 32 KiB.
+        text = '한' * 10922 + 'ab'
+        self.assertEqual(len(text.encode('utf-8')), p.AGY_MAX_BYTES)
+        with mock.patch.object(p.subprocess, 'run', return_value=argparse.Namespace(returncode=0)) as run:
+            result = self.bridge.handle(self.req(text=text))
+            self.assertTrue(result['submitted'])
+            self.assertEqual(run.call_args.args[0][-1], text)
+            with self.assertRaisesRegex(p.AdapterError, 'invalid_message'):
+                self.bridge.handle(self.req(text=text + 'x'))
+            self.assertEqual(run.call_count, 1)
+
     def test_invalid_requests_do_not_invoke_native(self):
         with mock.patch.object(p.subprocess, 'run') as run:
             for req in (self.req(generation=str(uuid.uuid4())), self.req(target=str(uuid.uuid4())),
@@ -231,7 +256,9 @@ p.agy_owner=lambda home,thread:{'pid':123,'start':'fixture'}
 p.agy_owner_live=lambda info:True
 p.cmd_agy_bridge(argparse.Namespace(action='serve',thread=THREAD,antigravity_home=HOME,ttl=20,max_requests=3))
 '''.replace('RUNTIME',repr(str(runtime))).replace('THREAD',repr(THREAD)).replace('HOME',repr(str(home)))
-            for i in range(2):
+            previous_generation = None
+            lock_inode = None
+            for shutdown_signal in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
                 proc=subprocess.Popen([sys.executable,'-u','-c',script],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,cwd=Path(p.__file__).parent)
                 try:
                     import selectors
@@ -239,12 +266,22 @@ p.cmd_agy_bridge(argparse.Namespace(action='serve',thread=THREAD,antigravity_hom
                     self.assertTrue(sel.select(5));sel.close()
                     ready=json.loads(proc.stdout.readline());self.assertTrue(ready['ready'])
                     regpath=next(runtime.glob('*.json'));info=json.loads(regpath.read_text());info['_key']=regpath.stem
+                    self.assertEqual(ready['generation'], info['generation'])
+                    if previous_generation is not None:
+                        self.assertNotEqual(info['generation'], previous_generation)
+                    previous_generation = info['generation']
+                    lockpath = runtime / (info['_key'] + '.lock')
+                    if lock_inode is not None:
+                        self.assertEqual(lockpath.stat().st_ino, lock_inode)
+                    lock_inode = lockpath.stat().st_ino
                     with mock.patch.object(p,'agy_root',return_value=runtime):
                         self.assertTrue(p.agy_rpc(info,{'op':'status','generation':info['generation']})['ready'])
                         req={'op':'send','generation':info['generation'],'target':THREAD,'requestId':str(uuid.uuid4()),'text':'fixture'}
                         self.assertEqual(p.agy_rpc(info,req)['status'],'submitted')
-                    proc.send_signal(signal.SIGTERM);self.assertEqual(proc.wait(timeout=5),0)
+                    proc.send_signal(shutdown_signal);self.assertEqual(proc.wait(timeout=5),0)
                     self.assertFalse(list(runtime.glob('*.sock')));self.assertFalse(list(runtime.glob('*.json')))
+                    self.assertTrue(lockpath.is_file())
+                    self.assertEqual(lockpath.stat().st_ino, lock_inode)
                     # Simulate residue from an uncatchable termination.
                     sock=runtime/(info['_key']+'.sock');sock.touch();regpath.write_text('{}')
                 finally:
