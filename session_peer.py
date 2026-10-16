@@ -235,6 +235,36 @@ def codex_storage_refused(reason: str) -> CcPeerError:
          "retryAllowed": False, "reason": reason})
 
 
+def _check_codex_discovery_storage(root: Path, *, include_ordinary_preferences: bool) -> None:
+    """Metadata-only discovery cannot verify the selected native loader.
+
+    Public listing conservatively checks ordinary macOS preferences without
+    launching a version child. A send dry-run can reuse its already established
+    preference policy privately; it must not run a second version query here.
+    """
+    try:
+        check_codex_storage(root, include_ordinary_preferences=include_ordinary_preferences)
+    except CcPeerError as exc:
+        reason = exc.details.get("reason")
+        if (sys.platform == "darwin" and include_ordinary_preferences and
+                reason in ("sqlite_home_managed_configuration", "storage_config_unverifiable")):
+            cause = ("macOS preference values contain an unsupported sqlite_home setting. "
+                     if reason == "sqlite_home_managed_configuration" else
+                     "A known storage configuration layer could not be classified; "
+                     "this need not originate in preferences. ")
+            raise CcPeerError(
+                "Cannot establish the selected Codex SQLite storage: " + reason + ". " + cause +
+                "This discovery step performs no additional native version query. Standalone metadata-only "
+                "listing checks ordinary as well as forced com.openai.codex preferences without querying "
+                "Codex; it can conservatively refuse values ignored by a 0.162.1 configuration. "
+                "Ask the operator to review known configuration layers, including effective com.openai.codex "
+                "config_toml_base64 and requirements_toml_base64 preferences, and ensure the intended home and storage. "
+                "--codex-home alone does not resolve "
+                "global preferences. Do not automatically remove preferences or switch databases. Nothing submitted.",
+                dict(exc.details)) from exc
+        raise
+
+
 def _codex_config_tokens(text: str) -> list[tuple[str, str]]:
     """Bounded lexical classification, NOT a general TOML parser.
 
@@ -320,7 +350,7 @@ def _codex_config_key(tokens: list[tuple[str, str]]) -> list[str]:
     return keys
 
 
-def _codex_config_has_storage(text: str) -> bool:
+def _codex_config_has_storage(text: str, root_key: str = "sqlite_home") -> bool:
     table = []
     statement = []
     brackets = []
@@ -333,14 +363,14 @@ def _codex_config_has_storage(text: str) -> bool:
                 if [item[0] for item in statement[-count:]] != ["]"] * count:
                     raise ValueError("unclassifiable configuration table")
                 table = _codex_config_key(statement[count:-count])
-                if table[0] == "sqlite_home":
+                if table[0] == root_key:
                     return True
             else:
                 split = next((i for i, token in enumerate(statement) if token[0] == "="), -1)
                 if split <= 0 or split == len(statement) - 1:
                     raise ValueError("unclassifiable configuration assignment")
                 key = _codex_config_key(statement[:split])
-                if not table and key[0] == "sqlite_home":
+                if not table and key[0] == root_key:
                     return True
             statement = []
             continue
@@ -356,23 +386,18 @@ def _codex_config_has_storage(text: str) -> bool:
     return False
 
 
-def check_codex_storage(root: Path) -> None:
-    """Reject known relocation without reading native accounts or transcripts.
+def _read_codex_config_bytes(path: Path, unreadable: str = "storage_config_unreadable") -> bytes | None:
+    """Return one bounded regular file, None when absent, or refuse.
 
-    This checks inherited SQLite overrides and this home's config only. It does
-    not pretend to resolve native project/system/managed requirement layers.
+    The file is pinned by device/inode and size/mtime across the read so a
+    concurrent replacement fails closed instead of being half-classified.
     """
-    for name, value in os.environ.items():
-        match = name.upper() == "CODEX_SQLITE_HOME" if IS_WINDOWS else name == "CODEX_SQLITE_HOME"
-        if match and value.strip():
-            raise codex_storage_refused("sqlite_environment_override")
-    path = root / "config.toml"
     try:
         before = path.lstat()
-    except FileNotFoundError:
-        return
+    except (FileNotFoundError, NotADirectoryError):
+        return None
     except OSError as exc:
-        raise codex_storage_refused("storage_config_unreadable") from exc
+        raise codex_storage_refused(unreadable) from exc
     descriptor = None
     try:
         if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_CODEX_CONFIG_BYTES:
@@ -394,22 +419,421 @@ def check_codex_storage(root: Path) -> None:
         if (len(data) > MAX_CODEX_CONFIG_BYTES or snapshot(before) != snapshot(after)
                 or snapshot(current) != snapshot(after)):
             raise ValueError("configuration file changed or exceeded limit")
-        relocated = _codex_config_has_storage(data.decode("utf-8", errors="strict"))
-    except (OSError, ValueError, UnicodeError, RecursionError) as exc:
+        return data
+    except (OSError, ValueError) as exc:
         raise codex_storage_refused("storage_config_unverifiable") from exc
     finally:
         if descriptor is not None:
             os.close(descriptor)
-    if relocated:
-        raise codex_storage_refused("sqlite_home_configuration")
 
 
-def codex_process_environment(root: Path, native_home: str | None = None) -> dict:
-    check_codex_storage(root)
+def _codex_config_text_has_storage(data: bytes) -> bool:
+    try:
+        return _codex_config_has_storage(data.decode("utf-8", errors="strict"))
+    except (ValueError, UnicodeError, RecursionError) as exc:
+        raise codex_storage_refused("storage_config_unverifiable") from exc
+
+
+def _refuse_configured_storage(path: Path, reason: str) -> None:
+    data = _read_codex_config_bytes(path)
+    if data is not None and _codex_config_text_has_storage(data):
+        raise codex_storage_refused(reason)
+
+
+def codex_windows_program_data() -> str:
+    """Native Known Folder lookup; never trust the ProgramData environment."""
+    import ctypes
+    class GUID(ctypes.Structure):
+        _fields_ = [("Data1", ctypes.c_uint32), ("Data2", ctypes.c_uint16),
+                    ("Data3", ctypes.c_uint16), ("Data4", ctypes.c_ubyte * 8)]
+    pointer = ctypes.c_void_p()
+    free = None
+    lookup_succeeded = False
+    try:
+        shell = ctypes.WinDLL("shell32", use_last_error=True)
+        ole = ctypes.WinDLL("ole32", use_last_error=True)
+        lookup = shell.SHGetKnownFolderPath
+        lookup.argtypes = [ctypes.POINTER(GUID), ctypes.c_uint32, ctypes.c_void_p,
+                           ctypes.POINTER(ctypes.c_void_p)]
+        lookup.restype = ctypes.c_int32
+        free = ole.CoTaskMemFree
+        free.argtypes = [ctypes.c_void_p]
+        free.restype = None
+        identifier = GUID(0x62AB5D82, 0xFDC1, 0x4DC3,
+                          (ctypes.c_ubyte * 8)(0xA9, 0xDD, 0x07, 0x0D, 0x1D, 0x49, 0x5D, 0x97))
+        if lookup(ctypes.byref(identifier), 0, None, ctypes.byref(pointer)) != 0 or not pointer.value:
+            return r"C:\ProgramData"
+        lookup_succeeded = True
+        # Windows WCHAR is UTF-16, independently of the host's wchar_t width.
+        units = ctypes.cast(pointer, ctypes.POINTER(ctypes.c_uint16))
+        encoded = bytearray()
+        for index in range(32768):
+            unit = units[index]
+            if unit == 0:
+                # Match native OsString::from_wide without substituting another
+                # directory when a Windows path contains an unpaired surrogate.
+                value = encoded.decode("utf-16-le", errors="surrogatepass")
+                import ntpath
+                if not value or not ntpath.splitdrive(value)[0] or not ntpath.isabs(value):
+                    raise ValueError("invalid native directory")
+                return value
+            encoded.extend(unit.to_bytes(2, "little"))
+        raise ValueError("unbounded native directory")
+    except (AttributeError, OSError, ValueError, UnicodeError) as exc:
+        if lookup_succeeded:
+            raise codex_storage_refused("storage_config_unverifiable") from exc
+    finally:
+        if pointer.value and free is not None:
+            free(pointer)
+    return r"C:\ProgramData"
+
+
+def codex_system_config_paths() -> list[Path]:
+    """System config and requirements layers that native Codex 0.162.1 reads.
+
+    Requirements (exact `sqlite_home`) outrank every config layer. Unix still
+    loads the legacy managed_config.toml as requirements.
+    """
+    if IS_WINDOWS:
+        base = Path(codex_windows_program_data()) / "OpenAI" / "Codex"
+        return [base / "config.toml", base / "requirements.toml"]
+    base = Path("/etc/codex")
+    return [base / "config.toml", base / "managed_config.toml", base / "requirements.toml"]
+
+
+CODEX_MANAGED_PREFERENCES_DOMAIN = "com.openai.codex"
+CODEX_MANAGED_PREFERENCES_KEYS = ("config_toml_base64", "requirements_toml_base64")
+
+
+def codex_managed_preference_values(*, forced_only: bool = True) -> list[str]:
+    """Read native preferences, releasing owned CF values.
+
+    Codex 0.162.1 accepts only forced values. The supported wake version,
+    0.154.0, used CopyAppValue without that gate, including ordinary values.
+    """
+    if sys.platform != "darwin":
+        return []
+    import ctypes
+    cf = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+    def api(name, args, result):
+        function = getattr(cf, name)
+        function.argtypes, function.restype = args, result
+        return function
+    ptr = ctypes.c_void_p
+    create = api("CFStringCreateWithCString", [ptr, ctypes.c_char_p, ctypes.c_uint32], ptr)
+    release = api("CFRelease", [ptr], None)
+    sync = api("CFPreferencesAppSynchronize", [ptr], ctypes.c_ubyte)
+    forced = api("CFPreferencesAppValueIsForced", [ptr, ptr], ctypes.c_ubyte)
+    copy = api("CFPreferencesCopyAppValue", [ptr, ptr], ptr)
+    type_id = api("CFGetTypeID", [ptr], ctypes.c_ulong)
+    string_type = api("CFStringGetTypeID", [], ctypes.c_ulong)
+    extract = api("CFStringGetCString", [ptr, ptr, ctypes.c_long, ctypes.c_uint32], ctypes.c_ubyte)
+    owned = []
+    try:
+        domain = create(None, CODEX_MANAGED_PREFERENCES_DOMAIN.encode("ascii"), 0x08000100)
+        if not domain:
+            raise ValueError("missing domain")
+        owned.append(domain)
+        if not sync(domain):
+            raise ValueError("preference synchronization failed")
+        values = []
+        for name in CODEX_MANAGED_PREFERENCES_KEYS:
+            key = create(None, name.encode("ascii"), 0x08000100)
+            if not key:
+                raise ValueError("missing key")
+            owned.append(key)
+            if forced_only and not forced(key, domain):
+                continue
+            value = copy(key, domain)
+            if not value:
+                continue
+            try:
+                if forced_only and not forced(key, domain):
+                    continue
+                if type_id(value) != string_type():
+                    raise ValueError("non-string preference")
+                buffer = ctypes.create_string_buffer(MAX_CODEX_CONFIG_BYTES * 2 + 1)
+                if not extract(value, buffer, len(buffer), 0x08000100):
+                    raise ValueError("unbounded preference")
+                values.append(buffer.value.decode("utf-8", errors="strict"))
+            finally:
+                release(value)
+        return values
+    finally:
+        for value in reversed(owned):
+            release(value)
+
+
+def _refuse_managed_preference_storage(*, include_ordinary_preferences: bool = False) -> None:
+    try:
+        values = (codex_managed_preference_values(forced_only=False) if include_ordinary_preferences
+                  else codex_managed_preference_values())
+        for encoded in values:
+            if not isinstance(encoded, str) or len(encoded) > MAX_CODEX_CONFIG_BYTES * 2:
+                raise ValueError("unbounded preference")
+            decoded = base64.b64decode(encoded.strip(), validate=True)
+            if len(decoded) > MAX_CODEX_CONFIG_BYTES:
+                raise ValueError("unbounded preference")
+            if _codex_config_text_has_storage(decoded):
+                raise codex_storage_refused("sqlite_home_managed_configuration")
+    except CcPeerError:
+        raise
+    except (AttributeError, OSError, ValueError, TypeError, OverflowError, UnicodeError) as exc:
+        raise codex_storage_refused("storage_config_unverifiable") from exc
+
+
+def codex_physical_cwd(cwd: Path) -> Path:
+    """The existing directory chdir will reach, not its lexical alias."""
+    try:
+        physical = Path(cwd).resolve(strict=True)
+        if not physical.is_dir():
+            raise ValueError("not a directory")
+        return physical
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise codex_storage_refused("storage_config_unverifiable") from exc
+
+
+def codex_project_config_paths(cwd: Path, *, root: Path | None = None,
+                               include_ordinary_preferences: bool = False) -> list[Path]:
+    """Native cwd/tree/repo project layers for a process started in `cwd`.
+
+    Default markers stop at the closest .git root; without a marker only cwd
+    applies. A custom marker in any known layer retains a conservative superset.
+    """
+    return _codex_project_config_paths_from(codex_physical_cwd(cwd), root=root,
+        include_ordinary_preferences=include_ordinary_preferences)
+
+
+def _codex_project_config_paths_from(base: Path, *, root: Path | None = None,
+                                     include_ordinary_preferences: bool = False) -> list[Path]:
+    """Apply the same marker boundary to an already selected spelling."""
+    directories = (base, *base.parents)
+    if len(directories) > 256:
+        raise codex_storage_refused("storage_config_unverifiable")
+    candidates = [directory / ".codex" / "config.toml" for directory in directories]
+    selected = root or Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    known = [selected / "config.toml", *codex_system_config_paths()]
+    custom = False
+    for path in known:
+        data = _read_codex_config_bytes(path)
+        if data is not None:
+            try:
+                custom |= _codex_config_has_storage(data.decode("utf-8", errors="strict"), "project_root_markers")
+            except (ValueError, UnicodeError) as exc:
+                raise codex_storage_refused("storage_config_unverifiable") from exc
+    try:
+        values = (codex_managed_preference_values(forced_only=False) if include_ordinary_preferences
+                  else codex_managed_preference_values())
+        for encoded in values:
+            if not isinstance(encoded, str) or len(encoded) > MAX_CODEX_CONFIG_BYTES * 2:
+                raise ValueError("unbounded preference")
+            data = base64.b64decode(encoded.strip(), validate=True)
+            if len(data) > MAX_CODEX_CONFIG_BYTES:
+                raise ValueError("unbounded preference")
+            custom |= _codex_config_has_storage(data.decode("utf-8", errors="strict"), "project_root_markers")
+    except (AttributeError, OSError, ValueError, TypeError, UnicodeError) as exc:
+        raise codex_storage_refused("storage_config_unverifiable") from exc
+    if custom:
+        return candidates
+    for index, directory in enumerate(directories):
+        try:
+            marker = directory / ".git"
+            info = marker.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                raise codex_storage_refused("storage_config_unverifiable")
+            head_present = False
+            if stat.S_ISDIR(info.st_mode):
+                try:
+                    (marker / "HEAD").stat()
+                    head_present = True
+                except (FileNotFoundError, NotADirectoryError):
+                    pass
+            # Native accepts any existing non-directory marker by metadata;
+            # never open FIFO/device markers or silently scan less than native.
+            if not stat.S_ISDIR(info.st_mode) or head_present:
+                return candidates[:index + 1]
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except OSError as exc:
+            raise codex_storage_refused("storage_config_unverifiable") from exc
+    return candidates[:1]
+
+
+def check_codex_storage(root: Path, *, cwd: Path | None = None,
+                        include_ordinary_preferences: bool = False) -> None:
+    """Refuse known storage relocation before any effect.
+
+    Covered native layers (codex-cli 0.162.1, rust-v0.162.1 092d3acd): an
+    inherited CODEX_SQLITE_HOME, this home's config, system config and
+    requirements, macOS managed profiles and, when `cwd` is given, the
+    project layers of a process started there. Passing is not an attestation
+    of effective storage: package defaults, enterprise cloud bundles and a
+    running shared app-server daemon (whose QueueStore keeps the database
+    chosen at its startup, while config/read rereads current disk layers) are
+    not inspected. Message bodies, accounts and transcripts are never read.
+    Version-selected queue paths additionally check ordinary macOS values
+    when the reviewed 0.162.1 forced-only loader has not been established.
+    """
+    for name, value in os.environ.items():
+        match = name.upper() == "CODEX_SQLITE_HOME" if IS_WINDOWS else name == "CODEX_SQLITE_HOME"
+        if match and value.strip():
+            raise codex_storage_refused("sqlite_environment_override")
+    _refuse_configured_storage(root / "config.toml", "sqlite_home_configuration")
+    for path in codex_system_config_paths():
+        _refuse_configured_storage(path, "sqlite_home_system_configuration")
+    _refuse_managed_preference_storage(include_ordinary_preferences=include_ordinary_preferences)
+    if cwd is not None:
+        _refuse_codex_project_paths(root, codex_project_config_paths(cwd, root=root,
+            include_ordinary_preferences=include_ordinary_preferences))
+
+
+def _refuse_codex_project_paths(root: Path, paths: list[Path]) -> None:
+    try:
+        selected_home = os.path.normcase(str(root.resolve()))
+        seen = set()
+        for path in paths:
+            project_home = os.path.normcase(str(path.parent.resolve()))
+            if project_home != selected_home and project_home not in seen:
+                seen.add(project_home)
+                _refuse_configured_storage(path, "sqlite_home_project_configuration")
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise codex_storage_refused("storage_config_unverifiable") from exc
+
+
+def codex_process_environment(root: Path, native_home: str | None = None, *,
+                              cwd: Path | None = None, include_ordinary_preferences: bool = False) -> dict:
+    check_codex_storage(root, cwd=cwd, include_ordinary_preferences=include_ordinary_preferences)
     env = {name: value for name, value in os.environ.items()
            if (name.upper() if IS_WINDOWS else name) not in ("CODEX_HOME", "CODEX_SQLITE_HOME")}
     env["CODEX_HOME"] = native_home or str(root)
+    if cwd is not None and not IS_WINDOWS:
+        # Keep a shell-style PWD consistent with the inspected project layers.
+        env["PWD"] = str(codex_physical_cwd(cwd))
     return env
+
+
+def codex_preferences_for_version(version: str | None) -> bool:
+    """Unknown loader semantics conservatively include ordinary preferences.
+
+    Only the exact reviewed 0.162.1 loader is known to require forced values;
+    do not infer the same semantics for an older, future or vendor build.
+    """
+    return version != "codex-cli 0.162.1"
+
+
+def codex_queue_preference_policy(executable: str, root: Path, queue_cwd: Path,
+                                   native_home: str | None = None) -> bool:
+    """One bounded, diagnostic-only macOS version query for this queue plan.
+
+    Reuse the owned-process primitive (1 MiB stdout/64 KiB stderr caps), with
+    three seconds for the query and two for cleanup. Unrecognized/unavailable
+    output selects a conservative preference scan, not a version refusal.
+    Output and diagnostics are never reflected. The helper is called only
+    after the generated runtime has loaded all of its source segments.
+    """
+    if sys.platform != "darwin":
+        return False
+    env = codex_process_environment(root, native_home, cwd=queue_cwd)
+    now = time.monotonic()
+    done = handoff_stream_child([executable, "--version"], b"", now + 3, now + 5,
+                                time.monotonic, env=env, cwd=queue_cwd)
+    if done.interrupted:
+        raise KeyboardInterrupt
+    if done.cleanup_failed or done.spawned is None:
+        raise codex_storage_refused("storage_config_unverifiable")
+    version = None
+    if not done.reason and done.returncode == 0 and not done.stdout_overflow and len(done.stdout) <= 4096:
+        try:
+            version = done.stdout.decode("utf-8", errors="strict").strip()
+        except UnicodeError:
+            pass
+    return codex_preferences_for_version(version)
+
+
+def _codex_thread_directory(root: Path, thread_id: str) -> Path | None:
+    """The saved thread directory (metadata only), or None when it has none.
+
+    The consuming writer normally started there, so its project layers can
+    have selected storage that differs from the inspected home. Unreadable or
+    malformed metadata refuses; a missing row or a directory that no longer
+    exists has no layers to inspect.
+    """
+    try:
+        with contextlib.closing(sqlite3.connect((root / "state_5.sqlite").as_uri() + "?mode=ro",
+                                                uri=True, timeout=3)) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            row = conn.execute("SELECT cwd FROM threads WHERE id=?", (thread_id,)).fetchone()
+    except sqlite3.Error as exc:
+        raise codex_storage_refused("consumer_directory_unverifiable") from exc
+    if row is None or row[0] is None or row[0] == "":
+        return None
+    if not isinstance(row[0], str) or "\0" in row[0] or not Path(row[0]).is_absolute():
+        raise codex_storage_refused("consumer_directory_unverifiable")
+    path = Path(row[0])
+    try:
+        return path if stat.S_ISDIR(path.stat().st_mode) else None
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except OSError as exc:
+        raise codex_storage_refused("consumer_directory_unverifiable") from exc
+
+
+def codex_thread_cwd(root: Path, thread_id: str) -> Path | None:
+    path = _codex_thread_directory(root, thread_id)
+    return None if path is None else codex_physical_cwd(path)
+
+
+def check_codex_consumer_storage(root: Path, thread_id: str, *, native_home: str | None = None,
+                                 include_ordinary_preferences: bool = False) -> None:
+    if native_home and not IS_WINDOWS:
+        # A translated Windows receiver has Windows cwd metadata. POSIX
+        # paths cannot inspect its configuration; preserve the explicitly
+        # unverified legacy route rather than classifying that cwd as invalid.
+        return
+    saved = _codex_thread_directory(root, thread_id)
+    if saved is not None:
+        cwd = codex_physical_cwd(saved)
+        check_codex_storage(root, cwd=cwd, include_ordinary_preferences=include_ordinary_preferences)
+        lexical = Path(os.path.abspath(saved))
+        if lexical != cwd:
+            # A running consumer may have selected explicit lexical layers;
+            # check both spellings with native-style boundaries, not every
+            # lexical ancestor. This can conservatively over-refuse an alias.
+            _refuse_codex_project_paths(root, _codex_project_config_paths_from(lexical, root=root,
+                include_ordinary_preferences=include_ordinary_preferences))
+
+
+def codex_queue_cwd(root: Path, native_home: str | None) -> Path:
+    """Working directory whose project config layers the queue process loads.
+
+    Native queue resolves project layers from its own working directory, so
+    pin it to the inspected home. A translated native home (WSL relay receiver
+    to native Windows) keeps the inherited directory. Storage verification is
+    NOT supported for that path: this POSIX process cannot see the Windows
+    home spelling, case rules, environment, or system/managed/project layers,
+    so only POSIX-visible layers are checked and the submission contract is
+    otherwise unchanged.
+    """
+    return Path(os.getcwd()) if native_home else codex_physical_cwd(root)
+
+
+def codex_queue_storage_preflight(args: argparse.Namespace, root: Path, thread_id: str) -> Path:
+    """Initial home, cwd and consumer checks for the selected queue plan.
+
+    This helper starts no child. Ordinary macOS callers subsequently run the
+    bounded version query and apply its preference policy, including during
+    dry-run; dry-run never submits a queue item. Real submission repeats the
+    version-selected checks before its effect. Wake runs this initial guard
+    before reserving a budget, but later changes can still refuse after a
+    reservation. These checks do not remove the configuration-read time gap.
+    Returns the physical queue cwd (except the unverified translated route).
+    """
+    queue_cwd = codex_queue_cwd(root, getattr(args, "codex_native_home", None))
+    include_ordinary_preferences = bool(getattr(args, "wake", False))
+    check_codex_storage(root, cwd=queue_cwd, include_ordinary_preferences=include_ordinary_preferences)
+    check_codex_consumer_storage(root, thread_id, native_home=getattr(args, "codex_native_home", None),
+                                 include_ordinary_preferences=include_ordinary_preferences)
+    return queue_cwd
 
 
 def codex_home(args: argparse.Namespace) -> Path:
@@ -488,11 +912,15 @@ def collect_codex_listing(args: argparse.Namespace) -> dict:
     homes, errors = codex_listing_candidates(args)
     sessions = []
     diagnostics = []
+    # Listing remains metadata-only: no executable/version query, even when
+    # --codex-bin is supplied. Never trust a caller's private send-policy flag.
+    include_ordinary_preferences = sys.platform == "darwin"
     for candidate in homes:
         item = {key: value for key, value in candidate.items() if key != "required"}
         db = Path(item["stateDb"])
         try:
-            check_codex_storage(Path(item["codexHome"]))
+            _check_codex_discovery_storage(Path(item["codexHome"]),
+                include_ordinary_preferences=include_ordinary_preferences)
             try:
                 mode = db.stat().st_mode
             except (FileNotFoundError, NotADirectoryError):
@@ -508,6 +936,7 @@ def collect_codex_listing(args: argparse.Namespace) -> dict:
                 continue
             home_args = argparse.Namespace(**vars(args))
             home_args.codex_home = item["codexHome"]
+            home_args._codex_discovery_include_ordinary_preferences = include_ordinary_preferences
             rows = discover_codex(home_args)
             if any(not isinstance(row["updatedAt"], (int, float)) or
                    not isinstance(row["id"], str) or not row["id"] for row in rows):
@@ -1123,7 +1552,9 @@ def codex_executable(args: argparse.Namespace) -> str:
 def discover_codex(args: argparse.Namespace) -> list[dict]:
     """Experimental saved-session discovery; never write Codex's internal DB."""
     root = codex_home(args)
-    check_codex_storage(root)
+    policy = getattr(args, "_codex_discovery_include_ordinary_preferences", None)
+    include_ordinary_preferences = policy if type(policy) is bool else sys.platform == "darwin"
+    _check_codex_discovery_storage(root, include_ordinary_preferences=include_ordinary_preferences)
     db = root / "state_5.sqlite"
     if not db.is_file():
         raise CcPeerError(f"Codex state_5.sqlite not found in {root}; check --codex-home (tested with CLI 0.154.0)")
@@ -1185,7 +1616,14 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
                            "consumptionConfirmed": False})
     selected = codex_home(args)
     root, home_resolution = resolve_codex_home(args, selected, thread_id)
-    check_codex_storage(root)
+    native_home = getattr(args, "codex_native_home", None)
+    # Dry-run applies the same storage boundary as the real submission.
+    queue_cwd = codex_queue_storage_preflight(args, root, thread_id)
+    include_ordinary_preferences = (True if getattr(args, "wake", False) else
+        codex_queue_preference_policy(executable, root, queue_cwd, native_home))
+    check_codex_storage(root, cwd=queue_cwd, include_ordinary_preferences=include_ordinary_preferences)
+    check_codex_consumer_storage(root, thread_id, native_home=native_home,
+                                 include_ordinary_preferences=include_ordinary_preferences)
     result = {"ok": True, "target": {"agent": "codex", "id": thread_id},
               "chars": len(text), "dryRun": args.dry_run,
               "codexHome": str(root), "submitted": not args.dry_run,
@@ -1193,7 +1631,8 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
               "status": "validated" if args.dry_run else "queued",
               "codexHomeResolution": home_resolution}
     if args.dry_run:
-        discovery_args = argparse.Namespace(codex_home=str(root), all=True)
+        discovery_args = argparse.Namespace(codex_home=str(root), all=True,
+            _codex_discovery_include_ordinary_preferences=include_ordinary_preferences)
         if not any(s["id"] == thread_id for s in discover_codex(discovery_args)):
             raise NoTargetError(f"No saved Codex thread {thread_id} in {root}")
         return result
@@ -1202,11 +1641,13 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
     # mounted POSIX path, but the native codex.exe process needs the Windows
     # spelling of that same home.  This private adapter value is derived from
     # operator policy; it is never accepted from a paired request.
-    process_home = getattr(args, "codex_native_home", None) or str(root)
-    env = codex_process_environment(root, process_home)
+    process_home = native_home or str(root)
+    env = codex_process_environment(root, process_home, cwd=queue_cwd, include_ordinary_preferences=include_ordinary_preferences)
+    check_codex_consumer_storage(root, thread_id, native_home=native_home,
+                                 include_ordinary_preferences=include_ordinary_preferences)
     try:
         # Keep leading dashes inside the option value, including with --no-from.
-        done = subprocess.run(argv,
+        done = subprocess.run(argv, cwd=None if native_home else str(queue_cwd),
                               env=env, capture_output=True, encoding="utf-8", errors="replace",
                               timeout=CODEX_QUEUE_TIMEOUT)
     except subprocess.TimeoutExpired as exc:
@@ -1247,6 +1688,9 @@ def codex_wake_preflight(root: Path, thread_id: str, executable: str) -> dict:
         raise wake_refused("version_unavailable", "Cannot establish native Codex wake support") from exc
     if version not in CODEX_WAKE_VERSIONS:
         raise wake_refused("unsupported_version", f"Codex wake is not validated for {version}")
+    # Validated 0.154.0 wake always includes ordinary CF preferences. Ordinary
+    # queue paths select their own version policy; this does not expand wake.
+    check_codex_storage(root, include_ordinary_preferences=True)
     try:
         with contextlib.closing(sqlite3.connect((root / "state_5.sqlite").as_uri() + "?mode=ro", uri=True, timeout=3)) as conn:
             conn.execute("PRAGMA query_only=ON")
@@ -1260,6 +1704,9 @@ def codex_wake_preflight(root: Path, thread_id: str, executable: str) -> dict:
         raise wake_refused("archived_thread", "Archived Codex threads cannot be woken")
     if not isinstance(cwd, str) or not Path(cwd).is_absolute() or not Path(cwd).is_dir():
         raise wake_refused("cwd_unavailable", "Original Codex working directory is unavailable")
+    cwd = str(codex_physical_cwd(Path(cwd)))
+    # The wake app-server starts in the thread's directory and loads its layers.
+    check_codex_storage(root, cwd=Path(cwd), include_ordinary_preferences=True)
     if not isinstance(rollout, str) or not Path(rollout).is_file() or Path(rollout).stat().st_size == 0:
         raise wake_refused("uninitialized_thread", "Codex wake requires an initialized rollout")
     writer = inspect_codex_writer(root, thread_id)
@@ -1344,6 +1791,7 @@ def stop_codex_wake(process, grace: float = CODEX_WAKE_CLEANUP_GRACE) -> None:
 def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeout: float,
                    *, wake_context: dict | None = None) -> dict:
     """Resume one thread, await one turn, and own/clean up the native process."""
+    cwd = str(codex_physical_cwd(Path(cwd)))
     process = None
     def cancelled(signum, frame):
         raise KeyboardInterrupt
@@ -1356,7 +1804,7 @@ def run_codex_wake(executable: str, root: Path, thread_id: str, cwd: str, timeou
         # into CLI JSON. Only lifecycle states and bounded error text escape.
         with tempfile.TemporaryFile() as diagnostics:
             process = subprocess.Popen([executable, "app-server"], cwd=cwd,
-                env={**codex_process_environment(root),
+                env={**codex_process_environment(root, cwd=Path(cwd), include_ordinary_preferences=True),
                      **(wake_chain_environment(wake_context) if wake_context else {})}, stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=diagnostics, start_new_session=True)
             selector = selectors.DefaultSelector()
@@ -1464,6 +1912,8 @@ def queue_codex(args: argparse.Namespace, text: str) -> dict:
         # A known active writer only receives the existing queue submission;
         # it does not start another native process or consume an activation.
         initially_active = preflight.get("writer", {}).get("activity") == "live_writer"
+        # Storage refusals must not consume a wake reservation.
+        codex_queue_storage_preflight(selected, root, thread_id)
         if not initially_active:
             wake_target_rate_reserve(guard_fd)
         result = _queue_codex(selected, text)
@@ -6159,7 +6609,7 @@ def handoff_group_zombies_only(pid, native_total):
     return valid
 
 
-def handoff_stream_child(argv, source_bytes, cutoff, total, clock, *, env=None):
+def handoff_stream_child(argv, source_bytes, cutoff, total, clock, *, env=None, cwd=None):
     """Stream trusted source on stdin and drain both output pipes concurrently.
 
     ``cutoff`` and ``total`` use the caller's original clock, including its
@@ -6308,7 +6758,7 @@ def handoff_stream_child(argv, source_bytes, cutoff, total, clock, *, env=None):
             return result(False)
         construction_started = True
         process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE, env=env, close_fds=True,
+                                   stderr=subprocess.PIPE, env=env, cwd=cwd, close_fds=True,
                                    start_new_session=True)
         selector = selectors.DefaultSelector()
         for stream, events, kind in ((process.stdin, selectors.EVENT_WRITE, "stdin"),
@@ -7546,11 +7996,11 @@ def handoff_native_context(args):
     return context
 
 
-def handoff_child(argv, cutoff, total, env=None):
+def handoff_child(argv, cutoff, total, env=None, *, cwd=None):
     """Use the shared owned-process primitive; never inspect a transcript."""
     if IS_WINDOWS or handoff_now() >= cutoff:
         raise handoff_error("deadline_before_effect")
-    done = handoff_stream_child(argv, b"", cutoff, total, handoff_now, env=env)
+    done = handoff_stream_child(argv, b"", cutoff, total, handoff_now, env=env, cwd=cwd)
     reasons = {"process_deadline": "native_deadline",
                "stderr_capacity": "native_diagnostic_capacity",
                "process_not_started": "native_process_failed",
@@ -7566,10 +8016,15 @@ def handoff_codex_context(args, binding, cutoff, total):
     root, resolution = args._handoff_codex_selection
     if str(root) != binding["home"]:
         raise handoff_error("native_context_changed")
+    # Inspect the ordinary queue's execution plan before any native child or
+    # attempted intent. Prepared ledger history may already exist here.
+    queue_cwd = codex_queue_storage_preflight(args, root, binding["target"])
+    native_home = getattr(args, "codex_native_home", None)
     executable = codex_executable(args)
     # A bounded harmless version query proves the selected queue executable is
     # callable. It does not certify all native versions or a writer generation.
-    probe = handoff_child([executable, "--version"], cutoff, total, codex_process_environment(root))
+    probe = handoff_child([executable, "--version"], cutoff, total,
+                          codex_process_environment(root, native_home, cwd=queue_cwd), cwd=queue_cwd)
     if probe["interrupted"]:
         raise KeyboardInterrupt
     try:
@@ -7578,23 +8033,32 @@ def handoff_codex_context(args, binding, cutoff, total):
         raise handoff_error("native_version_unavailable") from exc
     if probe["reason"] or probe["returncode"] not in (0, -signal.SIGKILL) or re.fullmatch(r"codex-cli [0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?", version) is None:
         raise handoff_error("native_version_unavailable")
+    include_ordinary_preferences = codex_preferences_for_version(version)
+    check_codex_storage(root, cwd=queue_cwd, include_ordinary_preferences=include_ordinary_preferences)
+    check_codex_consumer_storage(root, binding["target"], native_home=native_home,
+                                 include_ordinary_preferences=include_ordinary_preferences)
     revalidate_codex_home(root, binding["target"], resolution)
-    return root, resolution, executable
+    return root, resolution, executable, queue_cwd, include_ordinary_preferences
 
 
 def handoff_codex_submit(args, text, binding, context, cutoff, total):
-    root, resolution, executable = context
+    root, resolution, executable, queue_cwd, include_ordinary_preferences = context
     check_codex_message(text)
     # Reuse the original selected-home evidence, not a fresh auto-selection
     # after durable intent. This remains a pre-queue guard, not atomic identity.
     try:
         revalidate_codex_home(root, binding["target"], resolution)
+        native_home = getattr(args, "codex_native_home", None)
+        env = codex_process_environment(root, native_home, cwd=queue_cwd,
+                                        include_ordinary_preferences=include_ordinary_preferences)
+        check_codex_consumer_storage(root, binding["target"], native_home=native_home,
+                                     include_ordinary_preferences=include_ordinary_preferences)
     except CcPeerError as exc:
         raise CcPeerError("Codex handoff refused before queue", {"status": "refused", "retryAllowed": False}) from exc
     if handoff_now() >= cutoff:
         raise CcPeerError("Codex handoff refused before queue", {"status": "refused", "retryAllowed": False})
-    env = codex_process_environment(root)
-    done = handoff_child(codex_queue_argv(executable, binding["target"], text), cutoff, total, env)
+    done = handoff_child(codex_queue_argv(executable, binding["target"], text), cutoff, total, env,
+                         cwd=queue_cwd)
     # Overflow is never salvaged from an apparently valid retained prefix.
     if done["reason"] == "native_output_capacity":
         if done["interrupted"]:
@@ -7765,7 +8229,7 @@ def cmd_handoff_send(args):
         check_message(text, remote=False)
         if adapter.name == "codex":
             check_codex_message(text)
-            root, resolution, _ = codex_context
+            root, resolution, _, _, _ = codex_context
             # Size a private prospective profile without claiming submission.
             # Reserve escaped queue-ID space before the only queue invocation.
             prospective = {"ok": True, "target": {"agent": "codex", "id": binding["target"]}, "chars": len(text),
