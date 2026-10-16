@@ -10,7 +10,16 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StableCandidate(unittest.TestCase):
-    def test_v120_candidate_keeps_proposed_scope_and_open_gates(self):
+    def test_v120_candidate_records_merged_scope_and_open_gates(self):
+        source_base = "21a0be0c0c5bcb8bca214d90a873b7479d7ba97a"
+        merged_prs = (
+            (305, "3392c561e8b8b3221c8c5fcad6077cad8f7becd8"),
+            (311, "57c42d4a97b351de41a6180b7a05a0ec018d0c4c"),
+            (310, "10a6da72b8b94f08b6b3b2ff70f581aadf548279"),
+            (308, "b04e46c4e641fd0defab72b96c26d0612d0d6a5e"),
+            (313, "9c625bebb21dec2519214889fc60cc3f362142c1"),
+            (314, source_base),
+        )
         profiles = (
             ("", "The 26 regression tests include unsupported API cases",
              "Merge the release-preparation PR last", "not publishable release assets"),
@@ -27,17 +36,24 @@ class StableCandidate(unittest.TestCase):
         for locale, regression_scope, merge_order, artifact_boundary in profiles:
             text = (ROOT / ("docs/" + locale + "releases/v1.2.0.md")).read_text(encoding="utf-8")
             for marker in ("1.1.2", "1.2.0", "2026-10-15", "2026-10-16", "2026-10-18",
-                           "#305", "#308", "#310", "#311", "#313", "#314",
+                           "#305", "#308", "#310", "#311", "#313", "#314", "#315", source_base,
                            "#180", "#181", "#268", "#304", "#306", "#307",
                            regression_scope, merge_order, artifact_boundary,
                            "20/21", "#161", "#316", "pypi", "Control/Relay"):
                 self.assertIn(marker, text)
+            merge_rows = ["| #%d | `%s` |" % pair for pair in merged_prs]
+            positions = [text.index(row) for row in merge_rows]
+            self.assertEqual(positions, sorted(positions))
             suffix = "." + locale.rstrip("/") if locale else ""
             runbook = (ROOT / ("RELEASING" + suffix + ".md")).read_text(encoding="utf-8")
             self.assertIn(merge_order, runbook)
             self.assertIn(artifact_boundary, runbook)
+            self.assertIn(source_base, runbook)
+            self.assertIn("#315", runbook)
         english = (ROOT / "docs/releases/v1.2.0.md").read_text(encoding="utf-8")
-        for marker in ("candidate is unpublished", "not effective-storage attestation",
+        for marker in ("candidate is unpublished", "The six scoped PRs are merged",
+                       "PR #315 remains open", "not the final release-preparation or publication commit",
+                       "3-second timeout", "up to 2 seconds", "not effective-storage attestation",
                        "unmaterialized empty TUIs may be refused", "remain open",
                        "not proof of general first-input support",
                        "required human pypi environment approval",
@@ -45,6 +61,10 @@ class StableCandidate(unittest.TestCase):
                        "final protected-main CI", "rebuild and verify release assets",
                        "At publication time", "actual publication evidence"):
             self.assertIn(marker, english)
+        self.assertNotIn("## Proposed changes", english)
+        runbook = (ROOT / "RELEASING.md").read_text(encoding="utf-8")
+        self.assertIn("not recorded as verified", runbook)
+        self.assertNotIn("six unmerged feature branches", runbook)
 
     def test_historical_pid_patch_preparation_remains_narrow(self):
         for locale in ("", "ko/", "ja/", "zh-CN/"):
