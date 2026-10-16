@@ -316,6 +316,13 @@ class HandoffRemote(unittest.TestCase):
             + "scope={'__name__':'owned_source','__file__':" + repr(str(Path(peer.__file__).resolve())) + "}\n"
             + "exec(compile(source,'owned_stream','exec'),scope)\n"
             + "scope['known_codex_homes']=lambda *a,**k:[scope['Path'](" + repr(self.home) + ")]\n"
+            # Isolate this source-streamed stand-in from machine system/MDM
+            # settings. This is not a live native CFPreferences/API test.
+            + "assert all(n in scope for n in ('codex_system_config_paths','codex_managed_preference_values','codex_project_config_paths'))\n"
+            + "scope['codex_system_config_paths']=lambda:[]\n"
+            + "scope['codex_managed_preference_values']=lambda **kwargs:[]\n"
+            + "project_paths=scope['codex_project_config_paths']\n"
+            + "scope['codex_project_config_paths']=lambda *a,**k:[p for p in project_paths(*a,**k) if str(p).startswith(" + repr(str(self.fixture.root) + os.sep) + ")]\n"
             + "def forbidden(*a,**k): raise AssertionError('remote ledger/receipt authority forbidden')\n"
             + "scope['handoff_root']=forbidden\nscope['handoff_ensure_collector']=forbidden\nscope['handoff_producer_command']=forbidden\n"
             + "sys.argv=['owned_stream']+shlex.split(sys.argv[-1])[2:]\n"
@@ -355,6 +362,11 @@ class HandoffRemote(unittest.TestCase):
         self.assertTrue(response["submitted"])
         self.assertFalse(response["consumptionConfirmed"])
         self.assertEqual(response["queueId"], "owned-queue-01")
+        # The streamed receiver derives cwd from its own selected home. The
+        # sender never serializes a local cwd into the private wire context.
+        native = json.loads(self.fixture.log.read_text())
+        self.assertEqual(native["cwd"], self.home)
+        self.assertEqual(native["pwd"], self.home)
         self.assertIsNone(response["handoff"]["targetGeneration"])
         self.assertEqual(response["handoff"]["ack"]["status"], "unsupported")
         for secret in ("handoffNative", "nativeContext", "homeSelection", "monotonicMs", "capability"):
