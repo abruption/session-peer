@@ -1,5 +1,6 @@
 """Owned SQLite/fake queue child tests, never a native Codex/model session."""
 import contextlib
+import base64
 import io
 import json
 import os
@@ -16,6 +17,7 @@ import unittest
 from unittest import mock
 
 import session_peer as peer
+from tests.codex.support import isolate_native_layers
 
 
 @unittest.skipIf(peer.IS_WINDOWS or peer.fcntl is None, "bounded owned POSIX queue child")
@@ -24,6 +26,7 @@ class HandoffCodex(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory(prefix="codex-ho-queue-", dir=os.environ.get("SESSION_PEER_TEST_TMP"))
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name).resolve()
+        isolate_native_layers(self, self.root)
         self.home = self.root / "owned-home"
         self.home.mkdir()
         self.thread = "12345678-abcd-1234-abcd-123456789abc"
@@ -41,7 +44,7 @@ class HandoffCodex(unittest.TestCase):
     def make_queue(self, ending="", version="codex-cli 0.159.0", receipt=True, version_ending="raise SystemExit(0)"):
         code = "import json,os,sys,time\n"
         code += "if sys.argv[1:] == ['--version']:\n print(" + repr(version) + ", flush=True)\n " + version_ending + "\n"
-        code += "with open(" + repr(str(self.log)) + ", 'w') as f: json.dump({'argv':sys.argv[1:],'home':os.environ.get('CODEX_HOME'),'sqliteEnv':os.environ.get('CODEX_SQLITE_HOME')}, f)\n"
+        code += "with open(" + repr(str(self.log)) + ", 'w') as f: json.dump({'argv':sys.argv[1:],'home':os.environ.get('CODEX_HOME'),'sqliteEnv':os.environ.get('CODEX_SQLITE_HOME'),'cwd':os.getcwd(),'pwd':os.environ.get('PWD')}, f)\n"
         if receipt:
             code += "print('Queued message owned-queue-01 for thread ' + sys.argv[sys.argv.index('--thread')+1] + '.', flush=True)\n"
         code += ending + "\n"
@@ -62,6 +65,141 @@ class HandoffCodex(unittest.TestCase):
                 mock.patch.object(peer, "handoff_root", return_value=self.ledger.root), contextlib.redirect_stdout(output):
             code = peer.main(command)
         return code, json.loads(output.getvalue())
+
+    def prepared_correlation(self):
+        args = peer.build_parser().parse_args(["send", "--to", "codex:" + self.thread,
+                "--codex-home", str(self.home), "--allow-inactive-codex-home"])
+        with mock.patch.object(peer, "known_codex_homes", return_value=[self.home]):
+            binding, generation, _ = peer.handoff_binding(args, self.body)
+        return self.ledger.prepare(binding, generation, native_context=peer.handoff_native_context(args))[1]["id"]
+
+    def test_handoff_storage_plan_pins_home_not_caller_project(self):
+        caller = self.root / "caller"
+        (caller / ".codex").mkdir(parents=True)
+        (caller / ".codex" / "config.toml").write_text('sqlite_home="caller-relocation-fixture"\n')
+        # The temporary caller directory is deliberately NOT the consumer cwd.
+        with mock.patch.object(peer.os, "getcwd", return_value=str(caller)):
+            code, dry = self.invoke(["--dry-run"], correlation=self.prepared_correlation())
+            self.assertEqual(code, 0, dry)
+            self.assertFalse(self.log.exists())
+            code, sent = self.invoke(["--request-ack"])
+        self.assertEqual(code, 0, sent)
+        native = json.loads(self.log.read_text())
+        self.assertEqual(native["cwd"], str(self.home))
+        self.assertEqual(native["pwd"], str(self.home))
+        self.assertEqual(native["home"], str(self.home))
+
+    def test_handoff_existing_version_probe_selects_ordinary_preference_policy(self):
+        def values(*, forced_only=True):
+            return [] if forced_only else [base64.b64encode(b'sqlite_home="ordinary-fixture"').decode("ascii")]
+        for version, expected in (("codex-cli 0.154.0", 1), ("codex-cli 0.162.1", 0)):
+            self.make_queue(version=version)
+            if self.log.exists():
+                self.log.unlink()
+            with self.subTest(version=version), \
+                 mock.patch.object(peer, "codex_managed_preference_values", side_effect=values):
+                code, result = self.invoke(["--request-ack"])
+            self.assertEqual(code, expected, result)
+            self.assertEqual(self.log.exists(), expected == 0)
+            if expected:
+                self.assertEqual(result["handoff"]["submission"]["status"], "refused")
+                self.assertFalse(result["handoff"]["retry"]["allowed"])
+
+    def test_handoff_retains_154_policy_for_effect_boundary(self):
+        self.make_queue(version="codex-cli 0.154.0")
+        actual = peer.handoff_codex_context
+        def changed(*args):
+            context = actual(*args)
+            reader.side_effect = lambda *, forced_only=True: ([] if forced_only else
+                [base64.b64encode(b'sqlite_home="late-ordinary-fixture"').decode("ascii")])
+            return context
+        with mock.patch.object(peer, "codex_managed_preference_values", return_value=[]) as reader, \
+             mock.patch.object(peer, "handoff_codex_context", side_effect=changed):
+            code, result = self.invoke(["--request-ack"])
+        self.assertEqual(code, 1, result)
+        self.assertEqual(result["reason"], "native_submission_refused")
+        self.assertFalse(result["handoff"]["retry"]["allowed"])
+        self.assertFalse(self.log.exists())
+
+    def test_consumer_storage_refusal_never_starts_native_or_attempts_intent(self):
+        consumer = self.root / "consumer"
+        (consumer / ".codex").mkdir(parents=True)
+        (consumer / ".codex" / "config.toml").write_text('sqlite_home="consumer-relocation-fixture"\n')
+        with contextlib.closing(sqlite3.connect(self.home / "state_5.sqlite")) as db:
+            db.execute("UPDATE threads SET cwd=?", (str(consumer),))
+            db.commit()
+        for extra in (["--dry-run"], ["--request-ack"]):
+            with self.subTest(extra=extra), mock.patch.object(peer, "handoff_child") as child:
+                code, result = self.invoke(extra, correlation=self.prepared_correlation())
+            self.assertEqual(code, 1, result)
+            self.assertEqual(result["handoff"]["submission"]["status"], "refused")
+            self.assertFalse(result["handoff"]["retry"]["allowed"])
+            record = self.ledger.record(result["handoff"]["correlationId"])[1]
+            self.assertNotEqual(record["phase"], "attempted")
+            child.assert_not_called()
+            self.assertFalse(self.log.exists())
+
+    def test_storage_change_after_durable_intent_refuses_without_resubmission(self):
+        actual = peer.handoff_codex_submit
+        correlation = self.prepared_correlation()
+        def changed(args, text, binding, context, cutoff, total):
+            record = self.ledger.record(correlation)[1]
+            self.assertEqual(record["phase"], "attempted")
+            (self.home / "config.toml").write_text('sqlite_home="late-relocation-fixture"\n')
+            return actual(args, text, binding, context, cutoff, total)
+        with mock.patch.object(peer, "handoff_codex_submit", side_effect=changed):
+            code, result = self.invoke(["--request-ack"], correlation=correlation)
+        self.assertEqual(code, 1, result)
+        self.assertEqual(result["reason"], "native_submission_refused")
+        self.assertEqual(result["handoff"]["submission"]["status"], "refused")
+        self.assertFalse(result["handoff"]["retry"]["allowed"])
+        self.assertFalse(self.log.exists())
+        (self.home / "config.toml").unlink()
+        with mock.patch.object(peer, "handoff_codex_submit") as submit:
+            code, repeated = self.invoke(["--request-ack"], correlation=result["handoff"]["correlationId"])
+        self.assertEqual(code, 1, repeated)
+        submit.assert_not_called()
+
+    def test_consumer_change_after_intent_is_rechecked_before_native_queue(self):
+        actual = peer.handoff_codex_submit
+        consumer = self.root / "consumer"
+        consumer.mkdir()
+        with contextlib.closing(sqlite3.connect(self.home / "state_5.sqlite")) as db:
+            db.execute("UPDATE threads SET cwd=?", (str(consumer),))
+            db.commit()
+        def changed(*args):
+            (consumer / ".codex").mkdir()
+            (consumer / ".codex" / "config.toml").write_text('sqlite_home="late-consumer-fixture"\n')
+            return actual(*args)
+        with mock.patch.object(peer, "handoff_codex_submit", side_effect=changed):
+            code, result = self.invoke(["--request-ack"])
+        self.assertEqual(code, 1, result)
+        self.assertEqual(result["reason"], "native_submission_refused")
+        self.assertEqual(result["handoff"]["submission"]["status"], "refused")
+        self.assertFalse(result["handoff"]["retry"]["allowed"])
+        self.assertFalse(self.log.exists())
+
+    def test_translated_native_home_keeps_ordinary_unverified_execution_plan(self):
+        args = peer.build_parser().parse_args(["send", "--to", "codex:" + self.thread,
+                "--codex-home", str(self.home), "--codex-bin", str(self.fake), "--allow-inactive-codex-home"])
+        with mock.patch.object(peer, "known_codex_homes", return_value=[self.home]):
+            binding, _, _ = peer.handoff_binding(args, self.body)
+        args.codex_native_home = r"C:\owned-native-home"
+        done = {"interrupted": False, "reason": None, "returncode": 0,
+                "stdout": b"codex-cli 0.159.0\n", "stderr": b"", "spawned": True, "cleanupFailed": False}
+        cutoff = peer.handoff_now() + 3
+        with mock.patch.object(peer, "codex_queue_cwd", return_value=self.root) as cwd_plan, \
+                mock.patch.object(peer, "handoff_child", return_value=done) as child:
+            context = peer.handoff_codex_context(args, binding, cutoff, cutoff + 1)
+            version_call = child.call_args
+            done["stdout"] = ("Queued message fixture-id for thread " + self.thread + ".\n").encode()
+            result = peer.handoff_codex_submit(args, self.body, binding, context, cutoff, cutoff + 1)
+        cwd_plan.assert_called_once_with(self.home, args.codex_native_home)
+        self.assertEqual(version_call.kwargs["cwd"], self.root)
+        self.assertEqual(version_call.args[3]["CODEX_HOME"], args.codex_native_home)
+        self.assertEqual(child.call_args.kwargs["cwd"], self.root)
+        self.assertEqual(child.call_args.args[3]["CODEX_HOME"], args.codex_native_home)
+        self.assertTrue(result["submitted"])
 
     def test_dry_run_retains_original_home_and_refuses_changed_resolution(self):
         def prepare():

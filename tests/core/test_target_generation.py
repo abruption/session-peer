@@ -245,7 +245,15 @@ class TargetGeneration(unittest.TestCase):
             conn, _ = self.listener.accept()
             with conn:
                 conn.settimeout(5)
-                received.append(conn.recv(65536))
+                # Wait for the sender's write shutdown before closing: a single
+                # recv followed by close races shutdown(SHUT_WR) on macOS.
+                chunks = []
+                while True:
+                    chunk = conn.recv(65536)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                received.append(b"".join(chunks))
         thread = threading.Thread(target=receive)
         thread.start()
         peer.post_to_socket(self.sock, "owned fixture", self.pid,

@@ -1108,11 +1108,11 @@ def handoff_native_context(args):
     return context
 
 
-def handoff_child(argv, cutoff, total, env=None):
+def handoff_child(argv, cutoff, total, env=None, *, cwd=None):
     """Use the shared owned-process primitive; never inspect a transcript."""
     if IS_WINDOWS or handoff_now() >= cutoff:
         raise handoff_error("deadline_before_effect")
-    done = handoff_stream_child(argv, b"", cutoff, total, handoff_now, env=env)
+    done = handoff_stream_child(argv, b"", cutoff, total, handoff_now, env=env, cwd=cwd)
     reasons = {"process_deadline": "native_deadline",
                "stderr_capacity": "native_diagnostic_capacity",
                "process_not_started": "native_process_failed",
@@ -1128,10 +1128,15 @@ def handoff_codex_context(args, binding, cutoff, total):
     root, resolution = args._handoff_codex_selection
     if str(root) != binding["home"]:
         raise handoff_error("native_context_changed")
+    # Inspect the ordinary queue's execution plan before any native child or
+    # attempted intent. Prepared ledger history may already exist here.
+    queue_cwd = codex_queue_storage_preflight(args, root, binding["target"])
+    native_home = getattr(args, "codex_native_home", None)
     executable = codex_executable(args)
     # A bounded harmless version query proves the selected queue executable is
     # callable. It does not certify all native versions or a writer generation.
-    probe = handoff_child([executable, "--version"], cutoff, total, codex_process_environment(root))
+    probe = handoff_child([executable, "--version"], cutoff, total,
+                          codex_process_environment(root, native_home, cwd=queue_cwd), cwd=queue_cwd)
     if probe["interrupted"]:
         raise KeyboardInterrupt
     try:
@@ -1140,23 +1145,32 @@ def handoff_codex_context(args, binding, cutoff, total):
         raise handoff_error("native_version_unavailable") from exc
     if probe["reason"] or probe["returncode"] not in (0, -signal.SIGKILL) or re.fullmatch(r"codex-cli [0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?", version) is None:
         raise handoff_error("native_version_unavailable")
+    include_ordinary_preferences = codex_preferences_for_version(version)
+    check_codex_storage(root, cwd=queue_cwd, include_ordinary_preferences=include_ordinary_preferences)
+    check_codex_consumer_storage(root, binding["target"], native_home=native_home,
+                                 include_ordinary_preferences=include_ordinary_preferences)
     revalidate_codex_home(root, binding["target"], resolution)
-    return root, resolution, executable
+    return root, resolution, executable, queue_cwd, include_ordinary_preferences
 
 
 def handoff_codex_submit(args, text, binding, context, cutoff, total):
-    root, resolution, executable = context
+    root, resolution, executable, queue_cwd, include_ordinary_preferences = context
     check_codex_message(text)
     # Reuse the original selected-home evidence, not a fresh auto-selection
     # after durable intent. This remains a pre-queue guard, not atomic identity.
     try:
         revalidate_codex_home(root, binding["target"], resolution)
+        native_home = getattr(args, "codex_native_home", None)
+        env = codex_process_environment(root, native_home, cwd=queue_cwd,
+                                        include_ordinary_preferences=include_ordinary_preferences)
+        check_codex_consumer_storage(root, binding["target"], native_home=native_home,
+                                     include_ordinary_preferences=include_ordinary_preferences)
     except CcPeerError as exc:
         raise CcPeerError("Codex handoff refused before queue", {"status": "refused", "retryAllowed": False}) from exc
     if handoff_now() >= cutoff:
         raise CcPeerError("Codex handoff refused before queue", {"status": "refused", "retryAllowed": False})
-    env = codex_process_environment(root)
-    done = handoff_child(codex_queue_argv(executable, binding["target"], text), cutoff, total, env)
+    done = handoff_child(codex_queue_argv(executable, binding["target"], text), cutoff, total, env,
+                         cwd=queue_cwd)
     # Overflow is never salvaged from an apparently valid retained prefix.
     if done["reason"] == "native_output_capacity":
         if done["interrupted"]:
@@ -1327,7 +1341,7 @@ def cmd_handoff_send(args):
         check_message(text, remote=False)
         if adapter.name == "codex":
             check_codex_message(text)
-            root, resolution, _ = codex_context
+            root, resolution, _, _, _ = codex_context
             # Size a private prospective profile without claiming submission.
             # Reserve escaped queue-ID space before the only queue invocation.
             prospective = {"ok": True, "target": {"agent": "codex", "id": binding["target"]}, "chars": len(text),
