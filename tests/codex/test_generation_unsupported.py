@@ -14,12 +14,13 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
 
 import session_peer as peer
-from tests.codex.support import THREAD
+from tests.codex.support import THREAD, isolate_native_layers
 
 CLAUDE_SHAPED = "tg1:" + "a" * 64
 
@@ -129,19 +130,52 @@ class CodexGenerationUnsupported(unittest.TestCase):
                     effect.assert_not_called()
 
     def test_successful_queue_result_never_carries_a_generation(self):
-        queued = {"ok": True, "target": {"agent": "codex", "id": THREAD}, "chars": 1,
-                  "dryRun": False, "codexHome": str(self.root), "submitted": True,
-                  "consumptionConfirmed": False, "status": "queued",
-                  "queueId": "01900000-0000-7000-8000-0000000000aa"}
-        with mock.patch.object(peer, "queue_codex", return_value=queued) as queue:
+        # Exercise the real CLI -> queue_codex -> _queue_codex result producer.
+        # Only native execution, writer evidence and fixture-local prerequisites
+        # are replaced; a prebuilt application result would make this vacuous.
+        isolate_native_layers(self, self.root)
+        rollout = self.root / "rollout.jsonl"
+        rollout.write_text("{}\n", encoding="utf-8")
+        database = self.root / "state_5.sqlite"
+        with contextlib.closing(sqlite3.connect(database)) as conn:
+            conn.execute("CREATE TABLE threads (id TEXT, title TEXT, cwd TEXT, updated_at INTEGER, archived INTEGER, rollout_path TEXT)")
+            conn.execute("INSERT INTO threads VALUES (?,?,?,?,?,?)",
+                         (THREAD, "fixture", str(self.root), 1, 0, str(rollout)))
+            conn.commit()
+        original_database = database.read_bytes()
+        queue_id = "01900000-0000-7000-8000-0000000000aa"
+        executable = str(self.root / "fixture-codex")
+        writer = {"activity": "live_writer", "writerLock": "held", "ownerPid": 4242,
+                  "ownerStable": True, "ownerStartTime": "fixture-start",
+                  "reason": "stable_live_writer"}
+        completed = subprocess.CompletedProcess([], 0,
+            "Queued message " + queue_id + " for thread " + THREAD + ".\n", "")
+        with mock.patch.object(peer, "known_codex_homes", return_value=[self.root]), \
+             mock.patch.object(peer, "inspect_codex_writer", return_value=writer), \
+             mock.patch.object(peer, "codex_executable", return_value=executable), \
+             mock.patch.object(peer.subprocess, "run", return_value=completed) as child, \
+             mock.patch.object(peer.subprocess, "Popen") as other_child:
             code, result = self.invoke("send", "--to", "codex:" + THREAD, "--message=x",
-                                       "--no-from", "--no-reply-to")
+                                       "--codex-home", str(self.root), "--no-from", "--no-reply-to")
         self.assertEqual(code, 0)
-        queue.assert_called_once()
+        child.assert_called_once()
+        framed = peer.peer_delivery_message("x", "codex")
+        self.assertEqual(child.call_args.args[0],
+                         [executable, "queue", "--thread", THREAD, "--message=" + framed])
+        self.assertIn("\n| x\nEND QUOTED PEER BODY", child.call_args.args[0][-1])
+        self.assertEqual(child.call_args.kwargs["cwd"], str(self.root))
+        self.assertEqual(child.call_args.kwargs["env"]["CODEX_HOME"], str(self.root))
+        if not peer.IS_WINDOWS:
+            self.assertEqual(child.call_args.kwargs["env"]["PWD"], str(self.root))
+        other_child.assert_not_called()
+        self.assertIs(result["ok"], True)
+        self.assertEqual(result["target"], {"agent": "codex", "id": THREAD})
         self.assertEqual(result["status"], "queued")
-        self.assertEqual(result["queueId"], queued["queueId"])
+        self.assertIs(result["submitted"], True)
+        self.assertEqual(result["queueId"], queue_id)
         self.assertNotIn("targetGeneration", result)
         self.assertIs(result["consumptionConfirmed"], False)
+        self.assertEqual(database.read_bytes(), original_database)
 
     def test_codex_adapter_contract_has_no_generation_capability(self):
         adapter = peer.AGENTS.for_target("codex:" + THREAD)
