@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 import session_peer as peer
 import session_peer_mcp as mcp_peer
-from tests.codex.support import THREAD
+from tests.codex.support import THREAD, isolate_native_layers
 
 ORIGIN = '01900000-0000-7000-8000-000000000002'
 CONTEXT = {'depth': 2, 'origin': ORIGIN, 'maxDepth': 3}
@@ -25,6 +25,7 @@ class WakeChain(unittest.TestCase):
         env = patch.dict(os.environ, clean, clear=True)
         env.start()
         self.addCleanup(env.stop)
+        isolate_native_layers(self)
 
     def args(self, **values):
         return argparse.Namespace(wake=True, wake_timeout=1, to='codex:'+THREAD, **values)
@@ -135,8 +136,11 @@ class WakeChain(unittest.TestCase):
             root = Path(folder)
             inactive = {'activity':'inactive'}
             submitted = {'ok':True, 'submitted':True, 'queueId':'fixture-only', 'consumptionConfirmed':False}
+            # Storage refusal ordering is covered by test_storage_layers; this
+            # unit test isolates the rate budget from every other collaborator.
             with patch.object(peer, 'resolve_codex_home', return_value=(root, {})), \
                     patch.object(peer, 'revalidate_codex_home'), \
+                    patch.object(peer, 'codex_queue_storage_preflight', return_value=root), \
                     patch.object(peer, 'codex_executable', return_value='fixture-codex'), \
                     patch.object(peer, 'codex_wake_preflight', return_value={'cwd':folder, 'writer':inactive}) as preflight, \
                     patch.object(peer, 'inspect_codex_writer', return_value=inactive) as inspect, \

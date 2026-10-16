@@ -1,6 +1,7 @@
 """Multi-home inventory, partial discovery and authorization boundaries."""
 import argparse
 import contextlib
+import ctypes
 import io
 import json
 import os
@@ -14,6 +15,7 @@ from unittest import mock
 
 import session_peer as peer
 import session_peer_mcp as adapter
+from tests.codex.support import isolate_native_layers
 
 THREAD = '01900000-0000-7000-8000-000000000001'
 
@@ -23,6 +25,13 @@ class MultiHome(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name).resolve()
+        # Mocking Darwin here selects an Orca inventory layout, not permission
+        # to load CoreFoundation on Linux/Windows or read host configuration.
+        isolate_native_layers(self, self.root)
+        platform_library = mock.patch.object(ctypes, 'CDLL', side_effect=AssertionError(
+            'inventory fixtures must not load native platform libraries'))
+        platform_library.start()
+        self.addCleanup(platform_library.stop)
         self.default = self.root/'.codex'
         self.orca = self.root/'Library/Application Support/orca/codex-accounts'
         self.args = argparse.Namespace(codex_home=None, agent='codex', all=False)

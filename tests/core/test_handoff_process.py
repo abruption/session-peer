@@ -109,19 +109,50 @@ while True:
         self.assertFalse(result.cleanup_failed)
 
     def test_own_term_resistant_forked_descendant_is_not_left_executing(self):
-        code = '''import os, signal, time
+        # Python/runner startup is not the cleanup behavior under test. Give
+        # only this fixture a bounded (5s) readiness phase, then retain the
+        # original .2s execution deadline and .5s cleanup reserve. Production
+        # clocks and budgets are unchanged. An unready child still times out.
+        with tempfile.TemporaryDirectory(prefix="handoff-child-ready-") as directory:
+            ready = Path(directory) / "pid-ready"
+            real_monotonic = time.monotonic
+            startup = real_monotonic()
+            running = [None]
+            def fixture_clock():
+                now = real_monotonic()
+                if running[0] is None:
+                    try:
+                        value = ready.read_text()
+                    except FileNotFoundError:
+                        value = ""
+                    if value.strip().isdigit():
+                        running[0] = now
+                    elif now - startup >= 5:
+                        # Exhaust both budgets if the fixture never became ready.
+                        return startup + 6
+                return startup if running[0] is None else startup + now - running[0]
+            code = '''import os, signal, time
+# Exercise readiness after a startup slower than the .2s cleanup-test budget.
+time.sleep(.3)
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 child = os.fork()
 if child == 0:
     while True: time.sleep(10)
 print(child, flush=True)
+with open(READY_PATH, 'w') as f:
+    f.write(str(child))
 while True: time.sleep(10)
-'''
-        result = self.run_child(code, seconds=.2)
-        self.assertEqual(result.reason, "process_deadline")
-        self.assertFalse(result.cleanup_failed)
-        self.assertEqual(result.returncode, -signal.SIGKILL)
-        self.assert_not_executing(int(result.stdout))
+'''.replace("READY_PATH", repr(str(ready)))
+            # Patch both clocks in this fixture: the primitive's independent
+            # monotonic fallback must use the same bounded readiness phase.
+            with patch.object(peer.time, "monotonic", side_effect=fixture_clock):
+                result = self.run_child(code, seconds=.2, clock=fixture_clock)
+            self.assertIsNotNone(running[0], "fixture failed to become ready within 5s")
+            self.assertEqual(result.reason, "process_deadline")
+            self.assertFalse(result.cleanup_failed)
+            self.assertEqual(result.returncode, -signal.SIGKILL)
+            self.assertEqual(int(result.stdout), int(ready.read_text()))
+            self.assert_not_executing(int(result.stdout))
 
     def test_descendant_holding_pipes_after_leader_exit_is_bounded(self):
         code = '''import os, time

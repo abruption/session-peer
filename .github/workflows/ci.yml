@@ -193,7 +193,9 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -m pip install '.[relay,mcp]' --requirement .github/requirements/build.txt
-      - run: python -m unittest discover -s tests/relay -t . -v
+      # Preserve Python stacks if a native dependency/process segfaults;
+      # this is diagnostic only, not a workaround for an unexplained crash.
+      - run: python -X faulthandler -m unittest discover -s tests/relay -t . -v
       - run: python -m build
       - name: Verify optional transport packaging
         env:

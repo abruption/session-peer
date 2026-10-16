@@ -21,3 +21,65 @@
 这是一个实验性的显式注册工作流。没有 CLI sidecar 自动启动、无头写入器替换、无人值守注册、持久发件箱、自动 ACK/wait/wake、跨 UID 访问或恰好一次声称。原生发送方是 TUI 的 agentapi 身份；描述性的 From 标头并不是加密发送方证明。新实现的实时原生测试是 Linux；macOS 具有协议/生命周期测试固件加上早期的原生 PoC，而不是该分支的实时原生测试。不支持 Windows bridge；未在本地运行 Windows CI 和 Python 3.9 执行。SIGKILL 无法同步清理；重启仅在获取排他锁后才移除陈旧条目。PID 轮询无法消除验证与 agentapi 调用之间的所有进程退出竞争。
 
 早期的 KR PoC 演示了忙碌投递、SSH 断开连接、bridge 和 TUI 重启，共涉及 7 条消息。这些结果为本次实现提供了参考，但不算作该分支的实时执行。产品级的重新连接持久性、长时间运行操作以及配对/中继集成仍属于单独的 v0.9/RC工作。
+
+## 2026-10-13：CLI 1.3.3 验收测试 (#304)
+
+此记录与上方 2026-09-17 开发分支的验证分别记录。
+基准为已发布的 session-peer 1.1.1，提交 b48144bdf2ad1569031562136f5a60e33780020e。
+两台设备的 native CLI 均为 1.3.3，专用 TUI 使用 Gemini 3.8 Flash (Low)。
+适配器仍处于实验阶段。本次测试不代表发布版本，也不保证普遍的版本兼容性、
+Windows 支持、sidecar 自动启动或服务可用性。
+
+### 已观察到的证据
+
+- 在 macOS 27.0.1 arm64 / Python 3.15.0 和 Ubuntu 24.04.5 arm64 / Python 3.12.3 上，
+  Antigravity 适配器测试分别通过 23 项。owner 与 native 调用的模拟，以及真实 Unix socket
+  和子进程 fixture，不等同于真实模型集成测试。
+- 已安装 CLI 的参数解析测试在每个平台通过 7 项，覆盖前导短横线、分隔符、多行韩语及
+  接收目标和标题保留。采用空 HOME、最小环境和有界 loopback 模拟服务，没有使用凭据或成功的实际投递。
+- 专用接收 TUI 通过正常终端工具注册了有界 bridge。macOS 本地、Linux 本地和
+  macOS→Linux source-streamed SSH 提交均返回 native exit zero，并在各 TUI 中观察到不同的精确回复标记。
+- 在 TUI 生成有界的合成回复、显示工作中状态时还进行了提交，随后观察到对应回复。
+  这是特定日期的 UI 观察，不保证调度、延迟或所有 busy 状态。
+- macOS dry-run 在未调用 native 提交的情况下结束。再次使用原 ID 和正文返回缓存的重复结果；
+  同一 ID 的不同正文被拒绝。SSH 路由中指定不同 generation 的请求也在 native 调用前被拒绝。
+- 显式停止两台设备的 bridge 后，注册从发现列表消失。两台仍运行的 TUI 重新注册后，
+  generation 发生变化，固定到原 generation 的请求在本地和 SSH 路由中被拒绝。fixture 还检查 SIGTERM、
+  SIGINT、SIGHUP 清理，重启后 generation 变化，以及相同 lock inode 的保留。
+- 对真实测试 bridge 发送 SIGKILL 后，残留注册和 socket 未出现在发现列表中。
+  通过所属 TUI 重新注册时，保留了相同 lock inode，并生成了新的 generation。
+  两个平台都验证了真实 owner 退出后的清理。native TUI 重启后，旧 generation 请求被拒绝，
+  向新 generation 发送消息则观察到了独立的精确回复。
+- 在 Mac→Linux 和 Linux→Mac 两个方向，均通过 native TUI 的正常工具执行真实 CLI 发送，
+  并观察到各方向不同的回复。正文中的回复地址不构成认证或发送授权。
+- 在切断真实 SSH 子进程连接的有界故障注入中，完整远程 JSON 响应保留了提交证据，
+  仅传递 12 字节的响应仍为 unknown。两种情况下都在接收 TUI 中观察到回复，但没有重发请求。
+  这是受控断开测试，不保证所有网络故障的结果。
+- 在 MCP SDK 1.30 的本地策略路径中，验证了拒绝未获许可的 agent、dry-run、真实 send
+  及 TUI 回复。这不表示已支持 paired Relay 或 custom home、generation 固定。
+- 隔离 Python 3.13 环境的完整默认 suite 执行了 876 项、跳过 37 项，结果通过。
+  添加 MCP SDK 后，包括全部 28 项 MCP 集成测试在内，执行 880 项、跳过 33 项，结果通过。
+  PR head `4087149` 的全部 28 项 CI 成功。最终文档修改 head 仍需单独验证。
+- JSON 消费确认始终为 false。观察到 TUI 回复只是该测试消息的独立证据，不是新的自动 ACK 或等待功能。
+
+### 失败记录与正式支持的剩余条件
+
+macOS 首次 shell-background 启动因无法验证必需的祖先进程而拒绝注册。
+改为通过终端工具运行 foreground 长期命令后注册成功。不能假定分离 shell 后 bridge 仍保留 TUI 祖先关系。
+首次 Linux fixture 传输遗漏 MCP 模块，导致一次 import 失败。补传该受版本控制的源文件后，
+全部 23 项通过。这是测试准备错误，不是产品修复的证据。
+
+新增测试覆盖启动失败结果的缓存和禁止重试，以及 UTF-8 精确的 32 KiB 边界。
+它们不证明跨重启去重，也不证明 unknown 结果没有产生效果；自动重发仍被禁止。
+首次持续运行测试 A 因用户更新 Tailscale 而中断，不记为产品缺陷，也不记为通过。
+新的测试 B 从 04:23 UTC 开始，持续 1,802.819 秒。每台主机的 31 次发现和 31 次 dry-run
+均成功，并确认了各自 4 次新提交及 TUI 中 4 条不同回复，没有重发。
+bridge RSS 在 Mac 上为 61,680→61,968 KiB，在 Linux 上为 47,204→47,228 KiB。
+这不保证长期可用性或不存在内存泄漏。两端测试 bridge 和专用 TUI 均已停止、退出；
+发现为空，注册和 socket 文件已删除，lock 文件保留。Linux 专用源文件传输目录也已删除。
+上述真实生命周期、断开和双向路由证据仅适用于所记录的日期和验证环境。
+本次未重新验证 Claude、Codex、Antigravity 的完整互操作性或 paired Relay 投递；
+它们与 managed sidecar、Windows 一样属于独立功能范围，不作为有界 Mac/Linux 手动 bridge
+支持的必需前提。仍保留实验状态，没有转为正式支持，也没有改变运行时行为。
+官方 sidecar 文档描述了托管启动，但其与当前依赖祖先进程的 bridge 的兼容性需要单独研究。
+没有修改全局 sidecar 设置、复制认证信息或部署到生产环境。
