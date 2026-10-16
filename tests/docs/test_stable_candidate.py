@@ -50,6 +50,20 @@ class StableCandidate(unittest.TestCase):
             self.assertIn(artifact_boundary, runbook)
             self.assertIn(source_base, runbook)
             self.assertIn("#315", runbook)
+            neutral_freeze, immutable_metadata, diagnostic = {
+                "": ("publication-neutral wording", "never rebuild or replace immutable assets",
+                     "transport-creation and shutdown diagnostics"),
+                "ko/": ("공개 여부와 무관하게 정확한 문구", "불변 자산을 다시 빌드하거나 교체하지",
+                        "transport 생성·종료 진단"),
+                "ja/": ("公開の前後によらず正確な表現", "不変資産を再ビルド・置換せず",
+                        "transport生成・終了診断"),
+                "zh-CN/": ("发布前后均准确的表述", "重新构建或替换不可变资产",
+                           "transport创建及关闭诊断"),
+            }[locale]
+            for marker in (neutral_freeze, immutable_metadata, diagnostic,
+                           "SHA256SUMS", "release-provenance.json"):
+                self.assertIn(marker, text)
+                self.assertIn(marker, runbook)
         english = (ROOT / "docs/releases/v1.2.0.md").read_text(encoding="utf-8")
         for marker in ("candidate is unpublished", "The six scoped PRs are merged",
                        "PR #315 remains open", "not the final release-preparation or publication commit",
@@ -205,17 +219,39 @@ class StableCandidate(unittest.TestCase):
                     self.assertIn(marker, text)
 
     def test_stable_release_keeps_operational_deployment_separate(self):
-        self.assertIn("Source candidate: **1.2.0**. Last verified published stable release: **1.1.2**.",
-                      (ROOT / "README.md").read_text(encoding="utf-8"))
-        for suffix in ("", ".ko", ".ja", ".zh-CN"):
+        profiles = (
+            ("", "Source version: **1.2.0**.",
+             "At the 2026-10-16 publication checkpoint, the last verified published stable release was **1.1.2**.",
+             "Development candidate 1.2.0 is unpublished"),
+            (".ko", "소스 버전: **1.2.0**.",
+             "2026-10-16 공개 상태 확인 시점의 마지막 확인 공개 안정판은 **1.1.2**였습니다.",
+             "개발 후보 1.2.0은 미공개입니다"),
+            (".ja", "ソースバージョン：**1.2.0**。",
+             "2026-10-16の公開状況の確認時点で、最後に確認した公開済み安定版は**1.1.2**でした。",
+             "開発候補1.2.0は未公開です"),
+            (".zh-CN", "源码版本：**1.2.0**。",
+             "在2026-10-16的发布状态检查时，最后确认的已发布稳定版本为**1.1.2**。",
+             "开发候选版本1.2.0尚未发布"),
+        )
+        for suffix, source_version, dated_checkpoint, stale_unpublished in profiles:
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
-            self.assertIn("**1.1.2**", text)
+            self.assertIn(source_version, text)
+            self.assertIn(dated_checkpoint, text)
+            self.assertNotIn(stale_unpublished, text)
+            self.assertIn("https://github.com/abruption/session-peer/releases", text)
+            self.assertIn("https://pypi.org/project/session-peer/", text)
             self.assertNotIn("**1.0.3**", text)
-            self.assertIn("1.2.0", text)
-        for locale in ("", "ko/", "ja/", "zh-CN/"):
+        for locale, merged_scope, stale_scope in (
+                ("", "the merged six-PR scope", "the proposed six-PR scope"),
+                ("ko/", "병합된 PR 6개 범위", "제안한 PR 6개 범위"),
+                ("ja/", "マージ済み6件のPRの範囲", "提案する6件のPRの範囲"),
+                ("zh-CN/", "已合并的6项PR范围", "拟议的6项PR范围")):
             text = (ROOT / ("docs/" + locale + "README.md")).read_text(encoding="utf-8")
             self.assertIn("releases/v1.0.3.md", text)
             self.assertIn("releases/v1.0.4.md", text)
+            self.assertIn(merged_scope, text)
+            self.assertNotIn(stale_scope, text)
+            self.assertIn("2026-10-16", text)
         self.assertIn("Package publication and operational deployment are separate.",
                       (ROOT / "README.md").read_text(encoding="utf-8"))
         self.assertIn("Package publication does not include operational deployment",

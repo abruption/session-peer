@@ -24,7 +24,7 @@ installation paths.
 
 ## Development and history
 
-- [v1.2.0 candidate notes](releases/v1.2.0.md) describe the unpublished preparation dated 2026-10-15, the proposed six-PR scope and remaining acceptance gates.
+- [v1.2.0 candidate notes](releases/v1.2.0.md) record the unpublished preparation started on 2026-10-15 and updated on 2026-10-16, the merged six-PR scope and remaining acceptance gates.
 
 - [v1.1.2 historical preparation notes](releases/v1.1.2.md) describe #298 and the 2026-10-13 preparation; v1.1.2 was subsequently published. Do not reuse its version or commands.
 

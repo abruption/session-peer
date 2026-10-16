@@ -34,11 +34,11 @@ session-peer 1.0.2를 사용해 실제 로컬 요청과 회신을 주고받았�
 ### 설치
 
 Python 3.9 이상이 필요합니다. 기본 로컬·SSH CLI는 외부 Python 패키지에 의존하지 않습니다.
-소스 후보: **1.2.0**. 마지막으로 확인한 공개 안정판: **1.1.2**.
+소스 버전: **1.2.0**. 2026-10-16 공개 상태 확인 시점의 마지막 확인 공개 안정판은 **1.1.2**였습니다.
 
 공개된 유지보수 버전 1.1.2는 #298을 수정합니다. [과거 준비 기록](docs/ko/releases/v1.1.2.md)을 참고하십시오. 패키지 공개와 운영 배포는 별개입니다.
 
-개발 후보 1.2.0은 미공개입니다. [후보 노트](docs/ko/releases/v1.2.0.md)는 제한된 범위와 남은 조건을 설명합니다. 이 소스 후보 안내는 패키지 관리자나 Latest가 이미 1.2.0을 제공한다는 뜻이 아닙니다.
+설치할 수 있는 버전은 [GitHub Releases](https://github.com/abruption/session-peer/releases)와 [PyPI](https://pypi.org/project/session-peer/)에서 확인하십시오. [준비 기록](docs/ko/releases/v1.2.0.md)은 해당 날짜의 범위와 남은 조건을 설명하며, 소스 버전만으로 패키지 공개 여부가 확인되는 것은 아닙니다.
 
 실험적 handoff는 명시적으로 선택해야 합니다. 로컬 POSIX Claude는 영수증 ACK를 지원하지만, Codex와 SSH는 상관 ID를 이용한 제출만 지원하며 ACK 관찰은 지원하지 않습니다. 공개된 범위와 남은 검증 조건은 [handoff 가이드](docs/ko/handoff-runtime.md)를 참고하십시오.
 
