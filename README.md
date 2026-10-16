@@ -34,11 +34,11 @@ in this ~22-second animation, not a screen recording; send success alone is not 
 ### Install
 
 Python 3.9+. The core local/SSH CLI has no third-party Python dependencies.
-Version covered by this README: **1.1.2**.
+Source candidate: **1.2.0**. Last verified published stable release: **1.1.2**.
 
 Published maintenance version 1.1.2 addresses #298; see the [historical preparation notes](docs/releases/v1.1.2.md). Package publication and operational deployment are separate.
 
-Development candidate 1.2.0 is unpublished; its [candidate notes](docs/releases/v1.2.0.md) describe the proposed scope and remaining gates. The published stable version remains 1.1.2.
+Development candidate 1.2.0 is unpublished; its [candidate notes](docs/releases/v1.2.0.md) describe the bounded scope and remaining gates. This source candidate is not a claim that package managers or Latest already provide 1.2.0.
 
 Experimental handoff is opt-in: local POSIX Claude supports receipt ACKs; Codex and SSH support correlation-only submission, not ACK observation. See the [handoff guide](docs/handoff-runtime.md) for the shipped scope and remaining acceptance gates.
 

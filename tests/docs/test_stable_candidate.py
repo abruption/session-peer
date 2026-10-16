@@ -26,11 +26,11 @@ class StableCandidate(unittest.TestCase):
         )
         for locale, regression_scope, merge_order, artifact_boundary in profiles:
             text = (ROOT / ("docs/" + locale + "releases/v1.2.0.md")).read_text(encoding="utf-8")
-            for marker in ("1.1.2", "1.2.0", "2026-10-15", "2026-10-18",
+            for marker in ("1.1.2", "1.2.0", "2026-10-15", "2026-10-16", "2026-10-18",
                            "#305", "#308", "#310", "#311", "#313", "#314",
                            "#180", "#181", "#268", "#304", "#306", "#307",
                            regression_scope, merge_order, artifact_boundary,
-                           "20/21", "#161", "pypi", "Control/Relay"):
+                           "20/21", "#161", "#316", "pypi", "Control/Relay"):
                 self.assertIn(marker, text)
             suffix = "." + locale.rstrip("/") if locale else ""
             runbook = (ROOT / ("RELEASING" + suffix + ".md")).read_text(encoding="utf-8")
@@ -185,7 +185,7 @@ class StableCandidate(unittest.TestCase):
                     self.assertIn(marker, text)
 
     def test_stable_release_keeps_operational_deployment_separate(self):
-        self.assertIn("Version covered by this README: **1.1.2**.",
+        self.assertIn("Source candidate: **1.2.0**. Last verified published stable release: **1.1.2**.",
                       (ROOT / "README.md").read_text(encoding="utf-8"))
         for suffix in ("", ".ko", ".ja", ".zh-CN"):
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
