@@ -30,7 +30,17 @@ gh release edit v1.1.2 --repo abruption/session-peer \
   --draft=false --prerelease=false --latest
 ```
 
-## v1.2.0 candidate — unpublished
+## v1.2.1 preparation — no publication authorization
+
+Prepared on 2026-10-19 against published 1.2.0. The [candidate notes](docs/releases/v1.2.1.md) record PR #319/#317 (bounded macOS Orca Claude inventory), #320/#318 (bounded skill frontmatter) and #303/#302 (canonical compatibility skill 0.3.3). Integrated source base: `32e76d2c85d945d66466f630d9729ec0be5288d8`, not the final preparation or publication commit. Plugin and skill versions remain independent of Python 1.2.1; no global installation or operational deployment is included. Preparation PR #321 also includes the #322 handled-signal staging-ownership fix. Controlled local reproduction is separate from the unproven original CI cause; SIGKILL, host loss and arbitrary interruption of cleanup are not covered, and unknown never grants automatic retry.
+
+The three scoped PRs are merged; complete final-head validation, independent review, package installation checks and current dependency audits. Require successful CI on the exact protected main after a separately authorized preparation-PR merge. The 2026-10-19 unused-tag/PyPI checks are dated observations, not a version reservation. No current private Trusted Publisher verification is claimed; the required human pypi environment approval remains mandatory. #316 and the remaining native/handoff acceptance gates remain separate and unclosed by this preparation.
+
+This section supplies no executable release commands and authorizes no merge, tag/draft creation, workflow dispatch, publication or deployment. After separate authorization, recheck all gates, stop after dispatch until attach-draft succeeds, and review all seven immutable assets, SHA256SUMS, release-provenance.json and authenticated attestations against the exact tag/commit. Local preparation builds are not publishable release assets; do not announce publication or replace immutable assets to update metadata.
+
+## v1.2.0 — published record and historical preparation
+
+GitHub published stable, immutable v1.2.0 on 2026-10-16 at 12:39:13 UTC from `4fc526f36afc65bb6ec460439eb0986c09ecc8ee`; PyPI uploaded the wheel at 12:41:38.903354 UTC and sdist at 12:41:40.537212 UTC. The 2026-10-19 read-only recheck confirmed the [GitHub release](https://github.com/abruption/session-peer/releases/tag/v1.2.0) and [PyPI record](https://pypi.org/pypi/session-peer/1.2.0/json). The candidate wording below, including unpublished and PR #315 remaining open, preserves the 2026-10-15/16 preparation snapshot, not current status or instructions. Never reuse v1.2.0 or modify its immutable assets.
 
 Prepared on 2026-10-15 against published 1.1.2. The milestone target is 2026-10-18, not a publication promise. PR #305, #311, #310, #308, #313 and #314 are now merged in that order; their exact merge commits are recorded in the [candidate notes](docs/releases/v1.2.0.md). This version/docs-only preparation incorporates those changes from main. Issues #180, #181, #268, #304, #306 and #307 remain open.
 

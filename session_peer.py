@@ -45,7 +45,7 @@ try:
 except ImportError:  # Native Windows uses its own read-only writer inspection.
     fcntl = None
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 GITHUB_REPO = "abruption/session-peer"
 
 # Claude Code refuses a same-machine message once its serialized form passes
@@ -3991,6 +3991,13 @@ finally:
     os.close(lock)
 """
     expected_line = f"session-peer {__version__}"
+    # Defer handled signals until the exact owned staging path is captured.
+    # Only the allocation child ignores them: otherwise mktemp can create a
+    # directory, die before printing it, and leave the parent nothing to clean.
+    # This is not cleanup assurance for SIGKILL, host loss or repeated signals
+    # interrupting a later cleanup/publication operation.
+    # Pending cancellation waits for allocator/filesystem IO to return; it has
+    # no universal time bound. The outer SSH timeout still means unknown.
     remote_script = (
         "set -eu; umask 077; "
         'D="$HOME/.local/share/session-peer"; B="$HOME/.local/bin"; '
@@ -3998,8 +4005,12 @@ finally:
         '[ ! -L "$P" ] || '
         "{ echo 'remote update: installation directory is a symlink' >&2; exit 1; }; done; "
         'mkdir -p "$D" "$B"; '
-        'T=$(mktemp -d "$D/.session-peer-update.XXXXXXXX"); '
-        "trap 'rm -rf \"$T\"' EXIT; trap 'exit 1' HUP INT TERM; "
+        'T=""; update_interrupted=0; '
+        "trap 'if [ -n \"$T\" ]; then rm -rf \"$T\"; fi' EXIT; "
+        "trap 'update_interrupted=1' HUP INT TERM; "
+        'T=$(trap \'\' HUP INT TERM; mktemp -d "$D/.session-peer-update.XXXXXXXX"); '
+        "trap 'exit 1' HUP INT TERM; "
+        '[ "$update_interrupted" -eq 0 ] || exit 1; '
         f'python3 -c {shlex.quote(decoder)} "$T/session_peer.py" '
         f"{hashlib.sha256(source).hexdigest()} {len(source)}; "
         'V=$(python3 "$T/session_peer.py" --version); '

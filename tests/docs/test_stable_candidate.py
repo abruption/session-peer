@@ -1,6 +1,7 @@
 """Stable version and publication boundary agree across package and docs."""
 
 from pathlib import Path
+import re
 import unittest
 
 import session_peer
@@ -10,6 +11,72 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StableCandidate(unittest.TestCase):
+    def test_v121_preparation_records_patch_sources_and_publication_gates(self):
+        notes = [(ROOT / ("docs/" + locale + "releases/v1.2.1.md")).read_text(encoding="utf-8")
+                 for locale in ("", "ko/", "ja/", "zh-CN/")]
+        source_base = "32e76d2c85d945d66466f630d9729ec0be5288d8"
+        expected_pairs = ((319, 317, "ba00540e24e4e378c002c11e7cbeb23b85003b9f"),
+                          (320, 318, "c5625a1667de50b2684067febed1772ed693eca7"),
+                          (303, 302, source_base))
+        locale_boundaries = {
+            "": ("unknown never permits automatic resend",
+                 "does not authorize its own merge, tag/draft creation, workflow dispatch, publication or deployment"),
+            "ko/": ("unknown은 자동 재전송을 허용하지 않습니다",
+                    "준비 PR 자체의 병합, 태그·초안 생성, 워크플로 실행 요청, 공개·배포를 승인하지 않습니다"),
+            "ja/": ("unknownは自動再送を許可しません",
+                    "この準備自身のマージ、タグ・ドラフト作成、ワークフロー実行、公開・配備も承認しません"),
+            "zh-CN/": ("unknown不允许自动重发",
+                       "也不授权准备自身合并、创建标签/草稿、派发工作流、发布或部署"),
+        }
+        for locale, text in zip(("", "ko/", "ja/", "zh-CN/"), notes):
+            with self.subTest(locale=locale):
+                self.assertNotIn("PENDING", text)
+                positions = []
+                for pr, issue, expected_sha in expected_pairs:
+                    row = re.search(r"\| #%d \| #%d \| `([0-9a-f]{40})` \|" % (pr, issue), text)
+                    self.assertIsNotNone(row)
+                    positions.append(row.start())
+                    self.assertEqual(expected_sha, row.group(1))
+                self.assertEqual(positions, sorted(positions))
+                self.assertIn(source_base, text)
+                suffix = "." + locale.rstrip("/") if locale else ""
+                self.assertIn(source_base, (ROOT / ("RELEASING" + suffix + ".md")).read_text(encoding="utf-8"))
+                for marker in ("1.2.1", "1.2.0", "2026-10-19", "macOS", "Windows/Linux",
+                               "CLAUDE_CONFIG_DIR", "ANTHROPIC_CONFIG_DIR", "16 KiB", "UTF-8",
+                               "0.3.3", "0.9.1", "1.0.1", "#316", "#161", "20/21",
+                               "#321", "#322", "HUP/INT/TERM", "SIGKILL",
+                               "#180", "#181", "#268", "#304", "#306", "#307", "Control/Relay",
+                               "pypi", "attach-draft", "SHA256SUMS", "release-provenance.json",
+                               "ad4aa0e464fb142424f6fb6a30303bb88e47163e",
+                               "4cd202af4b6a2f0b5e7daa1e7f9d960eb7a67217", "generationStatus=available",
+                               "eb239fb358336d85b49bab2c80e4ea39037d1374",
+                               "15378c6d503a69d1d738ac4739182e23257aa6f2f7fd31ef3fd2fa60e692867f"):
+                    self.assertIn(marker, text)
+                for marker in locale_boundaries[locale]:
+                    self.assertIn(marker, text)
+                self.assertNotIn("```", text)
+        for marker in ("not a publication announcement", "No YAML or skill instructions are executed",
+                       "refuses all target selection", "ordinary socket aliases remain supported",
+                       "not publishable release assets", "required human pypi environment approval",
+                       "not a reservation", "no executable release commands",
+                       "does not authorize its own merge", "never rebuild or replace immutable assets",
+                       "not the proven cause of the original CI failure", "only the allocation child",
+                       "no-automatic-retry contract are unchanged", "not a universal cancellation deadline"):
+            self.assertIn(marker, notes[0])
+
+    def test_v120_publication_addendum_does_not_erase_candidate_history(self):
+        for locale in ("", "ko/", "ja/", "zh-CN/"):
+            text = (ROOT / ("docs/" + locale + "releases/v1.2.0.md")).read_text(encoding="utf-8")
+            for marker in ("2026-10-19", "2026-10-16", "12:39:13 UTC", "12:41:38.903354 UTC",
+                           "12:41:40.537212 UTC", "4fc526f36afc65bb6ec460439eb0986c09ecc8ee",
+                           "https://github.com/abruption/session-peer/releases/tag/v1.2.0",
+                           "https://pypi.org/pypi/session-peer/1.2.0/json", "#315", "2026-10-15"):
+                self.assertIn(marker, text)
+        english = (ROOT / "docs/releases/v1.2.0.md").read_text(encoding="utf-8")
+        self.assertIn("historical preparation snapshot", english)
+        self.assertIn("not current status", english)
+        self.assertIn("candidate is unpublished", english)
+
     def test_v120_candidate_records_merged_scope_and_open_gates(self):
         source_base = "21a0be0c0c5bcb8bca214d90a873b7479d7ba97a"
         merged_prs = (
@@ -168,8 +235,8 @@ class StableCandidate(unittest.TestCase):
     def test_published_release_keeps_experimental_acceptance_gates(self):
         for suffix in ("", ".ko", ".ja", ".zh-CN"):
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
-            self.assertIn("**1.1.2**", text)
-            self.assertIn("releases/v1.1.2.md", text)
+            self.assertIn("**1.2.0**", text)
+            self.assertIn("releases/v1.2.0.md", text)
             self.assertIn("handoff-runtime.md", text)
             self.assertIn("POSIX", text)
             self.assertNotIn("**1.0.4**", text)
@@ -188,8 +255,8 @@ class StableCandidate(unittest.TestCase):
             self.assertIn(marker, english)
 
     def test_package_and_generated_core_version_agree(self):
-        self.assertEqual(session_peer.__version__, "1.2.0")
-        self.assertIn('__version__ = "1.2.0"',
+        self.assertEqual(session_peer.__version__, "1.2.1")
+        self.assertIn('__version__ = "1.2.1"',
                       (ROOT / "session_peer_core/common.py").read_text(encoding="utf-8"))
 
     def test_all_current_readmes_and_runbooks_use_stable_version(self):
@@ -197,7 +264,7 @@ class StableCandidate(unittest.TestCase):
             for stem in ("README", "RELEASING"):
                 with self.subTest(stem=stem, suffix=suffix):
                     text = (ROOT / (stem + suffix + ".md")).read_text(encoding="utf-8")
-                    self.assertIn("1.1.2", text)
+                    self.assertIn("1.2.0", text)
                     self.assertNotIn("1.0.0rc4", text)
                     if stem == "RELEASING":
                         self.assertIn("--draft=false --prerelease=false --latest", text)
@@ -220,24 +287,25 @@ class StableCandidate(unittest.TestCase):
 
     def test_stable_release_keeps_operational_deployment_separate(self):
         profiles = (
-            ("", "Source version: **1.2.0**.",
-             "At the 2026-10-16 publication checkpoint, the last verified published stable release was **1.1.2**.",
-             "Development candidate 1.2.0 is unpublished"),
-            (".ko", "소스 버전: **1.2.0**.",
-             "2026-10-16 공개 상태 확인 시점의 마지막 확인 공개 안정판은 **1.1.2**였습니다.",
-             "개발 후보 1.2.0은 미공개입니다"),
-            (".ja", "ソースバージョン：**1.2.0**。",
-             "2026-10-16の公開状況の確認時点で、最後に確認した公開済み安定版は**1.1.2**でした。",
-             "開発候補1.2.0は未公開です"),
-            (".zh-CN", "源码版本：**1.2.0**。",
-             "在2026-10-16的发布状态检查时，最后确认的已发布稳定版本为**1.1.2**。",
-             "开发候选版本1.2.0尚未发布"),
+            ("", "Source version: **1.2.1**.",
+             "At the 2026-10-19 publication checkpoint, the last verified published stable release was **1.2.0**.",
+             "Development candidate 1.2.1 is unpublished"),
+            (".ko", "소스 버전: **1.2.1**.",
+             "2026-10-19 공개 상태 확인 시점의 마지막 확인 공개 안정판은 **1.2.0**이었습니다.",
+             "개발 후보 1.2.1은 미공개입니다"),
+            (".ja", "ソースバージョン：**1.2.1**。",
+             "2026-10-19の公開状況の確認時点で、最後に確認した公開済み安定版は**1.2.0**でした。",
+             "開発候補1.2.1は未公開です"),
+            (".zh-CN", "源码版本：**1.2.1**。",
+             "在2026-10-19的发布状态检查时，最后确认的已发布稳定版本为**1.2.0**。",
+             "开发候选版本1.2.1尚未发布"),
         )
         for suffix, source_version, dated_checkpoint, stale_unpublished in profiles:
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
             self.assertIn(source_version, text)
             self.assertIn(dated_checkpoint, text)
-            self.assertNotIn(stale_unpublished, text)
+            for stale_version in ("1.2.0", "1.2.1"):
+                self.assertNotIn(stale_unpublished.replace("1.2.1", stale_version), text)
             self.assertIn("https://github.com/abruption/session-peer/releases", text)
             self.assertIn("https://pypi.org/project/session-peer/", text)
             self.assertNotIn("**1.0.3**", text)
