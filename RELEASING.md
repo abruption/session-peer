@@ -4,15 +4,14 @@ Version 1.1.0 is published. GitHub published v1.1.0 on 2026-10-09 at 06:46:41 UT
 
 The sections from source/configuration gates through publication recovery below preserve the historical 2026-10-09 release procedure, not a request to run it again. Do not recreate, move or reuse v1.1.0 or rerun its publication examples. For a future version, use a new reviewed version and repeat the gates with fresh evidence and explicit authorization. Preparation, immutable GitHub publication, required human PyPI environment review and operational deployment remain separate. Protected main requires reviewed, up-to-date PRs and the aggregate release gate, including Python platform matrices, documentation, shell, package/standalone/MCP/Relay/Control tests, integrations and Python/Node dependency audits.
 
-## Current v1.1.1 maintenance release
+## Published v1.1.2 — historical preparation
 
-The owner authorized this maintenance release on 2026-10-12. It includes #297 (development-only Paramiko 5.0.0 fixture) and #299 (four-locale documentation corrections); runtime behavior remains unchanged from 1.1.0. #298 is open and is not fixed by this patch. Use fresh exact-head CI, full local tests, regenerated standalone verification, isolated wheel/sdist installs and current dependency audits. Verify that v1.1.1 and PyPI 1.1.1 are unused before creating them; never move or reuse a tag/version. Verify the current Trusted Publisher and required human pypi review. Run the commands only after the preparation PR is merged and exact main CI is green. Review all seven immutable draft assets, hashes and attestations before publication. Publication authorization does not replace the human PyPI environment gate. Verify GitHub and PyPI separately; no fleet or Control/Relay deployment is included.
-
-The following commands are for v1.1.1. The v1.1.0 procedure below remains historical.
+GitHub published v1.1.2 on 2026-10-13 at 06:39:11 UTC from f3993bf8988dd301b7e14402e63e8ac04e5e2300. The earlier unpublished-candidate wording is historical. Never recreate, move or reuse v1.1.2; the v1.1.0 commands below are historical examples only.
 
 ```bash
+# Historical v1.1.2 example: do not rerun or reuse this version.
 git fetch origin main --tags
-release_tag=v1.1.1
+release_tag=v1.1.2
 release_commit=$(git rev-parse origin/main)
 git tag "$release_tag" "$release_commit"
 git push origin "$release_tag"
@@ -23,12 +22,30 @@ gh workflow run prepare-release.yml --repo abruption/session-peer \
   --ref main -f tag="$release_tag"
 ```
 
-STOP after dispatch: `gh workflow run` returns before preparation finishes. Identify the run for v1.1.1 at the exact release commit and wait with `gh run watch <prepare-run-id> --repo abruption/session-peer --exit-status`. Do not execute the publication block unless that run succeeds, including `attach-draft`. Keep the release a draft while reviewing exactly seven attached assets, SHA256SUMS, release-provenance.json and their authenticated attestations against the tag and commit. Failure, missing assets or unverified evidence means stop without publishing. Only after this separate verification may the following publication command be executed.
+STOP after dispatch: `gh workflow run` returns before preparation finishes. Identify the run for v1.1.2 at the exact release commit and wait with `gh run watch <prepare-run-id> --repo abruption/session-peer --exit-status`. Do not execute the publication block unless that run succeeds, including `attach-draft`. Keep the release a draft while reviewing exactly seven attached assets, SHA256SUMS, release-provenance.json and their authenticated attestations against the tag and commit. Failure, missing assets or unverified evidence means stop without publishing. Only after this separate verification may the following publication command be executed.
 
 ```bash
-gh release edit v1.1.1 --repo abruption/session-peer \
+# Historical v1.1.2 example: do not rerun or reuse this version.
+gh release edit v1.1.2 --repo abruption/session-peer \
   --draft=false --prerelease=false --latest
 ```
+
+## v1.2.0 candidate — unpublished
+
+Prepared on 2026-10-15 against published 1.1.2. The milestone target is 2026-10-18, not a publication promise. PR #305, #311, #310, #308, #313 and #314 are now merged in that order; their exact merge commits are recorded in the [candidate notes](docs/releases/v1.2.0.md). This version/docs-only preparation incorporates those changes from main. Issues #180, #181, #268, #304, #306 and #307 remain open.
+
+Updated on 2026-10-16 against integrated source base `21a0be0c0c5bcb8bca214d90a873b7479d7ba97a`. PR #315 remains open for final-head local validation, CI and review. This source base is not the final release-preparation or publication commit, and v1.2.0 remains unpublished.
+
+The #311 macOS discovery policy remains metadata-only: standalone list never executes Codex or queries its version, and conservatively checks ordinary as well as forced preferences. This may refuse newer environments whose native loader ignores ordinary values. Send/dry-run uses bounded native-version evidence: only the exact reviewed 0.162.1 selects forced-only checks; older, unavailable or unreviewed evidence includes ordinary values. Physical child cwd and consumer alias checks reduce known configuration ambiguity, not startup-storage or atomic identity uncertainty.
+
+The send/dry-run version probe has a 3-second timeout and a separate cleanup allowance of up to 2 seconds; it is not part of metadata-only list.
+
+The unexplained Relay exit139 and separate local transport-creation and shutdown diagnostics remain monitored in #316. Passing reruns do not establish a cause, relationship or fix. No test, audit or protection is bypassed.
+
+Before merging PR #315 or publication, review its final head, check standalone regeneration and document hashes, and rerun complete tests, package installations and current dependency audits. Require green CI on the exact main commit after the separately authorized preparation-PR merge. Recheck unused v1.2.0/PyPI 1.2.0 and immutable-release/tag rules. The owner omitted the current private Trusted Publisher binding recheck; it is not recorded as verified. Explicit authorization is still required for merging PR #315, tag creation, draft creation, workflow dispatch and publication; the required human pypi environment review is not waived. After authorized preparation, stop after dispatch until attach-draft succeeds and all seven assets (including SHA256SUMS and release-provenance.json) and their attestations match the exact commit. No release commands are supplied for execution by this preparation. Operational deployment remains separate.
+
+Merge the release-preparation PR last, after all six scoped PRs. Update and review its final head against merged main; historical approvals do not authorize v1.2.0. Prep-only CI and local integration artifacts are rehearsal evidence, not publishable release assets. Before the final release build, freeze all four README status notices in publication-neutral wording. After final protected-main CI succeeds, rebuild and verify release assets through the authorized preparation workflow at that exact main commit, then review all seven immutable assets (including SHA256SUMS and release-provenance.json) and their attestations before publication. At publication time, add a separate documentation record from actual publication evidence; never rebuild or replace immutable assets to change their frozen metadata, and do not announce publication in advance.
+
 
 ## Historical evidence and current boundaries
 

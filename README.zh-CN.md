@@ -34,9 +34,11 @@ session-peer使用各智能体自身的收件箱和队列；接收方智能体�
 ### 安装
 
 需要Python 3.9或更高版本。核心本地与SSH CLI没有第三方Python依赖。
-本README说明的版本：**1.1.1**。
+源码版本：**1.2.0**。在2026-10-16的发布状态检查时，最后确认的已发布稳定版本为**1.1.2**。
 
-请参阅2026-10-12准备的维护版本的[发布说明](docs/zh-CN/releases/v1.1.1.md)。此补丁改进文档和开发用测试，不改变运行时行为。软件包发布与生产环境部署是两项独立操作。
+已发布的维护版本1.1.2修复#298；请参阅[历史准备记录](docs/zh-CN/releases/v1.1.2.md)。软件包发布与生产环境部署是两项独立操作。
+
+可用版本请查看[GitHub Releases](https://github.com/abruption/session-peer/releases)和[PyPI](https://pypi.org/project/session-peer/)。[准备记录](docs/zh-CN/releases/v1.2.0.md)说明记录日期时的范围与剩余门禁；仅凭源码版本不能确认软件包是否已发布。
 
 实验性handoff需要明确选择启用：本地POSIX Claude支持收据ACK；Codex与SSH仅支持关联标识提交，不支持ACK观察。已发布范围与剩余验收条件请参阅[handoff指南](docs/zh-CN/handoff-runtime.md)。
 

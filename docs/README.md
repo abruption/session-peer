@@ -24,6 +24,10 @@ installation paths.
 
 ## Development and history
 
+- [v1.2.0 candidate notes](releases/v1.2.0.md) record the unpublished preparation started on 2026-10-15 and updated on 2026-10-16, the merged six-PR scope and remaining acceptance gates.
+
+- [v1.1.2 historical preparation notes](releases/v1.1.2.md) describe #298 and the 2026-10-13 preparation; v1.1.2 was subsequently published. Do not reuse its version or commands.
+
 - [v1.1.1 maintenance notes](releases/v1.1.1.md) cover the documentation/test maintenance target prepared on 2026-10-12; runtime behavior is unchanged from 1.1.0. Verify package publication separately.
 
 - [Experimental handoff runtime](handoff-runtime.md) describes the limited private-receipt support shipped in 1.1.0, supported routes and remaining acceptance gates.

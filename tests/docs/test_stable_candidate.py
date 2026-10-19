@@ -10,6 +10,88 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StableCandidate(unittest.TestCase):
+    def test_v120_candidate_records_merged_scope_and_open_gates(self):
+        source_base = "21a0be0c0c5bcb8bca214d90a873b7479d7ba97a"
+        merged_prs = (
+            (305, "3392c561e8b8b3221c8c5fcad6077cad8f7becd8"),
+            (311, "57c42d4a97b351de41a6180b7a05a0ec018d0c4c"),
+            (310, "10a6da72b8b94f08b6b3b2ff70f581aadf548279"),
+            (308, "b04e46c4e641fd0defab72b96c26d0612d0d6a5e"),
+            (313, "9c625bebb21dec2519214889fc60cc3f362142c1"),
+            (314, source_base),
+        )
+        profiles = (
+            ("", "The 26 regression tests include unsupported API cases",
+             "Merge the release-preparation PR last", "not publishable release assets"),
+            ("ko/", "회귀 테스트 26개에는 미지원 API 사례",
+             "릴리스 준비 PR은 범위 내 PR 6개를 모두 병합한 뒤 마지막으로 병합",
+             "게시할 릴리스 자산이 아닙니다"),
+            ("ja/", "26件の回帰テストには未対応API例",
+             "リリース準備PRは対象6件のPRをすべてマージした後、最後にマージ",
+             "公開用リリース資産ではありません"),
+            ("zh-CN/", "26项回归测试包括不支持API的情况",
+             "发布准备PR必须在范围内全部6项PR合并后最后合并",
+             "不是可发布的版本资产"),
+        )
+        for locale, regression_scope, merge_order, artifact_boundary in profiles:
+            text = (ROOT / ("docs/" + locale + "releases/v1.2.0.md")).read_text(encoding="utf-8")
+            for marker in ("1.1.2", "1.2.0", "2026-10-15", "2026-10-16", "2026-10-18",
+                           "#305", "#308", "#310", "#311", "#313", "#314", "#315", source_base,
+                           "#180", "#181", "#268", "#304", "#306", "#307",
+                           regression_scope, merge_order, artifact_boundary,
+                           "20/21", "#161", "#316", "pypi", "Control/Relay"):
+                self.assertIn(marker, text)
+            merge_rows = ["| #%d | `%s` |" % pair for pair in merged_prs]
+            positions = [text.index(row) for row in merge_rows]
+            self.assertEqual(positions, sorted(positions))
+            suffix = "." + locale.rstrip("/") if locale else ""
+            runbook = (ROOT / ("RELEASING" + suffix + ".md")).read_text(encoding="utf-8")
+            self.assertIn(merge_order, runbook)
+            self.assertIn(artifact_boundary, runbook)
+            self.assertIn(source_base, runbook)
+            self.assertIn("#315", runbook)
+            neutral_freeze, immutable_metadata, diagnostic = {
+                "": ("publication-neutral wording", "never rebuild or replace immutable assets",
+                     "transport-creation and shutdown diagnostics"),
+                "ko/": ("공개 여부와 무관하게 정확한 문구", "불변 자산을 다시 빌드하거나 교체하지",
+                        "transport 생성·종료 진단"),
+                "ja/": ("公開の前後によらず正確な表現", "不変資産を再ビルド・置換せず",
+                        "transport生成・終了診断"),
+                "zh-CN/": ("发布前后均准确的表述", "重新构建或替换不可变资产",
+                           "transport创建及关闭诊断"),
+            }[locale]
+            for marker in (neutral_freeze, immutable_metadata, diagnostic,
+                           "SHA256SUMS", "release-provenance.json"):
+                self.assertIn(marker, text)
+                self.assertIn(marker, runbook)
+        english = (ROOT / "docs/releases/v1.2.0.md").read_text(encoding="utf-8")
+        for marker in ("candidate is unpublished", "The six scoped PRs are merged",
+                       "PR #315 remains open", "not the final release-preparation or publication commit",
+                       "3-second timeout", "up to 2 seconds", "not effective-storage attestation",
+                       "unmaterialized empty TUIs may be refused", "remain open",
+                       "not proof of general first-input support",
+                       "required human pypi environment approval",
+                       "review its final head", "historical approvals do not authorize v1.2.0",
+                       "final protected-main CI", "rebuild and verify release assets",
+                       "At publication time", "actual publication evidence"):
+            self.assertIn(marker, english)
+        self.assertNotIn("## Proposed changes", english)
+        runbook = (ROOT / "RELEASING.md").read_text(encoding="utf-8")
+        self.assertIn("not recorded as verified", runbook)
+        self.assertNotIn("six unmerged feature branches", runbook)
+
+    def test_historical_pid_patch_preparation_remains_narrow(self):
+        for locale in ("", "ko/", "ja/", "zh-CN/"):
+            note = (ROOT / ("docs/" + locale + "releases/v1.1.2.md")).read_text(encoding="utf-8")
+            for marker in ("#298", "1.1.1", "1.1.2", "2026-10-13", "²",
+                           "Control/Relay", "20/21", "#161", "handoff-runtime.md"):
+                with self.subTest(locale=locale, marker=marker):
+                    self.assertIn(marker, note)
+        english = (ROOT / "docs/releases/v1.1.2.md").read_text(encoding="utf-8")
+        self.assertIn("candidate is unpublished", english)
+        self.assertIn("preparation does not authorize merge", english)
+        self.assertIn("Package publication does not include operational deployment", english)
+
     def test_maintenance_notes_do_not_claim_runtime_remediation(self):
         for locale in ("", "ko/", "ja/", "zh-CN/"):
             note = (ROOT / ("docs/" + locale + "releases/v1.1.1.md")).read_text(encoding="utf-8")
@@ -86,8 +168,8 @@ class StableCandidate(unittest.TestCase):
     def test_published_release_keeps_experimental_acceptance_gates(self):
         for suffix in ("", ".ko", ".ja", ".zh-CN"):
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
-            self.assertIn("**1.1.1**", text)
-            self.assertIn("releases/v1.1.1.md", text)
+            self.assertIn("**1.1.2**", text)
+            self.assertIn("releases/v1.1.2.md", text)
             self.assertIn("handoff-runtime.md", text)
             self.assertIn("POSIX", text)
             self.assertNotIn("**1.0.4**", text)
@@ -106,8 +188,8 @@ class StableCandidate(unittest.TestCase):
             self.assertIn(marker, english)
 
     def test_package_and_generated_core_version_agree(self):
-        self.assertEqual(session_peer.__version__, "1.1.1")
-        self.assertIn('__version__ = "1.1.1"',
+        self.assertEqual(session_peer.__version__, "1.2.0")
+        self.assertIn('__version__ = "1.2.0"',
                       (ROOT / "session_peer_core/common.py").read_text(encoding="utf-8"))
 
     def test_all_current_readmes_and_runbooks_use_stable_version(self):
@@ -115,7 +197,7 @@ class StableCandidate(unittest.TestCase):
             for stem in ("README", "RELEASING"):
                 with self.subTest(stem=stem, suffix=suffix):
                     text = (ROOT / (stem + suffix + ".md")).read_text(encoding="utf-8")
-                    self.assertIn("1.1.1", text)
+                    self.assertIn("1.1.2", text)
                     self.assertNotIn("1.0.0rc4", text)
                     if stem == "RELEASING":
                         self.assertIn("--draft=false --prerelease=false --latest", text)
@@ -137,17 +219,39 @@ class StableCandidate(unittest.TestCase):
                     self.assertIn(marker, text)
 
     def test_stable_release_keeps_operational_deployment_separate(self):
-        self.assertIn("Version covered by this README: **1.1.1**.",
-                      (ROOT / "README.md").read_text(encoding="utf-8"))
-        for suffix in ("", ".ko", ".ja", ".zh-CN"):
+        profiles = (
+            ("", "Source version: **1.2.0**.",
+             "At the 2026-10-16 publication checkpoint, the last verified published stable release was **1.1.2**.",
+             "Development candidate 1.2.0 is unpublished"),
+            (".ko", "소스 버전: **1.2.0**.",
+             "2026-10-16 공개 상태 확인 시점의 마지막 확인 공개 안정판은 **1.1.2**였습니다.",
+             "개발 후보 1.2.0은 미공개입니다"),
+            (".ja", "ソースバージョン：**1.2.0**。",
+             "2026-10-16の公開状況の確認時点で、最後に確認した公開済み安定版は**1.1.2**でした。",
+             "開発候補1.2.0は未公開です"),
+            (".zh-CN", "源码版本：**1.2.0**。",
+             "在2026-10-16的发布状态检查时，最后确认的已发布稳定版本为**1.1.2**。",
+             "开发候选版本1.2.0尚未发布"),
+        )
+        for suffix, source_version, dated_checkpoint, stale_unpublished in profiles:
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
-            self.assertIn("**1.1.1**", text)
+            self.assertIn(source_version, text)
+            self.assertIn(dated_checkpoint, text)
+            self.assertNotIn(stale_unpublished, text)
+            self.assertIn("https://github.com/abruption/session-peer/releases", text)
+            self.assertIn("https://pypi.org/project/session-peer/", text)
             self.assertNotIn("**1.0.3**", text)
-            self.assertIn("2026-10-12", text)
-        for locale in ("", "ko/", "ja/", "zh-CN/"):
+        for locale, merged_scope, stale_scope in (
+                ("", "the merged six-PR scope", "the proposed six-PR scope"),
+                ("ko/", "병합된 PR 6개 범위", "제안한 PR 6개 범위"),
+                ("ja/", "マージ済み6件のPRの範囲", "提案する6件のPRの範囲"),
+                ("zh-CN/", "已合并的6项PR范围", "拟议的6项PR范围")):
             text = (ROOT / ("docs/" + locale + "README.md")).read_text(encoding="utf-8")
             self.assertIn("releases/v1.0.3.md", text)
             self.assertIn("releases/v1.0.4.md", text)
+            self.assertIn(merged_scope, text)
+            self.assertNotIn(stale_scope, text)
+            self.assertIn("2026-10-16", text)
         self.assertIn("Package publication and operational deployment are separate.",
                       (ROOT / "README.md").read_text(encoding="utf-8"))
         self.assertIn("Package publication does not include operational deployment",

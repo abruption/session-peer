@@ -15,16 +15,29 @@ COMMIT = "a" * 40
 
 
 class ReleaseCommands(unittest.TestCase):
-    def test_current_publication_requires_completed_preparation_and_asset_review(self):
+    def test_historical_publication_requires_completed_preparation_and_asset_review(self):
         for name in ("RELEASING.md", "RELEASING.ko.md", "RELEASING.ja.md", "RELEASING.zh-CN.md"):
             with self.subTest(document=name):
                 text = (ROOT / name).read_text(encoding="utf-8")
                 dispatch = text.index('  --ref main -f tag="$release_tag"')
-                publication = text.index("gh release edit v1.1.1")
+                publication = text.index("gh release edit v1.1.2")
                 gate = text[dispatch:publication]
                 for marker in ("gh run watch <prepare-run-id>", "--exit-status",
                                "attach-draft", "SHA256SUMS", "release-provenance.json"):
                     self.assertIn(marker, gate)
+                self.assertEqual(
+                    text.count("# Historical v1.1.2 example: do not rerun or reuse this version."),
+                    2,
+                )
+                candidate = text[text.index("## v1.2.0"):text.index("## ", text.index("## v1.2.0") + 4)]
+                self.assertNotIn("```", candidate)
+                self.assertNotRegex(candidate, r"(?m)^\s*(?:git\s+(?:tag|push)\b|gh\s+(?:release\b|workflow\s+run\b)|release_tag=)")
+                self.assertNotIn("gh release ", candidate)
+                self.assertNotIn("gh workflow run", candidate)
+                for marker in ("2026-10-15", "2026-10-18", "pypi", "attach-draft",
+                               "SHA256SUMS", "release-provenance.json",
+                               "#180", "#181", "#268", "#304", "#306", "#307"):
+                    self.assertIn(marker, candidate)
 
     def shell_calls(self, block):
         with tempfile.TemporaryDirectory() as temporary:
@@ -72,7 +85,7 @@ rmdir() { capture rmdir "$@"; }
             with self.subTest(document=name):
                 blocks = re.findall(r"```bash\n(.*?)```", (ROOT / name).read_text(), re.DOTALL)
                 self.assertEqual(len(blocks), 5, "current/historical preparation and publication plus installer remain distinct")
-                for offset, version in ((0, "v1.1.1"), (2, "v1.1.0")):
+                for offset, version in ((0, "v1.1.2"), (2, "v1.1.0")):
                     calls, _ = self.shell_calls(blocks[offset])
                     self.assertEqual(calls, [
                         ["git", "fetch", "origin", "main", "--tags"],

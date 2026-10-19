@@ -58,7 +58,10 @@ def diagnose_claude() -> dict:
 
     permission_failures = 0
     for record_file in entries:
-        if not record_file.stem.isdigit():
+        record_pid = parse_claude_pid(record_file.stem)
+        if record_pid is None:
+            if record_file.stem.isdigit():
+                result["invalidRecords"] += 1
             continue
         try:
             record = read_claude_record(record_file)
@@ -73,7 +76,7 @@ def diagnose_claude() -> dict:
             result["invalidRecords"] += 1
             continue
         result["records"] += 1
-        alive, stale_reason = claude_process_state(record, int(record_file.stem))
+        alive, stale_reason = claude_process_state(record, record_pid)
         if stale_reason:
             result["staleRecords"] += 1
         if alive:
