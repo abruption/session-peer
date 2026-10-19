@@ -440,6 +440,33 @@ pip/pipx/uv 설치가 아니라 `~/.local/share/session-peer/session_peer.py`만
 로컬 `session-peer update --check` 및 `session-peer update`는 자동 알림에 사용되는
 동일한 캐시도 채웁니다.
 
+### Orca에서 관리하는 Claude 프로필
+
+macOS에서 `CLAUDE_CONFIG_DIR`과 `ANTHROPIC_CONFIG_DIR`을 지정하지 않으면
+`~/.claude/sessions`와 같은 사용자 소유의 알려진 Orca 경로
+`~/Library/Application Support/orca/claude-profiles/*/home/sessions`를 검색합니다.
+환경변수로 지정하면 기존 우선순위와 범위를 유지하며 다른 프로필로 검색을 넓히지 않습니다.
+한 프로필만 확인하려면
+`CLAUDE_CONFIG_DIR="/path/to/profile/home" session-peer list --agent claude --json`을
+사용하세요. 설치 경로는 바뀌지 않습니다.
+
+모든 플랫폼의 기본·명시적 등록 디렉터리 검색에는 전체 항목 4,096개, 등록 파일당
+1 MiB 제한이 적용됩니다. 추가 Orca 프로필 검색만 macOS 전용이며 바로 아래 항목 128개로
+제한합니다. 자동 검색하는 프로필 디렉터리의 심볼릭 링크·재분석 지점·다른 사용자 소유권은
+거부합니다. 검색과 doctor는 인증정보·수신함 키·대화 기록을 읽지 않습니다.
+같은 실제 등록 디렉터리의 별칭은 한 번만 검색합니다. 별도 기록이 같은 살아 있는 PID나
+수신함을 주장하면 공개 메타데이터가 같아도 충돌입니다.
+
+일부 오류가 있어도 정상 목록은 보존하지만, **살아 있는 세션 충돌을 포함한 검색 오류가
+하나라도 있으면 관련 없는 정상 PID도 포함하여 모든 대상 선택을 거부**합니다.
+이는 dry-run·전송·handoff에 모두 적용됩니다. 명시적 디렉터리는 다른 프로필의 오류를
+분리할 수 있지만 선택한 디렉터리 내부 충돌이나 검색 한도를 해결하지는 못합니다.
+기존 단일 디렉터리의 잘못된 기록 처리 방식은 유지합니다.
+선택한 기록·수신함을 다른 프로필로 재검색하지 않고 확인합니다. 일반 Unix 소켓 별칭은
+유지하지만 기존의 선택적 세대 확인 제한도 유지합니다. 세대 토큰은 전송 권한이나 ACK가 아닙니다.
+모델 인증·모든 파일시스템 경쟁 제거·수신 증명을 제공하지 않으며, 다른 Orca 구조나 임의 설정
+경로를 자동 검색하지 않습니다.
+
 ### 환경 변수
 
 | Variable | Effect |

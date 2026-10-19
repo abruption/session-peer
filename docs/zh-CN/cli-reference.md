@@ -314,6 +314,29 @@ session-peer update --host web-01                 # push this program if version
 
 无论是本地还是远程的 `update` 都不会刷新 Claude 技能。从所需发布版本的检出目录重新运行 `install.sh` 可同时刷新独立程序和技能。本地的 `session-peer update --check` 和 `session-peer update` 也会填充自动通知所使用的相同缓存。
 
+### Orca 管理的 Claude 配置档案
+
+在 macOS 上，未指定 `CLAUDE_CONFIG_DIR` 和 `ANTHROPIC_CONFIG_DIR` 时，搜索包含
+`~/.claude/sessions` 和同一用户拥有的已知 Orca 目录
+`~/Library/Application Support/orca/claude-profiles/*/home/sessions`。
+显式指定目录时保留原有优先级和范围，不扩展到其他档案。只检查一个档案可用
+`CLAUDE_CONFIG_DIR="/path/to/profile/home" session-peer list --agent claude --json`。
+安装路径不变。
+
+所有平台的默认及显式注册目录搜索合计最多 4,096 项，每个注册文件最多 1 MiB。
+只有额外的 Orca 档案枚举为 macOS 专用，最多 128 个直接子项。自动搜索的档案目录
+拒绝符号链接、重解析点及其他用户所有权。搜索和 doctor 不读取凭据、收件箱密钥或对话记录。
+同一实际注册目录的别名只搜索一次。不同记录声称同一存活 PID 或收件箱时，
+即使公开元数据相同也视为冲突。
+
+部分错误时保留正常列表，但**任何搜索错误（包括存活会话冲突）都会拒绝所有目标选择，
+即使目标是无关的正常 PID**。此规则适用于 dry-run、发送和 handoff。
+显式目录可隔离其他档案的错误，但不能修复所选目录内部的冲突或搜索限制。
+保留原有单目录对无效记录的处理方式。核对所选记录和端点时不会重新搜索其他档案。
+保留普通 Unix 套接字别名支持及其既有可选代际检查限制；代际令牌不是发送权限或 ACK。
+这些检查不验证模型身份，不消除所有文件系统竞争，也不证明收件。
+不会自动搜索其他 Orca 布局或任意配置目录。
+
 ### 环境变量
 
 | 变量 | 作用 |

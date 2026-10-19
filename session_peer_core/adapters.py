@@ -126,9 +126,12 @@ class ClaudeAdapter(AgentAdapter):
         return SessionIdentity(self.name, context.host, target)
 
     def list(self, context: ExecutionContext) -> DiscoveryResult:
-        return {"sessions": [{**row, "agent": self.name} for row in
-                             discover(include_unreachable=context.options.all)],
-                "discovery": {"status": "ok"}}
+        rows = discover(include_unreachable=context.options.all)
+        errors = getattr(rows, "errors", [])
+        return {"sessions": [row if isinstance(row, ClaudeSession) else {**row, "agent": self.name}
+                             for row in rows],
+                "discovery": ({"status": "error", "error": "Claude profile discovery incomplete: " +
+                               ", ".join(sorted(set(errors)))} if errors else {"status": "ok"})}
 
     def submit(self, context: ExecutionContext, text: str) -> SubmissionResult:
         args = context.options
@@ -142,12 +145,16 @@ class ClaudeAdapter(AgentAdapter):
             raise
         if expected is not None:
             require_claude_generation(session, expected)
+        revalidate_claude_selection(session)
         if not args.dry_run:
             if expected is not None:
                 post_to_socket(session["socket"], text, pid=session["pid"],
                                generation_session=session, expected_generation=expected)
             else:
-                post_to_socket(session["socket"], text, pid=session["pid"])
+                if isinstance(session, ClaudeSession):
+                    post_to_socket(session["socket"], text, pid=session["pid"], generation_session=session)
+                else:
+                    post_to_socket(session["socket"], text, pid=session["pid"])
         return {"ok": True, "target": {"pid": session["pid"], "name": session["name"]},
                 "chars": len(text), "dryRun": args.dry_run,
                 **({"targetGeneration": expected} if expected is not None else {})}
