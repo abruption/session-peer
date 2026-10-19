@@ -200,6 +200,27 @@ class RemoteTransfer(unittest.TestCase):
     def test_term_between_mktemp_creation_and_return_cleans_owned_staging(self):
         self.assert_interrupted_creation(signal.SIGTERM)
 
+    def assert_bash_interrupted_creation(self, signum):
+        bash = shutil.which("bash", path=self.environment["PATH"])
+        if bash is None:
+            self.skipTest("Bash is not installed")
+        version = subprocess.run([bash, "--version"], capture_output=True,
+                                 text=True, check=True, timeout=5)
+        print("Receiver fixture shell: " + version.stdout.splitlines()[0], flush=True)
+        # Exercise Bash's ordinary (non-POSIX) invocation as well as the sh
+        # path above. CI supplies its own installed Bash; no shell is fetched.
+        self.controlled_command("sh", "exec " + shlex.quote(bash) + ' "$@"\n')
+        self.assert_interrupted_creation(signum)
+
+    def test_bash_hup_between_mktemp_creation_and_return_cleans_owned_staging(self):
+        self.assert_bash_interrupted_creation(signal.SIGHUP)
+
+    def test_bash_int_between_mktemp_creation_and_return_cleans_owned_staging(self):
+        self.assert_bash_interrupted_creation(signal.SIGINT)
+
+    def test_bash_term_between_mktemp_creation_and_return_cleans_owned_staging(self):
+        self.assert_bash_interrupted_creation(signal.SIGTERM)
+
     def test_signal_during_marked_actual_transfer_preserves_old_installation(self):
         script, payload = self.script()
         process = self.partial_process(self.decoder_marker(script), payload[:65536])
