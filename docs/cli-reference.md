@@ -21,6 +21,31 @@ and [GitHub](https://github.com/abruption/session-peer/releases); the old PyPI
 cc-peer project is archived after its final 0.5.1 release.
 See [Moving from cc-peer](#moving-from-cc-peer) for explicit migration steps.
 
+## Claude profiles managed by Orca
+
+On macOS, when neither `CLAUDE_CONFIG_DIR` nor `ANTHROPIC_CONFIG_DIR` selects a
+directory, discovery includes `~/.claude/sessions` and known same-user Orca
+`~/Library/Application Support/orca/claude-profiles/*/home/sessions` directories.
+An explicit environment directory retains its original scope and precedence;
+it never expands into other profiles. For example, use
+`CLAUDE_CONFIG_DIR="/path/to/profile/home" session-peer list --agent claude --json`
+to inspect one profile only. Installation paths are unchanged.
+
+Inventory is limited to 128 immediate profile entries and 4,096 registry-directory
+entries in total, with bounded 1 MiB registration files. Unsafe profile directories
+(including symlinks, reparse points and foreign-user ownership) are not followed.
+No credentials, inbox key files or transcripts are read by discovery or doctor.
+Partial inventory errors preserve healthy sessions but mark discovery incomplete.
+Selection, including dry-run and handoff, is refused while inventory is incomplete;
+use an explicit configuration directory to restrict the search to the intended profile.
+Legacy single-directory handling of malformed records is unchanged.
+Aliases of the same canonical registry are de-duplicated; separate registries
+claiming the same PID/inbox are conflicting even with identical metadata and are not eligible
+targets, and duplicate names still require an unambiguous PID. Selected registry
+and inbox identities are rechecked for dry-run, send and generation checks;
+this does not authenticate a model, remove all filesystem races or prove receipt.
+Other Orca layouts and arbitrary configuration roots are not automatically scanned.
+
 ## Support and security
 
 - **Bugs and feature requests:** use the [issue templates](https://github.com/abruption/session-peer/issues/new/choose). Search existing issues first.

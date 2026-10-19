@@ -55,7 +55,8 @@ def claude_generation(session: dict) -> str | None:
         birth = process_generation(pid)
         if not birth:
             return None
-        directory = sessions_dir().resolve()
+        revalidate_claude_selection(session)
+        directory = claude_selection_directory(session).resolve()
         record = read_claude_record(directory / f"{pid}.json")
         endpoint = record.get("messagingSocketPath")
         if record["pid"] != pid or endpoint != session["socket"]:
@@ -72,7 +73,7 @@ def claude_generation(session: dict) -> str | None:
             identity += [record.get("startedAt")]
         return "tg1:" + hashlib.sha256(json.dumps(identity, ensure_ascii=False,
                                                 separators=(",", ":")).encode("utf-8")).hexdigest()
-    except (OSError, ValueError, KeyError, RuntimeError):
+    except (OSError, ValueError, KeyError, RuntimeError, CcPeerError):
         return None
 
 

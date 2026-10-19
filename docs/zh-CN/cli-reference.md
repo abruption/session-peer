@@ -1,5 +1,26 @@
 # session-peer CLI 参考
 
+## Orca 管理的 Claude 配置档案
+
+在 macOS 上，未指定 `CLAUDE_CONFIG_DIR` 和 `ANTHROPIC_CONFIG_DIR` 时，搜索范围包含
+`~/.claude/sessions`，以及同一用户拥有的已知 Orca 目录
+`~/Library/Application Support/orca/claude-profiles/*/home/sessions`。
+通过环境变量显式指定目录时，保留原有优先级和范围，不会扩展到其他配置档案。
+如需只检查一个档案，可使用
+`CLAUDE_CONFIG_DIR="/path/to/profile/home" session-peer list --agent claude --json`。
+安装路径不变。
+
+最多枚举 128 个直接子档案项，所有注册目录合计 4,096 项，每个注册文件最多 1 MiB。
+不跟随符号链接、重解析点或其他用户拥有的档案目录。
+搜索和 doctor 不读取凭据、收件箱密钥文件或对话记录。
+部分搜索失败时保留正常会话，并将搜索标记为不完整。同一实际注册目录的别名会去重；
+搜索不完整时拒绝选择目标，包括 dry-run 和 handoff。可显式指定所需档案的配置目录来缩小搜索范围。
+保留原有单目录对无效记录的处理方式。
+不同注册目录声称同一 PID 和收件箱时，即使内容相同也视为冲突，不能用作发送目标。
+同名的独立会话仍需使用无歧义的 PID 指定。
+dry-run、发送和代际检查会重新核对原注册目录及收件箱，但不能验证模型身份、
+消除所有文件系统竞争或证明收件。不会自动搜索其他 Orca 布局或任意配置目录。
+
 [返回概览](../../README.zh-CN.md)
 
 ## 固定接收会话代次的前置条件（开发中）

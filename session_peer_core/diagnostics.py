@@ -9,119 +9,67 @@ def _diagnostic(status: str, code: str, message: str, **detail) -> dict:
 
 
 def diagnose_claude() -> dict:
-    directory = sessions_dir()
+    directories, errors = claude_registry_directories()
     result = {
-        "sessionsDir": str(directory), "records": 0, "invalidRecords": 0,
+        "sessionsDir": str(sessions_dir()), "records": 0, "invalidRecords": 0,
         "aliveSessions": 0, "availableInboxes": 0, "staleRecords": 0, "checks": [],
     }
-    try:
-        mode = directory.stat().st_mode
-    except FileNotFoundError:
-        result["checks"].append(_diagnostic(
-            "error", "sessions_dir_missing",
-            "Claude sessions directory does not exist; check CLAUDE_CONFIG_DIR",
-        ))
-        return {"status": "missing_home", **result}
-    except PermissionError:
-        result["checks"].append(_diagnostic(
-            "error", "sessions_dir_permission_denied",
-            "Claude sessions directory is not readable by this user",
-        ))
-        return {"status": "permission_denied", **result}
-    except OSError as exc:
-        result["checks"].append(_diagnostic(
-            "unknown", "sessions_dir_unreadable", f"Cannot inspect Claude sessions: {exc}",
-        ))
-        return {"status": "unknown", **result}
-    if not stat.S_ISDIR(mode):
-        result["checks"].append(_diagnostic(
-            "error", "sessions_path_not_directory",
-            "Configured Claude sessions path is not a directory",
-        ))
-        return {"status": "wrong_home", **result}
-    try:
-        entries = sorted(
-            entry for entry in directory.iterdir()
-            if entry.name.endswith(".json")
-        )
-    except PermissionError:
-        result["checks"].append(_diagnostic(
-            "error", "sessions_dir_permission_denied",
-            "Claude sessions directory cannot be listed by this user",
-        ))
-        return {"status": "permission_denied", **result}
-    except OSError as exc:
-        result["checks"].append(_diagnostic(
-            "unknown", "sessions_dir_unreadable", f"Cannot list Claude sessions: {exc}",
-        ))
-        return {"status": "unknown", **result}
-
-    permission_failures = 0
-    for record_file in entries:
-        record_pid = parse_claude_pid(record_file.stem)
-        if record_pid is None:
-            if record_file.stem.isdigit():
-                result["invalidRecords"] += 1
-            continue
+    # Preserve legacy single-root diagnostics without a second/unbounded reader.
+    if len(directories) == 1 and not errors:
         try:
-            record = read_claude_record(record_file)
+            mode = directories[0].stat().st_mode
+        except FileNotFoundError:
+            result["checks"].append(_diagnostic("error", "sessions_dir_missing",
+                "Claude sessions directory does not exist; check CLAUDE_CONFIG_DIR"))
+            return {"status": "missing_home", **result}
         except PermissionError:
-            permission_failures += 1
-            continue
-        except (OSError, ValueError):
-            result["invalidRecords"] += 1
-            continue
-        pid = record.get("pid")
-        if not isinstance(pid, int):
-            result["invalidRecords"] += 1
-            continue
-        result["records"] += 1
-        alive, stale_reason = claude_process_state(record, record_pid)
-        if stale_reason:
-            result["staleRecords"] += 1
-        if alive:
-            result["aliveSessions"] += 1
-        inbox = str(record.get("messagingSocketPath") or "")
-        try:
-            present = (
-                inbox.startswith("\\\\.\\pipe\\") if IS_WINDOWS
-                else bool(inbox) and Path(inbox).is_socket()
-            )
+            result["checks"].append(_diagnostic("error", "sessions_dir_permission_denied",
+                "Claude sessions directory is not readable by this user"))
+            return {"status": "permission_denied", **result}
         except OSError:
-            present = False
-        if alive and present:
-            result["availableInboxes"] += 1
-
-    if permission_failures:
-        result["checks"].append(_diagnostic(
-            "error", "session_record_permission_denied",
-            "One or more Claude session records are not readable",
-            count=permission_failures,
-        ))
+            result["checks"].append(_diagnostic("unknown", "sessions_dir_unreadable",
+                "Cannot inspect Claude sessions"))
+            return {"status": "unknown", **result}
+        if not stat.S_ISDIR(mode):
+            result["checks"].append(_diagnostic("error", "sessions_path_not_directory",
+                "Configured Claude sessions path is not a directory"))
+            return {"status": "wrong_home", **result}
+    rows = ClaudeSessions()
+    rows.errors = list(errors)
+    rows.multiple = len(directories) > 1 or bool(errors)
+    try:
+        for directory in directories:
+            _discover_claude_directory(directory, rows)
+    except CcPeerError:
+        result["checks"].append(_diagnostic("error", "sessions_dir_unreadable",
+            "Cannot inspect the selected Claude registry"))
+        return {"status": "unknown", **result}
+    rows = _finish_claude_discovery(rows, include_unreachable=True)
+    result.update(records=len(rows), invalidRecords=rows.invalid_records,
+                  aliveSessions=sum(row["alive"] for row in rows),
+                  availableInboxes=sum(row["reachable"] for row in rows),
+                  staleRecords=sum(bool(row.get("staleReason")) for row in rows))
+    if rows.permission_failures:
+        result["checks"].append(_diagnostic("error", "session_record_permission_denied",
+            "One or more Claude session records are not readable", count=rows.permission_failures))
         return {"status": "permission_denied", **result}
+    if rows.errors:
+        result["checks"].append(_diagnostic("error", "claude_discovery_incomplete",
+            "Some Claude profiles or records could not be inspected", reasons=sorted(set(rows.errors))))
+        return {"status": "unknown", **result}
     if result["staleRecords"]:
-        result["checks"].append(_diagnostic(
-            "warning", "stale_session_records",
-            "Claude session records do not match live process identities",
-            count=result["staleRecords"],
-        ))
+        result["checks"].append(_diagnostic("warning", "stale_session_records",
+            "Claude session records do not match live process identities", count=result["staleRecords"]))
     if result["availableInboxes"]:
-        result["checks"].append(_diagnostic(
-            "ok", "inbox_present",
-            "At least one live Claude session advertises an inbox",
-            verification="filesystem_only",
-        ))
+        result["checks"].append(_diagnostic("ok", "inbox_present",
+            "At least one live Claude session advertises an inbox", verification="filesystem_only"))
         return {"status": "available", **result}
     if result["aliveSessions"]:
-        result["checks"].append(_diagnostic(
-            "warning", "inbox_unavailable",
-            "Live Claude sessions exist but none advertises an available inbox",
-        ))
+        result["checks"].append(_diagnostic("warning", "inbox_unavailable",
+            "Live Claude sessions exist but none advertises an available inbox"))
         return {"status": "inbox_unavailable", **result}
-    result["checks"].append(_diagnostic(
-        "warning", "no_live_sessions",
-        "No live Claude session with an inbox was found",
-    ))
+    result["checks"].append(_diagnostic("warning", "no_live_sessions",
+        "No live Claude session with an inbox was found"))
     return {"status": "unavailable", **result}
 
 

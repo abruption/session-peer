@@ -135,7 +135,9 @@ class ErrorHandling(unittest.TestCase):
         self.assertEqual(code, session_peer.EXIT_ERROR)
 
     def test_discover_reports_permission_error(self):
-        with mock.patch.object(Path, "iterdir", side_effect=PermissionError("denied")):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(session_peer, "sessions_dir", return_value=Path(directory)), \
+                mock.patch.object(session_peer.os, "scandir", side_effect=PermissionError("denied")):
             with self.assertRaisesRegex(session_peer.CcPeerError, "Cannot read Claude sessions"):
                 session_peer.discover()
 
