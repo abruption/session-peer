@@ -5879,25 +5879,56 @@ def skill_update_cache_path() -> Path:
     return update_cache_path().with_name("skill-update.json")
 
 
+SKILL_FRONTMATTER_MAX_BYTES = 16384
+
+
 def installed_skill_metadata(path: Path) -> dict:
     """Read only the small, published frontmatter fields; never execute a skill."""
     try:
-        if path.stat().st_size > 16384:
-            return {"version": None, "runtimeMinVersion": None}
-        content = path.read_text(encoding="utf-8")
+        # Follow manager-owned symlinks, but never block on a POSIX FIFO or
+        # interpret nonregular data. Read a finite prefix, not the skill body.
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0)
+                             | getattr(os, "O_NONBLOCK", 0))
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                return {"version": None, "runtimeMinVersion": None}
+            chunks, remaining = [], SKILL_FRONTMATTER_MAX_BYTES + 1
+            while remaining:
+                chunk = os.read(descriptor, remaining)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            content = b"".join(chunks)
+        finally:
+            os.close(descriptor)
     except (OSError, UnicodeError):
         return {"version": None, "runtimeMinVersion": None}
-    match = re.match(r"\A---\r?\n(.*?)\r?\n---(?:\r?\n|\Z)", content, re.DOTALL)
-    if match is None:
+    # The extra byte distinguishes a closing delimiter at actual EOF from a
+    # prefix cut just before more text. Delimiters and line endings count.
+    match = re.match(rb"\A---(?:\r\n|\r|\n)(.*?)(?:\r\n|\r|\n)---(?:(?:\r\n|\r|\n)|\Z)",
+                     content, re.DOTALL)
+    if match is None or match.end() > SKILL_FRONTMATTER_MAX_BYTES:
         return {"version": None, "runtimeMinVersion": None}
-    block = re.search(r"(?m)^metadata:\s*\n((?:[ \t]+[^\n]*\n?)*)", match.group(1))
+    try:
+        # Preserve read_text's universal-newline behavior, but decode only the
+        # complete header: a cut/invalid UTF-8 body cannot erase valid metadata.
+        header = match.group(1).decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    except UnicodeError:
+        return {"version": None, "runtimeMinVersion": None}
+    block = re.search(r"(?m)^metadata:\s*\n((?:[ \t]+[^\n]*\n?)*)", header)
     if block is None:
         return {"version": None, "runtimeMinVersion": None}
     fields = dict(re.findall(r"(?m)^  ([a-z-]+):\s*[\"']?([0-9]+\.[0-9]+\.[0-9]+)[\"']?\s*$", block.group(1)))
-    version = fields.get("version")
-    minimum = fields.get("runtime-min-version")
-    return {"version": version if stable_version(version) else None,
-            "runtimeMinVersion": minimum if stable_version(minimum) else None}
+    def known_version(value):
+        try:
+            return value if stable_version(value) else None
+        except ValueError:
+            # Python's integer digit limit must not turn malformed metadata
+            # into an exception, or erase a separately valid published field.
+            return None
+    return {"version": known_version(fields.get("version")),
+            "runtimeMinVersion": known_version(fields.get("runtime-min-version"))}
 
 
 def installed_skills() -> list[dict]:
