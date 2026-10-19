@@ -595,3 +595,21 @@ class ClaudeProfiles(unittest.TestCase):
             peer.resolve_target(rows, "100")
         with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(self.default.parent)}):
             self.assertEqual(peer.resolve_target(peer.discover(), "100")["pid"], 100)
+
+    @unittest.skipIf(os.name == "nt", "POSIX endpoint inode identity")
+    def test_live_socket_alias_claims_conflict_in_both_inventory_orders(self):
+        one, two = self.profile("one"), self.profile("two")
+        original = self.record(one, 101, "physical")
+        alias = self.root / "same-inbox-alias.sock"
+        alias.symlink_to(original["messagingSocketPath"])
+        self.record(two, 102, "alias", str(alias))
+        for directories in ([one, two], [two, one]):
+            with self.subTest(reversed=directories[0] == two), \
+                    mock.patch.object(peer, "claude_registry_directories", return_value=(directories, [])):
+                rows = peer.discover(True)
+                self.assertEqual(len(rows), 2)
+                self.assertIn("conflicting_session_records", rows.errors)
+                self.assertTrue(all(not row["reachable"] for row in rows))
+                for target in ("101", "102", "physical", "alias"):
+                    with self.assertRaises(peer.CcPeerError):
+                        peer.resolve_target(rows, target)

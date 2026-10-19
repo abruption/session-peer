@@ -2267,12 +2267,15 @@ def discover(include_unreachable: bool = False) -> list[dict]:
 def _finish_claude_discovery(found, include_unreachable):
     # Neither PID nor inbox ownership may depend on inventory order. Exact
     # duplicates are aliases; divergent claims remain visible but unreachable.
-    unique, by_pid, by_socket, conflicts = [], {}, {}, set()
+    unique, by_pid, by_socket, by_endpoint, conflicts = [], {}, {}, {}, set()
     for row in found:
         if not row["alive"]:
             unique.append(row)
             continue  # A proven dead/stale process no longer claims an inbox.
-        candidates = by_pid.get(row["pid"], []) + by_socket.get(row["socket"], [])
+        endpoint = row.registry_endpoint[-2:] if not IS_WINDOWS and row.registry_endpoint else None
+        candidates = list({id(item): item for item in (
+            by_pid.get(row["pid"], []) + by_socket.get(row["socket"], [])
+            + (by_endpoint.get(endpoint, []) if endpoint is not None else []))}.values())
         if any(dict(item) == dict(row) and item.registry_canonical == row.registry_canonical
                and item.registry_record.name == row.registry_record.name
                and item.registry_started == row.registry_started for item in candidates):
@@ -2283,6 +2286,8 @@ def _finish_claude_discovery(found, include_unreachable):
         by_pid.setdefault(row["pid"], []).append(row)
         if row["socket"]:
             by_socket.setdefault(row["socket"], []).append(row)
+        if endpoint is not None:
+            by_endpoint.setdefault(endpoint, []).append(row)
     found.clear()
     if conflicts:
         found.errors.append("conflicting_session_records")
