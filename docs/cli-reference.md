@@ -453,6 +453,35 @@ from the desired release checkout to refresh both standalone program and skill.
 Local `session-peer update --check` and `session-peer update` also populate the
 same cache used by automatic notices.
 
+### Claude profiles managed by Orca
+
+On macOS, when neither `CLAUDE_CONFIG_DIR` nor `ANTHROPIC_CONFIG_DIR` selects a
+directory, discovery includes `~/.claude/sessions` and known same-user Orca
+`~/Library/Application Support/orca/claude-profiles/*/home/sessions` directories.
+An explicit environment directory retains its original scope and precedence;
+it never expands into other profiles. For example, use
+`CLAUDE_CONFIG_DIR="/path/to/profile/home" session-peer list --agent claude --json`
+to inspect one profile only. Installation paths are unchanged.
+
+On all platforms, default and explicit registry scans share a total limit of
+4,096 directory entries and bounded 1 MiB registration files. Only the additional
+Orca profile inventory is macOS-specific, limited to 128 immediate entries.
+Automatic profile directories reject symlinks, reparse points and foreign-user
+ownership. Discovery and doctor never read credentials, inbox keys or transcripts.
+Canonical aliases of one registry are scanned once. Distinct records claiming
+the same live PID or inbox conflict even when their public metadata is identical.
+
+Partial errors preserve healthy listing rows, but **any inventory error, including
+a live conflict, refuses every target selection**, even an unrelated healthy PID,
+for dry-run, send and handoff. An explicit directory can isolate errors in other
+profiles; it cannot repair conflicts or limits within the selected directory.
+Legacy single-directory handling of malformed records is unchanged.
+Selected record and endpoint evidence is rechecked without rescanning other
+profiles. Ordinary Unix socket aliases remain supported; their existing optional
+generation limitation remains. A generation token is not send permission or ACK.
+These checks do not authenticate a model, remove all filesystem races or prove
+receipt. Other Orca layouts and arbitrary configuration roots are not scanned.
+
 ### Environment variables
 
 | Variable | Effect |
