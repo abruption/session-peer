@@ -18,6 +18,16 @@ class StableCandidate(unittest.TestCase):
         expected_pairs = ((319, 317, "ba00540e24e4e378c002c11e7cbeb23b85003b9f"),
                           (320, 318, "c5625a1667de50b2684067febed1772ed693eca7"),
                           (303, 302, source_base))
+        locale_boundaries = {
+            "": ("unknown never permits automatic resend",
+                 "does not authorize its own merge, tag/draft creation, workflow dispatch, publication or deployment"),
+            "ko/": ("unknown은 자동 재전송을 허용하지 않습니다",
+                    "준비 PR 자체의 병합, 태그·초안 생성, 워크플로 실행 요청, 공개·배포를 승인하지 않습니다"),
+            "ja/": ("unknownは自動再送を許可しません",
+                    "この準備自身のマージ、タグ・ドラフト作成、ワークフロー実行、公開・配備も承認しません"),
+            "zh-CN/": ("unknown不允许自动重发",
+                       "也不授权准备自身合并、创建标签/草稿、派发工作流、发布或部署"),
+        }
         for locale, text in zip(("", "ko/", "ja/", "zh-CN/"), notes):
             with self.subTest(locale=locale):
                 self.assertNotIn("PENDING", text)
@@ -36,8 +46,12 @@ class StableCandidate(unittest.TestCase):
                                "0.3.3", "0.9.1", "1.0.1", "#316", "#161", "20/21",
                                "#180", "#181", "#268", "#304", "#306", "#307", "Control/Relay",
                                "pypi", "attach-draft", "SHA256SUMS", "release-provenance.json",
+                               "ad4aa0e464fb142424f6fb6a30303bb88e47163e",
+                               "4cd202af4b6a2f0b5e7daa1e7f9d960eb7a67217", "generationStatus=available",
                                "eb239fb358336d85b49bab2c80e4ea39037d1374",
                                "15378c6d503a69d1d738ac4739182e23257aa6f2f7fd31ef3fd2fa60e692867f"):
+                    self.assertIn(marker, text)
+                for marker in locale_boundaries[locale]:
                     self.assertIn(marker, text)
                 self.assertNotIn("```", text)
         for marker in ("not a publication announcement", "No YAML or skill instructions are executed",
@@ -287,7 +301,8 @@ class StableCandidate(unittest.TestCase):
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
             self.assertIn(source_version, text)
             self.assertIn(dated_checkpoint, text)
-            self.assertNotIn(stale_unpublished, text)
+            for stale_version in ("1.2.0", "1.2.1"):
+                self.assertNotIn(stale_unpublished.replace("1.2.1", stale_version), text)
             self.assertIn("https://github.com/abruption/session-peer/releases", text)
             self.assertIn("https://pypi.org/project/session-peer/", text)
             self.assertNotIn("**1.0.3**", text)
