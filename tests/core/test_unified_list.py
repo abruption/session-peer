@@ -79,7 +79,9 @@ class UnifiedList(unittest.TestCase):
             self.assertEqual(result["discovery"]["codex"]["status"], "error")
 
     def test_claude_directory_permission_is_not_empty_success(self):
-        with mock.patch.object(Path, "iterdir", side_effect=PermissionError("denied")):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(peer, "sessions_dir", return_value=Path(directory)), \
+                mock.patch.object(peer.os, "scandir", side_effect=PermissionError("denied")):
             with self.assertRaises(peer.CcPeerError):
                 peer.discover()
 

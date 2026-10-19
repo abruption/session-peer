@@ -1996,6 +1996,114 @@ IS_WINDOWS = sys.platform == "win32"
 # Registry records contain identity/inbox metadata, not conversation history.
 # A 1 MiB ceiling leaves ample room for additional metadata without unbounded IO.
 MAX_CLAUDE_RECORD_BYTES = 1024 * 1024
+MAX_CLAUDE_PROFILES = 128
+MAX_CLAUDE_RECORDS = 4096
+
+
+class ClaudeSessions(list):
+    """List-compatible internal discovery errors; never serialized as rows."""
+    def __init__(self):
+        super().__init__()
+        self.errors = []
+        self.enumerated = 0
+        self.invalid_records = 0
+        self.permission_failures = 0
+        self.scanned = set()
+
+
+class ClaudeSession(dict):
+    """Native row with non-JSON provenance for the original registry selection."""
+    pass
+
+
+def claude_registry_directories():
+    """Bounded known Orca inventory, never an arbitrary recursive home scan."""
+    selected = sessions_dir()
+    directories, errors = [selected], []
+    if any(os.environ.get(key) for key in ("CLAUDE_CONFIG_DIR", "ANTHROPIC_CONFIG_DIR")):
+        return directories, errors
+    # Orca's macOS account-profile location is not a cross-platform convention.
+    if sys.platform != "darwin" or selected != Path.home() / ".claude/sessions":
+        return directories, errors
+    base = Path.home() / "Library/Application Support/orca/claude-profiles"
+    try:
+        _claude_safe_directory(base)
+        with os.scandir(base) as iterator:
+            entries = []
+            for entry in iterator:
+                if len(entries) >= MAX_CLAUDE_PROFILES:
+                    errors.append("profile_inventory_limit")
+                    break
+                entries.append(Path(entry.path))
+        for profile in sorted(entries):
+            try:
+                node = profile.lstat()
+                if (not stat.S_ISDIR(node.st_mode) and not stat.S_ISLNK(node.st_mode)
+                        and not getattr(node, "st_file_attributes", 0) & 0x400):
+                    continue  # Finder/metadata files are not profile homes.
+                for directory in (profile, profile / "home", profile / "home/sessions"):
+                    _claude_safe_directory(directory)
+                candidate = profile / "home/sessions"
+                if candidate not in directories:
+                    directories.append(candidate)
+            except FileNotFoundError:
+                continue  # A profile need not have started Claude yet.
+            except (OSError, ValueError):
+                errors.append("profile_directory_unavailable")
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError):
+        errors.append("profile_inventory_unavailable")
+    return directories, errors
+
+
+def _claude_safe_directory(path, *, same_user=True):
+    node = path.lstat()
+    if (not stat.S_ISDIR(node.st_mode) or getattr(node, "st_file_attributes", 0) & 0x400
+            or (same_user and hasattr(os, "getuid") and node.st_uid != os.getuid())):
+        raise ValueError("Unsafe Claude profile directory")
+    return (node.st_dev, node.st_ino)
+
+
+def claude_selection_directory(session):
+    return getattr(session, "registry_directory", sessions_dir())
+
+
+def claude_selection_record(session):
+    return getattr(session, "registry_record", claude_selection_directory(session) / f"{session['pid']}.json")
+
+
+def claude_endpoint_identity(endpoint):
+    """Preserve ordinary socket aliases, binding both alias and socket target."""
+    path = Path(endpoint)
+    canonical = path.resolve()
+    alias, target = path.lstat(), canonical.lstat()
+    if not stat.S_ISSOCK(target.st_mode):
+        raise ValueError("Inbox is not a socket")
+    return (str(canonical), alias.st_dev, alias.st_ino, target.st_dev, target.st_ino)
+
+
+def revalidate_claude_selection(session):
+    """Do not rediscover or retarget a selected profile after replacement."""
+    if not isinstance(session, ClaudeSession):
+        return  # Compatibility for adapter/test callers supplying legacy rows.
+    try:
+        directory = session.registry_directory
+        if (directory.resolve() != session.registry_canonical
+                or tuple(_claude_safe_directory(path, same_user=session.registry_same_user)
+                         for path in session.registry_chain) != session.registry_identity):
+            raise ValueError("Registry directory changed")
+        record = read_claude_record(claude_selection_record(session))
+        if (record["pid"] != session["pid"] or record.get("messagingSocketPath") != session["socket"]
+                or record.get("startedAt") != session.registry_started
+                or not claude_process_state(record, session["pid"])[0]):
+            raise ValueError("Registry selection changed")
+        if not IS_WINDOWS:
+            if claude_endpoint_identity(session["socket"]) != session.registry_endpoint:
+                raise ValueError("Inbox changed")
+    except (OSError, ValueError, KeyError, RuntimeError):
+        raise generation_refused("target_generation_unavailable",
+            "Selected Claude profile or inbox changed; discover again; nothing sent") from None
 
 
 def parse_claude_pid(value) -> int | None:
@@ -2148,21 +2256,97 @@ def discover(include_unreachable: bool = False) -> list[dict]:
     under /tmp: a session may bind under $XDG_RUNTIME_DIR, or under a private
     per-user directory when Claude Code rejects the one it would have used.
     """
-    found: list[dict] = []
-    directory = sessions_dir()
+    found = ClaudeSessions()
+    directories, found.errors = claude_registry_directories()
+    found.multiple = len(directories) > 1 or bool(found.errors)
+    for directory in directories:
+        _discover_claude_directory(directory, found)
+    return _finish_claude_discovery(found, include_unreachable)
+
+
+def _finish_claude_discovery(found, include_unreachable):
+    # Neither PID nor inbox ownership may depend on inventory order. Exact
+    # duplicates are aliases; divergent claims remain visible but unreachable.
+    unique, by_pid, by_socket, by_endpoint, conflicts = [], {}, {}, {}, set()
+    for row in found:
+        if not row["alive"]:
+            unique.append(row)
+            continue  # A proven dead/stale process no longer claims an inbox.
+        endpoint = row.registry_endpoint[-2:] if not IS_WINDOWS and row.registry_endpoint else None
+        candidates = list({id(item): item for item in (
+            by_pid.get(row["pid"], []) + by_socket.get(row["socket"], [])
+            + (by_endpoint.get(endpoint, []) if endpoint is not None else []))}.values())
+        if any(dict(item) == dict(row) and item.registry_canonical == row.registry_canonical
+               and item.registry_record.name == row.registry_record.name
+               and item.registry_started == row.registry_started for item in candidates):
+            continue
+        for other in candidates:
+            conflicts.update((id(row), id(other)))
+        unique.append(row)
+        by_pid.setdefault(row["pid"], []).append(row)
+        if row["socket"]:
+            by_socket.setdefault(row["socket"], []).append(row)
+        if endpoint is not None:
+            by_endpoint.setdefault(endpoint, []).append(row)
+    found.clear()
+    if conflicts:
+        found.errors.append("conflicting_session_records")
+    for row in unique:
+        if id(row) in conflicts:
+            row.update(reachable=False, staleReason="conflicting_session_records")
+        if row["reachable"] or include_unreachable:
+            found.append(row)
+    return found
+
+
+def _discover_claude_directory(directory, found):
     try:
-        entries = sorted(path for path in directory.iterdir() if path.suffix == ".json")
+        selected = directory.resolve()
+        base = Path.home() / "Library/Application Support/orca/claude-profiles"
+        automatic_profile = directory != sessions_dir() and directory.parent.parent.parent == base
+        chain = ([base, directory.parent.parent, directory.parent, directory]
+                 if automatic_profile else [selected])
+        identity = tuple(_claude_safe_directory(path, same_user=automatic_profile) for path in chain)
+        scanned = (str(selected), identity[-1])
+        if scanned in found.scanned:
+            return
+        found.scanned.add(scanned)
+        entries = []
+        with os.scandir(directory) as iterator:
+            for entry in iterator:
+                if found.enumerated >= MAX_CLAUDE_RECORDS:
+                    found.errors.append("session_inventory_limit")
+                    break
+                # Count all entries, not only records, to bound enumeration.
+                entries.append(Path(entry.path))
+                found.enumerated += 1
+        entries.sort()
     except FileNotFoundError:
-        return found
-    except OSError as exc:
-        raise CcPeerError(f"Cannot read Claude sessions at {directory}: {exc}") from exc
+        if directory != sessions_dir():
+            found.errors.append("sessions_directory_unavailable")
+        return
+    except (OSError, ValueError, RuntimeError) as exc:
+        if not found.multiple and directory == sessions_dir():
+            raise CcPeerError("Cannot read Claude sessions: selected directory is unavailable") from exc
+        found.errors.append("sessions_directory_unavailable")
+        return
     for record_file in entries:
+        if record_file.suffix != ".json":
+            continue
         record_pid = parse_claude_pid(record_file.stem)
         if record_pid is None:
+            if record_file.stem.isdigit():
+                found.invalid_records += 1
             continue
         try:
             record = read_claude_record(record_file)
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            if isinstance(exc, PermissionError):
+                found.permission_failures += 1
+            else:
+                found.invalid_records += 1
+            if found.multiple or directory != sessions_dir():
+                found.errors.append("session_record_unavailable")
             continue
 
         pid = record.get("pid")
@@ -2174,9 +2358,12 @@ def discover(include_unreachable: bool = False) -> list[dict]:
         if IS_WINDOWS:
             has_inbox = bool(sock) and sock.startswith("\\\\.\\pipe\\")
         else:
-            has_inbox = bool(sock) and Path(sock).is_socket()
+            try:
+                has_inbox = bool(sock) and Path(sock).is_socket()
+            except OSError:
+                has_inbox = False
 
-        entry = {
+        entry = ClaudeSession({
             "agent": "claude",
             "pid": pid,
             "name": record.get("name"),
@@ -2188,17 +2375,43 @@ def discover(include_unreachable: bool = False) -> list[dict]:
             "socket": sock,
             "alive": alive,
             "reachable": alive and has_inbox,
-        }
+        })
+        try:
+            if (directory.resolve() != selected
+                    or tuple(_claude_safe_directory(path, same_user=automatic_profile)
+                             for path in chain) != identity):
+                raise ValueError("Registry changed")
+            entry.registry_directory = directory
+            entry.registry_canonical = selected
+            entry.registry_chain = chain
+            entry.registry_same_user = automatic_profile
+            entry.registry_identity = identity
+            entry.registry_started = record.get("startedAt")
+            entry.registry_record = record_file
+            if not IS_WINDOWS and has_inbox:
+                try:
+                    entry.registry_endpoint = claude_endpoint_identity(sock)
+                except (OSError, ValueError, RuntimeError):
+                    # Presence is only a snapshot: a disappearing inbox makes
+                    # this row unreachable, not every other profile ambiguous.
+                    entry.registry_endpoint = None
+                    entry["reachable"] = False
+            else:
+                entry.registry_endpoint = None
+        except (OSError, ValueError, RuntimeError):
+            found.errors.append("session_record_unavailable")
+            continue
         if stale_reason:
             entry["staleReason"] = stale_reason
-        if entry["reachable"] or include_unreachable:
-            found.append(entry)
-
-    return found
+        found.append(entry)
 
 
 def resolve_target(sessions: list[dict], target: str) -> dict:
     """Find one session by name, or by pid when the target is all digits."""
+    if getattr(sessions, "errors", []):
+        raise CcPeerError("Claude profile discovery is incomplete; cannot select an unambiguous target; "
+                          "inspect conflicts or limits within the selected directory, or set "
+                          "CLAUDE_CONFIG_DIR to isolate errors in other profiles")
     reachable = [s for s in sessions if s["reachable"]]
 
     if target.isdecimal():
@@ -2245,9 +2458,9 @@ def check_message(text: str, remote: bool) -> None:
         )
 
 
-def _read_win_auth(pid: int) -> str | None:
+def _read_win_auth(pid: int, directory=None) -> str | None:
     """Read the Windows auth key for a session and return the auth JSON line."""
-    directory = sessions_dir()
+    directory = sessions_dir() if directory is None else directory
     for key_file in directory.glob(f"{pid}.*.key"):
         try:
             data = json.loads(key_file.read_text(encoding="utf-8"))
@@ -2270,7 +2483,8 @@ def _post_to_pipe(pipe_path: str, pid: int, text: str, *, generation_session=Non
     """Write one message to a Windows named pipe inbox."""
     check_message(text, remote=False)
 
-    auth_line = _read_win_auth(pid)
+    auth_line = (_read_win_auth(pid, claude_selection_directory(generation_session))
+                 if isinstance(generation_session, ClaudeSession) else _read_win_auth(pid))
     if auth_line is None:
         raise CcPeerError(f"no auth key found for pid {pid} — cannot post to Windows pipe")
 
@@ -2282,6 +2496,8 @@ def _post_to_pipe(pipe_path: str, pid: int, text: str, *, generation_session=Non
     import time
     try:
         with open(pipe_path, "wb") as pipe:
+            if generation_session is not None:
+                revalidate_claude_selection(generation_session)
             if expected_generation is not None:
                 verify_connected_generation(generation_session, expected_generation, connected_pipe_pid(pipe))
             pipe.write((auth_line + "\n").encode("utf-8"))
@@ -2303,6 +2519,8 @@ def post_to_socket(socket_path: str, text: str, pid: int = 0, *, generation_sess
     a complete line within 30 seconds, so the message is built before the
     socket is opened.
     """
+    if generation_session is not None:
+        revalidate_claude_selection(generation_session)
     bounded = effect_deadline is not None or total_deadline is not None
     if bounded:
         import math
@@ -2342,6 +2560,8 @@ def post_to_socket(socket_path: str, text: str, pid: int = 0, *, generation_sess
             raise CcPeerError(f"cannot reach inbox at {socket_path}: {exc}") from exc
 
         try:
+            if generation_session is not None:
+                revalidate_claude_selection(generation_session)
             if expected_generation is not None:
                 verify_connected_generation(generation_session, expected_generation, connected_inbox_pid(conn))
             if bounded:
@@ -2426,8 +2646,9 @@ def claude_generation(session: dict) -> str | None:
         birth = process_generation(pid)
         if not birth:
             return None
-        directory = sessions_dir().resolve()
-        record = read_claude_record(directory / f"{pid}.json")
+        revalidate_claude_selection(session)
+        directory = claude_selection_directory(session).resolve()
+        record = read_claude_record(claude_selection_record(session))
         endpoint = record.get("messagingSocketPath")
         if record["pid"] != pid or endpoint != session["socket"]:
             return None
@@ -2443,7 +2664,7 @@ def claude_generation(session: dict) -> str | None:
             identity += [record.get("startedAt")]
         return "tg1:" + hashlib.sha256(json.dumps(identity, ensure_ascii=False,
                                                 separators=(",", ":")).encode("utf-8")).hexdigest()
-    except (OSError, ValueError, KeyError, RuntimeError):
+    except (OSError, ValueError, KeyError, RuntimeError, CcPeerError):
         return None
 
 
@@ -4204,119 +4425,68 @@ def _diagnostic(status: str, code: str, message: str, **detail) -> dict:
 
 
 def diagnose_claude() -> dict:
-    directory = sessions_dir()
+    directories, errors = claude_registry_directories()
     result = {
-        "sessionsDir": str(directory), "records": 0, "invalidRecords": 0,
+        "sessionsDir": str(sessions_dir()), "records": 0, "invalidRecords": 0,
         "aliveSessions": 0, "availableInboxes": 0, "staleRecords": 0, "checks": [],
     }
-    try:
-        mode = directory.stat().st_mode
-    except FileNotFoundError:
-        result["checks"].append(_diagnostic(
-            "error", "sessions_dir_missing",
-            "Claude sessions directory does not exist; check CLAUDE_CONFIG_DIR",
-        ))
-        return {"status": "missing_home", **result}
-    except PermissionError:
-        result["checks"].append(_diagnostic(
-            "error", "sessions_dir_permission_denied",
-            "Claude sessions directory is not readable by this user",
-        ))
-        return {"status": "permission_denied", **result}
-    except OSError as exc:
-        result["checks"].append(_diagnostic(
-            "unknown", "sessions_dir_unreadable", f"Cannot inspect Claude sessions: {exc}",
-        ))
-        return {"status": "unknown", **result}
-    if not stat.S_ISDIR(mode):
-        result["checks"].append(_diagnostic(
-            "error", "sessions_path_not_directory",
-            "Configured Claude sessions path is not a directory",
-        ))
-        return {"status": "wrong_home", **result}
-    try:
-        entries = sorted(
-            entry for entry in directory.iterdir()
-            if entry.name.endswith(".json")
-        )
-    except PermissionError:
-        result["checks"].append(_diagnostic(
-            "error", "sessions_dir_permission_denied",
-            "Claude sessions directory cannot be listed by this user",
-        ))
-        return {"status": "permission_denied", **result}
-    except OSError as exc:
-        result["checks"].append(_diagnostic(
-            "unknown", "sessions_dir_unreadable", f"Cannot list Claude sessions: {exc}",
-        ))
-        return {"status": "unknown", **result}
-
-    permission_failures = 0
-    for record_file in entries:
-        record_pid = parse_claude_pid(record_file.stem)
-        if record_pid is None:
-            if record_file.stem.isdigit():
-                result["invalidRecords"] += 1
-            continue
+    # Preserve legacy single-root diagnostics without a second/unbounded reader.
+    if len(directories) == 1 and not errors:
         try:
-            record = read_claude_record(record_file)
+            mode = directories[0].stat().st_mode
+        except FileNotFoundError:
+            result["checks"].append(_diagnostic("error", "sessions_dir_missing",
+                "Claude sessions directory does not exist; check CLAUDE_CONFIG_DIR"))
+            return {"status": "missing_home", **result}
         except PermissionError:
-            permission_failures += 1
-            continue
-        except (OSError, ValueError):
-            result["invalidRecords"] += 1
-            continue
-        pid = record.get("pid")
-        if not isinstance(pid, int):
-            result["invalidRecords"] += 1
-            continue
-        result["records"] += 1
-        alive, stale_reason = claude_process_state(record, record_pid)
-        if stale_reason:
-            result["staleRecords"] += 1
-        if alive:
-            result["aliveSessions"] += 1
-        inbox = str(record.get("messagingSocketPath") or "")
-        try:
-            present = (
-                inbox.startswith("\\\\.\\pipe\\") if IS_WINDOWS
-                else bool(inbox) and Path(inbox).is_socket()
-            )
+            result["checks"].append(_diagnostic("error", "sessions_dir_permission_denied",
+                "Claude sessions directory is not readable by this user"))
+            return {"status": "permission_denied", **result}
         except OSError:
-            present = False
-        if alive and present:
-            result["availableInboxes"] += 1
-
-    if permission_failures:
-        result["checks"].append(_diagnostic(
-            "error", "session_record_permission_denied",
-            "One or more Claude session records are not readable",
-            count=permission_failures,
-        ))
+            result["checks"].append(_diagnostic("unknown", "sessions_dir_unreadable",
+                "Cannot inspect Claude sessions"))
+            return {"status": "unknown", **result}
+        if not stat.S_ISDIR(mode):
+            result["checks"].append(_diagnostic("error", "sessions_path_not_directory",
+                "Configured Claude sessions path is not a directory"))
+            return {"status": "wrong_home", **result}
+    rows = ClaudeSessions()
+    rows.errors = list(errors)
+    rows.multiple = len(directories) > 1 or bool(errors)
+    try:
+        for directory in directories:
+            _discover_claude_directory(directory, rows)
+    except CcPeerError as exc:
+        denied = isinstance(exc.__cause__, PermissionError)
+        result["checks"].append(_diagnostic("error", "sessions_dir_permission_denied" if denied else "sessions_dir_unreadable",
+            "Cannot inspect the selected Claude registry"))
+        return {"status": "permission_denied" if denied else "unknown", **result}
+    rows = _finish_claude_discovery(rows, include_unreachable=True)
+    result.update(records=len(rows), invalidRecords=rows.invalid_records,
+                  aliveSessions=sum(row["alive"] for row in rows),
+                  availableInboxes=sum(row["reachable"] for row in rows),
+                  staleRecords=sum(bool(row.get("staleReason")) for row in rows))
+    if rows.permission_failures:
+        result["checks"].append(_diagnostic("error", "session_record_permission_denied",
+            "One or more Claude session records are not readable", count=rows.permission_failures))
         return {"status": "permission_denied", **result}
+    if rows.errors:
+        result["checks"].append(_diagnostic("error", "claude_discovery_incomplete",
+            "Some Claude profiles or records could not be inspected", reasons=sorted(set(rows.errors))))
+        return {"status": "unknown", **result}
     if result["staleRecords"]:
-        result["checks"].append(_diagnostic(
-            "warning", "stale_session_records",
-            "Claude session records do not match live process identities",
-            count=result["staleRecords"],
-        ))
+        result["checks"].append(_diagnostic("warning", "stale_session_records",
+            "Claude session records do not match live process identities", count=result["staleRecords"]))
     if result["availableInboxes"]:
-        result["checks"].append(_diagnostic(
-            "ok", "inbox_present",
-            "At least one live Claude session advertises an inbox",
-            verification="filesystem_only",
-        ))
+        result["checks"].append(_diagnostic("ok", "inbox_present",
+            "At least one live Claude session advertises an inbox", verification="filesystem_only"))
         return {"status": "available", **result}
     if result["aliveSessions"]:
-        result["checks"].append(_diagnostic(
-            "warning", "inbox_unavailable",
-            "Live Claude sessions exist but none advertises an available inbox",
-        ))
+        result["checks"].append(_diagnostic("warning", "inbox_unavailable",
+            "Live Claude sessions exist but none advertises an available inbox"))
         return {"status": "inbox_unavailable", **result}
-    result["checks"].append(_diagnostic(
-        "warning", "no_live_sessions",
-        "No live Claude session with an inbox was found",
-    ))
+    result["checks"].append(_diagnostic("warning", "no_live_sessions",
+        "No live Claude session with an inbox was found"))
     return {"status": "unavailable", **result}
 
 
@@ -4689,9 +4859,12 @@ class ClaudeAdapter(AgentAdapter):
         return SessionIdentity(self.name, context.host, target)
 
     def list(self, context: ExecutionContext) -> DiscoveryResult:
-        return {"sessions": [{**row, "agent": self.name} for row in
-                             discover(include_unreachable=context.options.all)],
-                "discovery": {"status": "ok"}}
+        rows = discover(include_unreachable=context.options.all)
+        errors = getattr(rows, "errors", [])
+        return {"sessions": [row if isinstance(row, ClaudeSession) else {**row, "agent": self.name}
+                             for row in rows],
+                "discovery": ({"status": "error", "error": "Claude profile discovery incomplete: " +
+                               ", ".join(sorted(set(errors)))} if errors else {"status": "ok"})}
 
     def submit(self, context: ExecutionContext, text: str) -> SubmissionResult:
         args = context.options
@@ -4705,12 +4878,16 @@ class ClaudeAdapter(AgentAdapter):
             raise
         if expected is not None:
             require_claude_generation(session, expected)
+        revalidate_claude_selection(session)
         if not args.dry_run:
             if expected is not None:
                 post_to_socket(session["socket"], text, pid=session["pid"],
                                generation_session=session, expected_generation=expected)
             else:
-                post_to_socket(session["socket"], text, pid=session["pid"])
+                if isinstance(session, ClaudeSession):
+                    post_to_socket(session["socket"], text, pid=session["pid"], generation_session=session)
+                else:
+                    post_to_socket(session["socket"], text, pid=session["pid"])
         return {"ok": True, "target": {"pid": session["pid"], "name": session["name"]},
                 "chars": len(text), "dryRun": args.dry_run,
                 **({"targetGeneration": expected} if expected is not None else {})}
@@ -5879,25 +6056,56 @@ def skill_update_cache_path() -> Path:
     return update_cache_path().with_name("skill-update.json")
 
 
+SKILL_FRONTMATTER_MAX_BYTES = 16384
+
+
 def installed_skill_metadata(path: Path) -> dict:
     """Read only the small, published frontmatter fields; never execute a skill."""
     try:
-        if path.stat().st_size > 16384:
-            return {"version": None, "runtimeMinVersion": None}
-        content = path.read_text(encoding="utf-8")
+        # Follow manager-owned symlinks, but never block on a POSIX FIFO or
+        # interpret nonregular data. Read a finite prefix, not the skill body.
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0)
+                             | getattr(os, "O_NONBLOCK", 0))
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                return {"version": None, "runtimeMinVersion": None}
+            chunks, remaining = [], SKILL_FRONTMATTER_MAX_BYTES + 1
+            while remaining:
+                chunk = os.read(descriptor, remaining)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            content = b"".join(chunks)
+        finally:
+            os.close(descriptor)
     except (OSError, UnicodeError):
         return {"version": None, "runtimeMinVersion": None}
-    match = re.match(r"\A---\r?\n(.*?)\r?\n---(?:\r?\n|\Z)", content, re.DOTALL)
-    if match is None:
+    # The extra byte distinguishes a closing delimiter at actual EOF from a
+    # prefix cut just before more text. Delimiters and line endings count.
+    match = re.match(rb"\A---(?:\r\n|\r|\n)(.*?)(?:\r\n|\r|\n)---(?:(?:\r\n|\r|\n)|\Z)",
+                     content, re.DOTALL)
+    if match is None or match.end() > SKILL_FRONTMATTER_MAX_BYTES:
         return {"version": None, "runtimeMinVersion": None}
-    block = re.search(r"(?m)^metadata:\s*\n((?:[ \t]+[^\n]*\n?)*)", match.group(1))
+    try:
+        # Preserve read_text's universal-newline behavior, but decode only the
+        # complete header: a cut/invalid UTF-8 body cannot erase valid metadata.
+        header = match.group(1).decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    except UnicodeError:
+        return {"version": None, "runtimeMinVersion": None}
+    block = re.search(r"(?m)^metadata:\s*\n((?:[ \t]+[^\n]*\n?)*)", header)
     if block is None:
         return {"version": None, "runtimeMinVersion": None}
     fields = dict(re.findall(r"(?m)^  ([a-z-]+):\s*[\"']?([0-9]+\.[0-9]+\.[0-9]+)[\"']?\s*$", block.group(1)))
-    version = fields.get("version")
-    minimum = fields.get("runtime-min-version")
-    return {"version": version if stable_version(version) else None,
-            "runtimeMinVersion": minimum if stable_version(minimum) else None}
+    def known_version(value):
+        try:
+            return value if stable_version(value) else None
+        except ValueError:
+            # Python's integer digit limit must not turn malformed metadata
+            # into an exception, or erase a separately valid published field.
+            return None
+    return {"version": known_version(fields.get("version")),
+            "runtimeMinVersion": known_version(fields.get("runtime-min-version"))}
 
 
 def installed_skills() -> list[dict]:
