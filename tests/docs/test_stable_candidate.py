@@ -14,17 +14,23 @@ class StableCandidate(unittest.TestCase):
     def test_v121_preparation_records_patch_sources_and_publication_gates(self):
         notes = [(ROOT / ("docs/" + locale + "releases/v1.2.1.md")).read_text(encoding="utf-8")
                  for locale in ("", "ko/", "ja/", "zh-CN/")]
-        expected_pairs = ((319, 317), (320, 318), (303, 302))
+        source_base = "32e76d2c85d945d66466f630d9729ec0be5288d8"
+        expected_pairs = ((319, 317, "ba00540e24e4e378c002c11e7cbeb23b85003b9f"),
+                          (320, 318, "c5625a1667de50b2684067febed1772ed693eca7"),
+                          (303, 302, source_base))
         for locale, text in zip(("", "ko/", "ja/", "zh-CN/"), notes):
             with self.subTest(locale=locale):
                 self.assertNotIn("PENDING", text)
                 positions = []
-                for pr, issue in expected_pairs:
+                for pr, issue, expected_sha in expected_pairs:
                     row = re.search(r"\| #%d \| #%d \| `([0-9a-f]{40})` \|" % (pr, issue), text)
                     self.assertIsNotNone(row)
                     positions.append(row.start())
-                    self.assertIn(row.group(1), notes[0])
+                    self.assertEqual(expected_sha, row.group(1))
                 self.assertEqual(positions, sorted(positions))
+                self.assertIn(source_base, text)
+                suffix = "." + locale.rstrip("/") if locale else ""
+                self.assertIn(source_base, (ROOT / ("RELEASING" + suffix + ".md")).read_text(encoding="utf-8"))
                 for marker in ("1.2.1", "1.2.0", "2026-10-19", "macOS", "Windows/Linux",
                                "CLAUDE_CONFIG_DIR", "ANTHROPIC_CONFIG_DIR", "16 KiB", "UTF-8",
                                "0.3.3", "0.9.1", "1.0.1", "#316", "#161", "20/21",
