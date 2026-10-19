@@ -161,6 +161,12 @@ class RemoteTransfer(unittest.TestCase):
         # The receiver must never clean an inherited, unowned shell variable.
         self.environment["T"] = str(self.sentinel)
         script, payload = self.script()
+        entry = "digest = hashlib.sha256()"
+        self.assertEqual(script.count(entry), 1)
+        # Persist outside staging: cleanup must not hide a decoder that ran
+        # despite cancellation recorded while allocation was still returning.
+        script = script.replace(entry, entry + '; '
+            '__import__("pathlib").Path(__import__("os").environ["HOME"], "decoder-entered").touch()')
         process = self.partial_process(script, payload[:4096])
         try:
             self.wait_for(self.home / "mktemp-created", process)
@@ -170,6 +176,8 @@ class RemoteTransfer(unittest.TestCase):
             output, error = process.communicate(timeout=5)
             self.assertNotEqual(process.returncode, 0)
             self.assertEqual(output, "", "Interruption must not produce an installed receipt")
+            self.assertFalse((self.home / "decoder-entered").exists(),
+                             "Pending cancellation must prevent decoder entry")
             self.assert_preserved()
             receipt = subprocess.CompletedProcess([], process.returncode, output, error)
             with mock.patch.object(session_peer.Path, "read_bytes", return_value=self.SOURCE), \
