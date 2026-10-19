@@ -15,6 +15,19 @@ COMMIT = "a" * 40
 
 
 class ReleaseCommands(unittest.TestCase):
+    def test_v121_preparation_has_no_executable_publication_instructions(self):
+        for name in ("RELEASING.md", "RELEASING.ko.md", "RELEASING.ja.md", "RELEASING.zh-CN.md"):
+            with self.subTest(document=name):
+                text = (ROOT / name).read_text(encoding="utf-8")
+                section = text[text.index("## v1.2.1"):text.index("## v1.2.0")]
+                self.assertNotIn("```", section)
+                self.assertNotRegex(section, r"(?m)^\s*(?:git\s+(?:tag|push)\b|gh\s+(?:release\b|workflow\s+run\b)|release_tag=)")
+                self.assertNotIn("PENDING", section)
+                for marker in ("2026-10-19", "1.2.1", "1.2.0", "#319", "#317", "#320", "#318",
+                               "#303", "#302", "#316", "Trusted Publisher", "pypi", "attach-draft",
+                               "SHA256SUMS", "release-provenance.json"):
+                    self.assertIn(marker, section)
+
     def test_historical_publication_requires_completed_preparation_and_asset_review(self):
         for name in ("RELEASING.md", "RELEASING.ko.md", "RELEASING.ja.md", "RELEASING.zh-CN.md"):
             with self.subTest(document=name):
