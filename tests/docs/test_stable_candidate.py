@@ -44,6 +44,7 @@ class StableCandidate(unittest.TestCase):
                 for marker in ("1.2.1", "1.2.0", "2026-10-19", "macOS", "Windows/Linux",
                                "CLAUDE_CONFIG_DIR", "ANTHROPIC_CONFIG_DIR", "16 KiB", "UTF-8",
                                "0.3.3", "0.9.1", "1.0.1", "#316", "#161", "20/21",
+                               "#321", "#322", "HUP/INT/TERM", "SIGKILL",
                                "#180", "#181", "#268", "#304", "#306", "#307", "Control/Relay",
                                "pypi", "attach-draft", "SHA256SUMS", "release-provenance.json",
                                "ad4aa0e464fb142424f6fb6a30303bb88e47163e",
@@ -58,7 +59,9 @@ class StableCandidate(unittest.TestCase):
                        "refuses all target selection", "ordinary socket aliases remain supported",
                        "not publishable release assets", "required human pypi environment approval",
                        "not a reservation", "no executable release commands",
-                       "does not authorize its own merge", "never rebuild or replace immutable assets"):
+                       "does not authorize its own merge", "never rebuild or replace immutable assets",
+                       "not the proven cause of the original CI failure", "only the allocation child",
+                       "no-automatic-retry contract are unchanged", "not a universal cancellation deadline"):
             self.assertIn(marker, notes[0])
 
     def test_v120_publication_addendum_does_not_erase_candidate_history(self):

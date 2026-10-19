@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -119,6 +120,111 @@ class RemoteTransfer(unittest.TestCase):
                   '"), "a").close(); ' + call)
         self.assertIn(call, script)
         return script.replace(call, marked)
+
+    def controlled_command(self, name, content):
+        directory = self.root / "controlled-bin"
+        directory.mkdir(exist_ok=True)
+        command = directory / name
+        command.write_text("#!/bin/sh\n" + content, encoding="utf-8")
+        command.chmod(0o700)
+        self.environment["PATH"] = str(directory) + os.pathsep + self.environment["PATH"]
+
+    def partial_process(self, script, payload):
+        process = subprocess.Popen(["sh", "-c", script], stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True, env=self.environment, start_new_session=True)
+        def cleanup():
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+            process.communicate(timeout=5)
+        self.addCleanup(cleanup)
+        process.stdin.write(payload)
+        process.stdin.flush()
+        return process
+
+    def decoder_marker(self, script):
+        call = "staged.write(decoded)"
+        self.assertIn(call, script)
+        # Double quotes keep the instrumentation inside the generated shell's
+        # already-quoted Python argument. This is a local fixture only.
+        return script.replace(call, call + '; staged.flush(); '
+            '__import__("pathlib").Path(__import__("os").environ["HOME"], "decoder-ready").touch()')
+
+    def assert_interrupted_creation(self, signum):
+        real_mktemp = shutil.which("mktemp", path=self.environment["PATH"])
+        self.assertIsNotNone(real_mktemp)
+        self.controlled_command("mktemp", "set -eu\n"
+            "stage=$(" + shlex.quote(real_mktemp) + ' "$@")\n'
+            ': > "$HOME/mktemp-created"\n'
+            'while [ ! -e "$HOME/release-mktemp" ]; do sleep 0.01; done\n'
+            'printf \'%s\\n\' "$stage"\n')
+        # The receiver must never clean an inherited, unowned shell variable.
+        self.environment["T"] = str(self.sentinel)
+        script, payload = self.script()
+        process = self.partial_process(script, payload[:4096])
+        try:
+            self.wait_for(self.home / "mktemp-created", process)
+            self.assertEqual(len(list(self.install.glob(".session-peer-update.*"))), 2)
+            os.killpg(process.pid, signum)
+            (self.home / "release-mktemp").touch()
+            output, error = process.communicate(timeout=5)
+            self.assertNotEqual(process.returncode, 0)
+            self.assertEqual(output, "", "Interruption must not produce an installed receipt")
+            self.assert_preserved()
+            receipt = subprocess.CompletedProcess([], process.returncode, output, error)
+            with mock.patch.object(session_peer.Path, "read_bytes", return_value=self.SOURCE), \
+                    mock.patch.object(session_peer, "__version__", self.VERSION), \
+                    mock.patch.object(session_peer.subprocess, "run", return_value=receipt) as run, \
+                    self.assertRaises(session_peer.CcPeerError) as caught:
+                session_peer.push_to_remote("fixture", [], {})
+            self.assertEqual(caught.exception.details["commitStatus"], "unknown")
+            self.assertFalse(caught.exception.details["retryAllowed"])
+            run.assert_called_once()
+        finally:
+            (self.home / "release-mktemp").touch()
+
+    def test_hup_between_mktemp_creation_and_return_cleans_owned_staging(self):
+        self.assert_interrupted_creation(signal.SIGHUP)
+
+    def test_int_between_mktemp_creation_and_return_cleans_owned_staging(self):
+        self.assert_interrupted_creation(signal.SIGINT)
+
+    def test_term_between_mktemp_creation_and_return_cleans_owned_staging(self):
+        self.assert_interrupted_creation(signal.SIGTERM)
+
+    def test_signal_during_marked_actual_transfer_preserves_old_installation(self):
+        script, payload = self.script()
+        process = self.partial_process(self.decoder_marker(script), payload[:65536])
+        self.wait_for(self.home / "decoder-ready", process)
+        staged = list(self.install.glob(".session-peer-update.*/session_peer.py"))
+        self.assertEqual(len(staged), 1)
+        self.assertGreater(staged[0].stat().st_size, 0)
+        os.killpg(process.pid, signal.SIGTERM)
+        output, _ = process.communicate(timeout=5)
+        self.assertNotEqual(process.returncode, 0)
+        self.assertEqual(output, "")
+        self.assert_preserved()
+
+    def test_parent_wait_includes_foreground_trap_cleanup(self):
+        real_rm = shutil.which("rm", path=self.environment["PATH"])
+        self.assertIsNotNone(real_rm)
+        self.controlled_command("rm", ': > "$HOME/cleanup-entered"\n'
+            'while [ ! -e "$HOME/release-cleanup" ]; do sleep 0.01; done\n'
+            "exec " + shlex.quote(real_rm) + ' "$@"\n')
+        script, payload = self.script()
+        process = self.partial_process(self.decoder_marker(script), payload[:65536])
+        try:
+            self.wait_for(self.home / "decoder-ready", process)
+            os.killpg(process.pid, signal.SIGTERM)
+            self.wait_for(self.home / "cleanup-entered", process)
+            self.assertIsNone(process.poll(), "Parent must wait for its foreground cleanup")
+            self.assertEqual(self.target.read_bytes(), self.old)
+            (self.home / "release-cleanup").touch()
+            process.communicate(timeout=5)
+            self.assertNotEqual(process.returncode, 0)
+            self.assert_preserved()
+        finally:
+            (self.home / "release-cleanup").touch()
 
     def test_interleaved_failed_update_cannot_roll_back_successful_different_version(self):
         first = (b"import os, time\nfrom pathlib import Path\n"

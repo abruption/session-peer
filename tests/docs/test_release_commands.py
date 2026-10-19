@@ -24,7 +24,7 @@ class ReleaseCommands(unittest.TestCase):
                 self.assertNotRegex(section, r"(?m)^\s*(?:git\s+(?:tag|push)\b|gh\s+(?:release\b|workflow\s+run\b)|release_tag=)")
                 self.assertNotIn("PENDING", section)
                 for marker in ("2026-10-19", "1.2.1", "1.2.0", "#319", "#317", "#320", "#318",
-                               "#303", "#302", "#316", "Trusted Publisher", "pypi", "attach-draft",
+                               "#303", "#302", "#316", "#321", "#322", "SIGKILL", "Trusted Publisher", "pypi", "attach-draft",
                                "SHA256SUMS", "release-provenance.json"):
                     self.assertIn(marker, section)
 
