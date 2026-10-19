@@ -40,10 +40,11 @@ def diagnose_claude() -> dict:
     try:
         for directory in directories:
             _discover_claude_directory(directory, rows)
-    except CcPeerError:
-        result["checks"].append(_diagnostic("error", "sessions_dir_unreadable",
+    except CcPeerError as exc:
+        denied = isinstance(exc.__cause__, PermissionError)
+        result["checks"].append(_diagnostic("error", "sessions_dir_permission_denied" if denied else "sessions_dir_unreadable",
             "Cannot inspect the selected Claude registry"))
-        return {"status": "unknown", **result}
+        return {"status": "permission_denied" if denied else "unknown", **result}
     rows = _finish_claude_discovery(rows, include_unreachable=True)
     result.update(records=len(rows), invalidRecords=rows.invalid_records,
                   aliveSessions=sum(row["alive"] for row in rows),

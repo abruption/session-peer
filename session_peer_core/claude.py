@@ -33,6 +33,7 @@ class ClaudeSessions(list):
         self.enumerated = 0
         self.invalid_records = 0
         self.permission_failures = 0
+        self.scanned = set()
 
 
 class ClaudeSession(dict):
@@ -93,6 +94,20 @@ def claude_selection_directory(session):
     return getattr(session, "registry_directory", sessions_dir())
 
 
+def claude_selection_record(session):
+    return getattr(session, "registry_record", claude_selection_directory(session) / f"{session['pid']}.json")
+
+
+def claude_endpoint_identity(endpoint):
+    """Preserve ordinary socket aliases, binding both alias and socket target."""
+    path = Path(endpoint)
+    canonical = path.resolve()
+    alias, target = path.lstat(), canonical.lstat()
+    if not stat.S_ISSOCK(target.st_mode):
+        raise ValueError("Inbox is not a socket")
+    return (str(canonical), alias.st_dev, alias.st_ino, target.st_dev, target.st_ino)
+
+
 def revalidate_claude_selection(session):
     """Do not rediscover or retarget a selected profile after replacement."""
     if not isinstance(session, ClaudeSession):
@@ -103,18 +118,17 @@ def revalidate_claude_selection(session):
                 or tuple(_claude_safe_directory(path, same_user=session.registry_same_user)
                          for path in session.registry_chain) != session.registry_identity):
             raise ValueError("Registry directory changed")
-        record = read_claude_record(directory / f"{session['pid']}.json")
+        record = read_claude_record(claude_selection_record(session))
         if (record["pid"] != session["pid"] or record.get("messagingSocketPath") != session["socket"]
                 or record.get("startedAt") != session.registry_started
                 or not claude_process_state(record, session["pid"])[0]):
             raise ValueError("Registry selection changed")
         if not IS_WINDOWS:
-            node = Path(session["socket"]).lstat()
-            if (not stat.S_ISSOCK(node.st_mode)
-                    or (node.st_dev, node.st_ino) != session.registry_endpoint):
+            if claude_endpoint_identity(session["socket"]) != session.registry_endpoint:
                 raise ValueError("Inbox changed")
     except (OSError, ValueError, KeyError, RuntimeError):
-        raise CcPeerError("Selected Claude profile or inbox changed; discover again; nothing sent") from None
+        raise generation_refused("target_generation_unavailable",
+            "Selected Claude profile or inbox changed; discover again; nothing sent") from None
 
 
 def parse_claude_pid(value) -> int | None:
@@ -285,6 +299,7 @@ def _finish_claude_discovery(found, include_unreachable):
             continue  # A proven dead/stale process no longer claims an inbox.
         candidates = by_pid.get(row["pid"], []) + by_socket.get(row["socket"], [])
         if any(dict(item) == dict(row) and item.registry_canonical == row.registry_canonical
+               and item.registry_record.name == row.registry_record.name
                and item.registry_started == row.registry_started for item in candidates):
             continue
         for other in candidates:
@@ -312,6 +327,10 @@ def _discover_claude_directory(directory, found):
         chain = ([base, directory.parent.parent, directory.parent, directory]
                  if automatic_profile else [selected])
         identity = tuple(_claude_safe_directory(path, same_user=automatic_profile) for path in chain)
+        scanned = (str(selected), identity[-1])
+        if scanned in found.scanned:
+            return
+        found.scanned.add(scanned)
         entries = []
         with os.scandir(directory) as iterator:
             for entry in iterator:
@@ -326,9 +345,9 @@ def _discover_claude_directory(directory, found):
         if directory != sessions_dir():
             found.errors.append("sessions_directory_unavailable")
         return
-    except (OSError, ValueError, RuntimeError):
+    except (OSError, ValueError, RuntimeError) as exc:
         if not found.multiple and directory == sessions_dir():
-            raise CcPeerError("Cannot read Claude sessions: selected directory is unavailable") from None
+            raise CcPeerError("Cannot read Claude sessions: selected directory is unavailable") from exc
         found.errors.append("sessions_directory_unavailable")
         return
     for record_file in entries:
@@ -342,9 +361,10 @@ def _discover_claude_directory(directory, found):
         try:
             record = read_claude_record(record_file)
         except (OSError, ValueError) as exc:
-            found.invalid_records += 1
             if isinstance(exc, PermissionError):
                 found.permission_failures += 1
+            else:
+                found.invalid_records += 1
             if found.multiple or directory != sessions_dir():
                 found.errors.append("session_record_unavailable")
             continue
@@ -387,9 +407,15 @@ def _discover_claude_directory(directory, found):
             entry.registry_same_user = automatic_profile
             entry.registry_identity = identity
             entry.registry_started = record.get("startedAt")
+            entry.registry_record = record_file
             if not IS_WINDOWS and has_inbox:
-                node = Path(sock).lstat()
-                entry.registry_endpoint = (node.st_dev, node.st_ino)
+                try:
+                    entry.registry_endpoint = claude_endpoint_identity(sock)
+                except (OSError, ValueError, RuntimeError):
+                    # Presence is only a snapshot: a disappearing inbox makes
+                    # this row unreachable, not every other profile ambiguous.
+                    entry.registry_endpoint = None
+                    entry["reachable"] = False
             else:
                 entry.registry_endpoint = None
         except (OSError, ValueError, RuntimeError):
@@ -404,7 +430,8 @@ def resolve_target(sessions: list[dict], target: str) -> dict:
     """Find one session by name, or by pid when the target is all digits."""
     if getattr(sessions, "errors", []):
         raise CcPeerError("Claude profile discovery is incomplete; cannot select an unambiguous target; "
-                          "set CLAUDE_CONFIG_DIR to the intended profile and discover again")
+                          "inspect conflicts or limits within the selected directory, or set "
+                          "CLAUDE_CONFIG_DIR to isolate errors in other profiles")
     reachable = [s for s in sessions if s["reachable"]]
 
     if target.isdecimal():

@@ -57,7 +57,7 @@ def claude_generation(session: dict) -> str | None:
             return None
         revalidate_claude_selection(session)
         directory = claude_selection_directory(session).resolve()
-        record = read_claude_record(directory / f"{pid}.json")
+        record = read_claude_record(claude_selection_record(session))
         endpoint = record.get("messagingSocketPath")
         if record["pid"] != pid or endpoint != session["socket"]:
             return None

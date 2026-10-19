@@ -1,5 +1,6 @@
 """Offline known-profile inventory; no native inbox connections or credentials."""
 import argparse
+import base64
 import contextlib
 import io
 import json
@@ -376,3 +377,221 @@ class ClaudeProfiles(unittest.TestCase):
             with self.assertRaises(peer.CcPeerError):
                 peer._post_to_pipe(r"\\.\pipe\fixture", 101, "fixture", generation_session=selected)
         auth.assert_called_once_with(101, directory)
+
+    def test_selected_decimal_filename_aliases_preserve_ordinary_dry_run(self):
+        for stem in ("00101", "١٠١"):
+            with self.subTest(stem=stem):
+                for old_record in self.default.glob("*.json"):
+                    old_record.unlink()
+                self.record(self.default, 101)
+                canonical_generation = peer.claude_generation(peer.discover()[0])
+                (self.default / "101.json").rename(self.default / (stem + ".json"))
+                with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(self.default.parent)}):
+                    selected = peer.discover()[0]
+                    peer.revalidate_claude_selection(selected)
+                    result = peer.ClaudeAdapter().submit(peer.ExecutionContext("local",
+                        argparse.Namespace(to="101", dry_run=True)), "fixture")
+                self.assertTrue(result["dryRun"])
+                self.assertEqual(peer.claude_generation(selected), canonical_generation)
+                self.assertNotIn("registry", json.dumps(selected))
+                value = json.loads((self.default / (stem + ".json")).read_text(encoding="utf-8"))
+                value["startedAt"] += 1
+                (self.default / (stem + ".json")).write_text(json.dumps(value), encoding="utf-8")
+                with self.assertRaises(peer.CcPeerError):
+                    peer.revalidate_claude_selection(selected)
+                (self.default / (stem + ".json")).unlink()
+
+    @unittest.skipIf(os.name == "nt", "POSIX socket aliases")
+    def test_ordinary_socket_alias_remains_usable_and_retarget_is_refused(self):
+        record = self.record(self.default, 101)
+        alias = self.root / "alias.sock"
+        alias.symlink_to(record["messagingSocketPath"])
+        record["messagingSocketPath"] = str(alias)
+        (self.default / "101.json").write_text(json.dumps(record), encoding="utf-8")
+        selected = peer.discover()[0]
+        peer.revalidate_claude_selection(selected)
+        self.assertIsNone(peer.claude_generation(selected), "Existing alias-generation limit remains")
+        connection = mock.Mock()
+        with mock.patch.object(peer.socket, "socket", return_value=connection):
+            peer.post_to_socket(selected["socket"], "fixture", pid=101, generation_session=selected)
+        connection.connect.assert_called_once_with(str(alias))
+        connection.sendall.assert_called_once()
+        alias.unlink()
+        other = self.record(self.default, 102)
+        alias.symlink_to(other["messagingSocketPath"])
+        with self.assertRaises(peer.CcPeerError) as caught:
+            peer.revalidate_claude_selection(selected)
+        self.assertEqual(caught.exception.details.get("status"), "refused")
+
+    def test_doctor_directory_and_record_permission_classifications_are_preserved(self):
+        self.record(self.default, 101)
+        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(self.default.parent)}), \
+                mock.patch.object(peer.os, "scandir", side_effect=PermissionError("fixture")):
+            result = peer.diagnose_claude()
+        self.assertEqual(result["status"], "permission_denied")
+        self.assertEqual(result["checks"][0]["code"], "sessions_dir_permission_denied")
+        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(self.default.parent)}), \
+                mock.patch.object(peer, "read_claude_record", side_effect=PermissionError("fixture")):
+            result = peer.diagnose_claude()
+        self.assertEqual(result["status"], "permission_denied")
+        self.assertEqual(result["invalidRecords"], 0)
+        self.assertEqual(result["checks"][0]["count"], 1)
+
+    @unittest.skipIf(os.name == "nt", "symlink privilege is not assumed")
+    def test_canonical_registry_is_read_once_despite_status_changes(self):
+        directory = self.profile("one")
+        self.record(directory, 101)
+        self.default.rmdir()
+        self.default.symlink_to(directory, target_is_directory=True)
+        original = peer.read_claude_record
+        reads = []
+        def read(path):
+            record = original(path)
+            reads.append(path)
+            record["status"] = "idle" if len(reads) == 1 else "busy"
+            return record
+        with mock.patch.object(peer, "read_claude_record", side_effect=read):
+            rows = peer.discover()
+        self.assertEqual(len(reads), 1)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows.errors, [])
+
+    @unittest.skipIf(os.name == "nt", "POSIX socket boundary")
+    def test_after_connect_selection_refusal_is_typed_no_effect(self):
+        directory = self.profile("one")
+        self.record(directory, 101)
+        selected = peer.discover()[0]
+        connection = mock.Mock()
+        def replace(_):
+            directory.rename(directory.parent / "old-sessions")
+            directory.mkdir()
+        connection.connect.side_effect = replace
+        with mock.patch.object(peer.socket, "socket", return_value=connection):
+            with self.assertRaises(peer.CcPeerError) as caught:
+                peer.post_to_socket(selected["socket"], "fixture", pid=101, generation_session=selected)
+        self.assertEqual(caught.exception.details.get("status"), "refused")
+        self.assertFalse(caught.exception.details.get("submitted", True))
+        self.assertFalse(caught.exception.details.get("retryAllowed", True))
+        self.assertNotIn("lastSeenTarget", caught.exception.details)
+        connection.sendall.assert_not_called()
+
+    @unittest.skipIf(os.name == "nt", "POSIX handoff boundary")
+    def test_local_handoff_records_before_and_after_connect_changes_as_refused(self):
+        for boundary in ("before", "after"):
+            with self.subTest(boundary=boundary):
+                directory = self.profile(boundary)
+                self.record(directory, 101)
+                ledger_root = self.root / ("ledger-" + boundary)
+                peer.HandoffLedger(ledger_root).initialize()
+                output = io.StringIO()
+                connection = mock.Mock()
+                def replace():
+                    directory.rename(directory.parent / "old-sessions")
+                    directory.mkdir()
+                real_post = peer.post_to_socket
+                def post(*args, **kwargs):
+                    if boundary == "before":
+                        replace()
+                    return real_post(*args, **kwargs)
+                if boundary == "after":
+                    connection.connect.side_effect = lambda _: replace()
+                with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(directory.parent)}), \
+                        mock.patch.object(peer, "handoff_root", return_value=ledger_root), \
+                        mock.patch.object(peer, "handoff_now_ns", side_effect=peer.time.monotonic_ns), \
+                        mock.patch.object(peer, "handoff_boot_clock", return_value="a" * 64), \
+                        mock.patch.object(peer, "post_to_socket", side_effect=post), \
+                        mock.patch.object(peer.socket, "socket", return_value=connection), \
+                        contextlib.redirect_stdout(output):
+                    code = peer.main(["send", "--to=101", "--message=fixture", "--observe-delivery",
+                                      "--no-from", "--no-reply-to", "--no-update-notice", "--json"])
+                result = json.loads(output.getvalue())
+                self.assertEqual(code, 1)
+                self.assertEqual(result["handoff"]["submission"]["status"], "refused")
+                self.assertEqual(result["reason"], "native_submission_refused")
+                self.assertFalse(result["retryAllowed"])
+                connection.sendall.assert_not_called()
+                self.assertEqual(connection.connect.call_count, int(boundary == "after"))
+
+    @unittest.skipIf(os.name == "nt", "POSIX private source streaming")
+    def test_remote_handoff_after_connect_change_is_refused_without_writes(self):
+        directory = self.profile("remote")
+        self.record(directory, 101)
+        context = {"schemaVersion": 1, "phase": "probe", "requestId": str(peer.uuid.uuid4()),
+                   "agent": "claude", "target": "101", "home": None, "nativeContext": None,
+                   "generation": None, "anchor": None, "remainingCutoffMs": None, "remainingTotalMs": None}
+        def invoke(request):
+            argv = ["send", "--_handoff-native-context=" + base64.b64encode(peer.HandoffLedger.encode(request)).decode(),
+                    "--to=101", "--b64=" + base64.b64encode(b"fixture").decode(),
+                    "--no-from", "--no-reply-to", "--no-update-notice", "--json"]
+            if request["phase"] == "probe":
+                argv += ["--_handoff-native-cutoff-ms=2000", "--_handoff-native-total-ms=7000"]
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = peer.main(argv)
+            return code, json.loads(output.getvalue())
+        connection = mock.Mock()
+        def replace(_):
+            directory.rename(directory.parent / "old-sessions")
+            directory.mkdir()
+        connection.connect.side_effect = replace
+        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(directory.parent)}), \
+                mock.patch.object(peer, "handoff_now_ns", side_effect=peer.time.monotonic_ns), \
+                mock.patch.object(peer, "handoff_boot_clock", return_value="a" * 64):
+            code, response = invoke(context)
+            self.assertEqual(code, 0)
+            peer.handoff_validate_remote_response(response, context)
+            proof = response["handoffNative"]
+            context.update(phase="effect", generation=proof["generation"], nativeContext=proof["nativeContext"],
+                           anchor=proof["anchor"], remainingCutoffMs=2000, remainingTotalMs=7000)
+            with mock.patch.object(peer.socket, "socket", return_value=connection):
+                code, response = invoke(context)
+            native = peer.handoff_validate_remote_response(response, context)
+        self.assertEqual(code, 1)
+        self.assertEqual(native["reason"], "native_submission_refused")
+        self.assertFalse(native["retryAllowed"])
+        connection.connect.assert_called_once()
+        connection.sendall.assert_not_called()
+
+    def test_selected_refusal_is_a_valid_pinned_ssh_response(self):
+        refusal = peer.generation_refused("target_generation_unavailable", "fixture")
+        response = {"schemaVersion": 1, "command": "send", "ok": False, "error": str(refusal), **refusal.details}
+        token = "tg1:" + "a" * 64
+        result = peer.parse_ssh_response(json.dumps(response),
+            ["send", "--to=101", "--target-generation=" + token])
+        self.assertTrue(result[3])
+        self.assertNotIn("lastSeenTarget", response)
+
+    @unittest.skipIf(os.name == "nt", "POSIX socket snapshot")
+    def test_endpoint_disappearance_does_not_invalidate_other_inventory_rows(self):
+        value = self.record(self.default, 101)
+        original = Path.is_socket
+        def disappear(path):
+            if str(path) == value["messagingSocketPath"]:
+                path.unlink()
+                return True  # It existed at the preceding presence checkpoint.
+            return original(path)
+        with mock.patch.object(Path, "is_socket", disappear):
+            rows = peer.discover(True)
+        self.assertEqual(len(rows), 1)
+        self.assertFalse(rows[0]["reachable"])
+        self.assertEqual(rows.errors, [])
+
+    def test_distinct_same_registry_records_are_conflicting_even_if_identical(self):
+        value = self.record(self.default, 101)
+        (self.default / "00101.json").write_text(json.dumps(value), encoding="utf-8")
+        rows = peer.discover(True)
+        self.assertEqual(len(rows), 2)
+        self.assertIn("conflicting_session_records", rows.errors)
+        self.assertTrue(all(not row["reachable"] for row in rows))
+
+    def test_unrelated_healthy_target_is_not_selected_amid_live_conflicts(self):
+        self.record(self.default, 100, "healthy")
+        value = self.record(self.profile("one"), 101)
+        two = self.profile("two")
+        (two / "101.json").write_text(json.dumps(value), encoding="utf-8")
+        rows = peer.discover(True)
+        self.assertTrue(next(row for row in rows if row["pid"] == 100)["reachable"])
+        with self.assertRaises(peer.CcPeerError):
+            peer.resolve_target(rows, "100")
+        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(self.default.parent)}):
+            self.assertEqual(peer.resolve_target(peer.discover(), "100")["pid"], 100)
