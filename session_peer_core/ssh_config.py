@@ -32,7 +32,9 @@ def _ssh_config_cleanup_scope(action, *args, **kwargs):
     try:
         yield
     except BaseException:
-        _ssh_config_cleanup(action, *args, preserve=True, **kwargs)
+        # A caller may already supply this policy for a nested cleanup. The
+        # active body's failure takes precedence without a duplicate keyword.
+        _ssh_config_cleanup(action, *args, **{**kwargs, "preserve": True})
         raise
     else:
         _ssh_config_cleanup(action, *args, **kwargs)

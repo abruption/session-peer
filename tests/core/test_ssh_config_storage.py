@@ -244,6 +244,41 @@ class TrustedSshConfigStorage(unittest.TestCase):
                 with peer._ssh_config_cleanup_scope(peer.os.close, 42):
                     raise peer._ssh_config_error("original")
 
+    def test_file_close_failure_still_closes_directory(self):
+        real_open, real_close = os.open, os.close
+        active = set()
+        failed_file = [False]
+        parent_closed = [False]
+        parent_inode = self.root.stat().st_ino
+
+        def opened(*args, **kwargs):
+            fd = real_open(*args, **kwargs)
+            active.add(fd)
+            return fd
+
+        def closed(fd):
+            info = os.fstat(fd)
+            real_close(fd)
+            active.discard(fd)
+            if stat.S_ISREG(info.st_mode):
+                failed_file[0] = True
+                raise OSError("private file-close diagnostic")
+            if failed_file[0] and info.st_ino == parent_inode:
+                parent_closed[0] = True
+
+        try:
+            with mock.patch.object(peer.os, "open", side_effect=opened), \
+                    mock.patch.object(peer.os, "close", side_effect=closed):
+                error = self.assertRefused(self.select, "ssh_config_cleanup_failed")
+            self.assertNotIn("private file-close diagnostic", str(error))
+            self.assertTrue(parent_closed[0], "directory was not closed after file cleanup failed")
+            self.assertFalse(active, "validation left owned descriptors open")
+        finally:
+            # Also clean the original buggy implementation during regression
+            # reproduction, without weakening the leak assertion above.
+            for fd in active:
+                real_close(fd)
+
 
 class TrustedSshConfigCommand(unittest.TestCase):
     def test_opt_out_exact_argv_no_io(self):
