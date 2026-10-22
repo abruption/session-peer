@@ -20,6 +20,7 @@ SEGMENTS = (
     "claude.py",
     "target_generation.py",
     "replies.py",
+    "ssh_config.py",
     "ssh.py",
     "ssh_identity.py",
     "output.py",

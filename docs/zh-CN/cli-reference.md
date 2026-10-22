@@ -288,6 +288,25 @@ Host web-01
 
 退出码：`0` 命令成功（包括列出或预检运行 dry-run），`1` 操作错误，`2` CLI 用法错误或未解析的目标被报告为 no-target，以及 `130` 中断（Ctrl-C）。Codex 队列拒绝（包括缺失 rollout）属于操作错误（`1`）；预检运行期间缺失已保存的线程返回 `2`。发送操作退出码为 `0` 并不确认消息已被消费或回复。
 
+### 可信本地 SSH 配置（v1.3 候选，尚未发布）
+
+在 Linux 和 macOS 上，显式指定 `--host` 的本地 CLI `list`、`send`、`doctor` 或 `update` 调用可以同时使用 `--ssh-config ABSOLUTE_PATH` 和 `--trust-ssh-config` 选择现有 OpenSSH 配置。两个标志缺一不可。以下为示例路径，支持用引号包裹的空格：
+
+```bash
+session-peer list --host worker --ssh-config '/home/alice/SSH Profiles/work.conf' --trust-ssh-config
+session-peer doctor --host worker --ssh-config '/home/alice/SSH Profiles/work.conf' --trust-ssh-config --check-return-route
+```
+
+此选择赋予配置本地代码执行权限：即使在 `ssh -G` 用户查询或 `send --dry-run` 中，`Match exec` 也可能执行。操作者还必须信任 `Include` 文件、`ProxyCommand` 及其他外部依赖。验证不是配置沙箱，也不会递归验证这些依赖。不会编辑任何现有配置档案或配置文件。
+
+路径必须是绝对路径，不得包含 `..` 路径段、控制字符或任何路径组件中的符号链接。所选文件必须是当前有效用户拥有的普通文件，硬链接数恰好为 1，大小不超过 64 KiB，且不得具有组或其他用户写权限以及 setuid/setgid/sticky 位。祖先目录须由 root 或当前有效用户拥有，且不得允许组或其他用户写入；root 拥有的 sticky 目录除外。Linux 拒绝扩展访问 ACL 和目录默认 ACL；macOS 拒绝 allow ACL 条目以及禁用所有权的卷。无法验证 ACL 或所有权时也会拒绝。这是保守检查，并非完整的有效权限解释器。
+
+同一次 CLI 调用会在本地 `ssh -G` 查询、doctor、远程列表与版本检查、更新探测/安装/验证，以及 send/handoff SSH 调用中复用同一选择。每次启动 SSH 前都会重新验证文件身份、元数据、内容哈希及存储安全性。检测到变更时拒绝操作，不回退至默认配置。OpenSSH 打开原始路径；这不是不可变字节快照，验证与 OpenSSH 读取之间仍可能发生同一用户修改文件的竞态。
+
+此模式强制 `StrictHostKeyChecking=yes`、`UpdateHostKeys=no`、`ForwardAgent=no`、`PermitLocalCommand=no` 和 `BatchMode=yes`，并禁用连接复用。现有显式主机密钥固定仍具有优先级。`--ssh-opt` 允许列表不变，其中的 `-F` 和 `ProxyCommand` 仍被禁止。所选本地路径不会传给远程命令、回复路由或公开 JSON。反向 doctor 使用远程机器自身的配置，绝不继承此路径。正向成功不能证明反向认证、消息消费或 ACK。
+
+环境变量、MCP 请求、ReplyTo 地址和已存储预设不能选择此模式。Windows、`setup`、配对设备路由、预设组合、回复 URI 目标以及未指定 `--host` 的调用，会在读取配置或启动 SSH 前被拒绝。省略这对标志时保留现有默认 SSH 行为。
+
 <a id="updating"></a>
 ### 更新
 

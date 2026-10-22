@@ -416,6 +416,58 @@ error, `2` CLI usage error or an unresolved target reported as no-target, and
 is an operational error (`1`); a missing saved thread during dry-run returns `2`.
 Exit `0` on send does not confirm consumption or a reply.
 
+### Trusted local SSH configuration (v1.3 candidate, not published)
+
+On Linux and macOS, an explicit local CLI invocation of `list`, `send`, `doctor`,
+or `update` with `--host` can select an existing OpenSSH configuration by pairing
+`--ssh-config ABSOLUTE_PATH` with `--trust-ssh-config`. Both flags are required.
+For example, using a placeholder path (quoted spaces are supported):
+
+```bash
+session-peer list --host worker --ssh-config '/home/alice/SSH Profiles/work.conf' --trust-ssh-config
+session-peer doctor --host worker --ssh-config '/home/alice/SSH Profiles/work.conf' --trust-ssh-config --check-return-route
+```
+
+This grants local code-execution authority to the selected configuration:
+`Match exec` can run even during `ssh -G` identity discovery or `send --dry-run`.
+The operator must also trust `Include` files, `ProxyCommand`, and other external
+dependencies. Validation is not a configuration sandbox and does not recursively
+validate those dependencies. No existing profile or configuration file is edited.
+
+The path must be absolute, with no `..` components, control characters, or
+symlinks in any component. The selected file must be a regular file owned by the
+current effective user, have exactly one hard link, be at most 64 KiB, and have
+neither group/other write permissions nor setuid/setgid/sticky bits. Ancestor
+directories must be owned by root or the current effective user and must not be
+group/other writable, except for root-owned sticky directories. Linux rejects
+extended access ACLs and directory default ACLs; macOS rejects allow ACL entries
+and volumes with ownership disabled. ACL or ownership checks that cannot be
+verified refuse the selection. These are conservative checks, not a full
+effective-permissions interpreter.
+
+One selection is reused throughout that CLI call for local `ssh -G` discovery,
+doctor, remote listing/version checks, update probes/install/verification, and
+send/handoff SSH calls. Before each SSH spawn it revalidates file identity,
+metadata, content hash, and storage safety. Detected changes refuse the operation
+without falling back to default configuration. OpenSSH opens the original path;
+this is not an immutable byte snapshot and a same-user change between validation
+and OpenSSH's read remains possible.
+
+This mode forces `StrictHostKeyChecking=yes`, `UpdateHostKeys=no`,
+`ForwardAgent=no`, `PermitLocalCommand=no`, and `BatchMode=yes`, and disables
+connection multiplexing. Existing explicit host-key pins retain priority. The
+`--ssh-opt` allowlist is unchanged: `-F` and `ProxyCommand` remain forbidden there.
+The selected local path is not forwarded to the remote command, reply route, or
+public JSON. Reverse doctor checks use the remote machine's own configuration;
+they never inherit this path. Forward success does not prove reverse
+authentication, message consumption, or an ACK.
+
+Environment variables, MCP requests, ReplyTo addresses, and stored presets cannot
+select this mode. Windows, `setup`, paired-device routes, preset combinations,
+reply-URI destinations, and invocations without `--host` are rejected before
+reading the configuration or starting SSH. Omitting the pair preserves the
+existing default SSH behavior.
+
 ### Updating
 
 For package-managed installs, use the same manager that installed the command:

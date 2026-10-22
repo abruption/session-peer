@@ -404,6 +404,25 @@ SSH `User` 設定に誘導し、再試行されることはありません。
 dry-run 中の保存済みスレッドの欠落は `2` を返します。send における終了コード `0` は、
 消費または返信を確認するものではありません。
 
+### 信頼するローカル SSH 設定 (v1.3 候補、未公開)
+
+Linux と macOS では、`--host` を指定したローカル CLI の `list`、`send`、`doctor`、`update` で、`--ssh-config ABSOLUTE_PATH` と `--trust-ssh-config` を併用して既存の OpenSSH 設定を選択できます。両方のフラグが必要です。次のパスは例であり、引用符で囲んだ空白も利用できます。
+
+```bash
+session-peer list --host worker --ssh-config '/home/alice/SSH Profiles/work.conf' --trust-ssh-config
+session-peer doctor --host worker --ssh-config '/home/alice/SSH Profiles/work.conf' --trust-ssh-config --check-return-route
+```
+
+この選択は設定にローカルコード実行権限を与えます。`Match exec` は `ssh -G` によるユーザー確認や `send --dry-run` 中でも実行され得ます。運用者は `Include` ファイル、`ProxyCommand`、その他の外部依存先も信頼する必要があります。検証は設定のサンドボックスではなく、依存先を再帰的に検証しません。既存のプロファイルや設定ファイルは編集しません。
+
+絶対パスが必要で、`..` 要素、制御文字、パス内のシンボリックリンクは許可しません。選択したファイルは現在の実効ユーザーが所有する通常ファイルで、ハードリンク数が 1、最大 64 KiB である必要があります。グループ・その他の書き込み権限、および setuid/setgid/sticky ビットも拒否します。祖先ディレクトリは root または現在の実効ユーザーの所有で、グループ・その他から書き込み不可である必要があります。ただし root 所有の sticky ディレクトリは例外です。Linux では拡張アクセス ACL とディレクトリのデフォルト ACL、macOS では allow ACL エントリと所有権が無効のボリュームを拒否します。ACL や所有権を確認できない場合も拒否します。これは保守的な検査であり、実効権限の完全な解釈ではありません。
+
+同じ CLI 呼び出し内で、ローカル `ssh -G` 照会、doctor、リモート一覧・バージョン確認、更新の調査・インストール・検証、send/handoff の SSH に同じ選択を使います。各 SSH 起動前にファイルの識別情報、メタデータ、内容ハッシュ、保存場所の安全性を再検証します。変更を検出すると、既定設定にフォールバックせず拒否します。OpenSSH は元のパスを開きます。不変のバイトスナップショットではなく、検証から OpenSSH の読み取りまでの間に同じユーザーが変更する競合は残ります。
+
+このモードでは `StrictHostKeyChecking=yes`、`UpdateHostKeys=no`、`ForwardAgent=no`、`PermitLocalCommand=no`、`BatchMode=yes` を強制し、接続の多重化を無効にします。既存の明示的なホスト鍵固定が優先されます。`--ssh-opt` の許可リストは変更せず、そこでの `-F` と `ProxyCommand` は引き続き禁止します。選択したローカルパスはリモートコマンド、返信経路、公開 JSON に渡しません。逆方向の doctor はリモート側自身の設定を使用し、このパスを継承しません。順方向の成功は逆方向の認証、メッセージ消費、ACK を証明しません。
+
+環境変数、MCP リクエスト、ReplyTo アドレス、保存済みプリセットからは選択できません。Windows、`setup`、ペアリング済みデバイス経路、プリセットとの併用、返信 URI 宛先、`--host` のない呼び出しは、設定を読む前および SSH 起動前に拒否します。両フラグを省略した場合は従来の既定 SSH 動作を維持します。
+
 <a id="updating"></a>
 ### 更新
 

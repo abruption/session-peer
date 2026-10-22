@@ -403,6 +403,25 @@ Host web-01
 포함한 Codex 큐 거부는 운영 오류(`1`)입니다. dry-run 중 저장된 스레드가 누락된 경우 `2`를
 반환합니다. 전송 시의 종료 코드 `0`은 소비나 응답을 확인해주지 않습니다.
 
+### 신뢰하는 로컬 SSH 설정 (v1.3 후보, 미출시)
+
+Linux와 macOS에서는 `--host`를 지정한 로컬 CLI의 `list`, `send`, `doctor`, `update` 호출에서 `--ssh-config ABSOLUTE_PATH`와 `--trust-ssh-config`를 함께 사용해 기존 OpenSSH 설정을 선택할 수 있습니다. 두 플래그가 모두 필요합니다. 다음은 예시 경로이며, 따옴표로 감싼 공백도 지원합니다.
+
+```bash
+session-peer list --host worker --ssh-config '/home/alice/SSH Profiles/work.conf' --trust-ssh-config
+session-peer doctor --host worker --ssh-config '/home/alice/SSH Profiles/work.conf' --trust-ssh-config --check-return-route
+```
+
+이 선택은 해당 설정에 로컬 코드 실행 권한을 부여합니다. `Match exec`는 `ssh -G` 사용자 확인이나 `send --dry-run` 중에도 실행될 수 있습니다. 운영자는 `Include` 파일, `ProxyCommand`, 기타 외부 의존성도 신뢰해야 합니다. 검증은 설정 샌드박스가 아니며 의존성을 재귀적으로 검증하지 않습니다. 기존 프로필이나 설정 파일을 수정하지 않습니다.
+
+경로는 절대 경로여야 하며 `..` 구성 요소, 제어 문자, 경로 내 심볼릭 링크를 허용하지 않습니다. 선택한 파일은 현재 유효 사용자가 소유한 일반 파일이어야 하고, 하드 링크 수가 정확히 1개이며, 최대 64 KiB여야 합니다. 그룹·다른 사용자 쓰기 권한과 setuid/setgid/sticky 비트도 거부합니다. 상위 디렉터리는 root 또는 현재 유효 사용자 소유여야 하며 그룹·다른 사용자 쓰기가 금지되어야 합니다. 단, root 소유의 sticky 디렉터리는 예외입니다. Linux에서는 확장 접근 ACL과 디렉터리 기본 ACL을 거부하고, macOS에서는 allow ACL 항목과 소유권이 비활성화된 볼륨을 거부합니다. ACL이나 소유권을 확인할 수 없어도 거부합니다. 이는 보수적 검사이며 전체 유효 권한 해석기는 아닙니다.
+
+하나의 CLI 호출에서 같은 선택을 로컬 `ssh -G` 조회, doctor, 원격 목록·버전 확인, 업데이트 탐색·설치·검증, send/handoff SSH 호출에 재사용합니다. 매 SSH 실행 전에 파일 식별 정보·메타데이터·내용 해시와 저장 경로 안전성을 다시 확인합니다. 변경을 발견하면 기본 설정으로 대체하지 않고 거부합니다. OpenSSH는 원래 경로를 열기 때문에 불변 바이트 스냅샷이 아니며, 검증과 OpenSSH 읽기 사이에 같은 사용자가 변경하는 경쟁 조건은 남습니다.
+
+이 모드는 `StrictHostKeyChecking=yes`, `UpdateHostKeys=no`, `ForwardAgent=no`, `PermitLocalCommand=no`, `BatchMode=yes`를 강제하고 연결 다중화를 비활성화합니다. 기존 명시적 호스트 키 고정이 우선합니다. `--ssh-opt` 허용 목록은 그대로이며, 여기서 `-F`와 `ProxyCommand`는 계속 금지됩니다. 선택한 로컬 경로는 원격 명령·응답 경로·공개 JSON으로 전달되지 않습니다. 역방향 doctor 검사는 원격 장비 자체 설정을 사용하고 이 경로를 상속하지 않습니다. 정방향 성공은 역방향 인증, 메시지 소비, ACK를 입증하지 않습니다.
+
+환경 변수, MCP 요청, ReplyTo 주소, 저장된 프리셋에서는 이 모드를 선택할 수 없습니다. Windows, `setup`, 페어링된 기기 경로, 프리셋 조합, 응답 URI 대상, `--host` 없는 호출은 설정을 읽거나 SSH를 시작하기 전에 거부됩니다. 두 플래그를 생략하면 기존 기본 SSH 동작을 유지합니다.
+
 <a id="updating"></a>
 ### 업데이트
 

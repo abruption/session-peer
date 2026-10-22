@@ -102,7 +102,7 @@ def ssh_user_metadata(host: str, ssh_opts: list[str], *, handoff_budget=None) ->
 
     try:
         completed = subprocess.run(
-            ["ssh", "-G", *ssh_opts, host], capture_output=True,
+            trusted_ssh_command(ssh_opts, host, prefix=("-G",)), capture_output=True,
             encoding="utf-8", errors="replace", timeout=DETECT_TIMEOUT,
         )
     except (OSError, subprocess.SubprocessError):
@@ -158,7 +158,7 @@ def ssh_failure_error(host: str, ssh_info: dict, failure: str,
     elif failure == "timeout":
         message = f"SSH connection to {target} timed out"
     else:
-        suffix = f": {detail.strip()[:2000]}" if detail and detail.strip() else ""
+        suffix = f": {trusted_ssh_diagnostic(detail.strip())[:2000]}" if detail and detail.strip() else ""
         message = f"SSH transport failed for {target}{suffix}"
     return CcPeerError(message, {**ssh_info, "sshFailure": failure})
 
@@ -315,7 +315,7 @@ def ssh_handoff_configuration(host, ssh_opts, handoff_budget):
     completed = None
     try:
         probe_cutoff = min(cutoff, handoff_now() + DETECT_TIMEOUT)
-        completed = handoff_stream_child(["ssh", "-G", *ssh_opts, host], b"", probe_cutoff,
+        completed = handoff_stream_child(trusted_ssh_command(ssh_opts, host, prefix=("-G",)), b"", probe_cutoff,
                                          min(total, probe_cutoff + 5), handoff_now)
         valid = (completed.returncode in (0, -signal.SIGKILL) and completed.reason is None
                  and not completed.interrupted and not completed.stdout_overflow
@@ -378,7 +378,7 @@ def _run_remote_handoff_dispatch(host, argv, ssh_opts, identity_options, budget,
         raise CcPeerError("Cannot read source for private SSH handoff",
                           {"reason": "ssh_handoff_source_unavailable", "retryAllowed": False, "spawned": False}) from exc
     ssh_info = ssh_user_metadata(host, ssh_opts, handoff_budget=budget)
-    completed = handoff_stream_child(["ssh", *identity_options, *ssh_opts, host, remote],
+    completed = handoff_stream_child(trusted_ssh_command(ssh_opts, host, remote, identity_options=identity_options),
                                      source, *budget, handoff_now)
     if context["phase"] == "probe" and completed.interrupted:
         # Probe success is not effect evidence. Operator cancellation must
@@ -435,7 +435,7 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
     # result to the remote *shell*, so an argv list is not the protection it
     # looks like: a metacharacter in any element executes over there. Build
     # the remote command as one already-quoted string instead.
-    command = ["ssh", *identity_options, *ssh_opts, host, remote]
+    command = trusted_ssh_command(ssh_opts, host, remote, identity_options=identity_options)
 
     def incomplete_response_error(message: str, details: dict | None = None) -> CcPeerError:
         metadata = {**ssh_info, **(details or {})}
@@ -489,7 +489,7 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
     if isinstance(stderr, bytes):
         stderr = stderr.decode("utf-8", errors="replace")
     stderr = stderr if isinstance(stderr, str) else ""
-    detail = stderr.strip() or f"ssh exited {completed.returncode}"
+    detail = trusted_ssh_diagnostic(stderr.strip()) or f"ssh exited {completed.returncode}"
     # A complete response proves the remote command ran, even if the SSH
     # process later exits 255. Login-shell stderr must not hide submission
     # evidence or turn a remote partial failure into an invitation to resend.
@@ -520,7 +520,7 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
     if not parsed_result or (isinstance(result, dict)
                              and "schemaVersion" in result and not valid_result) or (
             argv and argv[0] == "send" and not valid_result and not legacy_send_result):
-        raise incomplete_response_error(f"{host}: unexpected output: {stdout[:200]}")
+        raise incomplete_response_error(f"{host}: unexpected output: {trusted_ssh_diagnostic(stdout)[:200]}")
     if isinstance(result, dict):
         result.update(ssh_info)
 
@@ -562,7 +562,7 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
         elif "codexHomeResolution" in result:
             details["codexHomeResolution"] = result["codexHomeResolution"]
         raise CcPeerError(
-            f"{host}: {result.get('error', 'remote command failed')}", details
+            f"{host}: {trusted_ssh_diagnostic(str(result.get('error', 'remote command failed')))}", details
         )
     return result
 
@@ -814,7 +814,7 @@ finally:
         f'python3 -c {shlex.quote(publisher)} "$T/session_peer.py" '
         f'"$D/session_peer.py" "$B/session-peer" {shlex.quote(expected_line)}'
     )
-    command = ["ssh", *ssh_opts, host, remote_script]
+    command = trusted_ssh_command(ssh_opts, host, remote_script)
     uncertain = {**ssh_info, "commitStatus": "unknown", "retryAllowed": False}
 
     def push_failure(failure: str, detail: str | None = None,
@@ -857,6 +857,6 @@ finally:
         failure = classify_ssh_failure(detail, completed.returncode)
         if failure:
             raise push_failure(failure, detail)
-        raise CcPeerError(f"{host}: {detail}", uncertain)
+        raise CcPeerError(f"{host}: {trusted_ssh_diagnostic(detail)}", uncertain)
 
     raise CcPeerError(f"{host}: installed version did not match {__version__}", uncertain)
