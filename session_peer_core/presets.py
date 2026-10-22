@@ -13,8 +13,86 @@ def _preset_error(reason):
 
 
 def _preset_platform():
-    if IS_WINDOWS or fcntl is None:
+    if IS_WINDOWS or fcntl is None or sys.platform not in ("darwin", "linux"):
         raise _preset_error("preset_platform_unsupported")
+
+
+def _preset_darwin_acl_tags(fd):
+    """Read only Darwin's extended ACL, without paths or a child process.
+
+    Darwin returns 0 for an entry, -1/EINVAL at exhaustion (unlike Linux).
+    Validate the independent ACL handle first; release it on every path.
+    Constants and prototypes are from the macOS SDK sys/acl.h.
+    """
+    import ctypes
+    try:
+        api = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+        api.acl_get_fd_np.argtypes = [ctypes.c_int, ctypes.c_int]
+        api.acl_get_fd_np.restype = ctypes.c_void_p
+        api.acl_valid.argtypes = [ctypes.c_void_p]
+        api.acl_valid.restype = ctypes.c_int
+        api.acl_get_entry.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)]
+        api.acl_get_entry.restype = ctypes.c_int
+        api.acl_get_tag_type.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
+        api.acl_get_tag_type.restype = ctypes.c_int
+        api.acl_free.argtypes = [ctypes.c_void_p]
+        api.acl_free.restype = ctypes.c_int
+        ctypes.set_errno(0)
+        acl = api.acl_get_fd_np(fd, 0x100)  # ACL_TYPE_EXTENDED
+        if not acl:
+            # Darwin's fd getter returns NULL/ENOENT when FILESEC_ACL is absent
+            # (Libc posix1e/acl_file.c and gen/filesec.c), not an empty object.
+            if ctypes.get_errno() == errno.ENOENT:
+                return ()
+            raise _preset_error("preset_acl_unverifiable")
+        try:
+            if api.acl_valid(acl) != 0:
+                raise _preset_error("preset_acl_unverifiable")
+            tags = []
+            for index in range(129):
+                entry = ctypes.c_void_p()
+                ctypes.set_errno(0)
+                result = api.acl_get_entry(acl, 0 if index == 0 else -1, ctypes.byref(entry))
+                if result == -1 and ctypes.get_errno() == errno.EINVAL:
+                    return tuple(tags)
+                if result != 0 or not entry.value or index == 128:
+                    raise _preset_error("preset_acl_unverifiable")
+                tag = ctypes.c_int()
+                if api.acl_get_tag_type(entry, ctypes.byref(tag)) != 0 or tag.value not in (1, 2):
+                    raise _preset_error("preset_acl_unverifiable")
+                tags.append(tag.value)  # ACL_EXTENDED_ALLOW=1, DENY=2
+            raise _preset_error("preset_acl_unverifiable")
+        finally:
+            if api.acl_free(acl) != 0:
+                raise _preset_error("preset_acl_unverifiable")
+    except (OSError, AttributeError, TypeError, ValueError, OverflowError):
+        raise _preset_error("preset_acl_unverifiable") from None
+
+
+def _preset_check_acl(fd, *, private, directory=False):
+    """Conservative ACL policy, not an effective-permissions interpreter."""
+    if sys.platform == "darwin":
+        tags = _preset_darwin_acl_tags(fd)
+        if any(tag not in (1, 2) for tag in tags):
+            raise _preset_error("preset_acl_unverifiable")
+        if (private and tags) or (not private and 1 in tags):
+            raise _preset_error("preset_unsafe_acl")
+        return
+    if sys.platform == "linux":
+        try:
+            for attribute in (("system.posix_acl_access", "system.posix_acl_default")
+                              if directory else ("system.posix_acl_access",)):
+                try:
+                    os.getxattr(fd, attribute)
+                except OSError as error:
+                    if error.errno == errno.ENODATA:
+                        continue
+                    raise _preset_error("preset_acl_unverifiable") from None
+                raise _preset_error("preset_unsafe_acl")
+        except (AttributeError, TypeError, ValueError):
+            raise _preset_error("preset_acl_unverifiable") from None
+        return
+    raise _preset_error("preset_platform_unsupported")
 
 
 def _preset_name(name):
@@ -132,6 +210,7 @@ def _preset_directory(create=False):
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK
     fd = os.open("/", flags)
     try:
+        _preset_check_acl(fd, private=False, directory=True)
         for index, part in enumerate(root.parts[1:]):
             final = index == len(root.parts[1:]) - 1
             try:
@@ -148,11 +227,15 @@ def _preset_directory(create=False):
             try:
                 if final:
                     _preset_private(info, directory=True)
-                elif info.st_mode & 0o022 and not (info.st_uid == 0 and info.st_mode & stat.S_ISVTX):
-                    raise _preset_error("preset_unsafe_storage")
+                else:
+                    if info.st_uid not in (0, os.geteuid()):
+                        raise _preset_error("preset_unsafe_storage")
+                    if info.st_mode & 0o022 and not (info.st_uid == 0 and info.st_mode & stat.S_ISVTX):
+                        raise _preset_error("preset_unsafe_storage")
                 # The immediate configuration parent must belong to this user.
                 if not final and index == len(root.parts[1:]) - 2 and info.st_uid != os.geteuid():
                     raise _preset_error("preset_unsafe_storage")
+                _preset_check_acl(child, private=final, directory=True)
             except BaseException:
                 os.close(child)
                 raise
@@ -173,6 +256,7 @@ def _preset_read_at(directory):
     try:
         before = os.fstat(fd)
         _preset_private(before)
+        _preset_check_acl(fd, private=True)
         if before.st_size > PRESET_MAX_BYTES:
             raise _preset_error("preset_capacity")
         raw = bytearray()
@@ -184,6 +268,7 @@ def _preset_read_at(directory):
         if len(raw) > PRESET_MAX_BYTES:
             raise _preset_error("preset_capacity")
         after = os.fstat(fd)
+        _preset_check_acl(fd, private=True)
         current = os.stat("destinations.json", dir_fd=directory, follow_symlinks=False)
         if _preset_identity(before) != _preset_identity(after) or _preset_identity(after) != _preset_identity(current):
             raise _preset_error("preset_storage_changed")
@@ -224,6 +309,7 @@ def _preset_lock(directory):
         fd = os.open("destinations.lock", flags, dir_fd=directory)
     try:
         _preset_private(os.fstat(fd))
+        _preset_check_acl(fd, private=True)
         deadline = time.monotonic() + PRESET_LOCK_SECONDS
         while True:
             try:
@@ -236,6 +322,7 @@ def _preset_lock(directory):
         info = os.stat("destinations.lock", dir_fd=directory, follow_symlinks=False)
         if _preset_identity(info) != _preset_identity(os.fstat(fd)):
             raise _preset_error("preset_storage_changed")
+        _preset_check_acl(fd, private=True)
         return fd
     except BaseException:
         os.close(fd)
@@ -248,6 +335,14 @@ def _preset_entry_identity(directory):
     except FileNotFoundError:
         return None
     _preset_private(info)
+    fd = os.open("destinations.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+    try:
+        opened = os.fstat(fd)
+        if _preset_identity(opened) != _preset_identity(info):
+            raise _preset_error("preset_storage_changed")
+        _preset_check_acl(fd, private=True)
+    finally:
+        os.close(fd)
     return _preset_identity(info)
 
 
@@ -267,6 +362,7 @@ def preset_mutate(action, name, entry=None, expected_revision=None):
         raise _preset_error("preset_invalid_revision")
     directory = lock = None
     temporary = None
+    committed = False
     try:
         directory = _preset_directory(create=action == "add")
         if directory is None:
@@ -307,17 +403,26 @@ def preset_mutate(action, name, entry=None, expected_revision=None):
                      0o600, dir_fd=directory)
         try:
             with os.fdopen(fd, "wb") as stream:
+                _preset_private(os.fstat(stream.fileno()))
+                _preset_check_acl(stream.fileno(), private=True)
                 stream.write(raw)
                 stream.flush()
                 os.fsync(stream.fileno())
+                _preset_check_acl(stream.fileno(), private=True)
             if _preset_entry_identity(directory) != original_identity:
                 raise _preset_error("preset_storage_changed")
             os.replace(temporary, "destinations.json", src_dir_fd=directory, dst_dir_fd=directory)
             temporary = None
+            committed = True
             os.fsync(directory)
         finally:
             if temporary is not None:
-                os.unlink(temporary, dir_fd=directory)
+                try:
+                    os.unlink(temporary, dir_fd=directory)
+                except FileNotFoundError:
+                    # An interrupt immediately after a successful rename can
+                    # precede the in-memory name/commit bookkeeping above.
+                    pass
                 temporary = None
         result_route = previous if action == "remove" else route
         result = {"name": name, "route": dict(result_route), "revision": preset_revision(name, result_route)}
@@ -325,6 +430,9 @@ def preset_mutate(action, name, entry=None, expected_revision=None):
             result["removed"] = True
         return result
     except OSError:
+        if committed:
+            raise CcPeerError("preset commit unconfirmed; inspect configuration before retrying",
+                              {"reason": "preset_commit_unconfirmed"}) from None
         raise _preset_error("preset_unsafe_storage") from None
     finally:
         if lock is not None:

@@ -180,6 +180,10 @@ Combining a preset with explicit `--host`, `--codex-home`, `--agent`, `--ssh-opt
 
 Text list/send operations print the chosen route and revision to stderr before the existing action. Existing native result JSON, stdout and exit contracts are unchanged; preset flags, revisions and local file paths are not forwarded over SSH. Each invocation uses one read snapshot. Later replacement/removal does not cancel an already expanded invocation; actual submission still revalidates the native target. This is not atomic storage/owner attestation, receiver deduplication, consumption, ACK or task completion.
 
+A `preset_commit_unconfirmed` error means an atomic replacement may already be visible but its durability could not be confirmed. Inspect the current configuration before retrying; no automatic rollback is attempted.
+
+Checked ancestors must be owned by root or the current user and not writable by others, except a root-owned sticky temporary directory; the immediate configuration parent must belong to the current user. All path components are opened without following symlinks. Extended ACL entries on private storage are conservatively refused; macOS ancestors may contain deny-only ACLs, but allow entries or unverifiable ACLs are refused. Linux POSIX ACLs are also checked. An empty or relative `XDG_CONFIG_HOME` is refused rather than silently selecting another path. Existing permissions are not repaired automatically: choose a safe, private absolute configuration root, or inspect and repair malformed configuration offline after keeping a private backup. Do not publish its contents.
+
 ## Optional interactive shorthand
 
 For releases containing these assets, Bash/zsh and PowerShell users can opt in to a shell-local alias named `sp`. It invokes the currently selected `session-peer` command with the same arguments, stdin, output, exit codes and permissions. It is not a separate parser or a Python/TypeScript selector. Keep the canonical command in scripts, SSH requests and generated reply instructions. Do not install both implementations simultaneously; switch with the original installation manager and verify which command your shell resolves first.

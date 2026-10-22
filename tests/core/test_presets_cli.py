@@ -28,6 +28,7 @@ class PresetCliTests(unittest.TestCase):
                 mock.patch.object(peer, "cmd_list", return_value=0) as listing:
             self.assertEqual(self.run_cli(["list"])[0], 0)
         listing.assert_called_once()
+        self.assertFalse(hasattr(listing.call_args.args[0], "_preset_explicit_options"))
 
     def test_management_has_no_notice_refresh_or_transport_even_as_real_invocation(self):
         for action in (["list"], ["show", "work"]):
@@ -89,6 +90,46 @@ class PresetCliTests(unittest.TestCase):
             code, _, error = self.run_cli(["send", "--preset", "work", "--to", "test"])
         self.assertEqual(code, 2)
         self.assertIn("require --preset-revision", error)
+
+    def test_antigravity_target_refuses_before_lookup_or_advisory_work(self):
+        argv = ["send", "--preset", "work", "--to", "antigravity:00000000-0000-4000-8000-000000000001", "--dry-run"]
+        with mock.patch.object(peer.sys, "argv", ["session-peer", *argv]), \
+                mock.patch.object(peer, "preset_lookup") as lookup, \
+                mock.patch.object(peer, "read_message") as message, \
+                mock.patch.object(peer, "prepare_client_update") as client, \
+                mock.patch.object(peer, "prepare_skill_updates") as skills, \
+                mock.patch.object(peer, "cmd_send") as send, \
+                mock.patch.object(peer.LocalTransport, "execute") as native:
+            code, _, error = self.run_cli(None)
+        self.assertEqual(code, 2)
+        self.assertIn("--preset supports only Claude Code and Codex targets", error)
+        for operation in (lookup, message, client, skills, send, native):
+            operation.assert_not_called()
+
+    def test_duplicate_route_options_refuse_before_store_input_or_updates(self):
+        cases = [
+            ["list", "--preset", "work", "--preset=work"],
+            ["send", "--to", "test", "--dry-run", "--preset", "work", "--preset", "other"],
+            ["send", "--to", "test", "--preset", "work", "--preset-revision", self.revision, "--preset-revi=" + self.revision],
+            ["preset", "add", "work", "--agent", "claude", "--host", "fixture", "--ho=fixture"],
+            ["preset", "add", "work", "--agent", "claude", "--ag=claude"],
+            ["preset", "add", "work", "--agent", "codex", "--codex-home", "/fixture", "--codex-h=/fixture"],
+            ["preset", "remove", "work", "--expect-revision", self.revision, "--expect-r=" + self.revision],
+        ]
+        for argv in cases:
+            with self.subTest(argv=argv), \
+                    mock.patch.object(peer.sys, "argv", ["session-peer", *argv]), \
+                    mock.patch.object(peer, "preset_lookup") as lookup, \
+                    mock.patch.object(peer, "preset_read") as read, \
+                    mock.patch.object(peer, "preset_mutate") as mutate, \
+                    mock.patch.object(peer, "read_message") as message, \
+                    mock.patch.object(peer, "prepare_client_update") as client, \
+                    mock.patch.object(peer, "prepare_skill_updates") as skills:
+                code, _, error = self.run_cli(None)
+            self.assertEqual(code, 2)
+            self.assertIn("may be specified only once", error)
+            for operation in (lookup, read, mutate, message, client, skills):
+                operation.assert_not_called()
 
     def test_revision_without_preset_and_list_agent_override(self):
         for argv in (["send", "--to", "test", "--preset-revision", self.revision],

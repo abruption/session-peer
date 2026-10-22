@@ -1,3 +1,13 @@
+class PresetSingleUseAction(argparse.Action):
+    """A route selector never silently replaces an earlier explicit value."""
+    def __call__(self, parser, namespace, values, option_string=None):
+        seen = getattr(namespace, "_preset_single_use", [])
+        if self.dest in seen:
+            parser.error(self.option_strings[0] + " may be specified only once")
+        namespace._preset_single_use = [*seen, self.dest]
+        setattr(namespace, self.dest, values)
+
+
 def preset_explicit_options(parser):
     """Collect only actual argparse actions, never scan message values."""
     explicit = set(getattr(parser, "_explicit_option_strings", ()))
@@ -42,8 +52,10 @@ def prepare_preset_route(parser, args, raw_argv):
             parser.error("--preset conflicts with " + flag)
     if str(getattr(args, "to", "")).lower().startswith("session-peer:"):
         parser.error("--preset conflicts with a Reply-To URI")
+    if args.command == "send" and AGENTS.for_target(args.to).name not in ("claude", "codex"):
+        parser.error("--preset supports only Claude Code and Codex targets")
     if args.command == "send" and not args.dry_run and revision is None:
-        parser.error("actual --preset sends require --preset-revision from a reviewed dry run")
+        parser.error("actual --preset sends require --preset-revision from preset show or text dry-run stderr")
     if IS_WINDOWS:
         raise CcPeerError("Route presets are not supported on Windows", {"reason": "preset_platform_unsupported"})
     route, current = preset_lookup(name)
