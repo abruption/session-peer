@@ -3538,7 +3538,8 @@ def trusted_ssh_command(ssh_opts, host, *remote, prefix=(), identity_options=())
     return ["ssh", *prefix, *identity_options, *safety, *ssh_opts, host, *remote]
 
 
-def trusted_ssh_diagnostic(text):
+def redact_ssh_config_path(text):
+    """Mask the selected local path; not a general secret/content sanitizer."""
     selected = SSH_CONFIG_SELECTION.get()
     return text.replace(selected.path, "<ssh-config>") if selected is not None else text
 
@@ -3703,7 +3704,7 @@ def ssh_failure_error(host: str, ssh_info: dict, failure: str,
     elif failure == "timeout":
         message = f"SSH connection to {target} timed out"
     else:
-        suffix = f": {trusted_ssh_diagnostic(detail.strip())[:2000]}" if detail and detail.strip() else ""
+        suffix = f": {redact_ssh_config_path(detail.strip())[:2000]}" if detail and detail.strip() else ""
         message = f"SSH transport failed for {target}{suffix}"
     return CcPeerError(message, {**ssh_info, "sshFailure": failure})
 
@@ -4034,7 +4035,7 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
     if isinstance(stderr, bytes):
         stderr = stderr.decode("utf-8", errors="replace")
     stderr = stderr if isinstance(stderr, str) else ""
-    detail = trusted_ssh_diagnostic(stderr.strip()) or f"ssh exited {completed.returncode}"
+    detail = redact_ssh_config_path(stderr.strip()) or f"ssh exited {completed.returncode}"
     # A complete response proves the remote command ran, even if the SSH
     # process later exits 255. Login-shell stderr must not hide submission
     # evidence or turn a remote partial failure into an invitation to resend.
@@ -4065,7 +4066,7 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
     if not parsed_result or (isinstance(result, dict)
                              and "schemaVersion" in result and not valid_result) or (
             argv and argv[0] == "send" and not valid_result and not legacy_send_result):
-        raise incomplete_response_error(f"{host}: unexpected output: {trusted_ssh_diagnostic(stdout)[:200]}")
+        raise incomplete_response_error(f"{host}: unexpected output: {redact_ssh_config_path(stdout)[:200]}")
     if isinstance(result, dict):
         result.update(ssh_info)
 
@@ -4107,7 +4108,7 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
         elif "codexHomeResolution" in result:
             details["codexHomeResolution"] = result["codexHomeResolution"]
         raise CcPeerError(
-            f"{host}: {trusted_ssh_diagnostic(str(result.get('error', 'remote command failed')))}", details
+            f"{host}: {redact_ssh_config_path(str(result.get('error', 'remote command failed')))}", details
         )
     return result
 
@@ -4402,7 +4403,7 @@ finally:
         failure = classify_ssh_failure(detail, completed.returncode)
         if failure:
             raise push_failure(failure, detail)
-        raise CcPeerError(f"{host}: {trusted_ssh_diagnostic(detail)}", uncertain)
+        raise CcPeerError(f"{host}: {redact_ssh_config_path(detail)}", uncertain)
 
     raise CcPeerError(f"{host}: installed version did not match {__version__}", uncertain)
 
@@ -10195,7 +10196,7 @@ def _main(argv: list[str] | None = None) -> int:
         validate_ssh_identity_options(args)
         exit_code = args.func(args)
     except CcPeerError as exc:
-        message = trusted_ssh_diagnostic(str(exc))
+        message = redact_ssh_config_path(str(exc))
         if args.json:
             payload = json_error_result(args, {"error": message, **exc.details})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
@@ -10210,7 +10211,7 @@ def _main(argv: list[str] | None = None) -> int:
         show_human_notice = False
         exit_code = 130
     except Exception as exc:
-        message = trusted_ssh_diagnostic(f"{type(exc).__name__}: {exc}")
+        message = redact_ssh_config_path(f"{type(exc).__name__}: {exc}")
         if getattr(args, "json", False):
             payload = json_error_result(args, {"error": message})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))

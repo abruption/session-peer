@@ -158,7 +158,7 @@ def ssh_failure_error(host: str, ssh_info: dict, failure: str,
     elif failure == "timeout":
         message = f"SSH connection to {target} timed out"
     else:
-        suffix = f": {trusted_ssh_diagnostic(detail.strip())[:2000]}" if detail and detail.strip() else ""
+        suffix = f": {redact_ssh_config_path(detail.strip())[:2000]}" if detail and detail.strip() else ""
         message = f"SSH transport failed for {target}{suffix}"
     return CcPeerError(message, {**ssh_info, "sshFailure": failure})
 
@@ -489,7 +489,7 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
     if isinstance(stderr, bytes):
         stderr = stderr.decode("utf-8", errors="replace")
     stderr = stderr if isinstance(stderr, str) else ""
-    detail = trusted_ssh_diagnostic(stderr.strip()) or f"ssh exited {completed.returncode}"
+    detail = redact_ssh_config_path(stderr.strip()) or f"ssh exited {completed.returncode}"
     # A complete response proves the remote command ran, even if the SSH
     # process later exits 255. Login-shell stderr must not hide submission
     # evidence or turn a remote partial failure into an invitation to resend.
@@ -520,7 +520,7 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
     if not parsed_result or (isinstance(result, dict)
                              and "schemaVersion" in result and not valid_result) or (
             argv and argv[0] == "send" and not valid_result and not legacy_send_result):
-        raise incomplete_response_error(f"{host}: unexpected output: {trusted_ssh_diagnostic(stdout)[:200]}")
+        raise incomplete_response_error(f"{host}: unexpected output: {redact_ssh_config_path(stdout)[:200]}")
     if isinstance(result, dict):
         result.update(ssh_info)
 
@@ -562,7 +562,7 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
         elif "codexHomeResolution" in result:
             details["codexHomeResolution"] = result["codexHomeResolution"]
         raise CcPeerError(
-            f"{host}: {trusted_ssh_diagnostic(str(result.get('error', 'remote command failed')))}", details
+            f"{host}: {redact_ssh_config_path(str(result.get('error', 'remote command failed')))}", details
         )
     return result
 
@@ -857,6 +857,6 @@ finally:
         failure = classify_ssh_failure(detail, completed.returncode)
         if failure:
             raise push_failure(failure, detail)
-        raise CcPeerError(f"{host}: {trusted_ssh_diagnostic(detail)}", uncertain)
+        raise CcPeerError(f"{host}: {redact_ssh_config_path(detail)}", uncertain)
 
     raise CcPeerError(f"{host}: installed version did not match {__version__}", uncertain)

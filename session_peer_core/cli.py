@@ -344,7 +344,7 @@ def _main(argv: list[str] | None = None) -> int:
         validate_ssh_identity_options(args)
         exit_code = args.func(args)
     except CcPeerError as exc:
-        message = trusted_ssh_diagnostic(str(exc))
+        message = redact_ssh_config_path(str(exc))
         if args.json:
             payload = json_error_result(args, {"error": message, **exc.details})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
@@ -359,7 +359,7 @@ def _main(argv: list[str] | None = None) -> int:
         show_human_notice = False
         exit_code = 130
     except Exception as exc:
-        message = trusted_ssh_diagnostic(f"{type(exc).__name__}: {exc}")
+        message = redact_ssh_config_path(f"{type(exc).__name__}: {exc}")
         if getattr(args, "json", False):
             payload = json_error_result(args, {"error": message})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))

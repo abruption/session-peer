@@ -332,6 +332,7 @@ def trusted_ssh_command(ssh_opts, host, *remote, prefix=(), identity_options=())
     return ["ssh", *prefix, *identity_options, *safety, *ssh_opts, host, *remote]
 
 
-def trusted_ssh_diagnostic(text):
+def redact_ssh_config_path(text):
+    """Mask the selected local path; not a general secret/content sanitizer."""
     selected = SSH_CONFIG_SELECTION.get()
     return text.replace(selected.path, "<ssh-config>") if selected is not None else text

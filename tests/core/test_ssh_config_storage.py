@@ -264,7 +264,7 @@ class TrustedSshConfigCommand(unittest.TestCase):
             self.assertEqual(argv[:3], ["ssh", "-G", "-oStrictHostKeyChecking=yes"])
             self.assertLess(argv.index("-oBatchMode=yes"), argv.index("-oBatchMode=no"))
             self.assertEqual(argv[-5:], ["-F", "/private/config", "-oBatchMode=no", "host", "cmd"])
-            self.assertEqual(peer.trusted_ssh_diagnostic("bad /private/config"), "bad <ssh-config>")
+            self.assertEqual(peer.redact_ssh_config_path("bad /private/config"), "bad <ssh-config>")
             selected.revalidate.side_effect = peer._ssh_config_error("changed")
             with self.assertRaises(peer.CcPeerError):
                 peer.trusted_ssh_command([], "host")
