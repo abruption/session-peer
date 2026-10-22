@@ -64,7 +64,7 @@ is opt-in and does not confirm consumption or a reply.
 
 ### Delivery explanation (development)
 
-Development for #323; unavailable in published v1.2.1. Add `--explain` to `send --dry-run` for a human-readable summary of the selected local or SSH destination, existing validation result, delivery method and observation limits. Multiple SSH destinations receive separate summaries.
+Development for #323; unavailable in published v1.2.1. Add `--explain` to `send --dry-run` for a human-readable summary of the selected local or SSH destination, existing validation result, delivery method and observation limits. Each processed SSH destination receives its own summary; an unexpected error can still stop the existing host loop before later destinations are processed.
 
 ```bash
 session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run --explain
@@ -74,7 +74,7 @@ The explanation reuses the current dry-run result and adds no diagnostic, native
 
 This first scope is text-only and requires `--dry-run`. Combining `--explain` with `--json` or `--output-format json`, paired `--device`, or handoff `--correlation-id`, `--request-ack`, `--observe-delivery` or `--wait-for` is a usage error before message input or destination/ledger work. Existing commands without the new option keep their output, JSON and exit contracts.
 
-The normal message requirement and limits still apply: supply `--message`, `--message-file` or stdin as usual; no placeholder body is generated. Explanation fields do not include the body or receipt secrets. Unknown evidence stays unknown, and an uncertain actual send must never trigger automatic resend.
+The normal message requirement and limits still apply: supply `--message`, `--message-file` or stdin as usual; no placeholder body is generated. Explanation fields do not include the body or receipt secrets. Normal explanations use stdout; failed results or unexpected submission evidence use stderr, without moving existing summary/error output. Unknown evidence stays unknown, and an uncertain actual send must never trigger automatic resend.
 
 ### Optional paired devices and Antigravity (v0.9)
 

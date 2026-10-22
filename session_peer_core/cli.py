@@ -323,7 +323,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(human_text(f"session-peer: {message}"), file=sys.stderr)
             if getattr(args, "explain", False):
-                emit_delivery_explanation(args, {}, failed=True, stream=sys.stderr,
+                explanation = ({"reason": "outcome_unknown"}
+                               if getattr(args, "_delivery_explanation_started", False) else {})
+                emit_delivery_explanation(args, explanation, failed=True, stream=sys.stderr,
                                           host=getattr(args, "_delivery_explanation_host", None))
         exit_code = EXIT_ERROR
     if show_human_notice and not args.json:

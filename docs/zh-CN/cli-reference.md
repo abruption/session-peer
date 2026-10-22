@@ -76,7 +76,7 @@ session-peer send --host worker --to 'codex:<full-thread-uuid>' --dry-run -m "me
 
 ### 传递说明（开发中）
 
-这是 #323 的开发功能，尚未包含在已发布的 v1.2.1 中。在 `send --dry-run` 中添加 `--explain`，即可查看所选本地或 SSH 目标、现有验证结果、传递方式及观察限制。多个 SSH 目标会分别显示说明。
+这是 #323 的开发功能，尚未包含在已发布的 v1.2.1 中。在 `send --dry-run` 中添加 `--explain`，即可查看所选本地或 SSH 目标、现有验证结果、传递方式及观察限制。每个已处理的 SSH 目标都会单独显示说明；意外错误仍可能中断现有的主机循环，导致后续目标未被处理。
 
 ```bash
 session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run --explain
@@ -86,7 +86,7 @@ session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "Revie
 
 首期范围仅支持文本输出，且必须指定 `--dry-run`。将 `--explain` 与 `--json` 或 `--output-format json`、配对 `--device`，或 handoff 的 `--correlation-id`、`--request-ack`、`--observe-delivery`、`--wait-for` 组合使用时，会在读取消息或执行目标、账本操作前报告用法错误。不使用新选项的现有命令保留原有输出、JSON 和退出契约。
 
-消息输入要求和限制保持不变。按原有方式使用 `--message`、`--message-file` 或 stdin，不自动生成占位正文。说明字段不包含正文或 receipt 秘密值。未知证据仍显示为未知，实际发送结果不确定时禁止自动重发。
+消息输入要求和限制保持不变。按原有方式使用 `--message`、`--message-file` 或 stdin，不自动生成占位正文。说明字段不包含正文或 receipt 秘密值。常规说明输出到 stdout，失败结果或意外提交证据的说明输出到 stderr，不改变现有摘要和错误的输出位置。未知证据仍显示为未知，实际发送结果不确定时禁止自动重发。
 
 ### 可选配对设备与 Antigravity (v0.9)
 

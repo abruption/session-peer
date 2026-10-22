@@ -98,7 +98,7 @@ session-peer send --host worker --to 'codex:<full-thread-uuid>' --dry-run -m "me
 
 ### 전달 설명 (개발 중)
 
-#323의 개발 기능이며 공개 v1.2.1에는 없습니다. `send --dry-run`에 `--explain`을 추가하면 선택한 로컬 또는 SSH 대상, 기존 검증 결과, 전달 방식과 관찰 한계를 사람이 읽기 쉬운 형태로 표시합니다. SSH 대상이 여러 개이면 각각 설명합니다.
+#323의 개발 기능이며 공개 v1.2.1에는 없습니다. `send --dry-run`에 `--explain`을 추가하면 선택한 로컬 또는 SSH 대상, 기존 검증 결과, 전달 방식과 관찰 한계를 사람이 읽기 쉬운 형태로 표시합니다. 처리한 SSH 대상마다 개별 설명을 표시하지만, 예상치 못한 오류가 나면 기존 호스트 반복 처리가 중단되어 이후 대상은 처리하지 않을 수 있습니다.
 
 ```bash
 session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run --explain
@@ -108,7 +108,7 @@ session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "Revie
 
 첫 지원 범위는 텍스트 출력 전용이며 `--dry-run`이 필수입니다. `--explain`을 `--json` 또는 `--output-format json`, 페어링 `--device`, handoff `--correlation-id`, `--request-ack`, `--observe-delivery`, `--wait-for`와 함께 지정하면 메시지 입력이나 대상·저널 작업 전에 사용법 오류로 거부합니다. 새 옵션을 사용하지 않은 기존 명령의 출력·JSON·종료 계약은 유지됩니다.
 
-메시지 입력 요구사항과 한도는 동일합니다. 평소처럼 `--message`, `--message-file` 또는 stdin을 사용하며 임시 본문을 자동 생성하지 않습니다. 설명 필드에는 본문이나 receipt 비밀값을 넣지 않습니다. 확인할 수 없는 증거는 그대로 알 수 없음으로 표시하고, 실제 전송 결과가 불확실하면 자동 재전송하지 않습니다.
+메시지 입력 요구사항과 한도는 동일합니다. 평소처럼 `--message`, `--message-file` 또는 stdin을 사용하며 임시 본문을 자동 생성하지 않습니다. 설명 필드에는 본문이나 receipt 비밀값을 넣지 않습니다. 일반 설명은 stdout에, 실패 결과나 예상 밖 제출 증거의 설명은 stderr에 표시하며 기존 요약·오류 출력의 위치는 바꾸지 않습니다. 확인할 수 없는 증거는 그대로 알 수 없음으로 표시하고, 실제 전송 결과가 불확실하면 자동 재전송하지 않습니다.
 
 ### 페어링된 기기 옵션 및 Antigravity (v0.9)
 

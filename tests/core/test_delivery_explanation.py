@@ -206,6 +206,20 @@ class DeliveryExplanation(unittest.TestCase):
                 self.assertNotIn("Destination checks: not run", err)
                 execute.assert_called_once()
 
+    def test_local_transport_invalid_result_and_adapter_exception_stay_unknown(self):
+        for kwargs in ({"return_value": None}, {"side_effect": RuntimeError(BODY)}):
+            with self.subTest(case=tuple(kwargs)), \
+                    mock.patch.object(peer.ClaudeAdapter, "submit", **kwargs) as submit:
+                code, out, err = self.invoke("--dry-run", "--explain")
+            self.assertEqual(code, peer.EXIT_ERROR)
+            self.assertEqual(out, "")
+            self.assertIn("Validation: result unknown", err)
+            self.assertIn("inspect the target and existing evidence", err)
+            self.assertIn("Do not automatically resend", err)
+            self.assertNotIn(BODY, err)
+            self.assertNotIn("nothing submitted", err)
+            submit.assert_called_once()
+
     def test_returned_failed_payload_keeps_old_stdout_and_explanation_on_stderr(self):
         for remote in (False, True):
             for submitted in (None, False):
@@ -272,6 +286,8 @@ class DeliveryExplanation(unittest.TestCase):
         self.assertIn("on second", err)
         self.assertNotIn("first", err)
         self.assertNotIn("Destination checks: not run", err)
+        self.assertIn("Validation: result unknown", err)
+        self.assertIn("inspect the target and existing evidence", err)
         good.execute.assert_called_once()
         bad.execute.assert_called_once()
 
@@ -319,6 +335,28 @@ class DeliveryExplanation(unittest.TestCase):
             rendered = peer.render_delivery_explanation(args, {"ok": True, **evidence})
             self.assertIn("Validation: result unknown", rendered)
             self.assertNotIn("passed for this dry run", rendered)
+
+    def test_connection_identity_failure_reason_preserves_uncertainty(self):
+        args = argparse.Namespace(to="worker", host=["receiver"], wake=False)
+        rendered = peer.render_delivery_explanation(args, {
+            "reason": "ssh_identity_evidence_unavailable", "dryRun": True}, failed=True)
+        self.assertIn("Validation: result unknown", rendered)
+        self.assertIn("inspect the target and existing evidence", rendered)
+        self.assertNotIn("nothing submitted", rendered)
+
+    def test_passed_validation_requires_adapter_dry_run_evidence(self):
+        args = argparse.Namespace(to="worker", host=[], wake=False)
+        for result, passed in (({"ok": True}, False), ({"ok": True, "submitted": False}, False),
+                               ({"ok": True, "dryRun": True}, True),
+                               ({"ok": True, "status": "validated"}, True),
+                               ({"ok": True, "status": "dry_run"}, True)):
+            with self.subTest(result=result):
+                rendered = peer.render_delivery_explanation(args, result)
+                if passed:
+                    self.assertIn("Validation: passed for this dry run", rendered)
+                else:
+                    self.assertIn("Validation: not confirmed (dry-run evidence not reported)", rendered)
+                    self.assertNotIn("passed for this dry run", rendered)
 
     def test_ambiguous_or_submitted_response_does_not_claim_no_turn_started(self):
         args = argparse.Namespace(to="codex:" + THREAD, host=[], wake=True)

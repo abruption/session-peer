@@ -4360,16 +4360,20 @@ def render_delivery_explanation(args: argparse.Namespace, result: dict, *,
         lines.append(("Codex home: " if agent == "codex" else "Antigravity home: ")
                      + (human_text(home) if isinstance(home, str) else "unknown (not reported)"))
     started = getattr(args, "_delivery_explanation_started", True)
-    unknown = result.get("status") == "unknown" or (
+    unknown = result.get("status") == "unknown" or result.get("reason") in (
+        "outcome_unknown", "ssh_identity_evidence_unavailable") or (
         "submitted" in result and result["submitted"] is None)
     unexpected = delivery_explanation_has_submission(result)
+    dry_run_reported = result.get("dryRun") is True or result.get("status") in ("dry_run", "validated")
     if not started:
         lines.append("Destination checks: not run (command failed before destination checks)")
         lines.append("Validation: not confirmed")
     else:
         lines.append("Validation: " + ("unexpected submission evidence; dry-run not confirmed" if unexpected else
                                        "result unknown" if unknown else
-                                       "not confirmed" if failed else "passed for this dry run"))
+                                       "not confirmed" if failed else
+                                       "passed for this dry run" if dry_run_reported else
+                                       "not confirmed (dry-run evidence not reported)"))
     if unexpected:
         for key, label in (("dryRun", "dry-run"), ("submitted", "submitted")):
             if type(result.get(key)) is bool:
@@ -9926,7 +9930,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(human_text(f"session-peer: {message}"), file=sys.stderr)
             if getattr(args, "explain", False):
-                emit_delivery_explanation(args, {}, failed=True, stream=sys.stderr,
+                explanation = ({"reason": "outcome_unknown"}
+                               if getattr(args, "_delivery_explanation_started", False) else {})
+                emit_delivery_explanation(args, explanation, failed=True, stream=sys.stderr,
                                           host=getattr(args, "_delivery_explanation_host", None))
         exit_code = EXIT_ERROR
     if show_human_notice and not args.json:

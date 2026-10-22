@@ -97,7 +97,7 @@ session-peer send --host worker --to 'codex:<full-thread-uuid>' --dry-run -m "me
 
 ### 配信説明（開発中）
 
-#323 の開発機能であり、公開済み v1.2.1 には含まれません。`send --dry-run` に `--explain` を追加すると、選択したローカルまたは SSH の宛先、既存の検証結果、配信方法、観測上の制限を読みやすく表示します。SSH の宛先が複数ある場合は個別に説明します。
+#323 の開発機能であり、公開済み v1.2.1 には含まれません。`send --dry-run` に `--explain` を追加すると、選択したローカルまたは SSH の宛先、既存の検証結果、配信方法、観測上の制限を読みやすく表示します。処理した SSH の宛先ごとに説明を表示しますが、予期しないエラーが発生すると既存のホスト処理が中断され、後続の宛先が処理されない場合があります。
 
 ```bash
 session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run --explain
@@ -107,7 +107,7 @@ session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "Revie
 
 最初の対応範囲はテキスト出力のみで、`--dry-run` が必須です。`--explain` と `--json` または `--output-format json`、ペアリングの `--device`、handoff の `--correlation-id`、`--request-ack`、`--observe-delivery`、`--wait-for` を組み合わせると、メッセージ入力や宛先・台帳処理の前に使用法エラーになります。新しいオプションを使わない既存コマンドの出力・JSON・終了契約は維持されます。
 
-通常のメッセージ入力要件と上限は変わりません。従来どおり `--message`、`--message-file` または stdin を使い、仮の本文は自動生成しません。説明フィールドに本文や receipt の秘密値は含めません。不明な証拠は不明のまま表示し、実際の送信結果が不確実な場合は自動再送しません。
+通常のメッセージ入力要件と上限は変わりません。従来どおり `--message`、`--message-file` または stdin を使い、仮の本文は自動生成しません。説明フィールドに本文や receipt の秘密値は含めません。通常の説明は stdout に、失敗した結果や予期しない投入の証拠に関する説明は stderr に出力し、既存の要約・エラーの出力先は変えません。不明な証拠は不明のまま表示し、実際の送信結果が不確実な場合は自動再送しません。
 
 ### オプションのペアリング済みデバイスと Antigravity (v0.9)
 
