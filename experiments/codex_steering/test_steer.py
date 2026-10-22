@@ -1,4 +1,7 @@
 import json
+import contextlib
+import io
+import sys
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -6,6 +9,7 @@ from types import SimpleNamespace
 import os
 import stat
 from steer import Rpc, Refused, Unknown, Rejected, pages, steer
+import steer as module
 
 THREAD = "00000000-0000-4000-8000-000000000001"
 HOME = "/test-home"
@@ -50,7 +54,7 @@ class FrameSocket:
         result = Fake().call(request["method"], request["params"])
         self.response = {"id": request["id"], "result": result}
         if request["method"] == self.method:
-            # A plausible success result must not mask a malformed/error reply.
+            self.response.pop("result")
             self.response["error"] = self.error
 
     def recv(self, timeout):
@@ -101,6 +105,122 @@ class RpcResponseContract(unittest.TestCase):
         result = send(rpc)
         self.assertTrue(result["submitted"])
         self.assertFalse(result["consumptionConfirmed"])
+
+    def test_contradictory_or_incomplete_error_cannot_prove_non_submission(self):
+        for error in ({"code": -32600}, {"code": -32600, "message": None},
+                      {"code": -32600, "message": "provider detail"}):
+            rpc = self.rpc("turn/steer", error)
+            receive = rpc.socket.recv
+
+            def recv(timeout):
+                if rpc.socket.calls[-1]["method"] == "turn/steer" and isinstance(error.get("message"), str):
+                    rpc.socket.response["result"] = {"turnId": "turn-test"}
+                return receive(timeout)
+
+            rpc.socket.recv = recv
+            with self.assertRaises(Unknown):
+                send(rpc)
+            self.assertEqual(sum(r["method"] == "turn/steer" for r in rpc.socket.calls), 1)
+
+    def test_bad_json_before_or_after_submission_keeps_outcome_boundary(self):
+        for raw in ('{"id":', '[' * 2000 + '0' + ']' * 2000):
+            for method, expected in (("thread/loaded/list", Refused), ("turn/steer", Unknown)):
+                rpc = self.rpc("unused", None)
+                receive = rpc.socket.recv
+                rpc.socket.recv = lambda timeout: raw if rpc.socket.calls[-1]["method"] == method else receive(timeout)
+                with self.assertRaises(expected):
+                    send(rpc)
+                self.assertEqual(sum(r["method"] == "turn/steer" for r in rpc.socket.calls), int(method == "turn/steer"))
+
+    def test_bool_or_float_id_never_matches_integer_request(self):
+        for malformed_id in (True, 1.0):
+            rpc = self.rpc("unused", None)
+            rpc.socket.recv = lambda timeout: json.dumps({"id": malformed_id, "result": {"data": [THREAD]}})
+            with self.assertRaises(Refused):
+                send(rpc)
+            self.assertEqual(len(rpc.socket.calls), 1)
+
+    def test_cli_deep_reply_is_unknown_without_diagnostic_reflection(self):
+        rpc = self.rpc("unused", None)
+        receive = rpc.socket.recv
+        rpc.socket.recv = lambda timeout: '[' * 2000 + '0' + ']' * 2000 if rpc.socket.calls[-1]["method"] == "turn/steer" else receive(timeout)
+        argv = ['steer.py', '--experimental-steering', '--socket', '/unused', '--expected-home', HOME,
+                '--to', THREAD, '--expected-turn-id', 'turn-test', '--message', 'private-body-sentinel']
+        out = io.StringIO()
+        with mock.patch.object(sys, 'argv', argv), mock.patch.object(Rpc, '__enter__', return_value=rpc), \
+                mock.patch.object(Rpc, '__exit__', return_value=None), contextlib.redirect_stdout(out):
+            code = module.main()
+        self.assertEqual(code, 1)
+        result = json.loads(out.getvalue())
+        self.assertIsNone(result['submitted'])
+        self.assertEqual(result['status'], 'unknown')
+        self.assertIs(result['retryAllowed'], False)
+        self.assertNotIn('private-body-sentinel', out.getvalue())
+        self.assertEqual(sum(r['method'] == 'turn/steer' for r in rpc.socket.calls), 1)
+
+    def test_total_deadline_stops_next_request_and_cached_event(self):
+        rpc = self.rpc("unused", None)
+        rpc.deadline = 100
+        with mock.patch.object(module.time, 'monotonic', return_value=99):
+            rpc.call('thread/loaded/list', {})
+        count = len(rpc.socket.calls)
+        rpc.events.append({'method': 'fixture'})
+        with mock.patch.object(module.time, 'monotonic', return_value=100):
+            with self.assertRaises(TimeoutError):
+                rpc.call('turn/steer', {})
+            with self.assertRaises(TimeoutError):
+                rpc.wait_event(lambda event: True)
+        self.assertEqual(len(rpc.socket.calls), count)
+
+    def test_cleanup_error_preserves_known_and_unknown_submission(self):
+        for successful in (True, False):
+            rpc = self.rpc('unused' if successful else 'turn/steer',
+                           {'code': -32000, 'message': 'private provider detail'})
+            rpc.connection = mock.MagicMock()
+            rpc.connection.__exit__.side_effect = OSError('private cleanup detail')
+            argv = ['steer.py', '--experimental-steering', '--socket', '/unused', '--expected-home', HOME,
+                    '--to', THREAD, '--expected-turn-id', 'turn-test', '--message', 'fixture']
+            out = io.StringIO()
+            with mock.patch.object(sys, 'argv', argv), mock.patch.object(module, 'Rpc', return_value=rpc), \
+                    mock.patch.object(Rpc, '__enter__', return_value=rpc), contextlib.redirect_stdout(out):
+                code = module.main()
+            result = json.loads(out.getvalue())
+            self.assertEqual(code, 0 if successful else 1)
+            self.assertEqual(result['status'], 'accepted' if successful else 'unknown')
+            self.assertIs(result['submitted'], True if successful else None)
+            if not successful:
+                self.assertIs(result['retryAllowed'], False)
+            self.assertTrue(rpc.close_failed)
+            self.assertNotIn('private', out.getvalue())
+            self.assertEqual(sum(r['method'] == 'turn/steer' for r in rpc.socket.calls), 1)
+
+    def test_initialize_rejects_non_string_version_without_traceback(self):
+        client = SimpleNamespace(unix_connect=mock.MagicMock())
+        for agent in (None, {}, [], 1):
+            rpc = Rpc('/unused/socket')
+            with mock.patch.dict(sys.modules, {'websockets.sync.client': client}), \
+                    mock.patch.object(Path, 'stat', return_value=SimpleNamespace(st_uid=os.getuid(), st_mode=0o700)), \
+                    mock.patch.object(Path, 'lstat', return_value=SimpleNamespace(st_uid=os.getuid(), st_mode=stat.S_IFSOCK)), \
+                    mock.patch.object(Path, 'resolve', return_value=rpc.path), \
+                    mock.patch.object(rpc, 'call', return_value={'userAgent': agent}):
+                with self.assertRaisesRegex(Refused, '^unsupported_server_version$'):
+                    rpc.__enter__()
+
+    def test_response_after_absolute_deadline_is_not_accepted(self):
+        rpc = self.rpc("unused", None)
+        rpc.deadline = 100
+        now = [99]
+        receive = rpc.socket.recv
+
+        def recv(timeout):
+            self.assertLessEqual(timeout, 1)
+            now[0] = 100
+            return receive(timeout)
+
+        rpc.socket.recv = recv
+        with mock.patch.object(module.time, 'monotonic', side_effect=lambda: now[0]):
+            with self.assertRaises(TimeoutError):
+                rpc.call('thread/loaded/list', {})
 
 
 class Contract(unittest.TestCase):

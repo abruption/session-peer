@@ -5,6 +5,12 @@ Existing package rules exclude `experiments/`. Canonical queue/send/wake,
 generated runtime, Relay/SSH, and the Side Session experiment (#245/#246)
 are unchanged.
 
+Malformed or contradictory RPC replies, including excessive JSON nesting, are
+refused before input and become `unknown` after a steering attempt. Ordinary
+connection-close errors preserve validated submission evidence or the original
+unknown outcome. The offline parser and cleanup tests do not establish native
+model consumption or support for newer Codex versions.
+
 ## Technical review
 
 Codex 0.159.0 introduced default-off `instant_interrupt`, still under development
@@ -47,7 +53,12 @@ gate stays closed; other cases must not produce it during a 0.75-second window.
 After gate release, all four cases must include the new input in the next
 request and finish. Steering must retain the same turn; queue must start a new
 turn. These are deterministic synthetic protocol observations, not model ACKs
-or a real-provider latency SLA. Each case has a 45-second deadline, first
+or a real-provider latency SLA. Each case shares a 45-second active-work budget
+across startup, RPCs and provider waits. A watchdog sends TERM then KILL after
+a 0.2-second grace; cleanup has additional bounded waits for connection close,
+process reaping and process-group checks. These are application time budgets,
+not guarantees against blocked OS operations. The version probe has a separate
+five-second timeout. First
 scenario assertion failure stops the batch. Failed gates are findings, not
 redefined expectations. Fixture/setup defects may be corrected separately.
 

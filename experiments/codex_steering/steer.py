@@ -31,10 +31,20 @@ class Rejected(Refused):
 class Rpc:
     LIMIT = 1024 * 1024
 
-    def __init__(self, path, timeout=10):
+    def __init__(self, path, timeout=10, *, deadline=None):
         self.path, self.timeout = Path(path), timeout
+        self.deadline = deadline
+        self.close_failed = False
         self.sequence = 0
         self.events = []
+
+    def remaining(self, maximum=None):
+        remaining = self.timeout if maximum is None else maximum
+        if self.deadline is not None:
+            remaining = min(remaining, self.deadline - time.monotonic())
+        if remaining <= 0:
+            raise TimeoutError()
+        return remaining
 
     def __enter__(self):
         if not self.path.is_absolute():
@@ -54,7 +64,7 @@ class Rpc:
             from websockets.sync.client import unix_connect
         except ImportError as exc:
             raise Refused("websockets_dependency_missing") from exc
-        self.connection = unix_connect(str(resolved), open_timeout=self.timeout,
+        self.connection = unix_connect(str(resolved), open_timeout=self.remaining(),
                                        close_timeout=1, max_size=self.LIMIT)
         try:
             self.socket = self.connection.__enter__()
@@ -65,7 +75,8 @@ class Rpc:
                 "clientInfo": {"name": "session_peer_steer_experiment", "version": "0.0.0"},
                 "capabilities": {"experimentalApi": True},
             })
-            if not re.match(r"(?:codex-tui|codex_cli_rs|codex-cli|session_peer_steer_experiment)/0\.159\.2(?:\s|$)", self.info.get("userAgent", "")):
+            agent = self.info.get("userAgent")
+            if not isinstance(agent, str) or not re.match(r"(?:codex-tui|codex_cli_rs|codex-cli|session_peer_steer_experiment)/0\.159\.2(?:\s|$)", agent):
                 raise Refused("unsupported_server_version")
             self.write({"method": "initialized"})
             return self
@@ -74,9 +85,16 @@ class Rpc:
             raise
 
     def __exit__(self, *args):
-        self.connection.__exit__(*args)
+        try:
+            self.connection.__exit__(*args)
+        except Exception:
+            # Closing a transport cannot negate a validated response or turn
+            # an already attempted, unknown submission into a safe refusal.
+            self.close_failed = True
+        return False
 
     def write(self, value):
+        self.remaining()
         frame = json.dumps(value, ensure_ascii=False)
         if len(frame.encode("utf-8")) > self.LIMIT:
             raise Refused("frame_too_large")
@@ -86,18 +104,20 @@ class Rpc:
             raise ConnectionError("transport_closed") from exc
 
     def read(self, deadline):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError()
+        remaining = self.remaining(deadline - time.monotonic())
         try:
             frame = self.socket.recv(timeout=remaining)
         except TimeoutError:
             raise
         except Exception as exc:
             raise ConnectionError("transport_closed") from exc
+        self.remaining(deadline - time.monotonic())
         if not isinstance(frame, str):
             raise Refused("invalid_frame")
-        value = json.loads(frame)
+        try:
+            value = json.loads(frame)
+        except (ValueError, RecursionError) as exc:
+            raise Refused("invalid_rpc_response") from exc
         if not isinstance(value, dict):
             raise Refused("invalid_rpc_response")
         return value
@@ -105,14 +125,17 @@ class Rpc:
     def call(self, method, params):
         self.sequence += 1
         request_id = self.sequence
+        deadline = time.monotonic() + self.remaining()
         self.write({"id": request_id, "method": method, "params": params})
-        deadline = time.monotonic() + self.timeout
         while True:
             value = self.read(deadline)
-            if value.get("id") == request_id:
+            if type(value.get("id")) is int and value["id"] == request_id:
+                if ("result" in value) == ("error" in value):
+                    raise Refused("invalid_rpc_response")
                 if "error" in value:
                     error = value["error"]
-                    if not isinstance(error, dict) or type(error.get("code")) is not int:
+                    if (not isinstance(error, dict) or type(error.get("code")) is not int
+                            or not isinstance(error.get("message"), str)):
                         raise Refused("invalid_rpc_response")
                     raise Rejected(method, error["code"])
                 if not isinstance(value.get("result"), dict):
@@ -125,8 +148,9 @@ class Rpc:
             self.events.append(value)
 
     def wait_event(self, predicate, timeout=10):
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + self.remaining(timeout)
         while True:
+            self.remaining(deadline - time.monotonic())
             for index, event in enumerate(self.events):
                 if predicate(event):
                     return self.events.pop(index)

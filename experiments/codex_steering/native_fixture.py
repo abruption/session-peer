@@ -4,7 +4,6 @@ First response gates prove ordering, not real-model latency/ACK. Stops on first
 assertion failure. Fixture-created homes/sockets are temporary and private.
 """
 import argparse
-import contextlib
 import http.server
 import json
 import os
@@ -20,8 +19,36 @@ from pathlib import Path
 from steer import Rpc, Refused, Rejected, pages, steer
 
 
+def remaining(deadline, maximum):
+    budget = deadline - time.monotonic()
+    if budget <= 0:
+        raise TimeoutError("fixture_case_deadline")
+    return min(maximum, budget)
+
+
+def wait_with_budget(event, seconds, deadline):
+    result = event.wait(remaining(deadline, seconds))
+    # A shortened negative-control window is not a successful observation.
+    remaining(deadline, seconds)
+    return result
+
+
+def native_version():
+    executable = shutil.which("codex")
+    if executable is None:
+        raise RuntimeError("fixture_executable_missing")
+    try:
+        version = subprocess.check_output([executable, "--version"], text=True, timeout=5).strip()
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("fixture_version_deadline") from exc
+    if version != "codex-cli 0.159.2":
+        raise RuntimeError("unsupported_fixture_version")
+    return executable, version
+
+
 class Provider:
-    def __init__(self):
+    def __init__(self, deadline):
+        self.deadline = deadline
         self.release = threading.Event()
         self.second = threading.Event()
         self.lock = threading.Lock()
@@ -79,7 +106,8 @@ class Provider:
                             "type": "message", "role": "assistant", "id": "initial-msg",
                             "content": [{"type": "output_text", "text": ""}]}})
                         emit({"type": "response.output_text.delta", "delta": "ORIGINAL-PREFIX"})
-                        if not provider.release.wait(40):
+                        if not provider.release.wait(max(0, min(40,
+                                provider.deadline - time.monotonic()))):
                             return
                     message = "ORIGINAL-FINISHED" if number == 1 else "SYNTHETIC-UPDATED-RESPONSE"
                     emit({"type": "response.output_item.done", "item": {
@@ -105,23 +133,39 @@ class Provider:
         assert not self.thread.is_alive()
 
 
-def kill_owned(process):
-    # Keep the leader PID unreaped through group cleanup, never reuse an old pgid.
-    for sig, grace in ((signal.SIGTERM, 0.2), (signal.SIGKILL, 0)):
+def signal_owned(process, sig):
+    # Caller retains the unreaped leader until every signaling thread has joined.
+    try:
+        os.killpg(process.pid, sig)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        # macOS reports EPERM for groups containing only zombies.
+        members = subprocess.run(["ps", "-o", "stat=", "-g", str(process.pid)],
+                                 capture_output=True, text=True, timeout=3)
+        if sys.platform != "darwin" or members.returncode not in (0, 1) or any(
+                line.strip() and not line.strip().startswith("Z") for line in members.stdout.splitlines()):
+            raise
+
+
+def terminate_owned_group(process):
+    signal_owned(process, signal.SIGTERM)
+    time.sleep(0.2)
+    signal_owned(process, signal.SIGKILL)
+
+
+def deadline_watchdog(process, deadline, done, hit, errors):
+    if not done.wait(max(0, deadline - time.monotonic())):
+        hit.set()
         try:
-            os.killpg(process.pid, sig)
-        except ProcessLookupError:
-            pass
-        except PermissionError:
-            # macOS reports EPERM for groups containing only zombies. Do not
-            # ignore denial while any member is still running.
-            members = subprocess.run(["ps", "-o", "stat=", "-g", str(process.pid)],
-                                     capture_output=True, text=True, timeout=3)
-            if sys.platform != "darwin" or members.returncode not in (0, 1) or any(
-                    line.strip() and not line.strip().startswith("Z") for line in members.stdout.splitlines()):
-                raise
-        if grace:
-            time.sleep(grace)
+            terminate_owned_group(process)
+        except Exception as exc:
+            errors.append(exc)
+
+
+def kill_owned(process):
+    # Watchdog must already be joined. Never poll/wait before group signaling.
+    terminate_owned_group(process)
     process.wait(timeout=5)
     check = subprocess.run(["ps", "-o", "stat=", "-g", str(process.pid)],
                            capture_output=True, text=True, timeout=3)
@@ -131,13 +175,14 @@ def kill_owned(process):
 
 def run_case(executable, root, mode, enabled):
     t0 = time.monotonic()
+    deadline = t0 + 45
     case = root / (mode + ("-on" if enabled else "-off"))
     case.mkdir(mode=0o700)
     home, cwd = case / "home", case / "cwd"
     home.mkdir(mode=0o700)
     cwd.mkdir(mode=0o700)
     sock = case / "app.sock"
-    provider = Provider()
+    provider = Provider(deadline)
     port = provider.server.server_address[1]
     # This configuration is generated fixture state. It contains no credentials.
     config = f'''model = "gpt-6.1-sol"
@@ -164,27 +209,21 @@ supports_websockets = false
     physical = None
     deadline_hit = threading.Event()
     watchdog_done = threading.Event()
-
-    def watchdog():
-        if not watchdog_done.wait(45) and process is not None:
-            deadline_hit.set()
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGTERM)
-
-    watcher = threading.Thread(target=watchdog, daemon=True)
-    watcher.start()
+    watchdog_errors = []
+    watcher = None
     try:
         process = subprocess.Popen([executable, "app-server", "--listen", "unix://" + str(sock)],
                                    cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                    start_new_session=True)
-        deadline = t0 + 15
+        watcher = threading.Thread(target=deadline_watchdog,
+            args=(process, deadline, watchdog_done, deadline_hit, watchdog_errors), daemon=True)
+        watcher.start()
+        startup_deadline = min(deadline, t0 + 15)
         while not sock.exists():
-            if time.monotonic() > deadline:
-                raise RuntimeError("fixture_native_startup_deadline")
-            time.sleep(0.05)
+            time.sleep(remaining(startup_deadline, 0.05))
         physical = sock.resolve()
-        observer = Rpc(sock, timeout=10)
+        observer = Rpc(sock, timeout=10, deadline=deadline)
         with observer:
             target = observer.call("thread/start", {
                 "cwd": str(cwd), "model": "gpt-6.1-sol", "sandbox": "read-only",
@@ -194,7 +233,7 @@ supports_websockets = false
                 "input": [{"type": "text", "text": "INITIAL-STEER247 synthetic protocol scenario"}]})["turn"]["id"]
             observer.wait_event(lambda e: e.get("method") == "item/agentMessage/delta"
                                 and "ORIGINAL-PREFIX" in e.get("params", {}).get("delta", ""))
-            with Rpc(sock, timeout=10) as sender:
+            with Rpc(sock, timeout=10, deadline=deadline) as sender:
                 flag_rows = list(pages(sender, "experimentalFeature/list", {"threadId": target}))
                 flag = next(f["enabled"] for f in flag_rows if f["name"] == "instant_interrupt")
                 assert flag is enabled, "feature_snapshot_mismatch"
@@ -233,11 +272,12 @@ supports_websockets = false
                     sender.call("thread/queue/add", {"threadId": target,
                         "clientUserMessageId": str(__import__("uuid").uuid4()),
                         "input": [{"type": "text", "text": "UPDATE-STEER247 synthetic queued follow-up"}]})
-                before_release = provider.second.wait(5 if mode == "steer" and enabled else 0.75)
+                before_release = wait_with_budget(provider.second,
+                    5 if mode == "steer" and enabled else 0.75, deadline)
                 expected = mode == "steer" and enabled
                 assert before_release is expected, "preemption_gate_mismatch"
                 provider.release.set()
-                assert provider.second.wait(10), "updated_request_missing"
+                assert wait_with_budget(provider.second, 10, deadline), "updated_request_missing"
                 observer.wait_event(lambda e: e.get("method") == "item/completed"
                     and e.get("params", {}).get("item", {}).get("text") == "SYNTHETIC-UPDATED-RESPONSE", timeout=10)
                 done = observer.wait_event(lambda e: e.get("method") == "turn/completed"
@@ -268,6 +308,7 @@ supports_websockets = false
                       "syntheticResponseObserved": True, "wrongTurnRejected": True,
                       "idleRejected": True, "homeMismatchRejected": True,
                       "missingTargetRejected": True, "elapsedMs": round((time.monotonic() - t0) * 1000, 2)}
+        remaining(deadline, 1)
         return result
     except Refused as exc:
         if str(exc) == "unsupported_server_version" and hasattr(observer, "info"):
@@ -277,7 +318,10 @@ supports_websockets = false
     finally:
         provider.release.set()
         watchdog_done.set()
-        watcher.join(timeout=2)
+        if watcher is not None:
+            # Its only active work is TERM, a 0.2s grace, KILL and bounded ps
+            # checks. Join before reaping so the PID cannot be reused under it.
+            watcher.join()
         try:
             if process is not None:
                 kill_owned(process)
@@ -291,6 +335,7 @@ supports_websockets = false
             if sock.is_symlink() or sock.exists():
                 sock.unlink()
         assert not deadline_hit.is_set(), "batch_deadline_hit"
+        assert not watchdog_errors, "watchdog_cleanup_failed"
 
 
 def main():
@@ -299,10 +344,7 @@ def main():
     p.add_argument("--temp-root", required=True)
     p.add_argument("--repetitions", type=int, default=1, choices=range(1, 6))
     args = p.parse_args()
-    executable = shutil.which("codex")
-    version = subprocess.check_output([executable, "--version"], text=True).strip()
-    if version != "codex-cli 0.159.2":
-        raise RuntimeError("unsupported_fixture_version")
+    executable, version = native_version()
     # tempfile is strictly within the operator-selected approved scratch root.
     with tempfile.TemporaryDirectory(prefix="codex-steer247-", dir=args.temp_root) as tmp:
         root = Path(tmp)
