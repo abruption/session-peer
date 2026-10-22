@@ -137,6 +137,39 @@ session-peer list --output-format json
 送信されません。JSON 結果は受信ではなく送信を表すことに変わりはありません。
 これらのフラグによって構造化された JSON メッセージ入力プロトコルが導入されるわけではありません。
 
+<a id="route-presets"></a>
+
+## ローカル経路プリセット（開発中）
+
+#324 の開発機能であり、公開済み v1.2.1 には含まれません。任意の `preset` コマンドが保存するのは受信者ではなく接続経路です。Mac/Linux では `--preset` でローカルまたは SSH の経路を一つ選び、通常の Claude Code・Codex の一覧取得や送信に利用します。Windows のプリセット操作は拒否し、既存の Windows コマンドは変更しません。
+
+```bash
+session-peer preset add work-mac --host user@work-mac --agent codex --codex-home /Users/user/.codex
+session-peer preset list
+session-peer preset show work-mac --json
+session-peer list --preset work-mac
+session-peer send --preset work-mac --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run
+session-peer send --preset work-mac --preset-revision 'dp1:<HASH>' --to 'codex:<full-thread-uuid>' --message "Review the patch"
+session-peer preset replace work-mac --expect-revision 'dp1:<HASH>' --host user@new-mac --agent codex --codex-home /Users/user/.codex
+session-peer preset remove work-mac --expect-revision 'dp1:<CURRENT-HASH>'
+```
+
+UUID は現在の一覧で確認した値に、ハッシュは選択したプリセットに表示された正確な revision に置き換えます。実際の送信には `--preset-revision` が必要で、dry-run では省略できます。`dp1:` ハッシュが対象とするのはプリセット名と検証済み経路の正確な値だけであり、DNS、SSH 設定、ホスト鍵、native 所有権、権限、世代、ACK は証明しません。経路の値が変わったら再確認が必要で、同じ値に戻すと同じハッシュになります。変更・削除には `--expect-revision` が必要で、同じ名前の追加は拒否します。
+
+受信者の名前、PID、UUID、世代トークンは保存しません。`--to` は引き続き必須で、名前は既存の規則で現在の宛先を検索する値であり、以前のセッションに固定されたアドレスではありません。既存の明示的な `--target-generation`、writer・保存先の検査、不確実な結果で自動再送しない原則を維持します。プリセット名は人物の身元や配信を証明しません。
+
+保存先は `$XDG_CONFIG_HOME/session-peer/destinations.json` で、変数が未設定なら `~/.config/session-peer/destinations.json` です。指定する基点は絶対パスに限ります。アプリ用ディレクトリは所有者専用の 0700、ファイルは所有者専用の 0600 またはそれより厳しい権限です。シンボリックリンク、安全でない所有権・権限、JSON の重複・未知のキー、不正な UTF-8、128 件を超える項目、64 KiB を超えるファイルは、別経路に切り替えず拒否します。名前の形式は `[a-z][a-z0-9_-]{0,63}` です。スキーマが保存するのは接続方式・エージェント、必要な場合の SSH ホスト一つ、Codex 経路の絶対 home だけです:
+
+```json
+{"schemaVersion":1,"presets":{"work-mac":{"transport":"ssh","agent":"codex","host":"user@work-mac","codexHome":"/Users/user/.codex"}}}
+```
+
+プリセットと明示的な `--host`、`--codex-home`、`--agent`、`--ssh-opt`、`--codex-bin` は値が同じでも併用できません。Reply-To URI、ペアリング済み機器、Antigravity、wake、実験的 handoff との組み合わせも対象外です。認証情報、実行ファイルのパス、SSH コマンドやオプション、承認設定、receipt の秘密値は保存しません。既存の運用者所有の SSH 設定は引き続き適用されます。
+
+`preset list` と `preset show` は設定を読むだけで、native の検索、SSH、更新通知、バックグラウンド更新は実行しません。読み取りで存在しない保存先を初期化することもありません。一方、`list --preset` は既存のリモート照会や部分失敗の処理を含め、選択した一経路の通常の一覧取得を明示的に実行します。他のプリセットへの接続やグループ一斉送信は行いません。
+
+テキスト形式の一覧取得・送信では、既存の処理前に選択した経路と revision を stderr に表示します。既存の native 結果 JSON、stdout、終了契約は維持し、プリセットのフラグ、revision、ローカルファイルのパスは SSH に転送しません。各呼び出しは読み取った一つのスナップショットを使います。後から変更・削除しても既に展開した呼び出しは取り消されず、実際の投入は native 宛先を再検証します。これは保存先・所有権の原子的な証明、受信側の重複抑止、消費、ACK、タスク完了を保証するものではありません。
+
 <a id="install"></a>
 ## 任意の対話型短縮コマンド
 

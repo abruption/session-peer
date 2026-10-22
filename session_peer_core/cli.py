@@ -12,6 +12,14 @@ class MessageArgumentParser(argparse.ArgumentParser):
 
 
 class HumanArgumentParser(MessageArgumentParser):
+    def _get_values(self, action, arg_strings):
+        if action.option_strings:
+            explicit = getattr(self, "_explicit_option_strings", None)
+            if explicit is None:
+                explicit = self._explicit_option_strings = set()
+            explicit.update(action.option_strings)
+        return super()._get_values(action, arg_strings)
+
     def error(self, message):
         # Preserve both the message-value and display-only escaping contracts.
         super().error(human_text(message))
@@ -52,6 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(listing)
     listing.add_argument("--agent", choices=AGENTS.names(), default=None,
                          help="filter by agent (default: all registered adapters)")
+    listing.add_argument("--preset", metavar="NAME", help="use one saved local or SSH route, not a saved receiver")
     home_help = ("select one Codex home on the destination (default: CODEX_HOME or ~/.codex); "
                  "set explicitly for Orca/multiple homes")
     listing.add_argument("--codex-home", help="list only this destination home (default: known default, CODEX_HOME, Orca and configured homes)")
@@ -82,6 +91,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     sending = subparsers.add_parser("send", help="send one message to a session")
     add_common(sending)
+    sending.add_argument("--preset", metavar="NAME", help="use one saved local or SSH route, not a saved receiver")
+    sending.add_argument("--preset-revision", metavar="REV", help="require the route revision shown by a dry run (required for actual preset sends)")
     sending.add_argument(
         "--to", required=True, metavar="TARGET|REPLY-URI",
         help="session name, PID, codex:UUID, antigravity:UUID, or session-peer://v1/reply address",
@@ -133,6 +144,22 @@ def build_parser() -> argparse.ArgumentParser:
                          help="wake deadline, 1..60 seconds (default: 30)")
     sending.add_argument("--dry-run", action="store_true", help="resolve the target, send nothing")
     sending.set_defaults(func=cmd_send)
+
+    preset = subparsers.add_parser("preset", help="manage private local route presets without contacting destinations")
+    preset_sub = preset.add_subparsers(dest="preset_action", required=True)
+    for action in ("add", "list", "show", "replace", "remove"):
+        sub = preset_sub.add_parser(action)
+        sub.add_argument("--json", action="store_true")
+        sub.add_argument("--output-format", choices=("text", "json"))
+        sub.set_defaults(func=cmd_preset, no_update_notice=True)
+        if action != "list":
+            sub.add_argument("name")
+        if action in ("add", "replace"):
+            sub.add_argument("--host")
+            sub.add_argument("--agent", choices=("claude", "codex"), required=True)
+            sub.add_argument("--codex-home")
+        if action in ("replace", "remove"):
+            sub.add_argument("--expect-revision", required=True, metavar="REV")
 
     handoff = subparsers.add_parser("handoff", help="manage private correlated intents without submitting native messages")
     handoff_sub = handoff.add_subparsers(dest="handoff_action", required=True)
@@ -266,10 +293,39 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = build_parser()
     args = parser.parse_args(raw_argv)
+    args._preset_explicit_options = preset_explicit_options(parser)
     output_format = getattr(args, "output_format", None)
     if args.json and output_format == "text":
         parser.error("--json conflicts with --output-format text")
     args.json = args.json or output_format == "json"
+    # Route checks precede advisory background work, stdin and transport. An
+    # opt-out invocation does not even read the presets configuration.
+    _CLIENT_UPDATE_NOTICE, _SKILL_UPDATE_NOTICES = None, []
+    try:
+        prepare_preset_route(parser, args, raw_argv)
+    except KeyboardInterrupt:
+        return 130
+    except CcPeerError as exc:
+        if args.json:
+            print(json.dumps(json_error_result(args, {"error": str(exc), **exc.details}), ensure_ascii=False))
+        else:
+            print(human_text(f"session-peer: {exc}"), file=sys.stderr)
+        return EXIT_ERROR
+    except Exception:
+        return preset_operation_failed(args)
+    if args.command == "preset":
+        try:
+            return args.func(args)
+        except KeyboardInterrupt:
+            return 130
+        except CcPeerError as exc:
+            if args.json:
+                print(json.dumps(json_result("preset", {"error": str(exc), **exc.details}, ok=False), ensure_ascii=False))
+            else:
+                print(human_text(f"session-peer: {exc}"), file=sys.stderr)
+            return EXIT_ERROR
+        except Exception:
+            return preset_operation_failed(args)
     try:
         _CLIENT_UPDATE_NOTICE = prepare_client_update(args) if cli_invocation else None
     except Exception:

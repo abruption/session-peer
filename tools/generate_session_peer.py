@@ -29,6 +29,8 @@ SEGMENTS = (
     "registry.py",
     "commands.py",
     "messages.py",
+    "presets.py",
+    "preset_cli.py",
     "release_verification.py",
     "updates.py",
     "handoff_stdin.py",

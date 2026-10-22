@@ -137,6 +137,39 @@ session-peer list --output-format json
 여전히 제출만을 설명합니다. 이 플래그들은 구조화된 JSON 메시지 입력 프로토콜을 도입하지
 않습니다.
 
+<a id="route-presets"></a>
+
+## 로컬 경로 프리셋 (개발 중)
+
+#324의 개발 기능이며 공개 v1.2.1에는 없습니다. 선택적으로 사용하는 `preset` 명령은 수신자가 아니라 접속 경로를 저장합니다. Mac/Linux에서 `--preset`으로 로컬 또는 SSH 경로 하나를 골라 일반 Claude Code·Codex 목록 조회나 전송에 사용합니다. Windows의 프리셋 작업은 거부하며 기존 Windows 명령은 바꾸지 않습니다.
+
+```bash
+session-peer preset add work-mac --host user@work-mac --agent codex --codex-home /Users/user/.codex
+session-peer preset list
+session-peer preset show work-mac --json
+session-peer list --preset work-mac
+session-peer send --preset work-mac --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run
+session-peer send --preset work-mac --preset-revision 'dp1:<HASH>' --to 'codex:<full-thread-uuid>' --message "Review the patch"
+session-peer preset replace work-mac --expect-revision 'dp1:<HASH>' --host user@new-mac --agent codex --codex-home /Users/user/.codex
+session-peer preset remove work-mac --expect-revision 'dp1:<CURRENT-HASH>'
+```
+
+UUID는 현재 목록에서 확인한 값으로, 해시는 선택한 프리셋에 표시된 정확한 revision으로 바꿉니다. 실제 전송에는 `--preset-revision`이 필요하고 dry-run에서는 생략할 수 있습니다. `dp1:` 해시는 프리셋 이름과 검증된 경로의 정확한 값만 포함하며 DNS·SSH 설정·호스트 키·native 소유권·권한·세대·ACK를 증명하지 않습니다. 경로 값이 바뀌면 다시 확인해야 하고, 동일한 값을 복원하면 해시도 같습니다. 수정·삭제에는 `--expect-revision`이 필요하며 같은 이름의 추가는 거부합니다.
+
+수신자의 이름·PID·UUID·세대 토큰은 저장하지 않습니다. `--to`는 계속 필수이며 이름은 기존 규칙으로 현재 대상을 새로 찾는 값이지 이전 세션에 고정된 주소가 아닙니다. 명시적인 기존 `--target-generation`, writer·저장소 검사, 결과가 불확실할 때 자동 재전송하지 않는 원칙은 유지합니다. 프리셋 이름은 사람의 신원이나 전달 사실을 증명하지 않습니다.
+
+저장 위치는 `$XDG_CONFIG_HOME/session-peer/destinations.json`이며 변수가 없으면 `~/.config/session-peer/destinations.json`입니다. 지정한 기본 경로는 절대 경로여야 합니다. 앱 디렉터리는 소유자 전용 0700, 파일은 소유자 전용 0600 또는 더 제한적인 권한을 사용합니다. 심볼릭 링크, 안전하지 않은 소유권·권한, 중복·알 수 없는 JSON 키, 잘못된 UTF-8, 128개 초과 항목, 64 KiB 초과 파일은 다른 경로로 우회하지 않고 거부합니다. 이름은 `[a-z][a-z0-9_-]{0,63}` 형식입니다. 스키마에는 전송 방식·에이전트, 필요한 경우 SSH 호스트 하나, Codex 경로의 절대 home만 저장합니다:
+
+```json
+{"schemaVersion":1,"presets":{"work-mac":{"transport":"ssh","agent":"codex","host":"user@work-mac","codexHome":"/Users/user/.codex"}}}
+```
+
+프리셋과 명시적인 `--host`, `--codex-home`, `--agent`, `--ssh-opt`, `--codex-bin`은 값이 같아도 함께 사용할 수 없습니다. Reply-To URI, 페어링 기기, Antigravity, wake, 실험적 handoff 조합도 제외합니다. 자격증명·실행 파일 경로·SSH 명령이나 옵션·승인 설정·receipt 비밀값은 저장하지 않습니다. 기존 운영자 소유 SSH 설정은 그대로 적용됩니다.
+
+`preset list`와 `preset show`는 설정만 읽으며 native 목록 조회·SSH·업데이트 알림·백그라운드 갱신을 실행하지 않습니다. 읽기 작업은 없는 저장소를 초기화하지 않습니다. 반면 `list --preset`은 기존 원격 조회와 부분 실패 처리를 포함해 선택한 경로 하나의 일반 목록 조회를 명시적으로 실행합니다. 다른 프리셋에 접속하거나 그룹에 일괄 전송하지 않습니다.
+
+텍스트 목록 조회·전송은 기존 작업 전에 선택한 경로와 revision을 stderr에 표시합니다. 기존 native 결과 JSON·stdout·종료 계약은 유지하며 프리셋 플래그·revision·로컬 파일 경로를 SSH로 전달하지 않습니다. 호출마다 읽은 스냅샷 하나를 사용합니다. 나중에 프리셋을 수정·삭제해도 이미 확장한 호출은 취소되지 않으며 실제 제출은 native 대상을 다시 검증합니다. 이는 저장소·소유권의 원자적 증명, 수신측 중복 억제, 소비, ACK, 작업 완료를 보장하지 않습니다.
+
 <a id="install"></a>
 ## 선택적 대화형 단축 명령
 

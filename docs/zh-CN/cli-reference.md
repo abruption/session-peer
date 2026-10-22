@@ -92,6 +92,39 @@ session-peer list --output-format json
 
 `--json --output-format json` 是合法的；无论先后顺序，将 `--json` 与 `--output-format text` 组合都会报错。无效或矛盾的输出选项属于 argparse 用法错误（stderr，退出码 2）；消息来源冲突属于普通命令错误（请求时为 JSON，退出码 1）。无论哪种情况均不会提交任何消息。JSON 结果仍然描述提交情况而非接收情况；这些标志并未引入结构化的 JSON 消息输入协议。
 
+<a id="route-presets"></a>
+
+## 本地路径预设（开发中）
+
+这是 #324 的开发功能，尚未包含在已发布的 v1.2.1 中。可选的 `preset` 命令保存的是连接路径，而不是接收者。在 Mac/Linux 上，使用 `--preset` 选择一个本地或 SSH 路径，用于常规 Claude Code、Codex 会话列表查询或发送。Windows 预设操作会被拒绝，现有 Windows 命令保持不变。
+
+```bash
+session-peer preset add work-mac --host user@work-mac --agent codex --codex-home /Users/user/.codex
+session-peer preset list
+session-peer preset show work-mac --json
+session-peer list --preset work-mac
+session-peer send --preset work-mac --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run
+session-peer send --preset work-mac --preset-revision 'dp1:<HASH>' --to 'codex:<full-thread-uuid>' --message "Review the patch"
+session-peer preset replace work-mac --expect-revision 'dp1:<HASH>' --host user@new-mac --agent codex --codex-home /Users/user/.codex
+session-peer preset remove work-mac --expect-revision 'dp1:<CURRENT-HASH>'
+```
+
+将 UUID 替换为当前列表中确认的值，将哈希替换为所选预设显示的准确 revision。实际发送必须提供 `--preset-revision`，dry-run 可以省略。`dp1:` 哈希仅涵盖预设名称和已验证路径的准确值，不证明 DNS、SSH 配置、主机密钥、native 所有权、权限、代际或 ACK。路径值变化后必须重新确认；恢复相同值会得到相同哈希。修改、删除需要 `--expect-revision`，重复名称的新增操作会被拒绝。
+
+接收者的名称、PID、UUID、代际令牌均不保存。`--to` 仍然必填；名称按现有规则重新查找当前目标，并非绑定到先前会话的地址。现有显式 `--target-generation`、writer 和存储检查，以及结果不确定时禁止自动重发的原则保持不变。预设名称不证明人员身份或消息已送达。
+
+存储位置为 `$XDG_CONFIG_HOME/session-peer/destinations.json`；变量未设置时使用 `~/.config/session-peer/destinations.json`。指定的基础路径必须是绝对路径。应用目录采用仅所有者可访问的 0700 权限，文件采用仅所有者可访问的 0600 或更严格权限。符号链接、不安全的所有权或权限、重复或未知 JSON 键、无效 UTF-8、超过 128 项或超过 64 KiB 的文件均被拒绝，不回退到其他路径。名称格式为 `[a-z][a-z0-9_-]{0,63}`。模式仅保存传输方式、代理类型、需要时的一个 SSH 主机，以及 Codex 路径的绝对 home:
+
+```json
+{"schemaVersion":1,"presets":{"work-mac":{"transport":"ssh","agent":"codex","host":"user@work-mac","codexHome":"/Users/user/.codex"}}}
+```
+
+预设不能与显式 `--host`、`--codex-home`、`--agent`、`--ssh-opt` 或 `--codex-bin` 组合，即使值相同也不例外；Reply-To URI、配对设备、Antigravity、wake 和实验性 handoff 组合也不在范围内。不保存凭据、可执行文件路径、SSH 命令或选项、审批设置或 receipt 秘密值。现有操作员拥有的 SSH 配置仍然适用。
+
+`preset list` 和 `preset show` 只读取配置，不执行 native 发现、SSH、更新通知或后台刷新，也不会因读取而初始化缺失的存储。相比之下，`list --preset` 会显式执行所选单一路径的常规发现，包括现有的远程探测和部分失败处理。不会连接其他预设，也不会添加群组广播。
+
+文本列表查询和发送会在现有操作之前，将所选路径和 revision 输出到 stderr。现有 native 结果 JSON、stdout 和退出契约保持不变；预设标志、revision 和本地文件路径不会通过 SSH 转发。每次调用使用一次读取的快照。之后修改或删除预设不会取消已展开的调用，实际提交仍会重新验证 native 目标。这不保证存储或所有权的原子证明、接收侧去重、消费、ACK 或任务完成。
+
 <a id="install"></a>
 ## 可选的交互式短命令
 
