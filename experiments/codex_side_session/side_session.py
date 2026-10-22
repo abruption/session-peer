@@ -30,8 +30,9 @@ class RpcRejected(Refused):
 class Rpc:
     MAX_FRAME = 1024 * 1024
 
-    def __init__(self, path, timeout=10):
+    def __init__(self, path, timeout=10, *, expected_home=None):
         self.path = Path(path)
+        self.expected_home = Path(expected_home) if expected_home is not None else None
         self.timeout = timeout
         self.socket = None
         self.buffer = b""
@@ -40,6 +41,8 @@ class Rpc:
         self.close_failed = False
 
     def __enter__(self):
+        if self.expected_home is None or not self.expected_home.is_absolute():
+            raise Refused("absolute_expected_home_required")
         if not self.path.is_absolute():
             raise Refused("absolute_socket_required")
         parent = self.path.parent.stat()
@@ -76,6 +79,15 @@ class Rpc:
             agent = self.info.get("userAgent")
             if not isinstance(agent, str) or not agent.startswith("codex-tui/0.159.2 "):
                 raise Refused("unsupported_server_version")
+            advertised_home = self.info.get("codexHome")
+            if not isinstance(advertised_home, str) or not Path(advertised_home).is_absolute():
+                raise Refused("invalid_server_home")
+            try:
+                home_matches = Path(advertised_home).resolve() == self.expected_home.resolve()
+            except (OSError, ValueError, RuntimeError) as exc:
+                raise Refused("invalid_server_home") from exc
+            if not home_matches:
+                raise Refused("server_home_mismatch")
             self.write({"method": "initialized"})
             return self
         except BaseException:
@@ -225,6 +237,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--experimental-side-session", action="store_true", required=True)
     parser.add_argument("--socket", required=True)
+    parser.add_argument("--expected-home", required=True,
+                        help="absolute Codex home expected in initialize metadata")
     parser.add_argument("--timeout", type=float, default=10)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("list")
@@ -237,7 +251,7 @@ def main(argv=None):
     if not 0 < args.timeout <= 30:
         parser.error("timeout must be greater than 0 and at most 30")
     try:
-        with Rpc(args.socket, args.timeout) as rpc:
+        with Rpc(args.socket, args.timeout, expected_home=args.expected_home) as rpc:
             if args.command == "list":
                 rows = []
                 for thread_id in loaded_ids(rpc):

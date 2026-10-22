@@ -3,8 +3,9 @@ import io
 import os
 import stat
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, contextmanager
 from types import SimpleNamespace
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 from side_session import Refused, Rpc, RpcRejected, Unknown, loaded_ids, send, main
 
@@ -135,7 +136,8 @@ class CliContract(unittest.TestCase):
     def run_cli(self, rpc, command):
         output = io.StringIO()
         with patch("side_session.Rpc", return_value=rpc), redirect_stdout(output):
-            code = main(["--experimental-side-session", "--socket", "/unused", *command])
+            code = main(["--experimental-side-session", "--socket", "/unused",
+                         "--expected-home", "/expected", *command])
         self.assertEqual(code, 1)
         return json.loads(output.getvalue())
 
@@ -170,7 +172,7 @@ class CliContract(unittest.TestCase):
     def test_malformed_initialize_agent_is_refused(self):
         client = SimpleNamespace(unix_connect=MagicMock())
         for agent in (None, [], {}, 1, True):
-            rpc = Rpc("/unused/socket")
+            rpc = Rpc("/unused/socket", expected_home="/expected")
             with patch.dict("sys.modules", {"websockets.sync.client": client}), \
                     patch("side_session.Path.stat", return_value=SimpleNamespace(st_uid=os.getuid(), st_mode=0o700)), \
                     patch("side_session.Path.lstat", return_value=SimpleNamespace(st_uid=os.getuid(), st_mode=stat.S_IFSOCK)), \
@@ -194,6 +196,7 @@ class CliContract(unittest.TestCase):
                     patch.object(Rpc, "__enter__", return_value=rpc), \
                     patch("side_session.Rpc", return_value=rpc), redirect_stdout(output):
                 code = main(["--experimental-side-session", "--socket", "/unused",
+                             "--expected-home", "/expected",
                              "send", "--to", TARGET, "--message", "hello",
                              "--exclusive-test-session"])
             result = json.loads(output.getvalue())
@@ -214,6 +217,114 @@ class CliContract(unittest.TestCase):
             rpc.connection.__exit__.side_effect = interruption()
             with self.subTest(interruption=interruption), self.assertRaises(interruption):
                 rpc.__exit__()
+
+
+class ConnectionBoundary(unittest.TestCase):
+    @contextmanager
+    def fixture(self, *, expected="/expected", advertised="/expected", agent="codex-tui/0.159.2 test",
+                parent_uid=None, parent_mode=0o700, link_uid=None, target_uid=None,
+                target_mode=stat.S_IFSOCK, resolved_parent_uid=None, resolved_parent_mode=0o700):
+        uid = os.getuid()
+        owner = lambda value: uid if value is None else value
+        rpc = Rpc("/rendezvous/socket", expected_home=expected)
+        client = SimpleNamespace(unix_connect=MagicMock())
+        def resolve(path, *args, **kwargs):
+            if str(path) == "/rendezvous/socket":
+                return Path("/resolved/socket")
+            return Path(os.path.normpath(str(path)))
+        with patch.dict("sys.modules", {"websockets.sync.client": client}), \
+                patch("side_session.Path.stat", side_effect=[
+                    SimpleNamespace(st_uid=owner(parent_uid), st_mode=parent_mode),
+                    SimpleNamespace(st_uid=owner(resolved_parent_uid), st_mode=resolved_parent_mode)]), \
+                patch("side_session.Path.lstat", side_effect=[
+                    SimpleNamespace(st_uid=owner(link_uid), st_mode=stat.S_IFLNK),
+                    SimpleNamespace(st_uid=owner(target_uid), st_mode=target_mode)]), \
+                patch("side_session.Path.resolve", new=resolve), \
+                patch.object(rpc, "call", return_value={"userAgent": agent, "codexHome": advertised}) as call, \
+                patch.object(rpc, "write") as write:
+            yield rpc, client, call, write
+
+    def test_socket_ownership_and_directory_boundaries(self):
+        other = os.getuid() + 1
+        cases = ({"link_uid": other}, {"target_uid": other}, {"target_mode": stat.S_IFREG},
+                 {"parent_uid": other}, {"parent_mode": 0o750},
+                 {"resolved_parent_uid": other}, {"resolved_parent_mode": 0o707})
+        for case in cases:
+            with self.subTest(case=case), self.fixture(**case) as (rpc, client, call, write):
+                with self.assertRaises(Refused):
+                    rpc.__enter__()
+                client.unix_connect.assert_not_called()
+                call.assert_not_called()
+                write.assert_not_called()
+
+    def test_absolute_expected_home_is_required_before_connect(self):
+        for expected in (None, "", "relative/home"):
+            with self.subTest(expected=expected), self.fixture(expected=expected) as (rpc, client, call, write):
+                with self.assertRaisesRegex(Refused, "^absolute_expected_home_required$"):
+                    rpc.__enter__()
+                client.unix_connect.assert_not_called()
+                call.assert_not_called()
+
+    def test_advertised_home_is_checked_before_inventory_or_input(self):
+        for advertised in (None, {}, [], True, "", "private relative detail", "/other-private-home"):
+            with self.subTest(advertised=advertised), self.fixture(advertised=advertised) as (rpc, client, call, write):
+                with self.assertRaises(Refused) as raised:
+                    rpc.__enter__()
+                self.assertIn(str(raised.exception), ("invalid_server_home", "server_home_mismatch"))
+                self.assertEqual([c.args[0] for c in call.call_args_list], ["initialize"])
+                write.assert_not_called()
+                client.unix_connect.return_value.__exit__.assert_called_once()
+
+    def test_home_comparison_uses_canonical_paths(self):
+        with self.fixture(expected="/expected/sub/..") as (rpc, client, call, write):
+            with rpc:
+                self.assertEqual(rpc.info["codexHome"], "/expected")
+            write.assert_called_once_with({"method": "initialized"})
+            self.assertEqual([c.args[0] for c in call.call_args_list], ["initialize"])
+
+    def test_other_server_versions_are_refused_before_inventory_or_input(self):
+        for agent in ("codex-tui/0.159.3 private detail", "codex-tui/0.159.2", "private detail"):
+            with self.subTest(agent=agent), self.fixture(agent=agent) as (rpc, client, call, write):
+                with self.assertRaisesRegex(Refused, "^unsupported_server_version$"):
+                    rpc.__enter__()
+                self.assertEqual([c.args[0] for c in call.call_args_list], ["initialize"])
+                write.assert_not_called()
+
+    def test_incoming_server_request_is_never_answered(self):
+        for method in ("thread/loaded/list", "turn/start"):
+            rpc = Rpc("/unused")
+            rpc.socket = FrameSocket("unused", None)
+            original_recv = rpc.socket.recv
+            def recv(timeout):
+                if rpc.socket.calls[-1]["method"] == method:
+                    return json.dumps({"id": 999, "method": "item/commandExecution/requestApproval",
+                                       "params": {"private": "detail"}})
+                return original_recv(timeout)
+            with self.subTest(method=method), patch.object(rpc.socket, "recv", side_effect=recv):
+                expected = Unknown if method == "turn/start" else Refused
+                with self.assertRaises(expected) as raised:
+                    send(rpc, TARGET, "hello", exclusive=True)
+                self.assertNotIn("private", str(raised.exception))
+                self.assertEqual([r["method"] for r in rpc.socket.calls],
+                                 ["thread/loaded/list", "thread/read", "turn/start"]
+                                 if method == "turn/start" else ["thread/loaded/list"])
+
+    def test_idle_preflight_does_not_close_native_start_race(self):
+        # A competitor can become active after our idle read. Native failure
+        # classification remains code-dependent, without a retry or UI proof.
+        for code in (-32600, -32601, -32603, -32000):
+            rpc = Rpc("/unused")
+            rpc.socket = FrameSocket("turn/start", {"code": code, "message": "native busy"})
+            expected = RpcRejected if code in (-32600, -32601) else Unknown
+            with self.subTest(code=code), self.assertRaises(expected) as raised:
+                send(rpc, TARGET, "hello", exclusive=True)
+            self.assertIs(type(raised.exception), expected)
+            if isinstance(raised.exception, RpcRejected):
+                self.assertEqual(raised.exception.code, code)
+            else:
+                self.assertEqual(raised.exception.__cause__.code, code)
+            self.assertEqual([r["method"] for r in rpc.socket.calls],
+                             ["thread/loaded/list", "thread/read", "turn/start"])
 
 
 class Contract(unittest.TestCase):

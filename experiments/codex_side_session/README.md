@@ -9,6 +9,9 @@ Codex app-server. It never starts/resumes/forks a target. A private socket
 directory and explicit experimental flag are required. The adapter uses
 WebSocket-over-Unix sockets (including Codex's owned rendezvous symlink),
 requires `websockets` (tested with 17.1), and gates server version to 0.159.2.
+The required absolute `--expected-home` must match the canonical `codexHome`
+reported by that server before inventory or input. This metadata comparison
+does not establish a server generation, atomic storage identity or side-UI lifetime.
 `list` reports loaded
 ephemeral threads as **unclassified**, not necessarily `/btw` conversations.
 For a real `/btw` test, establish its origin separately using the dedicated TUI.
@@ -24,9 +27,11 @@ Example (dummy paths/UUID):
 
 ```sh
 python3 experiments/codex_side_session/side_session.py \
-  --experimental-side-session --socket /private-test/app.sock list
+  --experimental-side-session --socket /private-test/app.sock \
+  --expected-home /private-test/home list
 python3 experiments/codex_side_session/side_session.py \
-  --experimental-side-session --socket /private-test/app.sock send \
+  --experimental-side-session --socket /private-test/app.sock \
+  --expected-home /private-test/home send \
   --to codex:00000000-0000-4000-8000-000000000001 \
   --exclusive-test-session --dry-run --message 'test input'
 ```
@@ -50,6 +55,18 @@ No automatic steering, retries, parent fallback, approval responses, permission
 overrides, or persistence of a side transcript. Acceptance is not ACK. The
 dedicated live test may read its own TUI output to verify an exact response,
 but this does not implement general wait/completion detection.
+
+## Review-ready experiment scope
+
+The offline suite runs explicitly in the Linux/macOS Python 3.13 CI jobs. It
+uses fake filesystem and RPC responses, including private-endpoint, server-home,
+version, approval-request and idle/start rejection cases. It never launches Codex
+or sends a model request. The historical native evidence in `RESULTS.md` predates
+the required home comparison and is not a rerun of the current adapter.
+
+Ready for code review means this bounded experiment can be reviewed with those
+limitations visible. General `/btw` support still requires the atomic submission
+and owner-lifecycle contracts described above; issue #245 remains open.
 
 Source review: session-peer base 90489fc; Codex CLI 0.159.2/upstream ff6aec9.
 See [RESULTS.md](RESULTS.md) for actual roundtrip evidence and unmet gates.
