@@ -376,6 +376,7 @@ class DeliveryExplanation(unittest.TestCase):
             self.assertIn("Delivery method: unknown (not resolved)", rendered)
             self.assertNotIn("Claude Code inbox", rendered)
 
+    @unittest.skipIf(peer.IS_WINDOWS, "private POSIX message-file input only")
     def test_private_message_file_remains_an_ordinary_supported_input(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "private-message"
@@ -391,6 +392,27 @@ class DeliveryExplanation(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(execute.call_args.args[-1], BODY)
         self.assertNotIn(BODY, out.getvalue())
+
+    @unittest.skipUnless(peer.IS_WINDOWS, "Windows private message-file refusal")
+    def test_windows_private_message_file_refusal_remains_before_destination_checks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "private-message"
+            path.write_text(BODY, encoding="utf-8")
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(peer.LocalTransport, "execute") as execute, \
+                    mock.patch.object(peer, "SshTransport") as ssh, \
+                    mock.patch.object(peer.subprocess, "Popen") as child, \
+                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = peer.main(["send", "--to", "worker", "--no-from", "--no-reply-to",
+                                  "--message-file", str(path), "--dry-run", "--explain"])
+        self.assertEqual(code, peer.EXIT_ERROR)
+        self.assertEqual(out.getvalue(), "")
+        self.assertIn("handoff_platform_unsupported", err.getvalue())
+        self.assertIn("Destination checks: not run", err.getvalue())
+        self.assertNotIn(BODY, err.getvalue())
+        execute.assert_not_called()
+        ssh.assert_not_called()
+        child.assert_not_called()
 
 
 if __name__ == "__main__":
