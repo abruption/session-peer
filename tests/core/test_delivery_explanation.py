@@ -29,7 +29,7 @@ class DeliveryExplanation(unittest.TestCase):
         variants = [[], ["--dry-run", "--json"],
                     ["--dry-run", "--output-format", "json"],
                     ["--dry-run", "--device", "fixture"],
-                    ["--dry-run", "--correlation-id", THREAD],
+                    ["--dry-run", "--correlation-id", "00000000-0000-4000-8000-000000000001"],
                     ["--dry-run", "--request-ack"],
                     ["--dry-run", "--observe-delivery"],
                     ["--dry-run", "--wait-for", "acknowledged"],
@@ -37,6 +37,7 @@ class DeliveryExplanation(unittest.TestCase):
                     ["--dry-run", "--_handoff-native-cutoff-ms", "1"],
                     ["--dry-run", "--_handoff-native-total-ms", "1"]]
         for flags in variants:
+            diagnostic = io.StringIO()
             with self.subTest(flags=flags), \
                     mock.patch.object(peer, "prepare_client_update") as updates, \
                     mock.patch.object(peer, "prepare_skill_updates") as skills, \
@@ -45,9 +46,14 @@ class DeliveryExplanation(unittest.TestCase):
                     mock.patch.object(peer.subprocess, "Popen") as child, \
                     mock.patch.object(sys, "argv", ["session-peer", "send", "--to", "worker",
                                                       "--explain", *flags]), \
-                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exc:
+                    contextlib.redirect_stderr(diagnostic), self.assertRaises(SystemExit) as exc:
                 peer.main()
             self.assertEqual(exc.exception.code, 2)
+            expected = ("--explain requires --dry-run" if not flags else
+                        "--explain requires text output" if "--json" in flags or "--output-format" in flags else
+                        "--explain does not support paired-device sends" if "--device" in flags else
+                        "--explain does not support experimental handoff sends")
+            self.assertIn("session-peer: error: " + expected, diagnostic.getvalue())
             for action in (updates, skills, read, send, child):
                 action.assert_not_called()
 
@@ -169,10 +175,128 @@ class DeliveryExplanation(unittest.TestCase):
             code, out, err = self.invoke("--dry-run", "--explain")
         self.assertEqual(code, peer.EXIT_NO_TARGET)
         self.assertEqual(out, "")
-        self.assertIn("Validation: not passed", err)
+        self.assertIn("Validation: not confirmed", err)
         self.assertIn("fixture\\x1b[31m", err)
         self.assertNotIn("\x1b", err)
         execute.assert_called_once()
+
+    def test_unknown_local_and_ssh_exceptions_preserve_uncertainty(self):
+        for remote in (False, True):
+            with self.subTest(remote=remote), contextlib.ExitStack() as stack:
+                error = peer.CcPeerError("fixture unknown outcome", {
+                    "status": "unknown", "submitted": None, "retryAllowed": False})
+                stack.enter_context(mock.patch.object(peer, "tailscale_status", return_value={}))
+                if remote:
+                    transport = stack.enter_context(mock.patch.object(peer, "SshTransport"))
+                    transport.return_value.host = "receiver"
+                    transport.return_value.ssh_opts = []
+                    execute = transport.return_value.execute
+                    execute.side_effect = error
+                else:
+                    execute = stack.enter_context(mock.patch.object(
+                        peer.LocalTransport, "execute", side_effect=error))
+                code, out, err = self.invoke("--dry-run", "--explain",
+                                            *(["--host", "receiver"] if remote else []))
+                self.assertEqual(code, peer.EXIT_ERROR)
+                self.assertEqual(out, "")
+                self.assertIn("Validation: result unknown", err)
+                self.assertIn("inspect the target and existing evidence", err)
+                self.assertIn("Do not automatically resend", err)
+                self.assertNotIn("nothing submitted", err)
+                self.assertNotIn("Destination checks: not run", err)
+                execute.assert_called_once()
+
+    def test_returned_failed_payload_keeps_old_stdout_and_explanation_on_stderr(self):
+        for remote in (False, True):
+            for submitted in (None, False):
+                outputs = []
+                for explain in (False, True):
+                    with self.subTest(remote=remote, submitted=submitted, explain=explain), \
+                            contextlib.ExitStack() as stack:
+                        payload = {"ok": False, "target": {"agent": "codex", "id": THREAD},
+                                   "dryRun": True, "chars": 12, "status": "unknown",
+                                   "submitted": submitted, "consumptionConfirmed": False}
+                        stack.enter_context(mock.patch.object(peer, "tailscale_status", return_value={}))
+                        if remote:
+                            transport = stack.enter_context(mock.patch.object(peer, "SshTransport"))
+                            transport.return_value.host = "receiver"
+                            transport.return_value.ssh_opts = []
+                            execute = transport.return_value.execute
+                            execute.return_value = payload
+                        else:
+                            execute = stack.enter_context(mock.patch.object(
+                                peer.LocalTransport, "execute", return_value=payload))
+                        code, out, err = self.invoke("--dry-run", *(["--explain"] if explain else []),
+                                                    *(["--host", "receiver"] if remote else []),
+                                                    target="codex:" + THREAD)
+                        self.assertEqual(code, peer.EXIT_ERROR)
+                        execute.assert_called_once()
+                        outputs.append(out)
+                        if explain:
+                            self.assertIn("Delivery preview\n", err)
+                            self.assertIn("Validation: result unknown", err)
+                            self.assertNotIn("nothing submitted", err)
+                        else:
+                            self.assertEqual(err, "")
+                self.assertEqual(outputs[0], outputs[1])
+
+    def test_common_multihost_failures_do_not_claim_destination_checks(self):
+        for stage in ("read_message", "validate_ssh_identity_options"):
+            with self.subTest(stage=stage), \
+                    mock.patch.object(peer, stage, side_effect=peer.CcPeerError("common command failure")), \
+                    mock.patch.object(peer, "SshTransport") as transport, \
+                    mock.patch.object(peer.LocalTransport, "execute") as local:
+                code, out, err = self.invoke("--host", "first", "--host", "second",
+                                            "--dry-run", "--explain")
+            self.assertEqual(code, peer.EXIT_ERROR)
+            self.assertEqual(out, "")
+            self.assertEqual(err.count("Delivery preview\n"), 1)
+            self.assertIn("Destination checks: not run", err)
+            self.assertIn("Validation: not confirmed", err)
+            self.assertNotIn("passed for this dry run", err)
+            transport.assert_not_called()
+            local.assert_not_called()
+
+    def test_second_host_unexpected_error_names_only_current_destination(self):
+        good = mock.Mock(host="first", ssh_opts=[])
+        good.execute.return_value = {"target": {"pid": 42, "name": "worker"},
+                                     "chars": 12, "dryRun": True}
+        bad = mock.Mock(host="second", ssh_opts=[])
+        bad.execute.side_effect = OSError("fixture transport error")
+        with mock.patch.object(peer, "tailscale_status", return_value={}), \
+                mock.patch.object(peer, "SshTransport", side_effect=[good, bad]):
+            code, out, err = self.invoke("--host", "first", "--host", "second",
+                                        "--dry-run", "--explain")
+        self.assertEqual(code, peer.EXIT_ERROR)
+        self.assertIn("on first", out)
+        self.assertIn("on second", err)
+        self.assertNotIn("first", err)
+        self.assertNotIn("Destination checks: not run", err)
+        good.execute.assert_called_once()
+        bad.execute.assert_called_once()
+
+    def test_remote_submission_evidence_is_not_presented_as_validated_dry_run(self):
+        for agent in ("claude", "codex"):
+            for evidence in ({"submitted": True}, {"dryRun": False},
+                             {"status": "queued"}, {"status": "posted"}):
+                with self.subTest(agent=agent, evidence=evidence):
+                    payload = {"ok": True, "target": {"pid": 42, "name": "worker"}
+                               if agent == "claude" else {"agent": "codex", "id": THREAD},
+                               "chars": 12, "dryRun": True, **evidence}
+                    with mock.patch.object(peer, "tailscale_status", return_value={}), \
+                            mock.patch.object(peer, "SshTransport") as transport:
+                        transport.return_value.host = "receiver"
+                        transport.return_value.ssh_opts = []
+                        transport.return_value.execute.return_value = payload
+                        code, out, err = self.invoke("--host", "receiver", "--dry-run", "--explain",
+                                                    target="worker" if agent == "claude" else "codex:" + THREAD)
+                    self.assertEqual(code, 0)
+                    self.assertNotIn("passed for this dry run", out + err)
+                    self.assertIn("unexpected submission evidence; dry-run not confirmed", err)
+                    self.assertIn("Reported ", err)
+                    self.assertIn("Do not automatically resend", err)
+                    self.assertNotIn("nothing submitted", out + err)
+                    transport.return_value.execute.assert_called_once()
 
     def test_display_allowlist_does_not_mutate_or_reflect_payload_secrets(self):
         args = argparse.Namespace(to="codex:" + THREAD, host=[], wake=False,
@@ -189,13 +313,30 @@ class DeliveryExplanation(unittest.TestCase):
         self.assertIn("\\x0a\\x1b", rendered)
         self.assertEqual(json.dumps(payload), original)
 
+    def test_ok_true_does_not_promote_unknown_evidence_to_validation(self):
+        args = argparse.Namespace(to="codex:" + THREAD, host=[], wake=False)
+        for evidence in ({"status": "unknown"}, {"submitted": None}):
+            rendered = peer.render_delivery_explanation(args, {"ok": True, **evidence})
+            self.assertIn("Validation: result unknown", rendered)
+            self.assertNotIn("passed for this dry run", rendered)
+
+    def test_ambiguous_or_submitted_response_does_not_claim_no_turn_started(self):
+        args = argparse.Namespace(to="codex:" + THREAD, host=[], wake=True)
+        for evidence in ({"status": "unknown"}, {"submitted": None},
+                         {"submitted": True}, {"dryRun": False}, {"status": "queued"}):
+            rendered = peer.render_delivery_explanation(args, {
+                "ok": True, "wake": {"status": "validated"}, **evidence})
+            self.assertIn("Wake: requested; preflight not confirmed", rendered)
+            self.assertNotIn("no turn started", rendered)
+
     def test_unresolved_reply_uri_is_not_reflected(self):
-        args = argparse.Namespace(to="session-peer://v1/reply?secret=" + BODY,
-                                  host=[], wake=False)
-        rendered = peer.render_delivery_explanation(args, {}, failed=True)
-        self.assertNotIn(BODY, rendered)
-        self.assertIn("Delivery method: unknown (not resolved)", rendered)
-        self.assertNotIn("Claude Code inbox", rendered)
+        for scheme in ("session-peer", "SeSsIoN-PeEr"):
+            args = argparse.Namespace(to=scheme + "://v1/reply?secret=" + BODY,
+                                      host=[], wake=False)
+            rendered = peer.render_delivery_explanation(args, {}, failed=True)
+            self.assertNotIn(BODY, rendered)
+            self.assertIn("Delivery method: unknown (not resolved)", rendered)
+            self.assertNotIn("Claude Code inbox", rendered)
 
     def test_private_message_file_remains_an_ordinary_supported_input(self):
         with tempfile.TemporaryDirectory() as temporary:

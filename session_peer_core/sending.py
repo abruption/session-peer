@@ -78,6 +78,8 @@ def cmd_send(args: argparse.Namespace) -> int:
     validate_agent_send(adapter, args, text)
 
     if not args.host:
+        if getattr(args, "explain", False):
+            args._delivery_explanation_started = True
         result = LocalTransport().execute("send", adapter, args, text)
         result.update(routing_metadata)
         emit(args.json, result, adapter.submission_text(result, "this machine"), command="send")
@@ -95,9 +97,14 @@ def cmd_send(args: argparse.Namespace) -> int:
     for requested_host in args.host:
         host = requested_host
         try:
+            if getattr(args, "explain", False):
+                args._delivery_explanation_started = True
+                args._delivery_explanation_host = requested_host
             transport = SshTransport(requested_host, args, tailnet_status)
             host, ssh_opts = transport.host, transport.ssh_opts
             shown_host = display_host(requested_host, host)
+            if getattr(args, "explain", False):
+                args._delivery_explanation_host = shown_host
             encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
             remote_argv = ["send", "--no-update-notice", "--to", args.to, "--b64", encoded]
             remote_argv += adapter.remote_options(args)
@@ -126,8 +133,10 @@ def cmd_send(args: argparse.Namespace) -> int:
             if not args.json:
                 print(adapter.submission_text(payload, shown_host))
                 if getattr(args, "explain", False):
-                    emit_delivery_explanation(args, payload, host=shown_host,
-                                              failed=payload.get("ok") is False)
+                    # Explain the received facts, before legacy adapter shaping
+                    # replaces fields such as Claude's dryRun with request data.
+                    emit_delivery_explanation(args, result, host=shown_host,
+                                              failed=payload.get("ok") is False or result.get("ok") is False)
         except CcPeerError as exc:
             exit_code = EXIT_ERROR
             all_results.append(json_result(

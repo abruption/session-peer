@@ -43,6 +43,12 @@ def render_sessions(sessions: list[dict], where: str) -> str:
     return f"Sessions on {where}:\n" + "\n".join(lines)
 
 
+def delivery_explanation_has_submission(result: dict) -> bool:
+    """Recognize reported submission evidence without changing native results."""
+    return (result.get("submitted") is True or result.get("dryRun") is False
+            or result.get("status") in ("queued", "posted", "submitted"))
+
+
 def render_delivery_explanation(args: argparse.Namespace, result: dict, *,
                                 host: str | None = None, failed: bool = False) -> str:
     """Describe only existing dry-run facts; never inspect or execute a target.
@@ -52,14 +58,14 @@ def render_delivery_explanation(args: argparse.Namespace, result: dict, *,
     facts stay unknown rather than being filled from the sender's environment.
     """
     requested = str(getattr(args, "to", ""))
-    unresolved_uri = requested.startswith("session-peer:")
+    unresolved_uri = requested.lower().startswith("session-peer:")
     if unresolved_uri:
         requested = "Reply-To URI (resolution unavailable)"
     agent = (None if unresolved_uri else
              "codex" if requested.startswith("codex:") else
              "antigravity" if requested.startswith("antigravity:") else "claude")
     where = host or (", ".join(getattr(args, "host", None) or []) or "this machine")
-    lines = ["Delivery preview — nothing submitted",
+    lines = ["Delivery preview",
              "Requested destination: " + human_text(requested) + " on " + human_text(where)]
     target = result.get("target")
     if isinstance(target, dict):
@@ -75,8 +81,23 @@ def render_delivery_explanation(args: argparse.Namespace, result: dict, *,
         home = result.get(home_key)
         lines.append(("Codex home: " if agent == "codex" else "Antigravity home: ")
                      + (human_text(home) if isinstance(home, str) else "unknown (not reported)"))
-    lines.append("Validation: " + ("not passed" if failed else
-                                   "passed for this dry run"))
+    started = getattr(args, "_delivery_explanation_started", True)
+    unknown = result.get("status") == "unknown" or (
+        "submitted" in result and result["submitted"] is None)
+    unexpected = delivery_explanation_has_submission(result)
+    if not started:
+        lines.append("Destination checks: not run (command failed before destination checks)")
+        lines.append("Validation: not confirmed")
+    else:
+        lines.append("Validation: " + ("unexpected submission evidence; dry-run not confirmed" if unexpected else
+                                       "result unknown" if unknown else
+                                       "not confirmed" if failed else "passed for this dry run"))
+    if unexpected:
+        for key, label in (("dryRun", "dry-run"), ("submitted", "submitted")):
+            if type(result.get(key)) is bool:
+                lines.append("Reported " + label + ": " + str(result[key]).lower())
+        if result.get("status") in ("queued", "posted", "submitted", "unknown"):
+            lines.append("Reported native status: " + result["status"])
     method = {"claude": "Claude Code inbox", "codex": "native Codex queue",
               "antigravity": "registered Antigravity bridge"}.get(agent)
     lines.append("Delivery method: " + (method + " (planned)" if method else "unknown (not resolved)"))
@@ -85,15 +106,16 @@ def render_delivery_explanation(args: argparse.Namespace, result: dict, *,
     else:
         fact = result.get("wake")
         wake = ("preflight passed for this dry run; no turn started"
-                if isinstance(fact, dict) and fact.get("status") == "validated" else
+                if not unknown and not unexpected and isinstance(fact, dict) and fact.get("status") == "validated" else
                 "requested; preflight not confirmed")
     lines.extend(["Wake: " + wake,
                   "Receipt ACK: unavailable for ordinary sends",
                   "Consumption / completion: not observed",
                   "A later send repeats validation.",
                   "Do not automatically resend after an unknown outcome."])
-    if failed:
-        lines.append("Next step: resolve the validation failure before attempting a send.")
+    if failed or unexpected:
+        lines.append("Next step: inspect the target and existing evidence before deciding what to do."
+                     if unknown or unexpected else "Next step: resolve the validation failure before attempting a send.")
     return "\n".join(lines)
 
 
@@ -101,7 +123,7 @@ def emit_delivery_explanation(args: argparse.Namespace, result: dict, *,
                               host: str | None = None, failed: bool = False,
                               stream=None) -> None:
     print(render_delivery_explanation(args, result, host=host, failed=failed),
-          file=stream or (sys.stderr if failed else sys.stdout))
+          file=stream or (sys.stderr if failed or delivery_explanation_has_submission(result) else sys.stdout))
 
 
 JSON_RESPONSE_SCHEMA_VERSION = 1

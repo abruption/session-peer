@@ -281,6 +281,8 @@ def main(argv: list[str] | None = None) -> int:
         if handoff_requested(args) or any(getattr(args, key, None) is not None for key in (
                 "_handoff_native_context", "_handoff_native_cutoff_ms", "_handoff_native_total_ms")):
             parser.error("--explain does not support experimental handoff sends")
+        args._delivery_explanation_started = False
+        args._delivery_explanation_host = None
     try:
         _CLIENT_UPDATE_NOTICE = prepare_client_update(args) if cli_invocation else None
     except Exception:
@@ -303,7 +305,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(human_text(f"session-peer: {message}"), file=sys.stderr)
             if getattr(args, "explain", False):
-                emit_delivery_explanation(args, exc.details, failed=True, stream=sys.stderr)
+                emit_delivery_explanation(args, exc.details, failed=True, stream=sys.stderr,
+                                          host=getattr(args, "_delivery_explanation_host", None))
         exit_code = (
             EXIT_NO_TARGET
             if isinstance(exc, NoTargetError) or "no reachable session" in message
@@ -320,7 +323,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(human_text(f"session-peer: {message}"), file=sys.stderr)
             if getattr(args, "explain", False):
-                emit_delivery_explanation(args, {}, failed=True, stream=sys.stderr)
+                emit_delivery_explanation(args, {}, failed=True, stream=sys.stderr,
+                                          host=getattr(args, "_delivery_explanation_host", None))
         exit_code = EXIT_ERROR
     if show_human_notice and not args.json:
         emit_human_update_notice()
