@@ -393,21 +393,25 @@ class DeliveryExplanation(unittest.TestCase):
         self.assertEqual(execute.call_args.args[-1], BODY)
         self.assertNotIn(BODY, out.getvalue())
 
-    @unittest.skipUnless(peer.IS_WINDOWS, "Windows private message-file refusal")
     def test_windows_private_message_file_refusal_remains_before_destination_checks(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "private-message"
             path.write_text(BODY, encoding="utf-8")
             out, err = io.StringIO(), io.StringIO()
-            with mock.patch.object(peer.LocalTransport, "execute") as execute, \
+            with mock.patch.object(peer, "IS_WINDOWS", True), \
+                    mock.patch.object(peer.LocalTransport, "execute") as execute, \
                     mock.patch.object(peer, "SshTransport") as ssh, \
                     mock.patch.object(peer.subprocess, "Popen") as child, \
                     contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                with self.assertRaises(peer.CcPeerError) as refusal:
+                    peer.handoff_private_stat(path)
+                self.assertEqual(refusal.exception.details["reason"], "handoff_platform_unsupported")
                 code = peer.main(["send", "--to", "worker", "--no-from", "--no-reply-to",
                                   "--message-file", str(path), "--dry-run", "--explain"])
         self.assertEqual(code, peer.EXIT_ERROR)
         self.assertEqual(out.getvalue(), "")
-        self.assertIn("handoff_platform_unsupported", err.getvalue())
+        self.assertIn("session-peer: Handoff operation refused", err.getvalue())
+        self.assertNotIn("handoff_platform_unsupported", err.getvalue())
         self.assertIn("Destination checks: not run", err.getvalue())
         self.assertNotIn(BODY, err.getvalue())
         execute.assert_not_called()
