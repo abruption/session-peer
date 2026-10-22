@@ -60,6 +60,22 @@ not a `--agent` flag.
 running. Plain send does not activate a session; [explicit `--wake`](wake.md)
 is opt-in and does not confirm consumption or a reply.
 
+<a id="delivery-explanation"></a>
+
+### Delivery explanation (development)
+
+Development for #323; unavailable in published v1.2.1. Add `--explain` to `send --dry-run` for a human-readable summary of the selected local or SSH destination, existing validation result, delivery method and observation limits. Multiple SSH destinations receive separate summaries.
+
+```bash
+session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run --explain
+```
+
+The explanation reuses the current dry-run result and adds no diagnostic, native-version or SSH probes. The dry-run itself may already run version checks. A later send repeats validation; a successful preview does not reserve the destination or guarantee submission, consumption or completion. Without `--wake`, wake eligibility is not checked. With it, only the existing preflight result is described. Ordinary-send receipt ACKs remain unavailable; the separate experimental handoff workflow has different capabilities.
+
+This first scope is text-only and requires `--dry-run`. Combining `--explain` with `--json` or `--output-format json`, paired `--device`, or handoff `--correlation-id`, `--request-ack`, `--observe-delivery` or `--wait-for` is a usage error before message input or destination/ledger work. Existing commands without the new option keep their output, JSON and exit contracts.
+
+The normal message requirement and limits still apply: supply `--message`, `--message-file` or stdin as usual; no placeholder body is generated. Explanation fields do not include the body or receipt secrets. Unknown evidence stays unknown, and an uncertain actual send must never trigger automatic resend.
+
 ### Optional paired devices and Antigravity (v0.9)
 
 These features are available starting with PyPI v0.9.0. Antigravity remains

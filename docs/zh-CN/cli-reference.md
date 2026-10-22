@@ -72,6 +72,22 @@ session-peer send --host worker --to 'codex:<full-thread-uuid>' --dry-run -m "me
 
 **已投递/已入队并不代表已确认。** 已保存的 Codex 线程不一定正在运行。普通的发送不会激活会话；[显式 `--wake`](wake.md) 是可选功能，且不确认消息已被消费或回复。
 
+<a id="delivery-explanation"></a>
+
+### 传递说明（开发中）
+
+这是 #323 的开发功能，尚未包含在已发布的 v1.2.1 中。在 `send --dry-run` 中添加 `--explain`，即可查看所选本地或 SSH 目标、现有验证结果、传递方式及观察限制。多个 SSH 目标会分别显示说明。
+
+```bash
+session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run --explain
+```
+
+说明复用当前 dry-run 的结果，不增加诊断、native 版本或 SSH 探测。原有 dry-run 本身可能包含版本检查。实际发送时会重新验证，因此预览成功不代表预留目标，也不保证提交、消费或完成。未指定 `--wake` 时，不检查唤醒资格；指定后也只说明原有预检结果。普通发送不支持 receipt ACK，独立的实验性 handoff 具有不同的能力范围。
+
+首期范围仅支持文本输出，且必须指定 `--dry-run`。将 `--explain` 与 `--json` 或 `--output-format json`、配对 `--device`，或 handoff 的 `--correlation-id`、`--request-ack`、`--observe-delivery`、`--wait-for` 组合使用时，会在读取消息或执行目标、账本操作前报告用法错误。不使用新选项的现有命令保留原有输出、JSON 和退出契约。
+
+消息输入要求和限制保持不变。按原有方式使用 `--message`、`--message-file` 或 stdin，不自动生成占位正文。说明字段不包含正文或 receipt 秘密值。未知证据仍显示为未知，实际发送结果不确定时禁止自动重发。
+
 ### 可选配对设备与 Antigravity (v0.9)
 
 这些功能自 PyPI v0.9.0 起提供。Antigravity 仍处于实验阶段，配对传输仍处于 Beta 阶段；仍需进行操作验证。使用 `pipx install 'session-peer[relay]'` 安装额外组件。`[relay]` 额外组件（Unix、Python 3.11+）支持通过直接连接或自建 WSS 中继进行经过身份验证的配对设备传递。配对会固定设备身份；单独的操作员策略允许特定的代理目标和操作。盲中继无法解密应用消息。在公开端点之前，请遵循[配对设备设置与操作指南](paired-devices.md)。该测试版不提供 NAT 穿透或托管公共服务。

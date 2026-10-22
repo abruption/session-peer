@@ -93,6 +93,22 @@ session-peer send --host worker --to 'codex:<full-thread-uuid>' --dry-run -m "me
 限りません。通常の送信ではセッションはアクティブ化されません。[明示的な `--wake`](wake.md)
 はオプトインであり、消費または返信を確認するものではありません。
 
+<a id="delivery-explanation"></a>
+
+### 配信説明（開発中）
+
+#323 の開発機能であり、公開済み v1.2.1 には含まれません。`send --dry-run` に `--explain` を追加すると、選択したローカルまたは SSH の宛先、既存の検証結果、配信方法、観測上の制限を読みやすく表示します。SSH の宛先が複数ある場合は個別に説明します。
+
+```bash
+session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run --explain
+```
+
+説明は現在の dry-run の結果を再利用し、診断、native バージョン、SSH の追加照会は行いません。既存の dry-run 自体にはバージョン確認が含まれる場合があります。実際の送信時には再検証するため、プレビューの成功は宛先の予約や投入・消費・完了を保証しません。`--wake` を指定しない場合、起動の適格性は確認しません。指定した場合も既存の事前検証結果だけを説明します。通常送信の receipt ACK は未対応で、別の実験的 handoff とは機能範囲が異なります。
+
+最初の対応範囲はテキスト出力のみで、`--dry-run` が必須です。`--explain` と `--json` または `--output-format json`、ペアリングの `--device`、handoff の `--correlation-id`、`--request-ack`、`--observe-delivery`、`--wait-for` を組み合わせると、メッセージ入力や宛先・台帳処理の前に使用法エラーになります。新しいオプションを使わない既存コマンドの出力・JSON・終了契約は維持されます。
+
+通常のメッセージ入力要件と上限は変わりません。従来どおり `--message`、`--message-file` または stdin を使い、仮の本文は自動生成しません。説明フィールドに本文や receipt の秘密値は含めません。不明な証拠は不明のまま表示し、実際の送信結果が不確実な場合は自動再送しません。
+
 ### オプションのペアリング済みデバイスと Antigravity (v0.9)
 
 これらの機能は PyPI v0.9.0 以降で利用可能です。Antigravity は引き続き

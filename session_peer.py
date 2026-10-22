@@ -4321,6 +4321,67 @@ def render_sessions(sessions: list[dict], where: str) -> str:
     return f"Sessions on {where}:\n" + "\n".join(lines)
 
 
+def render_delivery_explanation(args: argparse.Namespace, result: dict, *,
+                                host: str | None = None, failed: bool = False) -> str:
+    """Describe only existing dry-run facts; never inspect or execute a target.
+
+    This display-only allowlist deliberately excludes message bodies, native
+    errors, credentials, routing URIs and receipt authority. Missing remote
+    facts stay unknown rather than being filled from the sender's environment.
+    """
+    requested = str(getattr(args, "to", ""))
+    unresolved_uri = requested.startswith("session-peer:")
+    if unresolved_uri:
+        requested = "Reply-To URI (resolution unavailable)"
+    agent = (None if unresolved_uri else
+             "codex" if requested.startswith("codex:") else
+             "antigravity" if requested.startswith("antigravity:") else "claude")
+    where = host or (", ".join(getattr(args, "host", None) or []) or "this machine")
+    lines = ["Delivery preview — nothing submitted",
+             "Requested destination: " + human_text(requested) + " on " + human_text(where)]
+    target = result.get("target")
+    if isinstance(target, dict):
+        if agent == "claude" and type(target.get("pid")) is int:
+            resolved = "Claude PID " + str(target["pid"])
+            if isinstance(target.get("name"), str):
+                resolved += " (" + human_text(target["name"]) + ")"
+            lines.append("Resolved target: " + resolved)
+        elif agent == "codex" and isinstance(target.get("id"), str):
+            lines.append("Resolved target: codex:" + human_text(target["id"]))
+    home_key = "codexHome" if agent == "codex" else "antigravityHome"
+    if agent in ("codex", "antigravity"):
+        home = result.get(home_key)
+        lines.append(("Codex home: " if agent == "codex" else "Antigravity home: ")
+                     + (human_text(home) if isinstance(home, str) else "unknown (not reported)"))
+    lines.append("Validation: " + ("not passed" if failed else
+                                   "passed for this dry run"))
+    method = {"claude": "Claude Code inbox", "codex": "native Codex queue",
+              "antigravity": "registered Antigravity bridge"}.get(agent)
+    lines.append("Delivery method: " + (method + " (planned)" if method else "unknown (not resolved)"))
+    if not getattr(args, "wake", False):
+        wake = "not requested; eligibility not checked"
+    else:
+        fact = result.get("wake")
+        wake = ("preflight passed for this dry run; no turn started"
+                if isinstance(fact, dict) and fact.get("status") == "validated" else
+                "requested; preflight not confirmed")
+    lines.extend(["Wake: " + wake,
+                  "Receipt ACK: unavailable for ordinary sends",
+                  "Consumption / completion: not observed",
+                  "A later send repeats validation.",
+                  "Do not automatically resend after an unknown outcome."])
+    if failed:
+        lines.append("Next step: resolve the validation failure before attempting a send.")
+    return "\n".join(lines)
+
+
+def emit_delivery_explanation(args: argparse.Namespace, result: dict, *,
+                              host: str | None = None, failed: bool = False,
+                              stream=None) -> None:
+    print(render_delivery_explanation(args, result, host=host, failed=failed),
+          file=stream or (sys.stderr if failed else sys.stdout))
+
+
 JSON_RESPONSE_SCHEMA_VERSION = 1
 
 
@@ -9362,6 +9423,8 @@ def cmd_send(args: argparse.Namespace) -> int:
         result = LocalTransport().execute("send", adapter, args, text)
         result.update(routing_metadata)
         emit(args.json, result, adapter.submission_text(result, "this machine"), command="send")
+        if getattr(args, "explain", False):
+            emit_delivery_explanation(args, result, failed=result.get("ok") is False)
         if advertised_route and advertised_route["status"] == "unverified" and not args.json:
             print(
                 "session-peer: reverse SSH reply route was not checked; "
@@ -9404,6 +9467,9 @@ def cmd_send(args: argparse.Namespace) -> int:
                 exit_code = EXIT_ERROR
             if not args.json:
                 print(adapter.submission_text(payload, shown_host))
+                if getattr(args, "explain", False):
+                    emit_delivery_explanation(args, payload, host=shown_host,
+                                              failed=payload.get("ok") is False)
         except CcPeerError as exc:
             exit_code = EXIT_ERROR
             all_results.append(json_result(
@@ -9413,6 +9479,10 @@ def cmd_send(args: argparse.Namespace) -> int:
             ))
             if not args.json:
                 print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
+                if getattr(args, "explain", False):
+                    emit_delivery_explanation(args, exc.details,
+                                              host=display_host(requested_host, host),
+                                              failed=True, stream=sys.stderr)
 
     if args.json:
         emit_json_results(all_results)
@@ -9634,6 +9704,7 @@ def build_parser() -> argparse.ArgumentParser:
     sending.add_argument("--wake-timeout", type=int, choices=range(1, 61), default=30, metavar="SECONDS",
                          help="wake deadline, 1..60 seconds (default: 30)")
     sending.add_argument("--dry-run", action="store_true", help="resolve the target, send nothing")
+    sending.add_argument("--explain", action="store_true", help="explain an ordinary local/SSH dry-run in text")
     sending.set_defaults(func=cmd_send)
 
     handoff = subparsers.add_parser("handoff", help="manage private correlated intents without submitting native messages")
@@ -9772,6 +9843,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.json and output_format == "text":
         parser.error("--json conflicts with --output-format text")
     args.json = args.json or output_format == "json"
+    if getattr(args, "explain", False):
+        if not args.dry_run:
+            parser.error("--explain requires --dry-run")
+        if args.json:
+            parser.error("--explain requires text output")
+        if getattr(args, "device", None):
+            parser.error("--explain does not support paired-device sends")
+        if handoff_requested(args) or any(getattr(args, key, None) is not None for key in (
+                "_handoff_native_context", "_handoff_native_cutoff_ms", "_handoff_native_total_ms")):
+            parser.error("--explain does not support experimental handoff sends")
     try:
         _CLIENT_UPDATE_NOTICE = prepare_client_update(args) if cli_invocation else None
     except Exception:
@@ -9793,6 +9874,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
             print(human_text(f"session-peer: {message}"), file=sys.stderr)
+            if getattr(args, "explain", False):
+                emit_delivery_explanation(args, exc.details, failed=True, stream=sys.stderr)
         exit_code = (
             EXIT_NO_TARGET
             if isinstance(exc, NoTargetError) or "no reachable session" in message
@@ -9808,6 +9891,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
             print(human_text(f"session-peer: {message}"), file=sys.stderr)
+            if getattr(args, "explain", False):
+                emit_delivery_explanation(args, {}, failed=True, stream=sys.stderr)
         exit_code = EXIT_ERROR
     if show_human_notice and not args.json:
         emit_human_update_notice()

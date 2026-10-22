@@ -132,6 +132,7 @@ def build_parser() -> argparse.ArgumentParser:
     sending.add_argument("--wake-timeout", type=int, choices=range(1, 61), default=30, metavar="SECONDS",
                          help="wake deadline, 1..60 seconds (default: 30)")
     sending.add_argument("--dry-run", action="store_true", help="resolve the target, send nothing")
+    sending.add_argument("--explain", action="store_true", help="explain an ordinary local/SSH dry-run in text")
     sending.set_defaults(func=cmd_send)
 
     handoff = subparsers.add_parser("handoff", help="manage private correlated intents without submitting native messages")
@@ -270,6 +271,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.json and output_format == "text":
         parser.error("--json conflicts with --output-format text")
     args.json = args.json or output_format == "json"
+    if getattr(args, "explain", False):
+        if not args.dry_run:
+            parser.error("--explain requires --dry-run")
+        if args.json:
+            parser.error("--explain requires text output")
+        if getattr(args, "device", None):
+            parser.error("--explain does not support paired-device sends")
+        if handoff_requested(args) or any(getattr(args, key, None) is not None for key in (
+                "_handoff_native_context", "_handoff_native_cutoff_ms", "_handoff_native_total_ms")):
+            parser.error("--explain does not support experimental handoff sends")
     try:
         _CLIENT_UPDATE_NOTICE = prepare_client_update(args) if cli_invocation else None
     except Exception:
@@ -291,6 +302,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
             print(human_text(f"session-peer: {message}"), file=sys.stderr)
+            if getattr(args, "explain", False):
+                emit_delivery_explanation(args, exc.details, failed=True, stream=sys.stderr)
         exit_code = (
             EXIT_NO_TARGET
             if isinstance(exc, NoTargetError) or "no reachable session" in message
@@ -306,6 +319,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
             print(human_text(f"session-peer: {message}"), file=sys.stderr)
+            if getattr(args, "explain", False):
+                emit_delivery_explanation(args, {}, failed=True, stream=sys.stderr)
         exit_code = EXIT_ERROR
     if show_human_notice and not args.json:
         emit_human_update_notice()

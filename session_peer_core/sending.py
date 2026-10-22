@@ -81,6 +81,8 @@ def cmd_send(args: argparse.Namespace) -> int:
         result = LocalTransport().execute("send", adapter, args, text)
         result.update(routing_metadata)
         emit(args.json, result, adapter.submission_text(result, "this machine"), command="send")
+        if getattr(args, "explain", False):
+            emit_delivery_explanation(args, result, failed=result.get("ok") is False)
         if advertised_route and advertised_route["status"] == "unverified" and not args.json:
             print(
                 "session-peer: reverse SSH reply route was not checked; "
@@ -123,6 +125,9 @@ def cmd_send(args: argparse.Namespace) -> int:
                 exit_code = EXIT_ERROR
             if not args.json:
                 print(adapter.submission_text(payload, shown_host))
+                if getattr(args, "explain", False):
+                    emit_delivery_explanation(args, payload, host=shown_host,
+                                              failed=payload.get("ok") is False)
         except CcPeerError as exc:
             exit_code = EXIT_ERROR
             all_results.append(json_result(
@@ -132,6 +137,10 @@ def cmd_send(args: argparse.Namespace) -> int:
             ))
             if not args.json:
                 print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
+                if getattr(args, "explain", False):
+                    emit_delivery_explanation(args, exc.details,
+                                              host=display_host(requested_host, host),
+                                              failed=True, stream=sys.stderr)
 
     if args.json:
         emit_json_results(all_results)
