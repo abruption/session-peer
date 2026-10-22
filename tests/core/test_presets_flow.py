@@ -4,6 +4,8 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -17,7 +19,7 @@ THREAD = "00000000-0000-4000-8000-000000000001"
 @unittest.skipIf(peer.IS_WINDOWS or peer.fcntl is None, "POSIX route preset storage")
 class PresetFlow(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="codex-preset-flow-")
+        temporary = tempfile.TemporaryDirectory(prefix="codex-preset-flow-", dir=os.environ.get("SESSION_PEER_TEST_TMP"))
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.root.chmod(0o700)
@@ -25,20 +27,24 @@ class PresetFlow(unittest.TestCase):
         self.environment.start()
         self.addCleanup(self.environment.stop)
 
-    def invoke(self, argv):
+    def invoke(self, argv, *, entrypoint=False):
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = peer.main(argv)
+            if entrypoint:
+                with mock.patch.object(peer.sys, "argv", ["session-peer", *argv]):
+                    code = peer.main()
+            else:
+                code = peer.main(argv)
         return code, json.loads(out.getvalue()), err.getvalue()
 
     def test_management_preview_changed_revision_and_single_remote_send(self):
         with mock.patch.object(peer.subprocess, "Popen") as child, \
                 mock.patch.object(peer, "prepare_client_update") as notice, \
                 mock.patch.object(peer, "prepare_skill_updates") as skills:
-            code, added, _ = self.invoke(["preset", "add", "work", "--agent", "claude", "--json"])
+            code, added, _ = self.invoke(["preset", "add", "work", "--agent", "claude", "--json"], entrypoint=True)
             self.assertEqual(code, 0)
             old = added["revision"]
-            code, shown, _ = self.invoke(["preset", "show", "work", "--json"])
+            code, shown, _ = self.invoke(["preset", "show", "work", "--json"], entrypoint=True)
             self.assertEqual(code, 0)
             self.assertEqual(shown["revision"], old)
             self.assertEqual(shown["route"], {"agent": "claude", "transport": "local"})
@@ -56,7 +62,7 @@ class PresetFlow(unittest.TestCase):
 
             code, changed, _ = self.invoke([
                 "preset", "replace", "work", "--expect-revision", old,
-                "--host", "user@fixture", "--agent", "codex", "--codex-home", "/fixture/home", "--json"])
+                "--host", "user@fixture", "--agent", "codex", "--codex-home", "/fixture/home", "--json"], entrypoint=True)
             self.assertEqual(code, 0)
             current = changed["revision"]
             self.assertNotEqual(old, current)
@@ -116,6 +122,28 @@ class PresetFlow(unittest.TestCase):
         route, revision = peer.preset_lookup("work")
         self.assertEqual(route["host"], "user@other")
         self.assertNotEqual(revision, original)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Darwin native deny-only ancestor")
+    def test_native_darwin_deny_only_ancestor_allows_private_child_storage(self):
+        ancestor = self.root / "deny-ancestor"
+        ancestor.mkdir(mode=0o700)
+        subprocess.run(["/bin/chmod", "+a", "everyone deny delete", str(ancestor)],
+                       check=True, capture_output=True)
+        try:
+            fd = os.open(ancestor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                self.assertEqual(peer._preset_darwin_acl_tags(fd), (2,))
+                peer._preset_check_acl(fd, private=False, directory=True)
+                with self.assertRaises(peer.CcPeerError) as refused:
+                    peer._preset_check_acl(fd, private=True, directory=True)
+                self.assertEqual(refused.exception.details["reason"], "preset_unsafe_acl")
+            finally:
+                os.close(fd)
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": str(ancestor / "config")}):
+                result = peer.preset_mutate("add", "work", {"transport": "local", "agent": "claude"})
+                self.assertEqual(peer.preset_lookup("work")[1], result["revision"])
+        finally:
+            subprocess.run(["/bin/chmod", "-N", str(ancestor)], check=True, capture_output=True)
 
 
 if __name__ == "__main__":

@@ -12,9 +12,82 @@ def _preset_error(reason):
     return CcPeerError("preset configuration refused: " + reason, {"reason": reason})
 
 
+def _preset_cleanup(action, *args, preserve=False, **kwargs):
+    """A secondary ordinary cleanup error must not replace an active failure.
+
+    New KeyboardInterrupt/SystemExit are never swallowed. On a normal return,
+    cleanup failure is still reported, without reflecting raw diagnostics.
+    """
+    try:
+        return action(*args, **kwargs)
+    except Exception as error:
+        if not preserve:
+            if isinstance(error, CcPeerError):
+                raise
+            raise _preset_error("preset_cleanup_failed") from None
+
+
+@contextlib.contextmanager
+def _preset_cleanup_scope(action, *args, **kwargs):
+    """Derive preservation from this body, never an ambient caller exception."""
+    try:
+        yield
+    except BaseException:
+        _preset_cleanup(action, *args, preserve=True, **kwargs)
+        raise
+    else:
+        _preset_cleanup(action, *args, **kwargs)
+
+
 def _preset_platform():
     if IS_WINDOWS or fcntl is None or sys.platform not in ("darwin", "linux"):
         raise _preset_error("preset_platform_unsupported")
+
+
+def _preset_darwin_mount_flags(fd):
+    """Use the explicit statfs64 ABI, never the ambiguous legacy statfs ABI."""
+    import ctypes
+    try:
+        class Statfs64(ctypes.Structure):
+            # sys/mount.h __DARWIN_STRUCT_STATFS64. The reserved tail remains
+            # 32 bytes across the f_flags_ext addition; no string is inspected.
+            _fields_ = [
+                ("f_bsize", ctypes.c_uint32), ("f_iosize", ctypes.c_int32),
+                ("f_blocks", ctypes.c_uint64), ("f_bfree", ctypes.c_uint64),
+                ("f_bavail", ctypes.c_uint64), ("f_files", ctypes.c_uint64),
+                ("f_ffree", ctypes.c_uint64), ("f_fsid", ctypes.c_int32 * 2),
+                ("f_owner", ctypes.c_uint32), ("f_type", ctypes.c_uint32),
+                ("f_flags", ctypes.c_uint32), ("f_fssubtype", ctypes.c_uint32),
+                ("f_fstypename", ctypes.c_char * 16),
+                ("f_mntonname", ctypes.c_char * 1024),
+                ("f_mntfromname", ctypes.c_char * 1024),
+                ("f_reserved", ctypes.c_uint32 * 8),
+            ]
+        if (ctypes.sizeof(ctypes.c_void_p) != 8 or ctypes.sizeof(Statfs64) != 2168
+                or Statfs64.f_flags.offset != 64):
+            raise _preset_error("preset_mount_unverifiable")
+        api = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+        api.fstatfs64.argtypes = [ctypes.c_int, ctypes.POINTER(Statfs64)]
+        api.fstatfs64.restype = ctypes.c_int
+        value = Statfs64()
+        if api.fstatfs64(fd, ctypes.byref(value)) != 0:
+            raise _preset_error("preset_mount_unverifiable")
+        return value.f_flags
+    except (OSError, AttributeError, TypeError, ValueError, OverflowError):
+        raise _preset_error("preset_mount_unverifiable") from None
+
+
+def _preset_check_ownership(fd):
+    if sys.platform == "darwin" and _preset_darwin_mount_flags(fd) & 0x00200000:
+        # MNT_IGNORE_OWNERSHIP can synthesize owner/mode metadata. Do not call
+        # such metadata an owner-only store, even if its ACL is empty.
+        raise _preset_error("preset_ownership_unenforced")
+
+
+def _preset_check_fd(fd, *, private, directory=False):
+    if private:
+        _preset_check_ownership(fd)
+    _preset_check_acl(fd, private=private, directory=directory)
 
 
 def _preset_darwin_acl_tags(fd):
@@ -45,6 +118,7 @@ def _preset_darwin_acl_tags(fd):
             if ctypes.get_errno() == errno.ENOENT:
                 return ()
             raise _preset_error("preset_acl_unverifiable")
+        acl_failed = False
         try:
             if api.acl_valid(acl) != 0:
                 raise _preset_error("preset_acl_unverifiable")
@@ -62,9 +136,14 @@ def _preset_darwin_acl_tags(fd):
                     raise _preset_error("preset_acl_unverifiable")
                 tags.append(tag.value)  # ACL_EXTENDED_ALLOW=1, DENY=2
             raise _preset_error("preset_acl_unverifiable")
+        except BaseException:
+            acl_failed = True
+            raise
         finally:
-            if api.acl_free(acl) != 0:
-                raise _preset_error("preset_acl_unverifiable")
+            def release_acl():
+                if api.acl_free(acl) != 0:
+                    raise _preset_error("preset_acl_unverifiable")
+            _preset_cleanup(release_acl, preserve=acl_failed)
     except (OSError, AttributeError, TypeError, ValueError, OverflowError):
         raise _preset_error("preset_acl_unverifiable") from None
 
@@ -209,8 +288,9 @@ def _preset_directory(create=False):
     root = _preset_path()
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK
     fd = os.open("/", flags)
+    directory_failed = False
     try:
-        _preset_check_acl(fd, private=False, directory=True)
+        _preset_check_fd(fd, private=False, directory=True)
         for index, part in enumerate(root.parts[1:]):
             final = index == len(root.parts[1:]) - 1
             try:
@@ -223,8 +303,8 @@ def _preset_directory(create=False):
                 except FileExistsError:
                     pass
                 child = os.open(part, flags, dir_fd=fd)
-            info = os.fstat(child)
             try:
+                info = os.fstat(child)
                 if final:
                     _preset_private(info, directory=True)
                 else:
@@ -235,17 +315,20 @@ def _preset_directory(create=False):
                 # The immediate configuration parent must belong to this user.
                 if not final and index == len(root.parts[1:]) - 2 and info.st_uid != os.geteuid():
                     raise _preset_error("preset_unsafe_storage")
-                _preset_check_acl(child, private=final, directory=True)
+                _preset_check_fd(child, private=final, directory=True)
             except BaseException:
-                os.close(child)
+                _preset_cleanup(os.close, child, preserve=True)
                 raise
-            os.close(fd)
-            fd = child
+            previous, fd = fd, child
+            _preset_cleanup(os.close, previous)
         result, fd = fd, None
         return result
+    except BaseException:
+        directory_failed = True
+        raise
     finally:
         if fd is not None:
-            os.close(fd)
+            _preset_cleanup(os.close, fd, preserve=directory_failed)
 
 
 def _preset_read_at(directory):
@@ -253,10 +336,11 @@ def _preset_read_at(directory):
         fd = os.open("destinations.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
     except FileNotFoundError:
         return {}
+    read_failed = False
     try:
         before = os.fstat(fd)
         _preset_private(before)
-        _preset_check_acl(fd, private=True)
+        _preset_check_fd(fd, private=True)
         if before.st_size > PRESET_MAX_BYTES:
             raise _preset_error("preset_capacity")
         raw = bytearray()
@@ -268,27 +352,35 @@ def _preset_read_at(directory):
         if len(raw) > PRESET_MAX_BYTES:
             raise _preset_error("preset_capacity")
         after = os.fstat(fd)
-        _preset_check_acl(fd, private=True)
+        _preset_check_fd(fd, private=True)
         current = os.stat("destinations.json", dir_fd=directory, follow_symlinks=False)
         if _preset_identity(before) != _preset_identity(after) or _preset_identity(after) != _preset_identity(current):
             raise _preset_error("preset_storage_changed")
         return _preset_decode(bytes(raw))
+    except BaseException:
+        read_failed = True
+        raise
     finally:
-        os.close(fd)
+        _preset_cleanup(os.close, fd, preserve=read_failed)
 
 
 def preset_read():
     """Read only: never creates a directory, file or lock."""
     _preset_platform()
     directory = None
+    read_failed = False
     try:
         directory = _preset_directory()
         return {} if directory is None else _preset_read_at(directory)
     except OSError:
+        read_failed = True
         raise _preset_error("preset_unsafe_storage") from None
+    except BaseException:
+        read_failed = True
+        raise
     finally:
         if directory is not None:
-            os.close(directory)
+            _preset_cleanup(os.close, directory, preserve=read_failed)
 
 
 def preset_lookup(name):
@@ -309,7 +401,7 @@ def _preset_lock(directory):
         fd = os.open("destinations.lock", flags, dir_fd=directory)
     try:
         _preset_private(os.fstat(fd))
-        _preset_check_acl(fd, private=True)
+        _preset_check_fd(fd, private=True)
         deadline = time.monotonic() + PRESET_LOCK_SECONDS
         while True:
             try:
@@ -322,10 +414,10 @@ def _preset_lock(directory):
         info = os.stat("destinations.lock", dir_fd=directory, follow_symlinks=False)
         if _preset_identity(info) != _preset_identity(os.fstat(fd)):
             raise _preset_error("preset_storage_changed")
-        _preset_check_acl(fd, private=True)
+        _preset_check_fd(fd, private=True)
         return fd
     except BaseException:
-        os.close(fd)
+        _preset_cleanup(os.close, fd, preserve=True)
         raise
 
 
@@ -336,13 +428,17 @@ def _preset_entry_identity(directory):
         return None
     _preset_private(info)
     fd = os.open("destinations.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+    identity_failed = False
     try:
         opened = os.fstat(fd)
         if _preset_identity(opened) != _preset_identity(info):
             raise _preset_error("preset_storage_changed")
-        _preset_check_acl(fd, private=True)
+        _preset_check_fd(fd, private=True)
+    except BaseException:
+        identity_failed = True
+        raise
     finally:
-        os.close(fd)
+        _preset_cleanup(os.close, fd, preserve=identity_failed)
     return _preset_identity(info)
 
 
@@ -363,6 +459,7 @@ def preset_mutate(action, name, entry=None, expected_revision=None):
     directory = lock = None
     temporary = None
     committed = False
+    mutation_failed = False
     try:
         directory = _preset_directory(create=action == "add")
         if directory is None:
@@ -391,38 +488,58 @@ def preset_mutate(action, name, entry=None, expected_revision=None):
             raise _preset_error("preset_capacity")
         # Reject ancestry replacement before committing through the held fd.
         check = _preset_directory()
+        check_failed = False
         try:
             if check is None or (os.fstat(check).st_dev, os.fstat(check).st_ino) != (
                     os.fstat(directory).st_dev, os.fstat(directory).st_ino):
                 raise _preset_error("preset_storage_changed")
+        except BaseException:
+            check_failed = True
+            raise
         finally:
             if check is not None:
-                os.close(check)
+                _preset_cleanup(os.close, check, preserve=check_failed)
         temporary = ".destinations-" + uuid.uuid4().hex + ".tmp"
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                      0o600, dir_fd=directory)
+        temporary_failed = False
         try:
-            with os.fdopen(fd, "wb") as stream:
+            stream = None
+            stream_failed = False
+            try:
+                stream = os.fdopen(fd, "wb")
                 _preset_private(os.fstat(stream.fileno()))
-                _preset_check_acl(stream.fileno(), private=True)
+                _preset_check_fd(stream.fileno(), private=True)
                 stream.write(raw)
                 stream.flush()
                 os.fsync(stream.fileno())
-                _preset_check_acl(stream.fileno(), private=True)
+                _preset_check_fd(stream.fileno(), private=True)
+            except BaseException:
+                stream_failed = True
+                raise
+            finally:
+                if stream is not None:
+                    _preset_cleanup(stream.close, preserve=stream_failed)
+                else:
+                    _preset_cleanup(os.close, fd, preserve=stream_failed)
             if _preset_entry_identity(directory) != original_identity:
                 raise _preset_error("preset_storage_changed")
             os.replace(temporary, "destinations.json", src_dir_fd=directory, dst_dir_fd=directory)
             temporary = None
             committed = True
             os.fsync(directory)
+        except BaseException:
+            temporary_failed = True
+            raise
         finally:
             if temporary is not None:
-                try:
-                    os.unlink(temporary, dir_fd=directory)
-                except FileNotFoundError:
-                    # An interrupt immediately after a successful rename can
-                    # precede the in-memory name/commit bookkeeping above.
-                    pass
+                def remove_temporary():
+                    try:
+                        os.unlink(temporary, dir_fd=directory)
+                    except FileNotFoundError:
+                        # Rename can finish immediately before an interrupt.
+                        pass
+                _preset_cleanup(remove_temporary, preserve=temporary_failed)
                 temporary = None
         result_route = previous if action == "remove" else route
         result = {"name": name, "route": dict(result_route), "revision": preset_revision(name, result_route)}
@@ -430,12 +547,20 @@ def preset_mutate(action, name, entry=None, expected_revision=None):
             result["removed"] = True
         return result
     except OSError:
+        mutation_failed = True
         if committed:
             raise CcPeerError("preset commit unconfirmed; inspect configuration before retrying",
                               {"reason": "preset_commit_unconfirmed"}) from None
         raise _preset_error("preset_unsafe_storage") from None
+    except BaseException:
+        mutation_failed = True
+        raise
     finally:
-        if lock is not None:
-            os.close(lock)
-        if directory is not None:
-            os.close(directory)
+        def close_storage():
+            def close_directory():
+                if directory is not None:
+                    os.close(directory)
+            with _preset_cleanup_scope(close_directory):
+                if lock is not None:
+                    _preset_cleanup(os.close, lock)
+        _preset_cleanup(close_storage, preserve=mutation_failed)

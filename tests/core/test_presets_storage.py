@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -263,6 +264,76 @@ class PresetStorageTests(unittest.TestCase):
         self.assertEqual(set(peer.preset_read()), {"fixture", "other"})
         self.assertFalse(any(path.name.startswith(".destinations-") for path in self.app.iterdir()))
 
+    def test_interrupt_is_not_masked_by_temporary_unlink_io_failure(self):
+        peer.preset_mutate("add", "fixture", self.route)
+        before = self.file.read_bytes()
+        with mock.patch.object(peer.os, "replace", side_effect=KeyboardInterrupt()), mock.patch.object(peer.os, "unlink", side_effect=OSError(errno.EIO, "private cleanup diagnostic")):
+            with self.assertRaises(KeyboardInterrupt):
+                peer.preset_mutate("add", "other", self.route)
+        self.assertEqual(self.file.read_bytes(), before)
+        remaining = [path for path in self.app.iterdir() if path.name.startswith(".destinations-")]
+        self.assertEqual(len(remaining), 1)
+        remaining[0].unlink()  # Only the dedicated fixture's unlinked temp remains.
+
+    def test_cleanup_reports_normal_errors_but_never_swallows_new_interrupts(self):
+        def failed_cleanup():
+            raise OSError(errno.EIO, "private cleanup diagnostic")
+        error = self.refuse("preset_cleanup_failed", peer._preset_cleanup, failed_cleanup)
+        self.assertNotIn("private cleanup diagnostic", str(error))
+        def interrupted_cleanup():
+            raise KeyboardInterrupt()
+        with self.assertRaises(KeyboardInterrupt):
+            try:
+                raise peer._preset_error("original_failure")
+            finally:
+                peer._preset_cleanup(interrupted_cleanup)
+
+    def test_handled_caller_exception_does_not_hide_normal_scope_or_acl_cleanup_failure(self):
+        def failed_cleanup():
+            raise OSError(errno.EIO, "private cleanup diagnostic")
+        api = self.darwin_api(())
+        api.acl_free.return_value = -1
+        try:
+            raise ValueError("already handled by caller")
+        except ValueError:
+            with self.assertRaises(peer.CcPeerError) as caught:
+                with peer._preset_cleanup_scope(failed_cleanup):
+                    pass
+            self.assertEqual(caught.exception.details["reason"], "preset_cleanup_failed")
+            with mock.patch.object(ctypes, "CDLL", return_value=api):
+                self.refuse("preset_acl_unverifiable", peer._preset_darwin_acl_tags, 123)
+        api.acl_free.assert_called_once_with(100)
+
+    def test_handled_caller_exception_does_not_hide_successful_mutation_close_failure(self):
+        peer.preset_mutate("add", "fixture", self.route)
+        lock_identity = (self.app / "destinations.lock").stat()
+        real_close = os.close
+        def close_then_fail(fd):
+            info = os.fstat(fd)
+            real_close(fd)
+            if (info.st_dev, info.st_ino) == (lock_identity.st_dev, lock_identity.st_ino):
+                raise OSError(errno.EIO, "private close diagnostic")
+        try:
+            raise ValueError("already handled by caller")
+        except ValueError:
+            with mock.patch.object(peer.os, "close", side_effect=close_then_fail):
+                self.refuse("preset_cleanup_failed", peer.preset_mutate, "add", "other", self.route)
+        self.assertEqual(set(peer.preset_read()), {"fixture", "other"})
+
+    def test_read_interrupt_is_not_masked_by_descriptor_close_error(self):
+        peer.preset_mutate("add", "fixture", self.route)
+        identity = self.file.stat()
+        real_close = os.close
+        def close_then_fail(fd):
+            info = os.fstat(fd)
+            real_close(fd)
+            if (info.st_dev, info.st_ino) == (identity.st_dev, identity.st_ino):
+                raise OSError(errno.EIO, "private close diagnostic")
+        with mock.patch.object(peer.os, "read", side_effect=KeyboardInterrupt()), mock.patch.object(peer.os, "close", side_effect=close_then_fail):
+            with self.assertRaises(KeyboardInterrupt):
+                peer.preset_read()
+        self.assertEqual(set(peer.preset_read()), {"fixture"})
+
     def test_foreign_owned_nonwritable_ancestor_is_rejected_before_creation(self):
         ancestor = self.root / "ancestor"
         ancestor.mkdir(mode=0o755)
@@ -308,7 +379,9 @@ class PresetStorageTests(unittest.TestCase):
         def create(index):
             barrier.wait(timeout=5)
             return peer.preset_mutate("add", "first" + str(index), self.route)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        # This test asserts update serialization, not the production lock's
+        # one-second wait deadline (covered by test_lock_wait_is_bounded...).
+        with mock.patch.object(peer, "PRESET_LOCK_SECONDS", 5.0), concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
             results = list(pool.map(create, range(6)))
         self.assertEqual(len(results), 6)
         self.assertEqual(set(peer.preset_read()), {"first" + str(index) for index in range(6)})
@@ -455,6 +528,15 @@ class PresetStorageTests(unittest.TestCase):
             self.refuse("preset_acl_unverifiable", peer._preset_darwin_acl_tags, 123)
         api.acl_free.assert_called_once_with(100)
 
+    def test_darwin_acl_entry_interrupt_is_not_masked_by_free_failure(self):
+        api = self.darwin_api((2,))
+        api.acl_get_entry.side_effect = KeyboardInterrupt()
+        api.acl_free.return_value = -1
+        with mock.patch.object(ctypes, "CDLL", return_value=api):
+            with self.assertRaises(KeyboardInterrupt):
+                peer._preset_darwin_acl_tags(123)
+        api.acl_free.assert_called_once_with(100)
+
     def test_darwin_acl_policy_all_private_entries_refused_ancestor_deny_only_allowed(self):
         with mock.patch.object(peer.sys, "platform", "darwin"):
             for tags in ((), (2,), (2, 2)):
@@ -486,6 +568,66 @@ class PresetStorageTests(unittest.TestCase):
             with mock.patch.object(peer.sys, "platform", "linux"), mock.patch.object(peer.os, "getxattr", side_effect=OSError(code, "private diagnostic"), create=True):
                 error = self.refuse("preset_acl_unverifiable", peer._preset_check_acl, 123, private=True)
                 self.assertNotIn("private diagnostic", str(error))
+
+    def linux_acl_bytes(self, owner_permissions):
+        # Linux UAPI POSIX_ACL_XATTR_VERSION=2 and five fixed-size entries.
+        # The named-user entry has a zero mask, granting it no effective access.
+        entries = ((1, owner_permissions, 0xffffffff), (2, 4, os.geteuid() + 1),
+                   (4, 0, 0xffffffff), (16, 0, 0xffffffff), (32, 0, 0xffffffff))
+        return struct.pack("<I", 2) + b"".join(struct.pack("<HHI", *entry) for entry in entries)
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux POSIX ACL fixture only")
+    def test_native_linux_temp_file_acl_presence_is_refused(self):
+        path = self.root / "acl-fixture"
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        applied = False
+        try:
+            peer._preset_check_acl(fd, private=True)
+            try:
+                os.setxattr(fd, "system.posix_acl_access", self.linux_acl_bytes(6))
+                applied = True
+            except OSError as error:
+                if error.errno == errno.EOPNOTSUPP:
+                    self.skipTest("dedicated fixture filesystem does not support POSIX ACL setup")
+                raise
+            self.refuse("preset_unsafe_acl", peer._preset_check_acl, fd, private=True)
+            self.assertEqual(stat.S_IMODE(os.fstat(fd).st_mode), 0o600)
+            os.removexattr(fd, "system.posix_acl_access")
+            applied = False
+            peer._preset_check_acl(fd, private=True)
+        finally:
+            try:
+                if applied:
+                    os.removexattr(fd, "system.posix_acl_access")
+            finally:
+                os.close(fd)
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux POSIX default ACL fixture only")
+    def test_native_linux_temp_directory_default_acl_presence_is_refused(self):
+        path = self.root / "acl-directory"
+        path.mkdir(mode=0o700)
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        applied = False
+        try:
+            peer._preset_check_acl(fd, private=True, directory=True)
+            try:
+                os.setxattr(fd, "system.posix_acl_default", self.linux_acl_bytes(7))
+                applied = True
+            except OSError as error:
+                if error.errno == errno.EOPNOTSUPP:
+                    self.skipTest("dedicated fixture filesystem does not support POSIX default ACL setup")
+                raise
+            self.refuse("preset_unsafe_acl", peer._preset_check_acl, fd, private=True, directory=True)
+            self.assertEqual(stat.S_IMODE(os.fstat(fd).st_mode), 0o700)
+            os.removexattr(fd, "system.posix_acl_default")
+            applied = False
+            peer._preset_check_acl(fd, private=True, directory=True)
+        finally:
+            try:
+                if applied:
+                    os.removexattr(fd, "system.posix_acl_default")
+            finally:
+                os.close(fd)
 
     def test_acl_checks_cover_held_app_file_lock_and_temp_descriptors(self):
         real_check = peer._preset_check_acl
@@ -544,3 +686,50 @@ class PresetStorageTests(unittest.TestCase):
             self.refuse("preset_platform_unsupported", peer.preset_read)
             self.refuse("preset_platform_unsupported", peer.preset_mutate, "add", "fixture", self.route)
             opening.assert_not_called()
+
+    def test_darwin_mount_explicit_64bit_abi_and_flag_only_result(self):
+        def populate(fd, output):
+            self.assertEqual(fd, 123)
+            self.assertEqual(ctypes.sizeof(output._obj), 2168)
+            self.assertEqual(type(output._obj).f_flags.offset, 64)
+            output._obj.f_flags = 0x00200000
+            return 0
+        api = SimpleNamespace(fstatfs64=mock.Mock(side_effect=populate))
+        with mock.patch.object(ctypes, "CDLL", return_value=api):
+            self.assertEqual(peer._preset_darwin_mount_flags(123), 0x00200000)
+        self.assertEqual(api.fstatfs64.restype, ctypes.c_int)
+
+    def test_darwin_mount_missing_symbol_failed_query_and_abi_rejected(self):
+        for api in (SimpleNamespace(), SimpleNamespace(fstatfs64=mock.Mock(return_value=-1))):
+            with mock.patch.object(ctypes, "CDLL", return_value=api):
+                self.refuse("preset_mount_unverifiable", peer._preset_darwin_mount_flags, 123)
+        real_sizeof = ctypes.sizeof
+        for pointer_size, structure_size in ((4, 2168), (8, 2160)):
+            def incompatible(value):
+                if value is ctypes.c_void_p:
+                    return pointer_size
+                if isinstance(value, type) and issubclass(value, ctypes.Structure):
+                    return structure_size
+                return real_sizeof(value)
+            with mock.patch.object(ctypes, "sizeof", side_effect=incompatible), mock.patch.object(ctypes, "CDLL") as loading:
+                self.refuse("preset_mount_unverifiable", peer._preset_darwin_mount_flags, 123)
+                loading.assert_not_called()
+
+    def test_darwin_ignore_ownership_is_refused_without_affecting_linux(self):
+        with mock.patch.object(peer.sys, "platform", "darwin"):
+            with mock.patch.object(peer, "_preset_darwin_mount_flags", return_value=0):
+                peer._preset_check_ownership(123)
+            with mock.patch.object(peer, "_preset_darwin_mount_flags", return_value=0x00200000):
+                self.refuse("preset_ownership_unenforced", peer._preset_check_ownership, 123)
+        with mock.patch.object(peer.sys, "platform", "linux"), mock.patch.object(peer, "_preset_darwin_mount_flags") as lookup:
+            peer._preset_check_ownership(123)
+            lookup.assert_not_called()
+
+    def test_private_fd_mount_refusal_precedes_acl_lookup(self):
+        with mock.patch.object(peer, "_preset_check_ownership", side_effect=peer._preset_error("preset_ownership_unenforced")), mock.patch.object(peer, "_preset_check_acl") as acl:
+            self.refuse("preset_ownership_unenforced", peer._preset_check_fd, 123, private=True)
+            acl.assert_not_called()
+        with mock.patch.object(peer, "_preset_check_ownership") as ownership, mock.patch.object(peer, "_preset_check_acl") as acl:
+            peer._preset_check_fd(123, private=False, directory=True)
+            ownership.assert_not_called()
+            acl.assert_called_once_with(123, private=False, directory=True)

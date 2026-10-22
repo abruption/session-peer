@@ -129,6 +129,8 @@ session-peer preset remove work-mac --expect-revision 'dp1:<CURRENT-HASH>'
 
 受检上级路径必须归 root 或当前用户所有，且不能由其他用户写入；root 所有的 sticky 临时目录除外，配置的直接父目录必须归当前用户所有。打开所有路径组成部分时均不跟随符号链接。专用存储中的扩展 ACL 条目会被保守地拒绝；macOS 上级路径允许 deny-only ACL，但 allow 条目或无法验证的 ACL 会被拒绝，同时也会检查 Linux POSIX ACL。空值或相对路径的 `XDG_CONFIG_HOME` 会被拒绝，不会静默改用其他位置。不会自动修复现有权限：请选择安全的用户专用绝对配置路径，或保留私有备份后离线检查、修复无效配置；不要公开其内容。
 
+在 macOS 上，忽略所有权的挂载会以 `preset_ownership_unenforced` 被拒绝，无法查询或验证挂载状态时则以 `preset_mount_unverifiable` 被拒绝。不会仅凭模式位断定所有权已强制执行。Linux 也会拒绝上级路径中的 ACL，以及无法验证 ACL 状态的文件系统。中断管理命令后请检查当前配置，因为更改可能已经可见；目录同步失败不会被静默当作成功。
+
 <a id="install"></a>
 ## 可选的交互式短命令
 
