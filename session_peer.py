@@ -5859,8 +5859,7 @@ def _preset_check_ownership(fd):
 
 
 def _preset_check_fd(fd, *, private, directory=False):
-    if private:
-        _preset_check_ownership(fd)
+    _preset_check_ownership(fd)
     _preset_check_acl(fd, private=private, directory=directory)
 
 
@@ -6337,7 +6336,13 @@ def preset_mutate(action, name, entry=None, expected_revision=None):
             with _preset_cleanup_scope(close_directory):
                 if lock is not None:
                     _preset_cleanup(os.close, lock)
-        _preset_cleanup(close_storage, preserve=mutation_failed)
+        try:
+            _preset_cleanup(close_storage, preserve=mutation_failed)
+        except CcPeerError:
+            if committed:
+                raise CcPeerError("preset commit unconfirmed; inspect configuration before retrying",
+                                  {"reason": "preset_commit_unconfirmed"}) from None
+            raise
 
 
 class PresetSingleUseAction(argparse.Action):

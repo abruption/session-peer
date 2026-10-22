@@ -317,7 +317,7 @@ class PresetStorageTests(unittest.TestCase):
             raise ValueError("already handled by caller")
         except ValueError:
             with mock.patch.object(peer.os, "close", side_effect=close_then_fail):
-                self.refuse("preset_cleanup_failed", peer.preset_mutate, "add", "other", self.route)
+                self.refuse("preset_commit_unconfirmed", peer.preset_mutate, "add", "other", self.route)
         self.assertEqual(set(peer.preset_read()), {"fixture", "other"})
 
     def test_read_interrupt_is_not_masked_by_descriptor_close_error(self):
@@ -725,11 +725,12 @@ class PresetStorageTests(unittest.TestCase):
             peer._preset_check_ownership(123)
             lookup.assert_not_called()
 
-    def test_private_fd_mount_refusal_precedes_acl_lookup(self):
+    def test_private_and_ancestor_mount_refusal_precedes_acl_lookup(self):
         with mock.patch.object(peer, "_preset_check_ownership", side_effect=peer._preset_error("preset_ownership_unenforced")), mock.patch.object(peer, "_preset_check_acl") as acl:
             self.refuse("preset_ownership_unenforced", peer._preset_check_fd, 123, private=True)
+            self.refuse("preset_ownership_unenforced", peer._preset_check_fd, 123, private=False, directory=True)
             acl.assert_not_called()
         with mock.patch.object(peer, "_preset_check_ownership") as ownership, mock.patch.object(peer, "_preset_check_acl") as acl:
             peer._preset_check_fd(123, private=False, directory=True)
-            ownership.assert_not_called()
+            ownership.assert_called_once_with(123)
             acl.assert_called_once_with(123, private=False, directory=True)
