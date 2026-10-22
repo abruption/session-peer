@@ -1,6 +1,12 @@
 import json
+import io
+import os
+import stat
 import unittest
-from side_session import Refused, Rpc, RpcRejected, Unknown, loaded_ids, send
+from contextlib import redirect_stdout
+from types import SimpleNamespace
+from unittest.mock import patch, MagicMock
+from side_session import Refused, Rpc, RpcRejected, Unknown, loaded_ids, send, main
 
 
 TARGET = "00000000-0000-4000-8000-000000000001"
@@ -26,8 +32,9 @@ class Fake:
 class FrameSocket:
     """In-memory JSON frames through the real RPC parser; no server or model."""
 
-    def __init__(self, method, error):
+    def __init__(self, method, error, both=False):
         self.method, self.error = method, error
+        self.both = both
         self.calls = []
 
     def send(self, frame):
@@ -36,7 +43,8 @@ class FrameSocket:
         result = Fake().call(request["method"], request["params"])
         self.response = {"id": request["id"], "result": result}
         if request["method"] == self.method:
-            # A plausible success result must not mask a malformed/error reply.
+            if not self.both:
+                del self.response["result"]
             self.response["error"] = self.error
 
     def recv(self, timeout):
@@ -46,7 +54,9 @@ class FrameSocket:
 class RpcResponseContract(unittest.TestCase):
     malformed_errors = (None, [], "private provider detail", {}, {"code": None},
                         {"code": True}, {"code": False}, {"code": -32600.0},
-                        {"code": "-32600"}, {"code": []}, {"code": {}})
+                        {"code": "-32600"}, {"code": []}, {"code": {}},
+                        {"code": -32600}, {"code": -32600, "message": None},
+                        {"code": -32600, "message": {"private": "detail"}})
 
     def rpc(self, method, error):
         rpc = Rpc("/unused-fixture.sock")
@@ -86,6 +96,124 @@ class RpcResponseContract(unittest.TestCase):
         result = send(rpc, TARGET, "hello", exclusive=True)
         self.assertTrue(result["submitted"])
         self.assertFalse(result["consumptionConfirmed"])
+
+    def test_ambiguous_envelope_never_proves_rejection(self):
+        for method in ("thread/loaded/list", "turn/start"):
+            rpc = self.rpc(method, {"code": -32600, "message": "private detail"})
+            rpc.socket.both = True
+            expected = Unknown if method == "turn/start" else Refused
+            with self.subTest(method=method), self.assertRaises(expected) as raised:
+                send(rpc, TARGET, "hello", exclusive=True)
+            self.assertIs(type(raised.exception), expected)
+            self.assertNotIn("private detail", str(raised.exception))
+            self.assertEqual(sum(r["method"] == "turn/start" for r in rpc.socket.calls),
+                             int(method == "turn/start"))
+
+    def test_response_ids_require_exact_integers(self):
+        for response_id in (True, 1.0, "1", None):
+            rpc = self.rpc("unused", None)
+            with patch.object(rpc.socket, "recv", return_value=json.dumps(
+                    {"id": response_id, "result": {}})):
+                with self.subTest(response_id=response_id), self.assertRaises(Refused):
+                    rpc.call("thread/loaded/list", {})
+
+    def test_bad_json_is_refused_before_attempt_and_unknown_after(self):
+        for frame in ('{"private detail":', '[' * 2000 + '0' + ']' * 2000):
+            for method in ("thread/loaded/list", "turn/start"):
+                rpc = self.rpc("unused", None)
+                original_recv = rpc.socket.recv
+                def recv(timeout):
+                    return frame if rpc.socket.calls[-1]["method"] == method else original_recv(timeout)
+                with patch.object(rpc.socket, "recv", side_effect=recv):
+                    expected = Unknown if method == "turn/start" else Refused
+                    with self.subTest(method=method, size=len(frame)), self.assertRaises(expected) as raised:
+                        send(rpc, TARGET, "hello", exclusive=True)
+                    self.assertNotIn("private detail", str(raised.exception))
+
+
+class CliContract(unittest.TestCase):
+    def run_cli(self, rpc, command):
+        output = io.StringIO()
+        with patch("side_session.Rpc", return_value=rpc), redirect_stdout(output):
+            code = main(["--experimental-side-session", "--socket", "/unused", *command])
+        self.assertEqual(code, 1)
+        return json.loads(output.getvalue())
+
+    def test_attempted_malformed_response_is_unknown_in_cli(self):
+        rpc = Rpc("/unused")
+        rpc.socket = FrameSocket("turn/start", {"code": -32600})
+        context = MagicMock()
+        context.__enter__.return_value = rpc
+        result = self.run_cli(context, ["send", "--to", TARGET, "--message", "hello",
+                                        "--exclusive-test-session"])
+        self.assertEqual(result["status"], "unknown")
+        self.assertIsNone(result["submitted"])
+        self.assertFalse(result["retryAllowed"])
+        self.assertEqual(sum(r["method"] == "turn/start" for r in rpc.socket.calls), 1)
+
+    def test_malformed_discovery_metadata_is_private_refusal(self):
+        base = {"id": TARGET, "ephemeral": True, "status": {"type": "idle"}}
+        responses = [{}, {"thread": None}, {"thread": "private detail"},
+                     *({"thread": {**base, "status": status}} for status in
+                       (None, [], "private detail", {}, {"type": {"private": "detail"}})),
+                     {"thread": {**base, "canAcceptDirectInput": "private detail"}}]
+        for response in responses:
+            context = MagicMock()
+            context.__enter__.return_value.call.side_effect = [{"data": [TARGET]}, response]
+            with self.subTest(response=response):
+                result = self.run_cli(context, ["list"])
+                self.assertEqual(result["status"], "refused")
+                self.assertFalse(result["submitted"])
+                self.assertEqual(result["reason"], "invalid_thread_metadata")
+                self.assertNotIn("private detail", json.dumps(result))
+
+    def test_malformed_initialize_agent_is_refused(self):
+        client = SimpleNamespace(unix_connect=MagicMock())
+        for agent in (None, [], {}, 1, True):
+            rpc = Rpc("/unused/socket")
+            with patch.dict("sys.modules", {"websockets.sync.client": client}), \
+                    patch("side_session.Path.stat", return_value=SimpleNamespace(st_uid=os.getuid(), st_mode=0o700)), \
+                    patch("side_session.Path.lstat", return_value=SimpleNamespace(st_uid=os.getuid(), st_mode=stat.S_IFSOCK)), \
+                    patch("side_session.Path.resolve", return_value=rpc.path), \
+                    patch.object(rpc, "call", return_value={"userAgent": agent}):
+                with self.subTest(agent=agent), self.assertRaisesRegex(Refused, "^unsupported_server_version$"):
+                    rpc.__enter__()
+
+    def test_cleanup_failure_preserves_submission_evidence(self):
+        for method, expected_status, expected_submitted in (
+                ("unused", "accepted", True),
+                ("turn/start", "unknown", None),
+                ("thread/loaded/list", "refused", False)):
+            rpc = Rpc("/unused")
+            rpc.socket = FrameSocket(method, {"code": -32600})
+            rpc.connection = MagicMock()
+            rpc.connection.__exit__.side_effect = OSError("private cleanup detail")
+            output = io.StringIO()
+            # Keep the real __exit__ while avoiding all native connections.
+            with self.subTest(method=method), \
+                    patch.object(Rpc, "__enter__", return_value=rpc), \
+                    patch("side_session.Rpc", return_value=rpc), redirect_stdout(output):
+                code = main(["--experimental-side-session", "--socket", "/unused",
+                             "send", "--to", TARGET, "--message", "hello",
+                             "--exclusive-test-session"])
+            result = json.loads(output.getvalue())
+            self.assertEqual(code, 0 if expected_submitted else 1)
+            self.assertEqual(result["status"], expected_status)
+            self.assertIs(result["submitted"], expected_submitted)
+            self.assertTrue(rpc.close_failed)
+            self.assertNotIn("private cleanup detail", output.getvalue())
+            self.assertEqual(sum(r["method"] == "turn/start" for r in rpc.socket.calls),
+                             0 if method == "thread/loaded/list" else 1)
+            if expected_status == "unknown":
+                self.assertFalse(result["retryAllowed"])
+
+    def test_cleanup_does_not_swallow_process_interrupts(self):
+        for interruption in (KeyboardInterrupt, SystemExit):
+            rpc = Rpc("/unused")
+            rpc.connection = MagicMock()
+            rpc.connection.__exit__.side_effect = interruption()
+            with self.subTest(interruption=interruption), self.assertRaises(interruption):
+                rpc.__exit__()
 
 
 class Contract(unittest.TestCase):

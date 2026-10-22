@@ -37,6 +37,7 @@ class Rpc:
         self.buffer = b""
         self.sequence = 0
         self.notifications = []
+        self.close_failed = False
 
     def __enter__(self):
         if not self.path.is_absolute():
@@ -72,7 +73,8 @@ class Rpc:
                                "title": "session-peer side experiment", "version": "0.0.0"},
                 "capabilities": {"experimentalApi": True},
             })
-            if not self.info.get("userAgent", "").startswith("codex-tui/0.159.2 "):
+            agent = self.info.get("userAgent")
+            if not isinstance(agent, str) or not agent.startswith("codex-tui/0.159.2 "):
                 raise Refused("unsupported_server_version")
             self.write({"method": "initialized"})
             return self
@@ -81,7 +83,12 @@ class Rpc:
             raise
 
     def __exit__(self, *args):
-        self.connection.__exit__(*args if args else (None, None, None))
+        try:
+            self.connection.__exit__(*args if args else (None, None, None))
+        except Exception:
+            # Cleanup cannot invalidate submission evidence or replace its error.
+            self.close_failed = True
+        return False
 
     def write(self, message):
         frame = json.dumps(message, ensure_ascii=False)
@@ -104,7 +111,10 @@ class Rpc:
             raise ConnectionError("transport_closed") from exc
         if not isinstance(frame, str):
             raise Refused("invalid_frame")
-        message = json.loads(frame)
+        try:
+            message = json.loads(frame)
+        except (ValueError, RecursionError) as exc:
+            raise Refused("invalid_rpc_response") from exc
         if not isinstance(message, dict):
             raise Refused("invalid_rpc_response")
         return message
@@ -116,11 +126,14 @@ class Rpc:
         deadline = time.monotonic() + self.timeout
         while True:
             message = self.read(deadline)
-            if message.get("id") == request_id:
+            if type(message.get("id")) is int and message["id"] == request_id:
+                if ("result" in message) == ("error" in message):
+                    raise Refused("invalid_rpc_response")
                 if "error" in message:
                     # Never expose provider errors, transcript content or paths.
                     error = message["error"]
-                    if not isinstance(error, dict) or type(error.get("code")) is not int:
+                    if (not isinstance(error, dict) or type(error.get("code")) is not int
+                            or not isinstance(error.get("message"), str)):
                         raise Refused("invalid_rpc_response")
                     raise RpcRejected(method, error["code"])
                 result = message.get("result")
@@ -228,11 +241,19 @@ def main(argv=None):
             if args.command == "list":
                 rows = []
                 for thread_id in loaded_ids(rpc):
-                    t = rpc.call("thread/read", {"threadId": thread_id, "includeTurns": False})["thread"]
+                    t = rpc.call("thread/read", {"threadId": thread_id, "includeTurns": False}).get("thread")
+                    if not isinstance(t, dict) or t.get("id") != thread_id:
+                        raise Refused("invalid_thread_metadata")
+                    status = t.get("status")
+                    if not isinstance(status, dict) or not isinstance(status.get("type"), str):
+                        raise Refused("invalid_thread_metadata")
                     if t.get("ephemeral") is True:
+                        direct = t.get("canAcceptDirectInput")
+                        if direct is not None and type(direct) is not bool:
+                            raise Refused("invalid_thread_metadata")
                         rows.append({"id": thread_id, "ephemeral": True, "kind": "ephemeral_unclassified",
-                                     "status": t.get("status", {}).get("type"),
-                                     "canAcceptDirectInput": t.get("canAcceptDirectInput")})
+                                     "status": status["type"],
+                                     "canAcceptDirectInput": direct})
                 result = {"schemaVersion": 1, "ok": True, "experimental": True, "sessions": rows}
             else:
                 text = sys.stdin.read(65537) if args.message == "-" else args.message

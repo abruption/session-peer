@@ -13,6 +13,13 @@ requires `websockets` (tested with 17.1), and gates server version to 0.159.2.
 ephemeral threads as **unclassified**, not necessarily `/btw` conversations.
 For a real `/btw` test, establish its origin separately using the dedicated TUI.
 
+Malformed RPC envelopes, error fields, deeply nested JSON and invalid discovery
+metadata are rejected with fixed diagnostics. Once `turn/start` has been
+attempted, an invalid response is `unknown`, with no automatic retry. An ordinary
+connection-close error preserves an already validated submission or the original
+unknown outcome; it does not establish non-submission. These boundaries are
+covered by offline fake-transport tests, not a new native-version acceptance run.
+
 Example (dummy paths/UUID):
 
 ```sh
