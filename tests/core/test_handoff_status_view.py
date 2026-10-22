@@ -436,4 +436,3 @@ class HandoffStatusView(unittest.TestCase):
         self.assertIn(self.correlation, text)
         for private in (self.epoch, self.record["generation"], self.binding["payloadDigest"]):
             self.assertNotIn(private, text)
-
