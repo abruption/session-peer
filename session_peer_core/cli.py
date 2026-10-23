@@ -29,6 +29,38 @@ class HumanArgumentParser(MessageArgumentParser):
         super().error(human_text(message))
 
 
+class SshConfigArgument(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        if getattr(namespace, self.dest, None) not in (None, False):
+            parser.error(self.option_strings[0] + " may be specified only once")
+        setattr(namespace, self.dest, self.const if self.nargs == 0 else values)
+
+
+def prepare_trusted_ssh_config(parser, args):
+    path = getattr(args, "ssh_config", None)
+    trust = getattr(args, "trust_ssh_config", False)
+    if path is None and not trust:
+        return
+    if path is None or not trust:
+        parser.error("--ssh-config and --trust-ssh-config must be supplied together")
+    if args.command not in ("list", "send", "doctor", "update") or not getattr(args, "host", None):
+        parser.error("--ssh-config requires list/send/doctor/update with explicit --host")
+    if getattr(args, "device", None) or getattr(args, "preset", None) is not None:
+        parser.error("--ssh-config cannot be combined with paired devices or route presets")
+    if str(getattr(args, "to", "")).lower().startswith("session-peer:"):
+        parser.error("--ssh-config cannot be selected through a Reply-To invocation")
+    for host in args.host:
+        check_ssh_argument(host, "--host")
+    check_ssh_options(getattr(args, "ssh_opt", []))
+    if IS_WINDOWS:
+        raise _ssh_config_error("ssh_config_platform_unsupported")
+    if args.command == "send" and handoff_requested(args):
+        # Configuration setup belongs to the ORIGINAL handoff budget; no
+        # metadata/effect child receives a renewed deadline or this local path.
+        args._handoff_fixed_total = handoff_now() + args.wait_timeout
+    SSH_CONFIG_SELECTION.set(select_trusted_ssh_config(path))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = HumanArgumentParser(
         prog="session-peer",
@@ -148,12 +180,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     handoff = subparsers.add_parser("handoff", help="manage private correlated intents without submitting native messages")
     handoff_sub = handoff.add_subparsers(dest="handoff_action", required=True)
-    for action in ("init", "prepare", "status", "wait", "confirm"):
+    for action in ("init", "prepare", "status", "watch", "wait", "confirm"):
         sub = handoff_sub.add_parser(action)
         sub.add_argument("--json", action="store_true")
-        sub.set_defaults(func=cmd_handoff, no_update_notice=True)
-        if action in ("status", "wait"):
+        sub.set_defaults(func=cmd_handoff_watch if action == "watch" else cmd_handoff, no_update_notice=True)
+        if action in ("status", "watch", "wait"):
             sub.add_argument("--correlation-id", required=True, type=handoff_cli_uuid)
+        if action == "watch":
+            sub.add_argument("--watch-timeout", type=handoff_watch_timeout, default=30,
+                             metavar="SECONDS", help="finite local watch budget, 1..60 seconds (default: 30)")
+            sub.add_argument("--interval-ms", type=handoff_watch_interval, default=1000,
+                             metavar="MILLISECONDS", help="sample every 1000..5000 ms (default: 1000)")
         if action == "wait":
             sub.add_argument("--wait-for", choices=("delivered", "acknowledged"), required=True)
             sub.add_argument("--wait-timeout", type=handoff_timeout, default=30)
@@ -175,6 +212,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--check", action="store_true", help="report the available version, change nothing"
     )
     updating.set_defaults(func=cmd_update)
+
+    # Deliberately not add_common: setup must not gain executable config input.
+    for sub in (listing, sending, doctor, updating):
+        sub.add_argument("--ssh-config", action=SshConfigArgument, metavar="ABS_PATH",
+                         help="operator-trusted local executable SSH configuration; requires --trust-ssh-config")
+        sub.add_argument("--trust-ssh-config", action=SshConfigArgument, nargs=0, const=True, default=False,
+                         help="authorize this configuration's local commands, including during ssh -G and dry-run")
 
     for sub in (listing, sending, doctor):
         sub.add_argument('--antigravity-home', help='filter registered Antigravity home on the destination')
@@ -246,6 +290,16 @@ def json_error_result(args: argparse.Namespace, payload: dict) -> dict | list[di
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Invocation-local authority, never an environment setting, MCP default or
+    # leaked state from a previous/reentrant call in the same interpreter.
+    token = SSH_CONFIG_SELECTION.set(None)
+    try:
+        return _main(argv)
+    finally:
+        SSH_CONFIG_SELECTION.reset(token)
+
+
+def _main(argv: list[str] | None = None) -> int:
     global _CLIENT_UPDATE_NOTICE, _SKILL_UPDATE_NOTICES
     cli_invocation = argv is None
     raw_argv = list(sys.argv[1:] if argv is None else argv)
@@ -288,6 +342,16 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--json conflicts with --output-format text")
     args.json = args.json or output_format == "json"
     try:
+        prepare_trusted_ssh_config(parser, args)
+    except CcPeerError as exc:
+        if args.json:
+            print(json.dumps(json_error_result(args, {"error": str(exc), **exc.details}), ensure_ascii=False))
+        else:
+            print(human_text(f"session-peer: {exc}"), file=sys.stderr)
+        return EXIT_ERROR
+    except KeyboardInterrupt:
+        return 130
+    try:
         _CLIENT_UPDATE_NOTICE = prepare_client_update(args) if cli_invocation else None
     except Exception:
         # Update discovery is advisory. Even an unexpected cache or launcher
@@ -302,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
         validate_ssh_identity_options(args)
         exit_code = args.func(args)
     except CcPeerError as exc:
-        message = str(exc)
+        message = redact_ssh_config_path(str(exc))
         if args.json:
             payload = json_error_result(args, {"error": message, **exc.details})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
@@ -317,7 +381,7 @@ def main(argv: list[str] | None = None) -> int:
         show_human_notice = False
         exit_code = 130
     except Exception as exc:
-        message = f"{type(exc).__name__}: {exc}"
+        message = redact_ssh_config_path(f"{type(exc).__name__}: {exc}")
         if getattr(args, "json", False):
             payload = json_error_result(args, {"error": message})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))

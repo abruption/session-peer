@@ -3204,6 +3204,348 @@ def reply_line(explicit_host: str | None) -> str | None:
     return _reply_from_identity(sender_identity(explicit_host))
 
 
+"""Opt-in local SSH configuration validation; never a remote identity proof."""
+
+import hashlib
+from contextvars import ContextVar
+
+SSH_CONFIG_MAX_BYTES = 65536
+SSH_CONFIG_SELECTION = ContextVar("ssh_config_selection", default=None)
+
+def _ssh_config_error(reason):
+    return CcPeerError("trusted SSH configuration refused: " + reason,
+                       {"reason": reason, "retryAllowed": False})
+
+
+def _ssh_config_cleanup(action, *args, preserve=False, **kwargs):
+    """A secondary ordinary cleanup error must not replace an active failure.
+
+    New KeyboardInterrupt/SystemExit are never swallowed. On a normal return,
+    cleanup failure is still reported, without reflecting raw diagnostics.
+    """
+    try:
+        return action(*args, **kwargs)
+    except Exception as error:
+        if not preserve:
+            if isinstance(error, CcPeerError):
+                raise
+            raise _ssh_config_error("ssh_config_cleanup_failed") from None
+
+
+@contextlib.contextmanager
+def _ssh_config_cleanup_scope(action, *args, **kwargs):
+    """Derive preservation from this body, never an ambient caller exception."""
+    try:
+        yield
+    except BaseException:
+        # A caller may already supply this policy for a nested cleanup. The
+        # active body's failure takes precedence without a duplicate keyword.
+        _ssh_config_cleanup(action, *args, **{**kwargs, "preserve": True})
+        raise
+    else:
+        _ssh_config_cleanup(action, *args, **kwargs)
+
+
+def _ssh_config_platform():
+    if IS_WINDOWS or fcntl is None or sys.platform not in ("darwin", "linux"):
+        raise _ssh_config_error("ssh_config_platform_unsupported")
+
+
+def _ssh_config_darwin_mount_flags(fd):
+    """Use the explicit statfs64 ABI, never the ambiguous legacy statfs ABI."""
+    import ctypes
+    try:
+        class Statfs64(ctypes.Structure):
+            # sys/mount.h __DARWIN_STRUCT_STATFS64. The reserved tail remains
+            # 32 bytes across the f_flags_ext addition; no string is inspected.
+            _fields_ = [
+                ("f_bsize", ctypes.c_uint32), ("f_iosize", ctypes.c_int32),
+                ("f_blocks", ctypes.c_uint64), ("f_bfree", ctypes.c_uint64),
+                ("f_bavail", ctypes.c_uint64), ("f_files", ctypes.c_uint64),
+                ("f_ffree", ctypes.c_uint64), ("f_fsid", ctypes.c_int32 * 2),
+                ("f_owner", ctypes.c_uint32), ("f_type", ctypes.c_uint32),
+                ("f_flags", ctypes.c_uint32), ("f_fssubtype", ctypes.c_uint32),
+                ("f_fstypename", ctypes.c_char * 16),
+                ("f_mntonname", ctypes.c_char * 1024),
+                ("f_mntfromname", ctypes.c_char * 1024),
+                ("f_reserved", ctypes.c_uint32 * 8),
+            ]
+        if (ctypes.sizeof(ctypes.c_void_p) != 8 or ctypes.sizeof(Statfs64) != 2168
+                or Statfs64.f_flags.offset != 64):
+            raise _ssh_config_error("ssh_config_mount_unverifiable")
+        api = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+        api.fstatfs64.argtypes = [ctypes.c_int, ctypes.POINTER(Statfs64)]
+        api.fstatfs64.restype = ctypes.c_int
+        value = Statfs64()
+        if api.fstatfs64(fd, ctypes.byref(value)) != 0:
+            raise _ssh_config_error("ssh_config_mount_unverifiable")
+        return value.f_flags
+    except (OSError, AttributeError, TypeError, ValueError, OverflowError):
+        raise _ssh_config_error("ssh_config_mount_unverifiable") from None
+
+
+def _ssh_config_check_ownership(fd):
+    if sys.platform == "darwin" and _ssh_config_darwin_mount_flags(fd) & 0x00200000:
+        # MNT_IGNORE_OWNERSHIP can synthesize owner/mode metadata. Do not call
+        # such metadata an owner-only store, even if its ACL is empty.
+        raise _ssh_config_error("ssh_config_ownership_unenforced")
+
+
+def _ssh_config_check_fd(fd, *, private, directory=False):
+    _ssh_config_check_ownership(fd)
+    _ssh_config_check_acl(fd, private=private, directory=directory)
+
+
+def _ssh_config_darwin_acl_tags(fd):
+    """Read only Darwin's extended ACL, without paths or a child process.
+
+    Darwin returns 0 for an entry, -1/EINVAL at exhaustion (unlike Linux).
+    Validate the independent ACL handle first; release it on every path.
+    Constants and prototypes are from the macOS SDK sys/acl.h.
+    """
+    import ctypes
+    try:
+        api = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+        api.acl_get_fd_np.argtypes = [ctypes.c_int, ctypes.c_int]
+        api.acl_get_fd_np.restype = ctypes.c_void_p
+        api.acl_valid.argtypes = [ctypes.c_void_p]
+        api.acl_valid.restype = ctypes.c_int
+        api.acl_get_entry.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)]
+        api.acl_get_entry.restype = ctypes.c_int
+        api.acl_get_tag_type.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
+        api.acl_get_tag_type.restype = ctypes.c_int
+        api.acl_free.argtypes = [ctypes.c_void_p]
+        api.acl_free.restype = ctypes.c_int
+        ctypes.set_errno(0)
+        acl = api.acl_get_fd_np(fd, 0x100)  # ACL_TYPE_EXTENDED
+        if not acl:
+            # Darwin's fd getter returns NULL/ENOENT when FILESEC_ACL is absent
+            # (Libc posix1e/acl_file.c and gen/filesec.c), not an empty object.
+            if ctypes.get_errno() == errno.ENOENT:
+                return ()
+            raise _ssh_config_error("ssh_config_acl_unverifiable")
+        acl_failed = False
+        try:
+            if api.acl_valid(acl) != 0:
+                raise _ssh_config_error("ssh_config_acl_unverifiable")
+            tags = []
+            for index in range(129):
+                entry = ctypes.c_void_p()
+                ctypes.set_errno(0)
+                result = api.acl_get_entry(acl, 0 if index == 0 else -1, ctypes.byref(entry))
+                if result == -1 and ctypes.get_errno() == errno.EINVAL:
+                    return tuple(tags)
+                if result != 0 or not entry.value or index == 128:
+                    raise _ssh_config_error("ssh_config_acl_unverifiable")
+                tag = ctypes.c_int()
+                if api.acl_get_tag_type(entry, ctypes.byref(tag)) != 0 or tag.value not in (1, 2):
+                    raise _ssh_config_error("ssh_config_acl_unverifiable")
+                tags.append(tag.value)  # ACL_EXTENDED_ALLOW=1, DENY=2
+            raise _ssh_config_error("ssh_config_acl_unverifiable")
+        except BaseException:
+            acl_failed = True
+            raise
+        finally:
+            def release_acl():
+                if api.acl_free(acl) != 0:
+                    raise _ssh_config_error("ssh_config_acl_unverifiable")
+            _ssh_config_cleanup(release_acl, preserve=acl_failed)
+    except (OSError, AttributeError, TypeError, ValueError, OverflowError):
+        raise _ssh_config_error("ssh_config_acl_unverifiable") from None
+
+
+def _ssh_config_check_acl(fd, *, private, directory=False):
+    """Conservative ACL policy, not an effective-permissions interpreter."""
+    if sys.platform == "darwin":
+        tags = _ssh_config_darwin_acl_tags(fd)
+        if any(tag not in (1, 2) for tag in tags):
+            raise _ssh_config_error("ssh_config_acl_unverifiable")
+        if (private and tags) or (not private and 1 in tags):
+            raise _ssh_config_error("ssh_config_unsafe_acl")
+        return
+    if sys.platform == "linux":
+        try:
+            for attribute in (("system.posix_acl_access", "system.posix_acl_default")
+                              if directory else ("system.posix_acl_access",)):
+                try:
+                    os.getxattr(fd, attribute)
+                except OSError as error:
+                    if error.errno == errno.ENODATA:
+                        continue
+                    raise _ssh_config_error("ssh_config_acl_unverifiable") from None
+                raise _ssh_config_error("ssh_config_unsafe_acl")
+        except (AttributeError, TypeError, ValueError):
+            raise _ssh_config_error("ssh_config_acl_unverifiable") from None
+        return
+    raise _ssh_config_error("ssh_config_platform_unsupported")
+
+
+
+def _ssh_config_path(path):
+    if (not isinstance(path, str) or not path or len(path) > 4096
+            or not path.startswith("/") or path.startswith("//")
+            or ".." in path.split("/")
+            or any(ord(c) < 32 or 127 <= ord(c) <= 159
+                   or 0xD800 <= ord(c) <= 0xDFFF for c in path)):
+        raise _ssh_config_error("ssh_config_invalid_path")
+    return path
+
+
+def _ssh_config_overflow_uid():
+    if sys.platform != "linux":
+        return None
+    try:
+        with open("/proc/sys/kernel/overflowuid", "rb") as stream:
+            raw = stream.read(32)
+        if not raw.strip().isdigit() or len(raw) == 32:
+            raise ValueError()
+        return int(raw)
+    except (OSError, ValueError):
+        raise _ssh_config_error("ssh_config_ownership_unverifiable") from None
+
+
+def _ssh_config_identity(info):
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid,
+            info.st_gid, info.st_nlink, info.st_size,
+            info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _ssh_config_metadata(info, overflow_uid, *, directory=False):
+    if overflow_uid is not None and info.st_uid == overflow_uid:
+        raise _ssh_config_error("ssh_config_ownership_unverifiable")
+    if directory:
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, os.geteuid())
+                or (info.st_mode & 0o022
+                    and not (info.st_uid == 0 and info.st_mode & stat.S_ISVTX))):
+            raise _ssh_config_error("ssh_config_unsafe_storage")
+    elif (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+          or info.st_nlink != 1 or info.st_mode & 0o7022):
+        raise _ssh_config_error("ssh_config_unsafe_storage")
+
+
+def _ssh_config_snapshot(path):
+    _ssh_config_platform()
+    _ssh_config_path(path)
+    overflow_uid = _ssh_config_overflow_uid()
+    directory = fd = None
+    ancestors = []
+    failed = False
+    try:
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+        directory = os.open("/", flags | os.O_DIRECTORY)
+        parts = path.split("/")[1:]
+        # Reject trailing slash / empty filename, but harmless internal repeated
+        # separators do not change the original path passed to OpenSSH.
+        if not parts[-1]:
+            raise _ssh_config_error("ssh_config_invalid_path")
+        for part in parts[:-1]:
+            info = os.fstat(directory)
+            _ssh_config_metadata(info, overflow_uid, directory=True)
+            _ssh_config_check_fd(directory, private=False, directory=True)
+            if not part:
+                continue
+            ancestors.append((info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid))
+            child = os.open(part, flags | os.O_DIRECTORY, dir_fd=directory)
+            previous, directory = directory, child
+            _ssh_config_cleanup(os.close, previous)
+        info = os.fstat(directory)
+        _ssh_config_metadata(info, overflow_uid, directory=True)
+        ancestors.append((info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid))
+        _ssh_config_check_fd(directory, private=False, directory=True)
+        fd = os.open(parts[-1], flags, dir_fd=directory)
+        before = os.fstat(fd)
+        _ssh_config_metadata(before, overflow_uid)
+        _ssh_config_check_fd(fd, private=False)
+        if before.st_size > SSH_CONFIG_MAX_BYTES:
+            raise _ssh_config_error("ssh_config_capacity")
+        raw = bytearray()
+        while len(raw) <= SSH_CONFIG_MAX_BYTES:
+            chunk = os.read(fd, min(8192, SSH_CONFIG_MAX_BYTES + 1 - len(raw)))
+            if not chunk:
+                break
+            raw.extend(chunk)
+        if len(raw) > SSH_CONFIG_MAX_BYTES:
+            raise _ssh_config_error("ssh_config_capacity")
+        after = os.fstat(fd)
+        _ssh_config_metadata(after, overflow_uid)
+        _ssh_config_check_fd(fd, private=False)
+        current = os.stat(parts[-1], dir_fd=directory, follow_symlinks=False)
+        if (_ssh_config_identity(before) != _ssh_config_identity(after)
+                or _ssh_config_identity(after) != _ssh_config_identity(current)):
+            raise _ssh_config_error("ssh_config_storage_changed")
+        return tuple(ancestors), _ssh_config_identity(after), hashlib.sha256(raw).digest()
+    except OSError:
+        failed = True
+        raise _ssh_config_error("ssh_config_unsafe_storage") from None
+    except BaseException:
+        failed = True
+        raise
+    finally:
+        def close_directory():
+            if directory is not None:
+                os.close(directory)
+        with _ssh_config_cleanup_scope(
+                _ssh_config_cleanup, close_directory, preserve=failed):
+            if fd is not None:
+                _ssh_config_cleanup(os.close, fd, preserve=failed)
+
+
+class _TrustedSshConfig:
+    # Source-streamed consumers may execute without a registered module entry;
+    # dataclass annotation resolution on supported older Python cannot do so.
+    __slots__ = ("_path", "_snapshot")
+
+    def __init__(self, path, snapshot):
+        object.__setattr__(self, "_path", path)
+        object.__setattr__(self, "_snapshot", snapshot)
+
+    @property
+    def path(self):
+        return self._path
+
+    def __setattr__(self, name, value):
+        raise AttributeError("trusted SSH selection is immutable")
+
+    def __delattr__(self, name):
+        raise AttributeError("trusted SSH selection is immutable")
+
+    def __repr__(self):
+        return "<trusted SSH configuration>"
+
+    def revalidate(self):
+        if _ssh_config_snapshot(self.path) != self._snapshot:
+            raise _ssh_config_error("ssh_config_storage_changed")
+
+
+def select_trusted_ssh_config(path):
+    """Validate without executing config, resolving Includes or making copies.
+
+    Revalidation detects changes since selection. OpenSSH subsequently reopens
+    the original path: same-user races and executable config remain user trust.
+    """
+    return _TrustedSshConfig(path, _ssh_config_snapshot(path))
+
+
+def trusted_ssh_command(ssh_opts, host, *remote, prefix=(), identity_options=()):
+    selected = SSH_CONFIG_SELECTION.get()
+    safety = []
+    if selected is not None:
+        selected.revalidate()
+        safety = [
+            "-oStrictHostKeyChecking=yes", "-oUpdateHostKeys=no",
+            "-oForwardAgent=no", "-oPermitLocalCommand=no", "-oBatchMode=yes",
+            "-oControlMaster=no", "-oControlPath=none", "-oControlPersist=no",
+            "-F", selected.path,
+        ]
+    return ["ssh", *prefix, *identity_options, *safety, *ssh_opts, host, *remote]
+
+
+def redact_ssh_config_path(text):
+    """Mask the selected local path; not a general secret/content sanitizer."""
+    selected = SSH_CONFIG_SELECTION.get()
+    return text.replace(selected.path, "<ssh-config>") if selected is not None else text
+
+
 # --------------------------------------------------------------------------
 # Remote dispatch. Ships this file over SSH and runs it there, so the remote
 # machine needs nothing installed beyond python3.
@@ -3308,7 +3650,7 @@ def ssh_user_metadata(host: str, ssh_opts: list[str], *, handoff_budget=None) ->
 
     try:
         completed = subprocess.run(
-            ["ssh", "-G", *ssh_opts, host], capture_output=True,
+            trusted_ssh_command(ssh_opts, host, prefix=("-G",)), capture_output=True,
             encoding="utf-8", errors="replace", timeout=DETECT_TIMEOUT,
         )
     except (OSError, subprocess.SubprocessError):
@@ -3364,7 +3706,7 @@ def ssh_failure_error(host: str, ssh_info: dict, failure: str,
     elif failure == "timeout":
         message = f"SSH connection to {target} timed out"
     else:
-        suffix = f": {detail.strip()[:2000]}" if detail and detail.strip() else ""
+        suffix = f": {redact_ssh_config_path(detail.strip())[:2000]}" if detail and detail.strip() else ""
         message = f"SSH transport failed for {target}{suffix}"
     return CcPeerError(message, {**ssh_info, "sshFailure": failure})
 
@@ -3521,7 +3863,7 @@ def ssh_handoff_configuration(host, ssh_opts, handoff_budget):
     completed = None
     try:
         probe_cutoff = min(cutoff, handoff_now() + DETECT_TIMEOUT)
-        completed = handoff_stream_child(["ssh", "-G", *ssh_opts, host], b"", probe_cutoff,
+        completed = handoff_stream_child(trusted_ssh_command(ssh_opts, host, prefix=("-G",)), b"", probe_cutoff,
                                          min(total, probe_cutoff + 5), handoff_now)
         valid = (completed.returncode in (0, -signal.SIGKILL) and completed.reason is None
                  and not completed.interrupted and not completed.stdout_overflow
@@ -3584,7 +3926,7 @@ def _run_remote_handoff_dispatch(host, argv, ssh_opts, identity_options, budget,
         raise CcPeerError("Cannot read source for private SSH handoff",
                           {"reason": "ssh_handoff_source_unavailable", "retryAllowed": False, "spawned": False}) from exc
     ssh_info = ssh_user_metadata(host, ssh_opts, handoff_budget=budget)
-    completed = handoff_stream_child(["ssh", *identity_options, *ssh_opts, host, remote],
+    completed = handoff_stream_child(trusted_ssh_command(ssh_opts, host, remote, identity_options=identity_options),
                                      source, *budget, handoff_now)
     if context["phase"] == "probe" and completed.interrupted:
         # Probe success is not effect evidence. Operator cancellation must
@@ -3641,7 +3983,7 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
     # result to the remote *shell*, so an argv list is not the protection it
     # looks like: a metacharacter in any element executes over there. Build
     # the remote command as one already-quoted string instead.
-    command = ["ssh", *identity_options, *ssh_opts, host, remote]
+    command = trusted_ssh_command(ssh_opts, host, remote, identity_options=identity_options)
 
     def incomplete_response_error(message: str, details: dict | None = None) -> CcPeerError:
         metadata = {**ssh_info, **(details or {})}
@@ -3695,7 +4037,7 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
     if isinstance(stderr, bytes):
         stderr = stderr.decode("utf-8", errors="replace")
     stderr = stderr if isinstance(stderr, str) else ""
-    detail = stderr.strip() or f"ssh exited {completed.returncode}"
+    detail = redact_ssh_config_path(stderr.strip()) or f"ssh exited {completed.returncode}"
     # A complete response proves the remote command ran, even if the SSH
     # process later exits 255. Login-shell stderr must not hide submission
     # evidence or turn a remote partial failure into an invitation to resend.
@@ -3726,7 +4068,7 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
     if not parsed_result or (isinstance(result, dict)
                              and "schemaVersion" in result and not valid_result) or (
             argv and argv[0] == "send" and not valid_result and not legacy_send_result):
-        raise incomplete_response_error(f"{host}: unexpected output: {stdout[:200]}")
+        raise incomplete_response_error(f"{host}: unexpected output: {redact_ssh_config_path(stdout)[:200]}")
     if isinstance(result, dict):
         result.update(ssh_info)
 
@@ -3768,7 +4110,7 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
         elif "codexHomeResolution" in result:
             details["codexHomeResolution"] = result["codexHomeResolution"]
         raise CcPeerError(
-            f"{host}: {result.get('error', 'remote command failed')}", details
+            f"{host}: {redact_ssh_config_path(str(result.get('error', 'remote command failed')))}", details
         )
     return result
 
@@ -4020,7 +4362,7 @@ finally:
         f'python3 -c {shlex.quote(publisher)} "$T/session_peer.py" '
         f'"$D/session_peer.py" "$B/session-peer" {shlex.quote(expected_line)}'
     )
-    command = ["ssh", *ssh_opts, host, remote_script]
+    command = trusted_ssh_command(ssh_opts, host, remote_script)
     uncertain = {**ssh_info, "commitStatus": "unknown", "retryAllowed": False}
 
     def push_failure(failure: str, detail: str | None = None,
@@ -4063,7 +4405,7 @@ finally:
         failure = classify_ssh_failure(detail, completed.returncode)
         if failure:
             raise push_failure(failure, detail)
-        raise CcPeerError(f"{host}: {detail}", uncertain)
+        raise CcPeerError(f"{host}: {redact_ssh_config_path(detail)}", uncertain)
 
     raise CcPeerError(f"{host}: installed version did not match {__version__}", uncertain)
 
@@ -4130,7 +4472,7 @@ def ssh_identity_configuration(host: str, ssh_opts: list[str], *, handoff_budget
     try:
         completed = (ssh_handoff_configuration(host, ssh_opts, handoff_budget)
                      if handoff_budget is not None else subprocess.run(
-                         ["ssh", "-G", *ssh_opts, host], capture_output=True, timeout=DETECT_TIMEOUT))
+                         trusted_ssh_command(ssh_opts, host, prefix=("-G",)), capture_output=True, timeout=DETECT_TIMEOUT))
         output = completed.stdout
         if isinstance(output, bytes):
             if len(output) > 1024 * 1024:
@@ -4612,6 +4954,16 @@ def diagnose_codex(args: argparse.Namespace) -> dict:
 
 
 def probe_return_route(destination: str) -> dict:
+    # A reverse probe belongs to the machine running this doctor. A caller's
+    # forward selection is never inherited, even by an in-process invocation.
+    token = SSH_CONFIG_SELECTION.set(None)
+    try:
+        return _probe_return_route(destination)
+    finally:
+        SSH_CONFIG_SELECTION.reset(token)
+
+
+def _probe_return_route(destination: str) -> dict:
     """Test reverse SSH without prompts, key enrollment, or config mutation."""
     check_ssh_argument(destination, "--host")
     if is_self_ssh_destination(destination):
@@ -5980,7 +6332,7 @@ def remote_installed_version(host: str, ssh_opts: list[str],
     )
     try:
         done = subprocess.run(
-            ["ssh", *ssh_opts, host, probe],
+            trusted_ssh_command(ssh_opts, host, probe),
             capture_output=True, timeout=30,
         )
     except FileNotFoundError as exc:
@@ -7359,6 +7711,10 @@ def handoff_private_stat(path, directory=False):
     return info
 
 
+class HandoffReadDeadlineExceeded(Exception):
+    """The caller's read budget elapsed; not evidence of corrupt history."""
+
+
 class HandoffLedger:
     """Serialized, fsynced snapshots with retained effect fences, not dedup.
 
@@ -7419,12 +7775,19 @@ class HandoffLedger:
                 os.unlink(temporary)
 
     @contextlib.contextmanager
-    def transaction(self, deadline=None):
+    def transaction(self, deadline=None, *, read_only=False):
+        """Validate one locked snapshot; read-only projections never persist retention."""
+        def check_read_deadline():
+            if read_only and deadline is not None and handoff_now() >= deadline:
+                raise HandoffReadDeadlineExceeded()
+
+        check_read_deadline()
         if IS_WINDOWS or fcntl is None:
             raise handoff_error("handoff_platform_unsupported")
         handoff_private_stat(self.root, True)
         lock = self.root / "ledger.lock"
         before = handoff_private_stat(lock)
+        check_read_deadline()
         fd = os.open(str(lock), os.O_RDWR | getattr(os, "O_NOFOLLOW", 0))
         try:
             after = os.fstat(fd)
@@ -7432,38 +7795,52 @@ class HandoffLedger:
                 raise handoff_error("unsafe_handoff_storage")
             limit = deadline if deadline is not None else handoff_now() + 5
             while True:
+                check_read_deadline()
                 try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(fd, (fcntl.LOCK_SH if read_only else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+                    check_read_deadline()
                     break
                 except BlockingIOError:
+                    check_read_deadline()
                     if handoff_now() >= limit:
                         raise handoff_error("handoff_storage_busy")
                     time.sleep(min(0.01, max(0, limit - handoff_now())))
             path = self.root / "ledger.json"
+            check_read_deadline()
             initial = handoff_private_stat(path)
             if initial.st_size > HANDOFF_LEDGER_BYTES:
                 raise handoff_error("handoff_history_unavailable")
+            check_read_deadline()
             read_fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
             with os.fdopen(read_fd, "rb") as stream:
                 current = os.fstat(stream.fileno())
                 if (initial.st_dev, initial.st_ino) != (current.st_dev, current.st_ino):
                     raise handoff_error("unsafe_handoff_storage")
+                check_read_deadline()
                 raw = stream.read(HANDOFF_LEDGER_BYTES + 1)
+            if read_only:
+                # Parse/validation use only this immutable local byte snapshot;
+                # release the shared lock so writers need not wait for them.
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            check_read_deadline()
             try:
                 state = handoff_json(raw, HANDOFF_LEDGER_BYTES)
                 if set(state) != {"schemaVersion", "epoch", "records"} or type(state["schemaVersion"]) is not int or state["schemaVersion"] != 1 or type(state["records"]) is not dict:
                     raise ValueError()
                 handoff_uuid(state["epoch"])
                 for key, record in state["records"].items():
+                    check_read_deadline()
                     handoff_uuid(key)
                     if type(record) is not dict or record.get("id") != key:
                         raise ValueError()
                     self._validate_record(record)
             except (CcPeerError, ValueError, KeyError, TypeError) as exc:
                 raise handoff_error("handoff_ledger_corrupt") from exc
+            check_read_deadline()
             boot, now = handoff_boot_clock(), handoff_now_ns()
             if boot is not None:
                 for record in state["records"].values():
+                    check_read_deadline()
                     if (record["phase"] != "tombstone" and record["historyBoot"] == boot
                             and now >= record["createdNs"] + 30 * 86400 * 1000000000):
                         # Detail expires only under proven boot/monotonic
@@ -7471,8 +7848,10 @@ class HandoffLedger:
                         # survives and still counts toward the intent quota.
                         record.update(phase="tombstone", submission="unknown", native=None,
                                       waits=[], ack=None, capability=None, pendingReceipt=None, observe=False, ackRequested=False)
+            check_read_deadline()
             yield state
-            self._save(state)
+            if not read_only:
+                self._save(state)
         except OSError as exc:
             raise handoff_error("handoff_history_unavailable") from exc
         finally:
@@ -7504,10 +7883,10 @@ class HandoffLedger:
             state["records"][correlation] = record
             return state["epoch"], copy.deepcopy(record)
 
-    def record(self, correlation, deadline=None):
+    def record(self, correlation, deadline=None, *, read_only=False):
         import copy
         handoff_uuid(correlation)
-        with self.transaction(deadline) as state:
+        with self.transaction(deadline, **({"read_only": True} if read_only else {})) as state:
             record = state["records"].get(correlation)
             if record is None:
                 raise handoff_error("handoff_id_unknown")
@@ -7751,8 +8130,9 @@ def handoff_cap_hash(epoch, correlation, generation, cap):
 def handoff_collect(ledger, epoch_id, frame):
     """Receipt-only operations. No native command, transcript or model access."""
     import hmac
-    with ledger.transaction() as state:
-        if frame == {"op": "clock"}:
+    read_only_clock = frame == {"op": "clock", "readOnly": True} and type(frame.get("readOnly")) is bool
+    with ledger.transaction(**({"read_only": True} if read_only_clock else {})) as state:
+        if frame == {"op": "clock"} or read_only_clock:
             return {"ok": True, "clockEpoch": epoch_id}
         if frame.get("op") == "mint":
             if set(frame) != {"op", "ledgerEpoch", "correlationId", "targetGeneration"}:
@@ -7875,9 +8255,16 @@ def handoff_ipc(root, frame, deadline=None):
         raise handoff_error("receipt_channel_unavailable") from exc
 
 
-def handoff_channel_epoch(ledger, deadline=None):
+def handoff_channel_epoch(ledger, deadline=None, *, read_only=False):
     try:
-        result = handoff_ipc(ledger.root, {"op": "clock"}, deadline)
+        frame = {"op": "clock"}
+        if read_only:
+            # Older collectors reject this extra field before committing a
+            # transaction. Never retry their write-through legacy clock query.
+            frame["readOnly"] = True
+            if deadline is None:
+                deadline = handoff_now() + 2
+        result = handoff_ipc(ledger.root, frame, deadline)
         return handoff_uuid(result.get("clockEpoch"))
     except CcPeerError:
         return None
@@ -8016,7 +8403,8 @@ def handoff_public(epoch, record, active_clock=None):
         result["nextActions"] = ["reconcile"]
         if (record.get("ackRequested") and record["capability"] and not record["capability"]["revoked"] and not ack
                 and active_clock is not None and active_clock == record["capability"]["clockEpoch"]
-                and handoff_now_ns() < record["capability"]["expiresNs"] and (not wait or wait["status"] != "unsupported")):
+                and handoff_now_ns() < record["capability"]["expiresNs"]
+                and (not wait or (wait["status"] != "unsupported" and wait.get("reason") != "history_unavailable"))):
             result["nextActions"].append("keep_waiting")
         if wait and wait["status"] == "pending":
             result["nextActions"].append("stop_waiting")
@@ -8029,6 +8417,55 @@ def handoff_query_error(correlation, context):
             "reason": "handoff_history_unavailable", "handoffQuery": {
                 "schemaVersion": 1, "correlationId": correlation, "status": "unknown", "context": context,
                 "retry": {"allowed": False, "reason": "history_unavailable"}}}
+
+
+def handoff_status_text(public, phase):
+    """Render only validated public metadata; never accept the private record."""
+    handoff_validate_public(public)
+    if phase not in ("prepared", "attempted", "terminal", "tombstone", "quarantined"):
+        raise handoff_error("invalid_handoff")
+    view = human_text(public)
+    observation, ack, wait = view["observation"], view["ack"], view["wait"]
+    unavailable = {"tombstone": "expired history", "quarantined": "quarantined history"}.get(phase)
+    injection = ("unavailable (" + unavailable + ")" if unavailable else
+                 observation["status"] + ("; injection observed" if observation["injectionObserved"]
+                                          else "; injection not confirmed"))
+    receipt = "unavailable (" + unavailable + ")" if unavailable else ack["status"]
+    if not unavailable and ack["status"] == "pending" and "keep_waiting" not in view["nextActions"]:
+        receipt += "; waiting availability not established"
+    lines = [
+        "Handoff " + view["correlationId"],
+        "State: " + view["state"],
+        "Submission: " + view["submission"]["status"],
+        "Injection observation: " + injection,
+        "Receipt (ACK): " + receipt,
+    ]
+    if not unavailable and ack["status"] == "acknowledged":
+        lines.extend([
+            "  Assurance: " + ack["assurance"],
+            "  Late receipt: " + ("yes (relative to the first wait)" if ack["late"] else "no"),
+            "  Received at (UTC milliseconds): " + str(ack["receivedAtUtcMs"]),
+        ])
+    lines.append("Latest wait: unavailable (expired history)" if phase == "tombstone" else
+                 "Latest wait: " + wait["status"] + "; goal: " + wait["for"])
+    if phase != "tombstone" and "operationId" in wait:
+        lines.append("  Operation: " + wait["operationId"])
+    if phase != "tombstone" and "deadlineAtUtcMs" in wait:
+        lines.append("  Deadline (UTC milliseconds): " + str(wait["deadlineAtUtcMs"]))
+    if phase != "tombstone" and "reason" in wait:
+        lines.append("  Reason: " + wait["reason"])
+    if phase == "tombstone":
+        lines.append("History: retained effect fence only; expired detail cannot establish absence of a receipt.")
+    elif phase == "quarantined":
+        lines.append("History: explicitly quarantined restored ledger; reconcile with the operator.")
+    lines.extend([
+        "Retry: not allowed (" + view["retry"]["reason"] + ")",
+        "Next actions: " + (", ".join(view["nextActions"]) or "none advertised"),
+        "Single ledger snapshot; latest stored wait only. No native submission performed.",
+        "Collector clock evidence, when available, is checked separately.",
+        "Submission does not confirm consumption; a receipt does not confirm task completion.",
+    ])
+    return "\n".join(lines)
 
 
 def handoff_start_wait(record, goal, deadline, clock_epoch, *, initial_status=None, reason=None):
@@ -8149,20 +8586,36 @@ def cmd_handoff(args):
         args.correlation_id = frame["correlationId"]
     correlation = handoff_uuid(args.correlation_id)
     try:
-        epoch, record = ledger.record(correlation)
+        epoch, record = ledger.record(correlation, **({"read_only": True} if action == "status" else {}))
     except CcPeerError as exc:
         context = "id_unknown" if exc.details.get("reason") == "handoff_id_unknown" else "ledger_corrupt" if exc.details.get("reason") == "handoff_ledger_corrupt" else "ledger_missing"
         result = handoff_query_error(correlation, context)
         if args.json:
             print(json.dumps(result, ensure_ascii=False))
         else:
-            print("Handoff history unavailable; do not resend.", file=sys.stderr)
+            diagnostic = "Handoff history unavailable; do not resend."
+            if action == "status":
+                reason = {
+                    "handoff_id_unknown": "request ID not found",
+                    "handoff_ledger_corrupt": "invalid ledger",
+                    "handoff_storage_busy": "ledger busy",
+                    "unsafe_handoff_storage": "storage ownership or permissions refused",
+                    "handoff_platform_unsupported": "handoff unsupported on this platform",
+                }.get(exc.details.get("reason"), "history could not be read")
+                diagnostic += " Reason: " + reason + ". No history initialized or repaired."
+            print(diagnostic, file=sys.stderr)
         return 1
     code = handoff_wait(ledger, correlation, args.wait_for, args.wait_timeout) if action == "wait" else 0
-    epoch, record = ledger.record(correlation)
+    if action != "status":
+        epoch, record = ledger.record(correlation)
     result = dict(record["native"] or {})
-    result.update(ok=code == 0, handoff=handoff_public(epoch, record, handoff_channel_epoch(ledger) if record["capability"] and not record["ack"] else None))
-    emit(args.json, result, "Handoff " + result["handoff"]["state"] + "; no native submission performed.", command="handoff")
+    active_clock = None
+    if record["capability"] and not record["ack"] and (action != "status" or not record["capability"]["revoked"]):
+        active_clock = handoff_channel_epoch(ledger, **({"read_only": True} if action == "status" else {}))
+    result.update(ok=code == 0, handoff=handoff_public(epoch, record, active_clock))
+    human = (handoff_status_text(result["handoff"], record["phase"]) if action == "status" and not args.json
+             else "Handoff " + result["handoff"]["state"] + "; no native submission performed.")
+    emit(args.json, result, human, command="handoff")
     return code
 
 
@@ -8535,6 +8988,356 @@ def cmd_handoff_send(args):
     result.update(ok=code == 0, handoff=handoff_public(epoch, record, authority["clockEpoch"] if authority else None))
     emit(args.json, result, "Handoff " + result["handoff"]["state"] + "; submission is not consumption.", command="send")
     return code
+
+
+# Read-only sampled handoff projection. Included in the standalone namespace.
+HANDOFF_WATCH_FRAME_BYTES = 16 * 1024
+HANDOFF_WATCH_OUTPUT_BYTES = 256 * 1024
+HANDOFF_WATCH_END_RESERVE = 2048
+HANDOFF_WATCH_FINISH_SECONDS = 0.1
+HANDOFF_WATCH_REAP_SECONDS = 0.025
+HANDOFF_WATCH_SLEEP_SLICE_SECONDS = 0.05
+HANDOFF_WATCH_WRITER_SCRIPT = r'''
+import os
+import select
+import signal
+import sys
+import threading
+import time
+try:
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT})
+    parent = int(sys.argv[1])
+    cutoff = float(sys.argv[2])
+    if sys.platform == "darwin":
+        import ctypes
+        class Timebase(ctypes.Structure):
+            _fields_ = [("numer", ctypes.c_uint32), ("denom", ctypes.c_uint32)]
+        library = ctypes.CDLL(None)
+        absolute = library.mach_absolute_time
+        absolute.argtypes, absolute.restype = [], ctypes.c_uint64
+        timebase = library.mach_timebase_info
+        timebase.argtypes, timebase.restype = [ctypes.POINTER(Timebase)], ctypes.c_int
+        info = Timebase()
+        if timebase(ctypes.byref(info)) != 0 or not info.numer or not info.denom:
+            os._exit(1)
+        def now():
+            return (int(absolute()) * int(info.numer) // int(info.denom)) / 1000000000
+    else:
+        def now():
+            return time.monotonic_ns() / 1000000000
+    def supervise():
+        try:
+            while True:
+                remaining = cutoff - now()
+                if os.getppid() != parent or remaining <= 0:
+                    os._exit(1)
+                time.sleep(min(0.01, remaining))
+        except BaseException:
+            os._exit(1)
+    if os.getppid() != parent or now() >= cutoff:
+        os._exit(1)
+    threading.Thread(target=supervise, daemon=True).start()
+except BaseException:
+    os._exit(1)
+def exact(size):
+    result = bytearray()
+    while len(result) < size:
+        chunk = os.read(0, size - len(result))
+        if not chunk:
+            os._exit(0)
+        result.extend(chunk)
+    return bytes(result)
+try:
+    while True:
+        size = int.from_bytes(exact(4), "big")
+        if not 1 <= size <= 16384:
+            os._exit(1)
+        frame = exact(size)
+        offset = 0
+        while offset < size:
+            try:
+                count = os.write(1, frame[offset:])
+            except BlockingIOError:
+                remaining = cutoff - now()
+                if remaining <= 0:
+                    os._exit(1)
+                select.select([], [1], [], remaining)
+                continue
+            if count <= 0:
+                os._exit(1)
+            offset += count
+        os.write(0, b"1")
+except BaseException:
+    os._exit(1)
+'''
+
+
+def handoff_watch_timeout(value):
+    return handoff_timeout(value)
+
+
+def handoff_watch_interval(value):
+    if (type(value) is not str or re.fullmatch(r"[1-9][0-9]{3}", value, flags=re.ASCII) is None
+            or not 1000 <= int(value) <= 5000):
+        raise argparse.ArgumentTypeError("expected an ASCII integer from 1000 to 5000")
+    return int(value)
+
+
+class HandoffWatchOutputError(Exception):
+    pass
+
+
+@contextlib.contextmanager
+def handoff_watch_defer_interrupt():
+    previous_handler = signal.getsignal(signal.SIGINT)
+    pending = [None]
+    def defer(signum, frame):
+        if previous_handler != signal.SIG_IGN:
+            pending[0] = (signum, frame)
+    # Masking this thread alone cannot defer CPython handlers when another
+    # unmasked thread receives a process-directed signal. Record it as well.
+    signal.signal(signal.SIGINT, defer)
+    try:
+        previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+        try:
+            yield
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+    finally:
+        signal.signal(signal.SIGINT, previous_handler)
+        if pending[0] is not None:
+            if callable(previous_handler):
+                previous_handler(*pending[0])
+            elif previous_handler == signal.SIG_DFL:
+                os.kill(os.getpid(), signal.SIGINT)
+
+
+class HandoffWatchOutput:
+    """Owned writer isolates blocking stdout without changing inherited flags.
+
+    A completion ACK proves only an OS write, never consumer processing. Unknown
+    completion suppresses subsequent frames. The final 100ms of the original
+    budget covers the end frame and child cleanup, including 25ms for reaping.
+    A helper watchdog also exits on parent death or the original shared-clock
+    deadline, including when the parent is stopped. OS process creation and
+    uninterruptible I/O remain scheduling limitations.
+    """
+    def __init__(self, stream, deadline):
+        import io
+        self.stream, self.deadline = stream, deadline
+        self.work_deadline = deadline - HANDOFF_WATCH_FINISH_SECONDS
+        self.channel, self.process = None, None
+        self.used, self.damaged = 0, False
+        if isinstance(stream, io.StringIO):
+            return
+        child = None
+        try:
+            fd = stream.fileno()
+            self.channel, child = socket.socketpair()
+            # Register the handle before delivering a pending terminal SIGINT.
+            with handoff_watch_defer_interrupt():
+                self.process = subprocess.Popen(
+                    [sys.executable, "-I", "-S", "-c", HANDOFF_WATCH_WRITER_SCRIPT,
+                     str(os.getpid()), repr(deadline)],
+                    stdin=child, stdout=fd, stderr=subprocess.DEVNULL, env={},
+                    close_fds=True, start_new_session=True)
+        except Exception:
+            self.close()
+            raise HandoffWatchOutputError()
+        except BaseException:
+            self.close()
+            raise
+        finally:
+            if child is not None:
+                try:
+                    child.close()
+                except BaseException:
+                    self.close()
+                    raise
+
+    def close(self):
+        # A pending SIGINT is delivered only after kill/reap has finished.
+        with handoff_watch_defer_interrupt():
+            return self._close()
+
+    def _close(self):
+        if self.channel is not None:
+            channel = self.channel
+            self.channel = None
+            try:
+                channel.close()
+            except OSError:
+                pass
+        if self.process is not None:
+            try:
+                if self.process.poll() is None:
+                    self.process.kill()
+                self.process.wait(timeout=max(0, self.deadline - handoff_now()))
+            except (OSError, subprocess.TimeoutExpired):
+                return False
+        return True
+
+    def write(self, text, *, end=False):
+        raw = (text + "\n").encode("utf-8")
+        limit = HANDOFF_WATCH_OUTPUT_BYTES - (0 if end else HANDOFF_WATCH_END_RESERVE)
+        if len(raw) > HANDOFF_WATCH_FRAME_BYTES or self.used + len(raw) > limit:
+            return "output_limit"
+        if self.damaged:
+            return "output_unavailable"
+        io_deadline = self.deadline - HANDOFF_WATCH_REAP_SECONDS if end else self.work_deadline
+        if handoff_now() >= io_deadline:
+            return "output_unavailable" if end else "duration_elapsed"
+        try:
+            if self.channel is None:
+                self.stream.write(raw.decode("utf-8"))
+            else:
+                self.channel.settimeout(max(0, io_deadline - handoff_now()))
+                self.channel.sendall(len(raw).to_bytes(4, "big") + raw)
+                remaining = io_deadline - handoff_now()
+                if remaining <= 0:
+                    raise HandoffWatchOutputError()
+                self.channel.settimeout(remaining)
+                if self.channel.recv(1) != b"1":
+                    raise HandoffWatchOutputError()
+            self.used += len(raw)
+            return None
+        except Exception:
+            self.damaged = True
+            return "output_unavailable"
+        except BaseException:
+            self.damaged = True
+            raise
+
+
+def handoff_watch_frame(args, payload, *, ok):
+    if args.json:
+        return json.dumps(json_result("handoff", payload, ok=ok), ensure_ascii=False,
+                          separators=(",", ":"), allow_nan=False)
+    if payload["event"] == "snapshot":
+        return ("Watch snapshot " + str(payload["sequence"]) + " (sampled changes)\n" +
+                handoff_status_text(payload["handoff"], payload["historyPhase"]))
+    return ("Handoff watch ended: " + payload["reason"] + "; snapshots: " +
+            str(payload["snapshotsEmitted"]) + "; samples: " + str(payload["samples"]) + ".")
+
+
+def handoff_watch_pause(until):
+    # Some schedulers coalesce a long relative sleep by a proportion of its
+    # duration. Recheck the same absolute deadline after short sleeps rather
+    # than consuming the final-output reserve in one long sleep. This changes
+    # neither the sampling interval nor the original total watch budget.
+    while True:
+        remaining = until - handoff_now()
+        if remaining <= 0:
+            return
+        time.sleep(min(HANDOFF_WATCH_SLEEP_SLICE_SECONDS, remaining))
+
+
+def cmd_handoff_watch(args):
+    if IS_WINDOWS or fcntl is None:
+        payload = {"operation": "watch", "event": "end", "reason": "unsupported",
+                   "snapshotsEmitted": 0, "samples": 0}
+        print(handoff_watch_frame(args, payload, ok=False))
+        return 1
+    # The same absolute deadline covers setup, locking, collector IPC and output.
+    started = handoff_now()
+    duration = args.watch_timeout
+    interval = args.interval_ms
+    if type(duration) is not int or not 1 <= duration <= 60:
+        raise handoff_error("invalid_watch_timeout")
+    if type(interval) is not int or not 1000 <= interval <= 5000:
+        raise handoff_error("invalid_watch_interval")
+    total_deadline = started + duration
+    deadline = total_deadline - HANDOFF_WATCH_FINISH_SECONDS
+    correlation = handoff_uuid(args.correlation_id)
+    snapshots, samples = 0, 0
+    writer, original_epoch, previous, context = None, None, None, None
+    reason = "history_unavailable"
+    try:
+        writer = HandoffWatchOutput(sys.stdout, total_deadline)
+        ledger = HandoffLedger()
+        while handoff_now() < deadline and samples < 61:
+            samples += 1
+            epoch, record = ledger.record(correlation, deadline, read_only=True)
+            if original_epoch is not None and epoch != original_epoch:
+                reason = "history_changed"
+                break
+            original_epoch = epoch
+            if handoff_now() >= deadline:
+                raise HandoffReadDeadlineExceeded()
+            phase = record["phase"]
+            if phase not in ("prepared", "attempted", "terminal", "tombstone", "quarantined"):
+                raise handoff_error("invalid_handoff")
+            active_clock = None
+            if record["capability"] and not record["capability"]["revoked"] and not record["ack"]:
+                active_clock = handoff_channel_epoch(ledger, deadline, read_only=True)
+            if handoff_now() >= deadline:
+                raise HandoffReadDeadlineExceeded()
+            public = handoff_public(epoch, record, active_clock)
+            if handoff_now() >= deadline:
+                raise HandoffReadDeadlineExceeded()
+            projection = (phase, public)
+            if projection != previous:
+                payload = {"operation": "watch", "event": "snapshot", "sequence": snapshots + 1,
+                           "historyPhase": phase, "handoff": public}
+                try:
+                    observed = int(time.time() * 1000)
+                except (ValueError, OverflowError):
+                    observed = None
+                if observed is not None and 0 <= observed <= 9007199254740991:
+                    payload["observedAtUtcMs"] = observed
+                failure = writer.write(handoff_watch_frame(args, payload, ok=True))
+                if failure:
+                    reason = failure
+                    break
+                snapshots += 1
+                previous = projection
+            remaining = deadline - handoff_now()
+            if remaining <= 0:
+                raise HandoffReadDeadlineExceeded()
+            handoff_watch_pause(min(deadline, handoff_now() + interval / 1000))
+        else:
+            reason = "duration_elapsed"
+    except KeyboardInterrupt:
+        reason = "interrupted"
+    except HandoffWatchOutputError:
+        reason = "output_unavailable"
+    except HandoffReadDeadlineExceeded:
+        reason = "duration_elapsed"
+    except Exception:
+        reason = "history_unavailable"
+        # Context is a closed enum. Never emit the underlying exception or path.
+        exc = sys.exc_info()[1]
+        detail = exc.details.get("reason") if isinstance(exc, CcPeerError) else None
+        context = ("id_unknown" if detail == "handoff_id_unknown" else
+                   "ledger_corrupt" if detail == "handoff_ledger_corrupt" else
+                   "ledger_missing" if isinstance(exc, FileNotFoundError) or
+                   isinstance(exc.__cause__, FileNotFoundError) else None)
+    finally:
+        if writer is not None:
+            if reason == "interrupted":
+                writer.deadline = min(writer.deadline, handoff_now() + HANDOFF_WATCH_FINISH_SECONDS)
+            try:
+                payload = {"operation": "watch", "event": "end", "reason": reason,
+                           "snapshotsEmitted": snapshots, "samples": samples}
+                if context is not None:
+                    payload["queryContext"] = context
+                failure = writer.write(handoff_watch_frame(args, payload, ok=reason == "duration_elapsed"), end=True)
+                if failure and reason != "interrupted":
+                    reason = failure
+            except KeyboardInterrupt:
+                reason = "interrupted"
+                writer.deadline = min(writer.deadline, handoff_now() + HANDOFF_WATCH_FINISH_SECONDS)
+            except Exception:
+                reason = "output_unavailable"
+            finally:
+                try:
+                    if not writer.close() and reason != "interrupted":
+                        reason = "output_unavailable"
+                except KeyboardInterrupt:
+                    reason = "interrupted"
+                except Exception:
+                    reason = "output_unavailable"
+    return 0 if reason == "duration_elapsed" else 130 if reason == "interrupted" else 1
 
 
 """Private source-streamed native snapshots, not a receipt/collector route."""
@@ -9531,6 +10334,38 @@ class HumanArgumentParser(MessageArgumentParser):
         super().error(human_text(message))
 
 
+class SshConfigArgument(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        if getattr(namespace, self.dest, None) not in (None, False):
+            parser.error(self.option_strings[0] + " may be specified only once")
+        setattr(namespace, self.dest, self.const if self.nargs == 0 else values)
+
+
+def prepare_trusted_ssh_config(parser, args):
+    path = getattr(args, "ssh_config", None)
+    trust = getattr(args, "trust_ssh_config", False)
+    if path is None and not trust:
+        return
+    if path is None or not trust:
+        parser.error("--ssh-config and --trust-ssh-config must be supplied together")
+    if args.command not in ("list", "send", "doctor", "update") or not getattr(args, "host", None):
+        parser.error("--ssh-config requires list/send/doctor/update with explicit --host")
+    if getattr(args, "device", None) or getattr(args, "preset", None) is not None:
+        parser.error("--ssh-config cannot be combined with paired devices or route presets")
+    if str(getattr(args, "to", "")).lower().startswith("session-peer:"):
+        parser.error("--ssh-config cannot be selected through a Reply-To invocation")
+    for host in args.host:
+        check_ssh_argument(host, "--host")
+    check_ssh_options(getattr(args, "ssh_opt", []))
+    if IS_WINDOWS:
+        raise _ssh_config_error("ssh_config_platform_unsupported")
+    if args.command == "send" and handoff_requested(args):
+        # Configuration setup belongs to the ORIGINAL handoff budget; no
+        # metadata/effect child receives a renewed deadline or this local path.
+        args._handoff_fixed_total = handoff_now() + args.wait_timeout
+    SSH_CONFIG_SELECTION.set(select_trusted_ssh_config(path))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = HumanArgumentParser(
         prog="session-peer",
@@ -9650,12 +10485,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     handoff = subparsers.add_parser("handoff", help="manage private correlated intents without submitting native messages")
     handoff_sub = handoff.add_subparsers(dest="handoff_action", required=True)
-    for action in ("init", "prepare", "status", "wait", "confirm"):
+    for action in ("init", "prepare", "status", "watch", "wait", "confirm"):
         sub = handoff_sub.add_parser(action)
         sub.add_argument("--json", action="store_true")
-        sub.set_defaults(func=cmd_handoff, no_update_notice=True)
-        if action in ("status", "wait"):
+        sub.set_defaults(func=cmd_handoff_watch if action == "watch" else cmd_handoff, no_update_notice=True)
+        if action in ("status", "watch", "wait"):
             sub.add_argument("--correlation-id", required=True, type=handoff_cli_uuid)
+        if action == "watch":
+            sub.add_argument("--watch-timeout", type=handoff_watch_timeout, default=30,
+                             metavar="SECONDS", help="finite local watch budget, 1..60 seconds (default: 30)")
+            sub.add_argument("--interval-ms", type=handoff_watch_interval, default=1000,
+                             metavar="MILLISECONDS", help="sample every 1000..5000 ms (default: 1000)")
         if action == "wait":
             sub.add_argument("--wait-for", choices=("delivered", "acknowledged"), required=True)
             sub.add_argument("--wait-timeout", type=handoff_timeout, default=30)
@@ -9677,6 +10517,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--check", action="store_true", help="report the available version, change nothing"
     )
     updating.set_defaults(func=cmd_update)
+
+    # Deliberately not add_common: setup must not gain executable config input.
+    for sub in (listing, sending, doctor, updating):
+        sub.add_argument("--ssh-config", action=SshConfigArgument, metavar="ABS_PATH",
+                         help="operator-trusted local executable SSH configuration; requires --trust-ssh-config")
+        sub.add_argument("--trust-ssh-config", action=SshConfigArgument, nargs=0, const=True, default=False,
+                         help="authorize this configuration's local commands, including during ssh -G and dry-run")
 
     for sub in (listing, sending, doctor):
         sub.add_argument('--antigravity-home', help='filter registered Antigravity home on the destination')
@@ -9748,6 +10595,16 @@ def json_error_result(args: argparse.Namespace, payload: dict) -> dict | list[di
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Invocation-local authority, never an environment setting, MCP default or
+    # leaked state from a previous/reentrant call in the same interpreter.
+    token = SSH_CONFIG_SELECTION.set(None)
+    try:
+        return _main(argv)
+    finally:
+        SSH_CONFIG_SELECTION.reset(token)
+
+
+def _main(argv: list[str] | None = None) -> int:
     global _CLIENT_UPDATE_NOTICE, _SKILL_UPDATE_NOTICES
     cli_invocation = argv is None
     raw_argv = list(sys.argv[1:] if argv is None else argv)
@@ -9790,6 +10647,16 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--json conflicts with --output-format text")
     args.json = args.json or output_format == "json"
     try:
+        prepare_trusted_ssh_config(parser, args)
+    except CcPeerError as exc:
+        if args.json:
+            print(json.dumps(json_error_result(args, {"error": str(exc), **exc.details}), ensure_ascii=False))
+        else:
+            print(human_text(f"session-peer: {exc}"), file=sys.stderr)
+        return EXIT_ERROR
+    except KeyboardInterrupt:
+        return 130
+    try:
         _CLIENT_UPDATE_NOTICE = prepare_client_update(args) if cli_invocation else None
     except Exception:
         # Update discovery is advisory. Even an unexpected cache or launcher
@@ -9804,7 +10671,7 @@ def main(argv: list[str] | None = None) -> int:
         validate_ssh_identity_options(args)
         exit_code = args.func(args)
     except CcPeerError as exc:
-        message = str(exc)
+        message = redact_ssh_config_path(str(exc))
         if args.json:
             payload = json_error_result(args, {"error": message, **exc.details})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
@@ -9819,7 +10686,7 @@ def main(argv: list[str] | None = None) -> int:
         show_human_notice = False
         exit_code = 130
     except Exception as exc:
-        message = f"{type(exc).__name__}: {exc}"
+        message = redact_ssh_config_path(f"{type(exc).__name__}: {exc}")
         if getattr(args, "json", False):
             payload = json_error_result(args, {"error": message})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
