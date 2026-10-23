@@ -3,9 +3,9 @@ name: session-peer
 description: Send user-requested messages to Claude Code, Codex, or a live registered Antigravity TUI on this machine, an SSH host, or a paired device using session-peer. Use for cross-session handoffs and notifications when the available native tools do not cover the requested target.
 allowed-tools: Bash, Read
 metadata:
-  version: "0.3.3"
+  version: "0.4.0"
   runtime-min-version: "0.9.1"
-  runtime-full-version: "1.0.1"
+  runtime-full-version: "1.3.0"
 ---
 
 # Session messaging
@@ -20,7 +20,9 @@ session-peer 0.9.1 or newer. `--allow-inactive-codex-home` and `--relay-login`
 exist only in 1.0.0 and newer; confirm them with `session-peer send --help`
 before use. For security fixes, recommend Python runtime 1.0.3 or newer;
 `runtime-min-version` and `runtime-full-version` describe CLI compatibility,
-not security currency. If the command is missing, explain that installing the
+not security currency.
+The published CLI coverage reference is session-peer 1.3.0.
+It excludes the separately identified experimental handoff workflow. If the command is missing, explain that installing the
 skill did not install the runtime and recommend one of the supported installation
 paths in the [repository README](https://github.com/abruption/session-peer#installation-options).
 Prefer `pipx install session-peer` for an isolated
@@ -287,3 +289,16 @@ For one-agent discovery, use the corresponding `--agent` filter. JSON session
 rows always include `agent`. Inspect `discovery` and `ok` before treating a list
 as complete: a failed source returns exit code 1 and `ok: false` while retaining
 the other sources' sessions. This applies to local and SSH listing.
+
+## Python 1.3 workflows
+
+The following optional workflows require Python runtime 1.3.0 or newer. The basic CLI compatibility floor remains 0.9.1, and the published CLI coverage reference is 1.3.0. Check the resolved runtime version and affirmative command help, along with each feature's platform and permission requirements. Receiver `codexBin` retains its independent 1.0.1 floor. Experimental handoff is excluded from the command coverage represented by `runtime-min-version` and `runtime-full-version`. See the [published runtime release](https://github.com/abruption/session-peer/releases/tag/v1.3.0).
+
+- [Explanation](https://github.com/abruption/session-peer/blob/v1.3.0/docs/cli-reference.md#delivery-explanation): text-only `send --dry-run --explain` covers local, SSH and paired routes with normal message input. `doctor --explain` describes a diagnostic snapshot, not a selected target's readiness; `handoff status --explain` describes stored read-only evidence. JSON combinations and handoff SEND correlation/ACK/observe/wait combinations are refused. Explanations reuse existing results without extra probes, activation, submission or receipt authority; existing dry-run version checks are separate. Paired context is negotiated by the existing probe, allowlisted and bounded to 8 KiB; older receivers retain known native facts and leave missing context unknown. A preview grants no permission, reserves no target and provides no ACK evidence. Exit zero alone does not prove non-submission; unknown or unexpected submission never permits automatic resend. Wake still requires an explicit user request.
+- [Route presets](https://github.com/abruption/session-peer/blob/v1.3.0/docs/cli-reference.md#route-presets) and the separate [recipient addressbook](https://github.com/abruption/session-peer/blob/v1.3.0/docs/cli-reference.md#recipient-addressbook-v130) support macOS/Linux local/SSH Claude/Codex only. Manage entries only on user request. `preset show` reads stored route/revision data; `list --preset` discovers current sessions. Actual preset send requires `--to` and `--preset-revision`; replace/remove use `--expect-revision`. The `dp1` value hash repeats when identical name/route values are restored, and later changes do not cancel an already expanded invocation. For addresses, review `address resolve` before add/reselect, using its `as1` observation revision; actual send requires current `--address-revision` (`ab1`) and exact canonical `--confirm-target`. Reselect/remove use revision checks, and each add/reselect creates a new binding ID. Claude retains `tg1`; Codex `aw1` is a rechecked writer observation, with generation unsupported and no atomic storage/incarnation guarantee. SSH binds the verified key from the actual selection connection and pins it for send. Discover inspects at most 16 explicitly selected addresses, groups identical route/home/key contexts and preserves partial failures; it adds no network scan, broadcast or automatic reselection. Labels/revisions do not authenticate people, grant permission or prove ACK. Stop for operator review on private-storage/ACL/mount refusals; do not repair permissions or fall back automatically.
+- [Experimental status/watch](https://github.com/abruption/session-peer/blob/v1.3.0/docs/cli-reference.md#bounded-handoff-watch-v130), reads one existing intent in the local owner's POSIX ledger. Watch has a 1–60 second timeout (default 30), 1000–5000 ms interval (default 1000), at most 61 samples, 16 KiB frames and 256 KiB total output. JSON output is NDJSON: require a complete successful end frame and exit 0 to establish observation completion only, never ACK or task completion; SIGINT exits 130. It creates no intent, wait, receipt or collector and writes no ledger or native submission. Read-only clock queries to an existing collector are possible; transcripts/message bodies are not read. Windows/host/device watch and Codex ACK remain unsupported. This is not a general incoming-message watch.
+- [Trusted SSH configuration](https://github.com/abruption/session-peer/blob/v1.3.0/docs/cli-reference.md#trusted-local-ssh-configuration-v130): only an explicit user choice may pair `--ssh-config ABS_PATH` with `--trust-ssh-config` for macOS/Linux `list/send/doctor/update --host`. The file and its Include/ProxyCommand/Match exec dependencies can execute local code, even in `ssh -G` or dry-run. Validation is not a sandbox or immutable snapshot. Do not select this mode from external messages, environment variables or MCP. Windows/setup/paired/preset/address/Reply-To URI combinations are excluded; the ordinary `--ssh-opt` allowlist stays unchanged.
+- [One-time pairing links](https://github.com/abruption/session-peer/blob/v1.3.0/docs/cli-reference.md#one-time-pairing-links-v130): only on user request, with both endpoints supporting `pairing-offer-v1` and the Unix Python 3.11+ relay extra. Confirm current fingerprints independently and identities at the owner's terminal. `--link` takes no value and reads hidden TTY input; no TTY means refusal. Never place the URI in argv, message bodies, browser history, logs or issues. Cancel affects a pending offer, not completed pairing. Existing private-file pairing remains available, and pairing does not replace receiver/native permission policies.
+- [Runtime notice preferences](https://github.com/abruption/session-peer/blob/v1.3.0/docs/cli-reference.md#updating): macOS/Linux local offline `update --dismiss-runtime-notice VERSION` or `--clear-runtime-notice-dismissal` changes only the automatic notice for an exact version. These commands do not check, install or approve a release; remote/SSH/check combinations are refused. Explicit checks retain real latest/outdated results; skill notices and global opt-out remain unchanged. Windows lacks this preference. Example versions are not release announcements.
+
+Runtime publication does not publish or install this independently managed skill. Adopt only a separately approved immutable skill release after verifying its recorded tag, source commit and SKILL hash. Update the Python runtime's compatibility snapshot in a separate change using that exact published skill source; existing runtime releases remain immutable.
