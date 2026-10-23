@@ -41,7 +41,10 @@ class RuntimeNoticePreferences(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory(prefix="codex-update-pref-", dir=os.environ.get("SESSION_PEER_TEST_TMP"))
         self.addCleanup(directory.cleanup)
-        self.root = Path(directory.name)
+        # macOS temporary roots may use /var, an alias for /private/var.
+        # Positive fixtures need a canonical path; production still refuses
+        # explicitly configured paths that traverse symlink ancestors.
+        self.root = Path(directory.name).resolve()
         self.config = self.root / "config"
         self.leaf = self.config / "session-peer"
         self.path = self.leaf / "update-notices.json"
@@ -184,6 +187,25 @@ class RuntimeNoticePreferences(unittest.TestCase):
         self.assertEqual(error.exception.details["reason"], "runtime_notice_preference_unsafe")
         self.assertEqual(target.read_text(), "untouched")
         self.assertFalse(self.path.exists())
+
+    def test_temporary_root_alias_refuses_while_resolved_fixture_succeeds(self):
+        actual = self.root / "actual-root"
+        actual.mkdir(mode=0o700)
+        alias = self.root / "root-alias"
+        alias.symlink_to(actual, target_is_directory=True)
+        configured = alias / "config"
+        with self.controlled_metadata():
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": str(configured)}):
+                self.assertEqual(peer.read_runtime_notice_preference()["reason"],
+                                 "runtime_notice_preference_unsafe")
+                with self.assertRaises(peer.CcPeerError) as error:
+                    peer.write_runtime_notice_preference("1.2.3")
+                self.assertEqual(error.exception.details["reason"], "runtime_notice_preference_unsafe")
+            self.assertEqual(list(actual.iterdir()), [])
+            with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": str(configured.resolve())}):
+                self.assertEqual(peer.read_runtime_notice_preference()["status"], "missing")
+                self.assertTrue(peer.write_runtime_notice_preference("1.2.3")["changed"])
+                self.assertEqual(peer.read_runtime_notice_preference()["dismissedVersion"], "1.2.3")
 
     def test_inode_substitution_is_refused(self):
         self.put(b'{"schemaVersion":1,"runtime":{"dismissedVersion":"1.2.3"}}')
