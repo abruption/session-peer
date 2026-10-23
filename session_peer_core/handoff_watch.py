@@ -4,6 +4,7 @@ HANDOFF_WATCH_OUTPUT_BYTES = 256 * 1024
 HANDOFF_WATCH_END_RESERVE = 2048
 HANDOFF_WATCH_FINISH_SECONDS = 0.1
 HANDOFF_WATCH_REAP_SECONDS = 0.025
+HANDOFF_WATCH_SLEEP_SLICE_SECONDS = 0.05
 HANDOFF_WATCH_WRITER_SCRIPT = r'''
 import os
 import select
@@ -227,6 +228,18 @@ def handoff_watch_frame(args, payload, *, ok):
             str(payload["snapshotsEmitted"]) + "; samples: " + str(payload["samples"]) + ".")
 
 
+def handoff_watch_pause(until):
+    # Some schedulers coalesce a long relative sleep by a proportion of its
+    # duration. Recheck the same absolute deadline after short sleeps rather
+    # than consuming the final-output reserve in one long sleep. This changes
+    # neither the sampling interval nor the original total watch budget.
+    while True:
+        remaining = until - handoff_now()
+        if remaining <= 0:
+            return
+        time.sleep(min(HANDOFF_WATCH_SLEEP_SLICE_SECONDS, remaining))
+
+
 def cmd_handoff_watch(args):
     if IS_WINDOWS or fcntl is None:
         payload = {"operation": "watch", "event": "end", "reason": "unsupported",
@@ -289,7 +302,7 @@ def cmd_handoff_watch(args):
             remaining = deadline - handoff_now()
             if remaining <= 0:
                 raise HandoffReadDeadlineExceeded()
-            time.sleep(min(interval / 1000, remaining))
+            handoff_watch_pause(min(deadline, handoff_now() + interval / 1000))
         else:
             reason = "duration_elapsed"
     except KeyboardInterrupt:

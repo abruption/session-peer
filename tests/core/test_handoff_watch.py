@@ -44,6 +44,18 @@ class HandoffWatch(unittest.TestCase):
         output = stream if stream is not None else io.StringIO()
         popen = peer.subprocess.Popen
         self.output_processes = []
+        self.output_diagnostics = []
+        write_output = peer.HandoffWatchOutput.write
+        def diagnosed_write(writer, text, **kwargs):
+            result = write_output(writer, text, **kwargs)
+            # Bounded output-only codes/timings: never include frame contents,
+            # correlation IDs, ledger paths or native error text in CI logs.
+            self.output_diagnostics.append({
+                "end": bool(kwargs.get("end")), "result": result,
+                "remainingMs": round((writer.deadline - peer.handoff_now()) * 1000),
+                "helperExit": writer.process.poll() if writer.process else None,
+            })
+            return result
         def output_helper(command, **kwargs):
             self.assertIsNotNone(stream, "unexpected process during captured watch")
             self.assertEqual(command[:5], [peer.sys.executable, "-I", "-S", "-c", peer.HANDOFF_WATCH_WRITER_SCRIPT])
@@ -68,6 +80,7 @@ class HandoffWatch(unittest.TestCase):
                                 (peer, "post_to_socket"), (peer, "handoff_codex_submit")):
                 stack.enter_context(mock.patch.object(owner, name, side_effect=AssertionError("watch performed an effect")))
             stack.enter_context(mock.patch.object(peer.subprocess, "Popen", side_effect=output_helper))
+            stack.enter_context(mock.patch.object(peer.HandoffWatchOutput, "write", new=diagnosed_write))
             stack.enter_context(contextlib.redirect_stdout(output))
             code = peer.cmd_handoff_watch(self.args)
         if stream is not None:
@@ -369,7 +382,7 @@ class HandoffWatch(unittest.TestCase):
             self.args.watch_timeout = 1
             with mock.patch.object(peer.fcntl, "fcntl", side_effect=AssertionError("inherited flag mutation")):
                 code, _ = self.invoke(stream=stream, real_clock=True)
-            self.assertEqual(code, 0)
+            self.assertEqual(code, 0, self.output_diagnostics)
             rows = [json.loads(line) for line in os.read(master, 8192).decode().splitlines()]
             self.assertEqual([row["event"] for row in rows], ["snapshot", "end"])
             self.assertEqual(peer.fcntl.fcntl(slave, peer.fcntl.F_GETFL), before)
@@ -609,7 +622,7 @@ writer.close()
             with mock.patch.object(peer.fcntl, "fcntl", side_effect=AssertionError("inherited flag mutation")):
                 code, unused = self.invoke(stream=stream, real_clock=True)
             drainer.join()
-            self.assertEqual(code, 0)
+            self.assertEqual(code, 0, self.output_diagnostics)
             rows = [json.loads(line) for line in os.read(read_fd, 8192).decode().splitlines()]
             self.assertEqual([row["event"] for row in rows], ["snapshot", "end"])
             self.assertEqual(peer.fcntl.fcntl(write_fd, peer.fcntl.F_GETFL), before)
@@ -651,6 +664,18 @@ writer.close()
             code, frames = self.invoke()
         self.assertEqual(code, 1)
         self.assertEqual(frames[-1]["reason"], "duration_elapsed")
+
+    def test_proportional_sleep_slack_preserves_final_output_reserve(self):
+        self.args.watch_timeout = 1
+        def coalesced_sleep(seconds):
+            # Model proportional timer coalescing, not a claim about the
+            # exact scheduler responsible for a historical CI failure.
+            self.clock.now += seconds * 1.1
+        with mock.patch.object(self.clock, "sleep", side_effect=coalesced_sleep):
+            code, frames = self.invoke()
+        self.assertEqual(code, 0)
+        self.assertEqual([row["event"] for row in frames], ["snapshot", "end"])
+        self.assertLess(self.clock.now, 1 - peer.HANDOFF_WATCH_REAP_SECONDS)
 
 
 if __name__ == "__main__":
