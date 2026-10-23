@@ -1108,7 +1108,35 @@ def handoff_receipt_stdin(timeout=5):
         raise handoff_error("invalid_receipt") from exc
 
 
+def cmd_handoff_explanation(args):
+    """Project existing history without saving retention or minting authority.
+
+    Reuses the same read-only ledger/clock primitives as #296 status/watch;
+    receipt schemas, wait history and ordinary output remain unchanged.
+    """
+    ledger = HandoffLedger()
+    correlation = handoff_uuid(args.correlation_id)
+    args._delivery_explanation_started = True
+    try:
+        epoch, record = ledger.record(correlation, read_only=True)
+    except CcPeerError as exc:
+        context = ("id_unknown" if exc.details.get("reason") == "handoff_id_unknown" else
+                   "ledger_corrupt" if exc.details.get("reason") == "handoff_ledger_corrupt" else
+                   "ledger_missing" if isinstance(exc.__cause__, FileNotFoundError) else "history_unavailable")
+        emit_delivery_explanation(args, {"handoffQuery": {"context": context}},
+                                  mode="existing_intent", failed=True, stream=sys.stderr)
+        return 1
+    active_clock = None
+    if record["capability"] and not record["capability"]["revoked"] and not record["ack"]:
+        active_clock = handoff_channel_epoch(ledger, read_only=True)
+    public = handoff_public(epoch, record, active_clock)
+    emit_delivery_explanation(args, {"handoff": public}, mode="existing_intent")
+    return 0
+
+
 def cmd_handoff(args):
+    if args.handoff_action == "status" and getattr(args, "explain", False):
+        return cmd_handoff_explanation(args)
     ledger = HandoffLedger()
     action = args.handoff_action
     if action == "init":

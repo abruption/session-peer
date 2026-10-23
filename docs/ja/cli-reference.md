@@ -93,6 +93,29 @@ session-peer send --host worker --to 'codex:<full-thread-uuid>' --dry-run -m "me
 限りません。通常の送信ではセッションはアクティブ化されません。[明示的な `--wake`](wake.md)
 はオプトインであり、消費または返信を確認するものではありません。
 
+<a id="delivery-explanation"></a>
+
+### 配信説明（開発中）
+
+#323 の開発機能で、v1.3 の候補です。公開済み v1.2.1 には含まれません。`send --dry-run` に `--explain` を追加すると、選択したローカル・SSH・ペアリング済みデバイスの宛先、既存の検証結果、配信方法、観測上の制限を読みやすく表示します。`doctor --explain` は既存の診断スナップショットと宣言された対応機能を説明するもので、個々の宛先の送信準備状態を確認するものではありません。`handoff status --explain` は既存の intent に保存された証拠を説明します。処理した SSH の宛先ごとに説明を表示しますが、予期しないエラーが発生すると既存のホスト処理が中断され、後続の宛先が処理されない場合があります。
+
+```bash
+session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run --explain
+session-peer send --device RECEIVER_FINGERPRINT --to review --message "Review the patch" --dry-run --explain
+session-peer doctor --explain
+session-peer handoff status --correlation-id PREPARED_UUID --explain
+```
+
+説明は選択したコマンドの既存の結果を再利用し、診断、native バージョン、SSH の追加照会、宛先の起動、別途の `list` 処理は行いません。既存の dry-run 自体にはバージョン確認が含まれる場合があります。実際の送信時には再検証するため、プレビューの成功は宛先の予約や投入・消費・完了を保証しません。宣言された対応機能、実際の検証結果、不明な事実を区別して表示します。`--wake` を指定しない場合、起動の適格性は確認しません。指定した場合も既存の事前検証結果だけを説明します。
+
+ペアリングの dry-run は、受信側ポリシーに従う既存の `resolve` 処理を維持します。既存の接続確認で対応を通知した受信側とのみ、任意の説明 context をネゴシエートします。この内部 context にはバージョンが付けられ、許可されたフィールドのみが認められます。サイズの上限は 8 KiB です。一般の JSON 出力や handoff スキーマは追加しません。選択された受信側のエージェント・宛先・home は、報告され検証された場合だけ表示し、送信側のプロファイルから推測しません。旧バージョンの受信側でも、独立に確認された native の結果は維持し、報告されない context は不明のまま扱います。代替経路への切り替え、追加照会、再送は行いません。
+
+Handoff status は読み取り専用スナップショットを再利用し、intent・receipt capability・wait・collector の作成や台帳への書き込みは行いません。投入、入力注入の観測、明示的な receipt、最後に保存された wait は別々に扱います。Receipt が acknowledged でも、タスクの完了を証明するものではありません。保存された観測は古い場合があります。報告された receipt の観測時刻だけを観測時刻として説明し、説明の生成時刻や診断スナップショットの時刻を配信の観測時刻として扱いません。通常送信に receipt ACK の対応が追加されるわけではありません。
+
+この範囲はテキスト出力のみで、`--explain` と `--json` または `--output-format json` の併用は使用法エラーになります。`--dry-run` が必要なのは `send --explain` だけで、`doctor --explain` と `handoff status --explain` には不要です。Send では引き続き、実験的 handoff の `--correlation-id`、`--request-ack`、`--observe-delivery`、`--wait-for` と `--explain` の組み合わせを、メッセージ入力や宛先・台帳処理の前に拒否します。新しいオプションを使わない既存コマンドの出力・JSON・終了契約は維持されます。説明によって、状態照会の成功が ACK の証拠に変わったり、元のコマンドの終了結果の意味が変わったりすることはありません。
+
+Send の通常のメッセージ入力要件と上限は変わりません。従来どおり `--message`、`--message-file` または stdin を使い、仮の本文は自動生成しません。説明フィールドに本文や receipt の秘密値は含めません。通常の説明は stdout に、失敗した結果や予期しない投入の証拠に関する説明は stderr に出力し、既存の要約・エラーの出力先は変えません。不明な証拠は不明のまま表示し、実際の送信結果が不確実な場合は自動再送しません。
+
 ### オプションのペアリング済みデバイスと Antigravity (v0.9)
 
 これらの機能は PyPI v0.9.0 以降で利用可能です。Antigravity は引き続き

@@ -4618,6 +4618,179 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str], *, handoff_budge
     return _run_remote_dispatch(host, argv, ssh_opts)
 
 
+# Display-only explanation facts. No discovery, transport, ledger or clock I/O.
+
+
+def validated_delivery_context(value):
+    """Accept the complete private receiver context, never guessed fragments."""
+    if not isinstance(value, dict) or set(value) != {
+            "schemaVersion", "agent", "target", "home", "capabilities"}:
+        return None
+    if type(value["schemaVersion"]) is not int or value["schemaVersion"] != 1:
+        return None
+    if value["agent"] not in ("claude", "codex", "antigravity"):
+        return None
+    for key in ("target", "home"):
+        item = value[key]
+        if item is not None:
+            if (not isinstance(item, str) or not item or item.lower().startswith("session-peer:")
+                    or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in item)):
+                return None
+            try:
+                if len(item.encode("utf-8")) > 4096:
+                    return None
+            except UnicodeError:
+                return None
+    if value["target"] is not None:
+        pattern = (r"claude:[1-9][0-9]*" if value["agent"] == "claude" else
+                   value["agent"] + r":[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+        if re.fullmatch(pattern, value["target"]) is None:
+            return None
+    if value["home"] is not None and not (PurePosixPath(value["home"]).is_absolute()
+                                          or PureWindowsPath(value["home"]).is_absolute()):
+        return None
+    caps = value["capabilities"]
+    if not isinstance(caps, dict) or set(caps) != {"send", "wake", "wait", "ack"}:
+        return None
+    if any(type(item) is not bool for item in caps.values()):
+        return None
+    if len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > 8192:
+        return None
+    return {**value, "capabilities": dict(caps)}
+
+
+def explanation_text(value):
+    """Sanitize only opt-in explanations, preserving ordinary output behavior."""
+    text = human_text(value)
+    return "".join("\\u%04x" % ord(c) if ord(c) in (
+        0x200b, 0x200c, 0x200d, 0x200e, 0x200f, 0x202a, 0x202b,
+        0x202c, 0x202d, 0x202e, 0x2060, 0x2066, 0x2067, 0x2068, 0x2069, 0xfeff)
+        else c for c in text)
+
+
+def build_delivery_explanation(args, result, *, mode="readiness", failed=False):
+    """Normalize only allowlisted facts already supplied by the caller.
+
+    Declaration never proves eligibility, and a snapshot never proves delivery.
+    The returned object is internal and is not a new JSON/wire contract.
+    """
+    if mode not in ("readiness", "doctor", "existing_intent"):
+        raise ValueError("unsupported delivery explanation mode")
+    paired = bool(getattr(args, "device", None))
+    context = validated_delivery_context(getattr(args, "_delivery_explanation_context", None)) if paired else None
+    requested = str(getattr(args, "to", "") or "")
+    uri = requested.lower().startswith("session-peer:")
+    agent = (context["agent"] if context else None) if paired else (
+        None if uri or not requested else "codex" if requested.startswith("codex:") else
+        "antigravity" if requested.startswith("antigravity:") else "claude")
+    caps = context["capabilities"] if context else None
+    if not paired and agent is not None:
+        caps = {key: getattr(AGENTS.get(agent).capabilities, key)
+                for key in ("send", "wake", "wait", "ack")}
+    home = context["home"] if context else None
+    if not paired and agent in ("codex", "antigravity"):
+        value = result.get("codexHome" if agent == "codex" else "antigravityHome")
+        home = value if isinstance(value, str) else None
+    facts = {"mode": mode, "paired": paired, "agent": agent,
+             "target": context["target"] if context else None, "home": home,
+             "capabilities": caps, "agents": [], "handoff": None,
+             "selectedRoute": result.get("route") if paired and result.get("route") in ("direct", "relay") else None,
+             "available": not failed, "historyContext": None}
+    if mode == "doctor":
+        declared = result.get("capabilities", {})
+        declared = declared.get("agents", {}) if isinstance(declared, dict) else {}
+        for name in ("claude", "codex", "antigravity"):
+            diagnostic = result.get(name, {})
+            status = diagnostic.get("status") if isinstance(diagnostic, dict) else None
+            allowed_status = {"available", "unavailable", "missing_home", "permission_denied",
+                              "wrong_home", "missing_tool", "unknown", "disabled", "unsupported", "inbox_unavailable"}
+            declaration = declared.get(name, {}) if isinstance(declared, dict) else {}
+            home = diagnostic.get("selectedHome") if isinstance(diagnostic, dict) else None
+            facts["agents"].append({"agent": name, "status": status if isinstance(status, str) and status in allowed_status else "unknown",
+                "home": home if isinstance(home, str) else None,
+                "capabilities": {key: declaration[key] if isinstance(declaration, dict)
+                                 and type(declaration.get(key)) is bool else None
+                                 for key in ("send", "wake", "wait", "ack")}})
+    elif mode == "existing_intent":
+        query = result.get("handoffQuery")
+        if isinstance(query, dict) and query.get("context") in (
+                "ledger_missing", "ledger_corrupt", "id_unknown", "history_unavailable"):
+            facts["historyContext"] = query["context"]
+        public = result.get("handoff")
+        if isinstance(public, dict):
+            snapshot = {}
+            allowed = {"submission": {"not_attempted", "submitted", "refused", "unknown"},
+                       "observation": {"unsupported", "not_requested", "pending", "observed", "failed"},
+                       "ack": {"pending", "unsupported", "not_requested", "acknowledged"},
+                       "wait": {"not_requested", "pending", "satisfied", "timed_out_unknown", "unsupported", "stopped", "failed"}}
+            for key, statuses in allowed.items():
+                value = public.get(key)
+                status = value.get("status") if isinstance(value, dict) else None
+                snapshot[key] = status if isinstance(status, str) and status in statuses else "unknown"
+            ack = public.get("ack", {})
+            observed = ack.get("receivedAtUtcMs") if isinstance(ack, dict) else None
+            snapshot["receivedAtUtcMs"] = observed if type(observed) is int and 0 <= observed <= 9007199254740991 else None
+            snapshot["late"] = ack.get("late") if isinstance(ack, dict) and type(ack.get("late")) is bool else None
+            assurance = ack.get("assurance") if isinstance(ack, dict) else None
+            snapshot["assurance"] = assurance if assurance in ("token_possession", "operator_confirmed") else None
+            if snapshot["ack"] != "acknowledged":
+                snapshot.update(receivedAtUtcMs=None, late=None, assurance=None)
+            wait = public.get("wait", {})
+            goal = wait.get("for") if isinstance(wait, dict) else None
+            snapshot["waitFor"] = goal if goal in ("none", "delivered", "acknowledged") else None
+            reason = wait.get("reason") if isinstance(wait, dict) else None
+            snapshot["waitReason"] = reason if reason in ("insufficient_budget", "deadline_before_effect", "evidence_unsupported", "evidence_failed", "history_unavailable", "stopped_by_operator", "invalid_handoff") else None
+            facts["handoff"] = snapshot
+    return facts
+
+
+def render_delivery_fact_lines(facts):
+    def capability(value):
+        return "supported (declared; eligibility unverified)" if value is True else "unsupported (declared)" if value is False else "unknown (not reported)"
+    if facts["mode"] == "doctor":
+        lines = ["Delivery capabilities (existing diagnostic snapshot)" if facts["available"] else
+                 "Delivery capabilities unavailable (diagnostic snapshot not received)"]
+        for item in facts["agents"]:
+            basis = "diagnostic report" if item["status"] != "unknown" else "not reported"
+            lines.append(item["agent"] + " availability: " + item["status"] + " (" + basis + "; not per-target readiness)")
+            if item["agent"] in ("codex", "antigravity"):
+                lines.append("  Selected home: " + (explanation_text(item["home"]) if item["home"] else "unknown (not reported)"))
+            for key, value in item["capabilities"].items():
+                lines.append("  " + key.capitalize() + ": " + capability(value))
+        return lines + ["Injection observation: unsupported", "Task completion: unknown",
+                        "Last delivery observation: unknown (not reported)",
+                        "A diagnostic snapshot does not guarantee later delivery."]
+    if facts["mode"] == "existing_intent":
+        value = facts["handoff"] or {}
+        lines = ["Delivery evidence (existing intent snapshot)" if facts["available"] else
+                 "Delivery evidence unavailable (history not read)"]
+        if facts["historyContext"]:
+            lines.append("History query: " + facts["historyContext"] + "; no history initialized or repaired.")
+        for key, label in (("submission", "Submission"), ("observation", "Injection observation"),
+                           ("ack", "Explicit receipt"), ("wait", "Latest stored wait")):
+            lines.append(label + ": " + value.get(key, "unknown") + (" (stored observation)" if facts["available"] else " (not available)"))
+        observed = value.get("receivedAtUtcMs")
+        lines.append("Receipt recorded at (stored UTC milliseconds): " + (str(observed) if observed is not None else "unknown (not reported)"))
+        if value.get("assurance"):
+            lines.append("Receipt assurance: " + value["assurance"] + "; does not prove task completion")
+            if value["assurance"] == "token_possession":
+                lines.append("Receipt proves token possession, not original agent/model identity.")
+        if value.get("waitFor"):
+            lines.append("Latest stored wait goal: " + value["waitFor"])
+        if value.get("waitReason"):
+            lines.append("Latest stored wait reason: " + value["waitReason"])
+        if value.get("late") is not None:
+            lines.append("Receipt late relative to first wait: " + str(value["late"]).lower())
+        return lines + ["Task completion: unknown", "Stored evidence may be stale; this view does not refresh delivery.",
+                        "Do not automatically resend after an unknown outcome."]
+    caps = facts["capabilities"] or {}
+    return ["Submission capability: " + capability(caps.get("send")),
+            "Wake capability: " + capability(caps.get("wake")),
+            "Injection observation: unsupported" if not facts["paired"] else "Injection observation: unknown (not reported)",
+            "Last delivery observation: unknown (not reported)",
+            "Task completion: unknown"]
+
+
 # --------------------------------------------------------------------------
 # Output
 # --------------------------------------------------------------------------
@@ -4661,6 +4834,119 @@ def render_sessions(sessions: list[dict], where: str) -> str:
         for r in rows
     ]
     return f"Sessions on {where}:\n" + "\n".join(lines)
+
+
+def delivery_explanation_has_submission(result: dict) -> bool:
+    """Recognize reported submission evidence without changing native results."""
+    return (result.get("submitted") is True or result.get("dryRun") is False
+            or result.get("status") in ("queued", "posted", "submitted"))
+
+
+def render_delivery_explanation(args: argparse.Namespace, result: dict, *,
+                                host: str | None = None, failed: bool = False,
+                                mode: str = "readiness") -> str:
+    """Describe only existing dry-run facts; never inspect or execute a target.
+
+    This display-only allowlist deliberately excludes message bodies, native
+    errors, credentials, routing URIs and receipt authority. Missing remote
+    facts stay unknown rather than being filled from the sender's environment.
+    """
+    facts = build_delivery_explanation(args, result, mode=mode, failed=failed)
+    if mode != "readiness":
+        lines = render_delivery_fact_lines(facts)
+        if host:
+            lines.insert(1, "Destination host: " + explanation_text(host))
+        return "\n".join(lines)
+    requested = str(getattr(args, "to", ""))
+    unresolved_uri = requested.lower().startswith("session-peer:")
+    if unresolved_uri:
+        requested = "Reply-To URI (resolution unavailable)"
+    agent = facts["agent"]
+    if facts["paired"]:
+        requested = facts["target"] or "paired target (not reported by receiver)"
+    where = host or (("device:" + str(args.device)) if facts["paired"] else
+                     (", ".join(getattr(args, "host", None) or []) or "this machine"))
+    lines = ["Delivery preview",
+             "Requested destination: " + explanation_text(requested) + " on " + explanation_text(where)]
+    if facts["paired"]:
+        lines.append("Selected paired route: " + (facts["selectedRoute"] + " (reported)" if facts["selectedRoute"] else "unknown (not reported)"))
+    target = None if facts["paired"] else result.get("target")
+    if isinstance(target, dict):
+        if agent == "claude" and type(target.get("pid")) is int:
+            resolved = "Claude PID " + str(target["pid"])
+            if isinstance(target.get("name"), str):
+                resolved += " (" + explanation_text(target["name"]) + ")"
+            lines.append("Resolved target: " + resolved)
+        elif agent == "codex" and isinstance(target.get("id"), str):
+            lines.append("Resolved target: codex:" + explanation_text(target["id"]))
+    if agent in ("codex", "antigravity"):
+        home = facts["home"]
+        lines.append(("Codex home: " if agent == "codex" else "Antigravity home: ")
+                     + (explanation_text(home) if isinstance(home, str) else "unknown (not reported)"))
+    started = getattr(args, "_delivery_explanation_started", True)
+    unknown = result.get("status") == "unknown" or result.get("reason") in (
+        "outcome_unknown", "ssh_identity_evidence_unavailable") or (
+        "submitted" in result and result["submitted"] is None)
+    unexpected = delivery_explanation_has_submission(result)
+    dry_run_reported = result.get("dryRun") is True or result.get("status") in ("dry_run", "validated")
+    if not started:
+        lines.append("Destination checks: not run (command failed before destination checks)")
+        lines.append("Validation: not confirmed")
+    else:
+        lines.append("Validation: " + ("unexpected submission evidence; dry-run not confirmed" if unexpected else
+                                       "result unknown" if unknown else
+                                       "not confirmed" if failed else
+                                       "passed for this dry run" if dry_run_reported else
+                                       "not confirmed (dry-run evidence not reported)"))
+    if unexpected:
+        for key, label in (("dryRun", "dry-run"), ("submitted", "submitted")):
+            if type(result.get(key)) is bool:
+                lines.append("Reported " + label + ": " + str(result[key]).lower())
+        if result.get("status") in ("queued", "posted", "submitted", "unknown"):
+            lines.append("Reported native status: " + result["status"])
+    method = {"claude": "Claude Code inbox", "codex": "native Codex queue",
+              "antigravity": "registered Antigravity bridge"}.get(agent)
+    lines.append("Delivery method: " + (method + " (planned)" if method else "unknown (not resolved)"))
+    if not getattr(args, "wake", False):
+        wake = "not requested; eligibility not checked"
+    else:
+        fact = result.get("wake")
+        wake = ("preflight passed for this dry run; no turn started"
+                if not unknown and not unexpected and isinstance(fact, dict) and fact.get("status") == "validated" else
+                "requested; preflight not confirmed")
+    lines.extend(["Wake: " + wake,
+                  ("Receipt ACK: unknown (receiver support not reported)" if facts["paired"]
+                   and facts["capabilities"] is None else "Receipt ACK: unavailable for ordinary sends"),
+                  "Consumption / completion: not observed",
+                  "A later send repeats validation.",
+                  "Do not automatically resend after an unknown outcome."])
+    if failed or unexpected:
+        lines.append("Next step: inspect the target and existing evidence before deciding what to do."
+                     if unknown or unexpected else "Next step: resolve the validation failure before attempting a send.")
+    lines.extend(render_delivery_fact_lines(facts))
+    if facts["paired"] and agent is None:
+        lines.append("Selected agent / home: unknown (receiver context not reported)")
+    generation = getattr(args, "target_generation", None)
+    if generation is not None:
+        lines.append("Target generation: requested; existing validation result applies")
+    else:
+        lines.append("Target generation: not requested" if agent == "claude" and not facts["paired"]
+                     else "Target generation: unsupported for this route")
+    return "\n".join(lines)
+
+
+def emit_delivery_explanation(args: argparse.Namespace, result: dict, *,
+                              host: str | None = None, failed: bool = False,
+                              stream=None, mode: str = "readiness") -> None:
+    explanation = render_delivery_explanation(args, result, host=host, failed=failed, mode=mode)
+    try:
+        generated = int(time.time() * 1000)
+        if 0 <= generated <= 9007199254740991:
+            explanation += "\nExplanation generated at (UTC milliseconds): " + str(generated) + "; not a delivery observation."
+    except Exception:
+        pass
+    print(explanation,
+          file=stream or (sys.stderr if failed or delivery_explanation_has_submission(result) else sys.stdout))
 
 
 JSON_RESPONSE_SCHEMA_VERSION = 1
@@ -6036,6 +6322,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         emit(
             args.json, payload, render_doctor(payload, "this machine"), command="doctor",
         )
+        if getattr(args, "explain", False):
+            args._delivery_explanation_started = True
+            emit_delivery_explanation(args, payload, mode="doctor")
         return 0
 
     exit_code = 0
@@ -6044,9 +6333,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return_host = _doctor_return_host(args) if args.check_return_route else None
     for requested_host in args.host:
         host = requested_host
+        if getattr(args, "explain", False):
+            args._delivery_explanation_started = False
+            args._delivery_explanation_host = requested_host
         try:
             transport = SshTransport(requested_host, args, tailnet_status)
             host, ssh_opts = transport.host, transport.ssh_opts
+            if getattr(args, "explain", False):
+                args._delivery_explanation_started = True
+                args._delivery_explanation_host = display_host(requested_host, host)
             remote_argv = ["doctor", "--no-update-notice"] + agent_remote_options(args)
             if return_host:
                 remote_argv.extend(["--_return-host", return_host])
@@ -6068,6 +6363,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 if len(all_results) > 1:
                     print()
                 print(render_doctor(payload, display_host(requested_host, host)))
+                if getattr(args, "explain", False):
+                    args._delivery_explanation_started = True
+                    emit_delivery_explanation(args, payload, mode="doctor", host=display_host(requested_host, host))
         except CcPeerError as exc:
             exit_code = EXIT_ERROR
             all_results.append(json_result(
@@ -6077,6 +6375,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             ))
             if not args.json:
                 print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
+                if getattr(args, "explain", False):
+                    emit_delivery_explanation(args, {}, mode="doctor", failed=True,
+                                              host=display_host(requested_host, host), stream=sys.stderr)
     if args.json:
         emit_json_results(all_results)
     return exit_code
@@ -8870,7 +9171,35 @@ def handoff_receipt_stdin(timeout=5):
         raise handoff_error("invalid_receipt") from exc
 
 
+def cmd_handoff_explanation(args):
+    """Project existing history without saving retention or minting authority.
+
+    Reuses the same read-only ledger/clock primitives as #296 status/watch;
+    receipt schemas, wait history and ordinary output remain unchanged.
+    """
+    ledger = HandoffLedger()
+    correlation = handoff_uuid(args.correlation_id)
+    args._delivery_explanation_started = True
+    try:
+        epoch, record = ledger.record(correlation, read_only=True)
+    except CcPeerError as exc:
+        context = ("id_unknown" if exc.details.get("reason") == "handoff_id_unknown" else
+                   "ledger_corrupt" if exc.details.get("reason") == "handoff_ledger_corrupt" else
+                   "ledger_missing" if isinstance(exc.__cause__, FileNotFoundError) else "history_unavailable")
+        emit_delivery_explanation(args, {"handoffQuery": {"context": context}},
+                                  mode="existing_intent", failed=True, stream=sys.stderr)
+        return 1
+    active_clock = None
+    if record["capability"] and not record["capability"]["revoked"] and not record["ack"]:
+        active_clock = handoff_channel_epoch(ledger, read_only=True)
+    public = handoff_public(epoch, record, active_clock)
+    emit_delivery_explanation(args, {"handoff": public}, mode="existing_intent")
+    return 0
+
+
 def cmd_handoff(args):
+    if args.handoff_action == "status" and getattr(args, "explain", False):
+        return cmd_handoff_explanation(args)
     ledger = HandoffLedger()
     action = args.handoff_action
     if action == "init":
@@ -10465,9 +10794,13 @@ def cmd_send(args: argparse.Namespace) -> int:
     validate_agent_send(adapter, args, text)
 
     if not args.host:
+        if getattr(args, "explain", False):
+            args._delivery_explanation_started = True
         result = LocalTransport().execute("send", adapter, args, text)
         result.update(routing_metadata)
         emit(args.json, result, adapter.submission_text(result, "this machine"), command="send")
+        if getattr(args, "explain", False):
+            emit_delivery_explanation(args, result, failed=result.get("ok") is False)
         if advertised_route and advertised_route["status"] == "unverified" and not args.json:
             print(
                 "session-peer: reverse SSH reply route was not checked; "
@@ -10480,9 +10813,14 @@ def cmd_send(args: argparse.Namespace) -> int:
     for requested_host in args.host:
         host = requested_host
         try:
+            if getattr(args, "explain", False):
+                args._delivery_explanation_started = True
+                args._delivery_explanation_host = requested_host
             transport = SshTransport(requested_host, args, tailnet_status)
             host, ssh_opts = transport.host, transport.ssh_opts
             shown_host = display_host(requested_host, host)
+            if getattr(args, "explain", False):
+                args._delivery_explanation_host = shown_host
             encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
             remote_argv = ["send", "--no-update-notice", "--to", args.to, "--b64", encoded]
             remote_argv += adapter.remote_options(args)
@@ -10510,6 +10848,11 @@ def cmd_send(args: argparse.Namespace) -> int:
                 exit_code = EXIT_ERROR
             if not args.json:
                 print(adapter.submission_text(payload, shown_host))
+                if getattr(args, "explain", False):
+                    # Explain the received facts, before legacy adapter shaping
+                    # replaces fields such as Claude's dryRun with request data.
+                    emit_delivery_explanation(args, result, host=shown_host,
+                                              failed=payload.get("ok") is False or result.get("ok") is False)
         except CcPeerError as exc:
             exit_code = EXIT_ERROR
             all_results.append(json_result(
@@ -10519,6 +10862,10 @@ def cmd_send(args: argparse.Namespace) -> int:
             ))
             if not args.json:
                 print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
+                if getattr(args, "explain", False):
+                    emit_delivery_explanation(args, exc.details,
+                                              host=display_host(requested_host, host),
+                                              failed=True, stream=sys.stderr)
 
     if args.json:
         emit_json_results(all_results)
@@ -10784,6 +11131,8 @@ def build_parser() -> argparse.ArgumentParser:
     sending.add_argument("--wake-timeout", type=int, choices=range(1, 61), default=30, metavar="SECONDS",
                          help="wake deadline, 1..60 seconds (default: 30)")
     sending.add_argument("--dry-run", action="store_true", help="resolve the target, send nothing")
+    sending.add_argument("--explain", action="store_true", help="explain existing dry-run evidence in text")
+    doctor.add_argument("--explain", action="store_true", help="explain existing diagnostic capabilities in text")
     sending.set_defaults(func=cmd_send)
 
     handoff = subparsers.add_parser("handoff", help="manage private correlated intents without submitting native messages")
@@ -10799,6 +11148,8 @@ def build_parser() -> argparse.ArgumentParser:
                              metavar="SECONDS", help="finite local watch budget, 1..60 seconds (default: 30)")
             sub.add_argument("--interval-ms", type=handoff_watch_interval, default=1000,
                              metavar="MILLISECONDS", help="sample every 1000..5000 ms (default: 1000)")
+        if action == "status":
+            sub.add_argument("--explain", action="store_true", help="explain the existing read-only intent snapshot")
         if action == "wait":
             sub.add_argument("--wait-for", choices=("delivered", "acknowledged"), required=True)
             sub.add_argument("--wait-timeout", type=handoff_timeout, default=30)
@@ -10954,6 +11305,19 @@ def _main(argv: list[str] | None = None) -> int:
     if args.json and output_format == "text":
         parser.error("--json conflicts with --output-format text")
     args.json = args.json or output_format == "json"
+    if getattr(args, "explain", False):
+        if args.json:
+            parser.error("--explain requires text output")
+        if args.command == "send":
+            if not args.dry_run:
+                parser.error("--explain requires --dry-run")
+            if handoff_requested(args) or any(getattr(args, key, None) is not None for key in (
+                    "_handoff_native_context", "_handoff_native_cutoff_ms", "_handoff_native_total_ms")):
+                parser.error("--explain does not support experimental handoff sends")
+        elif args.command == "handoff" and args.handoff_action != "status":
+            parser.error("--explain requires handoff status")
+        args._delivery_explanation_started = False
+        args._delivery_explanation_host = None
     if runtime_notice_preference_requested(args):
         if runtime_notice_preference_routed(args):
             parser.error("Runtime notice preferences are local only; do not use host or SSH options")
@@ -10989,6 +11353,10 @@ def _main(argv: list[str] | None = None) -> int:
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
             print(human_text(f"session-peer: {message}"), file=sys.stderr)
+            if getattr(args, "explain", False):
+                emit_delivery_explanation(args, exc.details, failed=True, stream=sys.stderr,
+                                          mode="doctor" if args.command == "doctor" else "existing_intent" if args.command == "handoff" else "readiness",
+                                          host=getattr(args, "_delivery_explanation_host", None))
         exit_code = (
             EXIT_NO_TARGET
             if isinstance(exc, NoTargetError) or "no reachable session" in message
@@ -11004,6 +11372,12 @@ def _main(argv: list[str] | None = None) -> int:
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
             print(human_text(f"session-peer: {message}"), file=sys.stderr)
+            if getattr(args, "explain", False):
+                explanation = ({"reason": "outcome_unknown"}
+                               if getattr(args, "_delivery_explanation_started", False) else {})
+                emit_delivery_explanation(args, explanation, failed=True, stream=sys.stderr,
+                                          mode="doctor" if args.command == "doctor" else "existing_intent" if args.command == "handoff" else "readiness",
+                                          host=getattr(args, "_delivery_explanation_host", None))
         exit_code = EXIT_ERROR
     if show_human_notice and not args.json:
         emit_human_update_notice()

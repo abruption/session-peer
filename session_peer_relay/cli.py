@@ -22,6 +22,7 @@ from .wire import validate_relay_url, direct_address
 from .transport_errors import NoAuthenticatedRoute, TransportFailure
 from .guidance import with_guidance
 from .pairing_ui import OfferOutcomeUnknown, offer_failure
+from .framing import valid_delivery_context
 
 
 def connection_diagnostics(exc):
@@ -460,9 +461,13 @@ async def core_exchange(args):
                 text = core.wrap_message(text, with_from=True, with_reply=False, explicit_host=None)
             body = {'target': args.to, 'message': text}
         operation = 'resolve' if args.command == 'send' and args.dry_run else args.command
+        credential = device_credential(args, store, args.device)
+        if operation == 'resolve' and getattr(args, 'explain', False):
+            args._delivery_explanation_started = True
         result = await exchange(store, args.device, operation, body,
                                 getattr(args, 'request_id', None), args.device_route,
-                                device_credential(args, store, args.device))
+                                credential,
+                                **({'explain': True} if operation == 'resolve' and getattr(args, 'explain', False) else {}))
         if args.command == 'list' and args.agent:
             result['sessions'] = [row for row in result.get('sessions', []) if row.get('agent') == args.agent]
         return result
@@ -477,6 +482,13 @@ def invoke_core(args):
     except Exception as exc:
         result = {'ok': False, 'reason': str(exc) if isinstance(exc, Rejected) else type(exc).__name__,
                   'retryAllowed': False, 'consumptionConfirmed': False, **connection_diagnostics(exc)}
+    delivery_context = result.pop('deliveryContext', None)
+    explain = (args.command == 'send' and getattr(args, 'dry_run', False)
+               and getattr(args, 'explain', False))
+    if hasattr(args, '_delivery_explanation_context'):
+        del args._delivery_explanation_context
+    if explain and valid_delivery_context(delivery_context):
+        args._delivery_explanation_context = delivery_context
     result = with_guidance(result)
     result.update(device=args.device, host='device:'+args.device, transport='paired_device')
     display = core.human_text(result)
@@ -488,4 +500,6 @@ def invoke_core(args):
             str(row.get('target', ''))+'  '+str(row.get('agent', ''))+'  '+str(row.get('id', row.get('pid', '')))+'  '+str(row.get('status', 'unknown'))
             for row in display.get('sessions', []))
     core.emit(args.json, result, human, command=args.command)
+    if explain:
+        core.emit_delivery_explanation(args, result, failed=not result.get('ok'))
     return 0 if result.get('ok') else 1

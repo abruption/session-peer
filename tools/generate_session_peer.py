@@ -23,6 +23,7 @@ SEGMENTS = (
     "ssh_config.py",
     "ssh.py",
     "ssh_identity.py",
+    "explanation.py",
     "output.py",
     "diagnostics.py",
     "adapters.py",

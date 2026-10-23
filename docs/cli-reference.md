@@ -60,6 +60,29 @@ not a `--agent` flag.
 running. Plain send does not activate a session; [explicit `--wake`](wake.md)
 is opt-in and does not confirm consumption or a reply.
 
+<a id="delivery-explanation"></a>
+
+### Delivery explanation (development)
+
+Development for #323, a v1.3 candidate; unavailable in published v1.2.1. Add `--explain` to `send --dry-run` for a human-readable summary of the selected local, SSH or paired-device destination, existing validation result, delivery method and observation limits. `doctor --explain` describes the existing diagnostic snapshot and declared capabilities, not per-target readiness. `handoff status --explain` describes an existing intent's stored evidence. Each processed SSH destination receives its own summary; an unexpected error can still stop the existing host loop before later destinations are processed.
+
+```bash
+session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run --explain
+session-peer send --device RECEIVER_FINGERPRINT --to review --message "Review the patch" --dry-run --explain
+session-peer doctor --explain
+session-peer handoff status --correlation-id PREPARED_UUID --explain
+```
+
+The explanation reuses the selected command's existing results and adds no diagnostic, native-version or SSH probes, target activation or standalone `list` work. The dry-run itself may already run version checks. A later send repeats validation; a successful preview does not reserve the destination or guarantee submission, consumption or completion. Declared support, observed checks and unknown facts are shown separately. Without `--wake`, wake eligibility is not checked. With it, only the existing preflight result is described.
+
+Paired dry-run keeps the existing receiver-policy `resolve` operation. The existing connection probe negotiates optional explanation context only with a receiver advertising support. This internal context is versioned, allowlisted and limited to 8 KiB; it adds no general JSON output or handoff schema. The selected receiver agent, target and home are shown only when reported and validated, never guessed from the sender's profile. Older receivers retain their independently known native results while unreported context stays unknown; no fallback, extra probe or resend is attempted.
+
+Handoff status reuses its read-only snapshot without creating an intent, receipt capability, wait or collector, or writing the ledger. Submission, injection observation, explicit receipt and latest stored wait remain separate; even an acknowledged receipt does not prove task completion. Stored observations may be stale. Only a reported receipt observation time is described as such; a description's generation time or diagnostic snapshot is not a delivery observation time. Ordinary sends do not gain receipt ACK support.
+
+This scope is text-only: combining `--explain` with `--json` or `--output-format json` is a usage error. Only `send --explain` requires `--dry-run`; `doctor --explain` and `handoff status --explain` do not. Send still refuses experimental handoff `--correlation-id`, `--request-ack`, `--observe-delivery` and `--wait-for` with `--explain`, before message input or destination/ledger work. Existing commands without the new option keep their output, JSON and exit contracts; explanation does not turn a successful status query into proof of ACK or change the underlying command's exit meaning.
+
+For send, the normal message requirement and limits still apply: supply `--message`, `--message-file` or stdin as usual; no placeholder body is generated. Explanation fields do not include the body or receipt secrets. Normal explanations use stdout; failed results or unexpected submission evidence use stderr, without moving existing summary/error output. Unknown evidence stays unknown, and an uncertain actual send must never trigger automatic resend.
+
 ### Optional paired devices and Antigravity (v0.9)
 
 These features are available starting with PyPI v0.9.0. Antigravity remains
