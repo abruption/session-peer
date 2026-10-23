@@ -1397,6 +1397,8 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
                            "consumptionConfirmed": False})
     selected = codex_home(args)
     root, home_resolution = resolve_codex_home(args, selected, thread_id)
+    if getattr(args, "_address_expected_writer", None) is not None:
+        require_address_writer(args, root, thread_id, home_resolution)
     native_home = getattr(args, "codex_native_home", None)
     # Dry-run applies the same storage boundary as the real submission.
     queue_cwd = codex_queue_storage_preflight(args, root, thread_id)
@@ -1417,7 +1419,12 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
         if not any(s["id"] == thread_id for s in discover_codex(discovery_args)):
             raise NoTargetError(f"No saved Codex thread {thread_id} in {root}")
         return result
-    revalidate_codex_home(root, thread_id, home_resolution)
+    try:
+        revalidate_codex_home(root, thread_id, home_resolution)
+    except CcPeerError:
+        if getattr(args, "_address_expected_writer", None) is not None:
+            raise address_refused("address_writer_changed") from None
+        raise
     # Relay receivers on WSL inspect the native Windows state DB through its
     # mounted POSIX path, but the native codex.exe process needs the Windows
     # spelling of that same home.  This private adapter value is derived from
@@ -1427,6 +1434,14 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
     check_codex_consumer_storage(root, thread_id, native_home=native_home,
                                  include_ordinary_preferences=include_ordinary_preferences)
     try:
+        if getattr(args, "_address_expected_writer", None) is not None:
+            # Compare to the selected observation again at the effect boundary;
+            # this is not an atomic native incarnation precondition.
+            try:
+                revalidate_codex_home(root, thread_id, home_resolution)
+            except CcPeerError:
+                raise address_refused("address_writer_changed") from None
+            require_address_writer(args, root, thread_id, home_resolution)
         # Keep leading dashes inside the option value, including with --no-from.
         done = subprocess.run(argv, cwd=None if native_home else str(queue_cwd),
                               env=env, capture_output=True, encoding="utf-8", errors="replace",

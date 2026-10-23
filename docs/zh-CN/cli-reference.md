@@ -131,6 +131,30 @@ session-peer preset remove work-mac --expect-revision 'dp1:<CURRENT-HASH>'
 
 在 macOS 上，忽略所有权的挂载会以 `preset_ownership_unenforced` 被拒绝，无法查询或验证挂载状态时则以 `preset_mount_unverifiable` 被拒绝。不会仅凭模式位断定所有权已强制执行。Linux 也会拒绝上级路径中的 ACL，以及无法验证 ACL 状态的文件系统。中断管理命令后请检查当前配置，因为更改可能已经可见；目录同步失败不会被静默当作成功。
 
+### 接收者地址簿（开发中）
+
+这项 #324 的新增范围是 v1.3 的候选功能，尚未包含在已发布的 v1.2.1 中。路径预设仍只保存路径。单独启用的地址簿将用户提供的显示标签绑定到在本地或 SSH Mac/Linux 路径上明确选择的 Claude Code 或 Codex 接收者。标签不认证人员身份。配对设备、Antigravity 和 Windows 均被拒绝。未显式执行地址簿操作或使用 `--address` 的命令不会读取地址簿配置，也不添加自动迁移或回退。
+
+```bash
+session-peer address resolve --preset work-mac --to 'codex:<full-thread-uuid>' --json
+session-peer address add review --label Review --preset work-mac --to 'codex:<full-thread-uuid>' --expect-selection 'as1:<HASH>'
+session-peer address discover --address review --json
+session-peer send --address review --dry-run --message 'Review the patch'
+session-peer send --address review --address-revision 'ab1:<HASH>' --confirm-target 'codex:<full-thread-uuid>' --message 'Review the patch'
+session-peer address reselect review --expect-revision 'ab1:<OLD_HASH>' --to 'codex:<new-full-thread-uuid>' --expect-selection 'as1:<NEW_HASH>'
+session-peer address remove review --expect-revision 'ab1:<HASH>'
+```
+
+请将占位符替换为实际报告的准确值。在 `add` 前检查 `address resolve` 的结果，并使用其中的 `as1:` 观察 revision。在 `reselect` 前，先使用同一预设再次 resolve 所需的新目标，并检查新的 `as1:` 值。`as1:` 是所观察到的选择元数据的 revision，不是授权、native epoch 或消费证据。每次成功新增或重新选择都会生成新的 `bindingId`，并将其纳入 `ab1:` 地址 revision。因此，即使删除后重建完全相同的地址，也不能复用旧 revision。路径的 `dp1:` 仍是值的哈希：恢复相同预设值会得到相同哈希，而不是新的 epoch。
+
+`address list` 和 `address show` 只读取配置。`address resolve` 和 `address discover` 显式检查所选接收者的元数据，不生成占位消息、不执行 native CLI 或版本探测，也不激活模型或会话；现有的 OS 进程元数据检查仍可能运行。Discover 最多接受 16 个不同的 `--address` 名称，仅在路径、home 和固定的 SSH 密钥 context 完全相同时分组，每组检查一次。它保留每个地址的部分失败；只要有一个选择检查失败或不再匹配，就返回退出码 1。它不会扫描网络或进行群组广播。引用的预设缺失，或路径、revision 发生变化时会被拒绝，绝不回退到保存的旧路径。
+
+Claude 地址保存选定的 `tg1:` 代次，并在提交前使用现有的连接对端前置检查。Codex 地址保存完整线程 UUID、准确的 home 和 `aw1:` writer 观察，并在产生副作用前重复现有检查。Codex 代次仍**不受支持**：writer 观察和重新验证并不提供对原有 native 实例代次的原子验证保证。Writer 已更改或无法确认时，必须显式重新选择，不会自动改选目标或重放。SSH 选择要求在实际连接上验证主机密钥，并在实际发送时固定使用同一密钥。这既不认证人员身份，也不证明 SSH 配置或 SQLite 存储的同一性。
+
+实际发送必须同时提供当前 `--address-revision` 和准确的 `--confirm-target`，dry-run 可以省略。`--address` 不能与 `--to`、`--preset`、显式主机、native 或 SSH 覆盖项、配对设备、wake、handoff 或 Reply-To URI 路由组合使用。常规消息输入和限制保持不变。结果未知时也不允许自动重发。这些命令不保证与单独开发的 #323 传递说明候选功能组合使用。
+
+存储是位于 `destinations.json` 旁的独立 `addresses.json`，采用 `schemaVersion: 1`，大小限制为 64 KiB，最多 128 项。它使用与预设相同的所有者、权限、ACL、挂载和不跟随符号链接的路径检查，不自动修复或迁移文件。地址名称遵循预设名称语法；显示标签会规范化为 NFC，最多 128 个字符，并拒绝控制字符、双向控制字符和格式字符。管理操作的 commit 未确认时，更改也可能已经可见，重试前请检查当前配置。绑定 revision 不增加接收侧去重、ACK 或任务完成证据。
+
 <a id="install"></a>
 ## 可选的交互式短命令
 

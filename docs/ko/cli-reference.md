@@ -176,6 +176,30 @@ UUID는 현재 목록에서 확인한 값으로, 해시는 선택한 프리셋�
 
 Mac에서 소유권을 무시하는 마운트는 `preset_ownership_unenforced`로, 마운트 조회를 수행하거나 검증할 수 없으면 `preset_mount_unverifiable`로 거부합니다. 파일 모드만으로 소유권 강제를 증명했다고 취급하지 않습니다. Linux에서는 상위 경로의 ACL도 거부하며 ACL 상태를 검증할 수 없는 파일시스템도 거부합니다. 관리 명령을 중단했을 때는 변경이 이미 보일 수 있으므로 현재 설정을 확인하세요. 디렉터리 동기화 실패를 조용히 성공으로 처리하지 않습니다.
 
+### 수신 대상 주소록 (개발 중)
+
+이 추가 #324 범위는 v1.3 후보이며 공개 v1.2.1에는 없습니다. 경로 프리셋은 계속 경로만 저장합니다. 별도로 선택해 사용하는 주소록은 사용자 지정 표시 이름을 로컬 또는 SSH Mac/Linux 경로에서 명시적으로 선택한 Claude Code·Codex 수신 대상에 연결합니다. 표시 이름은 사람의 신원을 인증하지 않습니다. 페어링 기기, Antigravity와 Windows는 거부합니다. 명시적인 주소록 작업이나 `--address`가 없는 명령은 주소록 설정을 읽지 않으며, 자동 이전이나 대체 경로 시도를 추가하지 않습니다.
+
+```bash
+session-peer address resolve --preset work-mac --to 'codex:<full-thread-uuid>' --json
+session-peer address add review --label Review --preset work-mac --to 'codex:<full-thread-uuid>' --expect-selection 'as1:<HASH>'
+session-peer address discover --address review --json
+session-peer send --address review --dry-run --message 'Review the patch'
+session-peer send --address review --address-revision 'ab1:<HASH>' --confirm-target 'codex:<full-thread-uuid>' --message 'Review the patch'
+session-peer address reselect review --expect-revision 'ab1:<OLD_HASH>' --to 'codex:<new-full-thread-uuid>' --expect-selection 'as1:<NEW_HASH>'
+session-peer address remove review --expect-revision 'ab1:<HASH>'
+```
+
+자리표시자를 실제로 보고된 정확한 값으로 바꿉니다. `add` 전에 `address resolve` 결과를 검토하고 해당 `as1:` 관찰 revision을 사용합니다. `reselect` 전에는 같은 프리셋으로 원하는 새 대상을 다시 resolve하고 새 `as1:` 값을 검토합니다. `as1:`은 관찰된 선택 메타데이터의 revision이며 권한, native epoch나 소비 증거가 아닙니다. 추가 또는 재선택에 성공할 때마다 새 `bindingId`를 만들고 이를 `ab1:` 주소 revision에 포함합니다. 따라서 동일한 주소를 삭제 후 다시 만들어도 이전 revision을 재사용할 수 없습니다. 경로의 `dp1:`은 계속 값의 해시이며, 동일한 프리셋 값을 복원하면 새 epoch가 아니라 같은 해시를 얻습니다.
+
+`address list`와 `address show`는 설정만 읽습니다. `address resolve`와 `address discover`는 임시 메시지, native CLI·버전 조회나 모델·세션 활성화 없이 선택한 수신 대상의 메타데이터를 명시적으로 확인합니다. 기존 OS 프로세스 메타데이터 확인은 수행될 수 있습니다. Discover는 서로 다른 `--address` 이름을 최대 16개까지 받으며, 경로·home과 고정된 SSH 키 context가 모두 같은 경우에만 묶어 그룹당 한 번 확인합니다. 주소별 부분 실패를 유지하고, 하나라도 확인에 실패하거나 저장된 선택과 달라지면 종료 코드 1을 반환합니다. 네트워크 검색이나 그룹 일괄 전송은 하지 않습니다. 참조 프리셋이 없거나 경로·revision이 달라지면 거부하며, 저장된 이전 경로로 대체하지 않습니다.
+
+Claude 주소는 선택한 `tg1:` 세대를 저장하고 제출 전에 기존 연결 상대 확인 조건을 적용합니다. Codex 주소는 전체 스레드 UUID, 정확한 home과 `aw1:` writer 관찰을 저장하며 효과가 발생하기 전에 기존 검사를 반복합니다. Codex 세대는 계속 **미지원**입니다. Writer 관찰과 재검증은 원래 native 인스턴스 세대를 원자적으로 검증하는 보장이 아닙니다. Writer가 달라지거나 확인할 수 없으면 명시적으로 다시 선택해야 하며, 자동 대상 변경이나 재실행은 하지 않습니다. SSH 선택은 실제 연결에서 검증한 호스트 키를 요구하며 실제 전송에도 같은 키를 고정합니다. 이것으로 사람을 인증하거나 SSH 설정·SQLite 저장소의 동일성을 증명하지는 않습니다.
+
+실제 전송에는 현재 `--address-revision`과 정확한 `--confirm-target`이 모두 필요하며 dry-run에서는 생략할 수 있습니다. `--address`는 `--to`, `--preset`, 명시적 호스트·native·SSH 재정의, 페어링 기기, wake, handoff나 Reply-To URI 경로와 함께 사용할 수 없습니다. 일반 메시지 입력과 한도는 그대로 유지됩니다. 결과가 불확실해도 자동 재전송은 허용되지 않습니다. 이 명령들은 별도의 #323 전달 설명 후보 기능과의 조합을 보장하지 않습니다.
+
+저장소는 `destinations.json` 옆의 별도 `addresses.json`이며 `schemaVersion: 1`, 64 KiB 한도와 최대 128개 항목을 사용합니다. 프리셋과 같은 소유자·권한·ACL·마운트 검사 및 심볼릭 링크를 따르지 않는 경로 검사를 적용하고 파일을 자동 복구하거나 이전하지 않습니다. 주소 이름은 프리셋 이름 문법을 따릅니다. 표시 이름은 NFC로 정규화하고 128자로 제한하며 제어 문자·양방향 제어 문자·서식 문자를 거부합니다. 관리 작업의 commit을 확인하지 못했어도 변경이 이미 보일 수 있으므로 재시도 전에 현재 설정을 확인하세요. 수신자 바인딩 revision은 수신 측 중복 방지, ACK나 작업 완료 증거를 추가하지 않습니다.
+
 <a id="install"></a>
 ## 선택적 대화형 단축 명령
 

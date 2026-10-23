@@ -330,9 +330,9 @@ def _preset_directory(create=False):
             _preset_cleanup(os.close, fd, preserve=directory_failed)
 
 
-def _preset_read_at(directory):
+def _preset_read_at(directory, filename="destinations.json", decoder=None):
     try:
-        fd = os.open("destinations.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
     except FileNotFoundError:
         return {}
     read_failed = False
@@ -352,10 +352,10 @@ def _preset_read_at(directory):
             raise _preset_error("preset_capacity")
         after = os.fstat(fd)
         _preset_check_fd(fd, private=True)
-        current = os.stat("destinations.json", dir_fd=directory, follow_symlinks=False)
+        current = os.stat(filename, dir_fd=directory, follow_symlinks=False)
         if _preset_identity(before) != _preset_identity(after) or _preset_identity(after) != _preset_identity(current):
             raise _preset_error("preset_storage_changed")
-        return _preset_decode(bytes(raw))
+        return (decoder or _preset_decode)(bytes(raw))
     except BaseException:
         read_failed = True
         raise
@@ -392,12 +392,12 @@ def preset_lookup(name):
     return route, preset_revision(name, route)
 
 
-def _preset_lock(directory):
+def _preset_lock(directory, filename="destinations.lock"):
     flags = os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK
     try:
-        fd = os.open("destinations.lock", flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory)
+        fd = os.open(filename, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory)
     except FileExistsError:
-        fd = os.open("destinations.lock", flags, dir_fd=directory)
+        fd = os.open(filename, flags, dir_fd=directory)
     try:
         _preset_private(os.fstat(fd))
         _preset_check_fd(fd, private=True)
@@ -410,7 +410,7 @@ def _preset_lock(directory):
                 if time.monotonic() >= deadline:
                     raise _preset_error("preset_busy")
                 time.sleep(0.01)
-        info = os.stat("destinations.lock", dir_fd=directory, follow_symlinks=False)
+        info = os.stat(filename, dir_fd=directory, follow_symlinks=False)
         if _preset_identity(info) != _preset_identity(os.fstat(fd)):
             raise _preset_error("preset_storage_changed")
         _preset_check_fd(fd, private=True)
@@ -420,13 +420,13 @@ def _preset_lock(directory):
         raise
 
 
-def _preset_entry_identity(directory):
+def _preset_entry_identity(directory, filename="destinations.json"):
     try:
-        info = os.stat("destinations.json", dir_fd=directory, follow_symlinks=False)
+        info = os.stat(filename, dir_fd=directory, follow_symlinks=False)
     except FileNotFoundError:
         return None
     _preset_private(info)
-    fd = os.open("destinations.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+    fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
     identity_failed = False
     try:
         opened = os.fstat(fd)
@@ -441,17 +441,21 @@ def _preset_entry_identity(directory):
     return _preset_identity(info)
 
 
-def preset_mutate(action, name, entry=None, expected_revision=None):
+def preset_mutate(action, name, entry=None, expected_revision=None, *, _storage=None):
     """Explicit management only; serialize writers and CAS replace/remove."""
     _preset_platform()
     _preset_name(name)
     if action not in ("add", "replace", "remove"):
         raise _preset_error("preset_invalid_action")
-    route = preset_validate_entry(entry) if action != "remove" else None
+    validate_entry = _storage["validate_entry"] if _storage else preset_validate_entry
+    revision = _storage["revision"] if _storage else preset_revision
+    revision_prefix = _storage["revision_prefix"] if _storage else "dp1"
+    filename = _storage["filename"] if _storage else "destinations.json"
+    route = validate_entry(entry) if action != "remove" else None
     if action == "remove" and entry is not None:
         raise _preset_error("preset_invalid_route")
     if action in ("replace", "remove") and (not isinstance(expected_revision, str)
-            or re.fullmatch(r"dp1:[0-9a-f]{64}", expected_revision) is None):
+            or re.fullmatch(revision_prefix + r":[0-9a-f]{64}", expected_revision) is None):
         raise _preset_error("preset_revision_required")
     if action == "add" and expected_revision is not None:
         raise _preset_error("preset_invalid_revision")
@@ -463,10 +467,12 @@ def preset_mutate(action, name, entry=None, expected_revision=None):
         directory = _preset_directory(create=action == "add")
         if directory is None:
             raise _preset_error("preset_not_found")
-        lock = _preset_lock(directory)
-        original_identity = _preset_entry_identity(directory)
-        entries = _preset_read_at(directory)
-        if _preset_entry_identity(directory) != original_identity:
+        lock = _preset_lock(directory, _storage["lockname"]) if _storage else _preset_lock(directory)
+        def identity():
+            return _preset_entry_identity(directory, filename) if _storage else _preset_entry_identity(directory)
+        original_identity = identity()
+        entries = _preset_read_at(directory, filename, _storage["decoder"]) if _storage else _preset_read_at(directory)
+        if identity() != original_identity:
             raise _preset_error("preset_storage_changed")
         if action == "add":
             if name in entries:
@@ -474,14 +480,16 @@ def preset_mutate(action, name, entry=None, expected_revision=None):
         else:
             if name not in entries:
                 raise _preset_error("preset_not_found")
-            if preset_revision(name, entries[name]) != expected_revision:
+            if revision(name, entries[name]) != expected_revision:
                 raise _preset_error("preset_revision_mismatch")
         previous = entries.get(name)
         if action == "remove":
             del entries[name]
         else:
             entries[name] = route
-        raw = json.dumps({"schemaVersion": 1, "presets": entries}, sort_keys=True,
+        if _storage:
+            _storage["validate_entries"](entries)
+        raw = json.dumps({"schemaVersion": 1, _storage["collection"] if _storage else "presets": entries}, sort_keys=True,
                          separators=(",", ":"), ensure_ascii=True).encode("ascii") + b"\n"
         if len(entries) > PRESET_MAX_ENTRIES or len(raw) > PRESET_MAX_BYTES:
             raise _preset_error("preset_capacity")
@@ -498,7 +506,7 @@ def preset_mutate(action, name, entry=None, expected_revision=None):
         finally:
             if check is not None:
                 _preset_cleanup(os.close, check, preserve=check_failed)
-        temporary = ".destinations-" + uuid.uuid4().hex + ".tmp"
+        temporary = "." + filename.removesuffix(".json") + "-" + uuid.uuid4().hex + ".tmp"
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                      0o600, dir_fd=directory)
         temporary_failed = False
@@ -521,9 +529,9 @@ def preset_mutate(action, name, entry=None, expected_revision=None):
                     _preset_cleanup(stream.close, preserve=stream_failed)
                 else:
                     _preset_cleanup(os.close, fd, preserve=stream_failed)
-            if _preset_entry_identity(directory) != original_identity:
+            if identity() != original_identity:
                 raise _preset_error("preset_storage_changed")
-            os.replace(temporary, "destinations.json", src_dir_fd=directory, dst_dir_fd=directory)
+            os.replace(temporary, filename, src_dir_fd=directory, dst_dir_fd=directory)
             temporary = None
             committed = True
             os.fsync(directory)
@@ -541,7 +549,8 @@ def preset_mutate(action, name, entry=None, expected_revision=None):
                 _preset_cleanup(remove_temporary, preserve=temporary_failed)
                 temporary = None
         result_route = previous if action == "remove" else route
-        result = {"name": name, "route": dict(result_route), "revision": preset_revision(name, result_route)}
+        result = {"name": name, _storage["result_key"] if _storage else "route": dict(result_route),
+                  "revision": revision(name, result_route)}
         if action == "remove":
             result["removed"] = True
         return result

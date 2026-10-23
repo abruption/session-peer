@@ -1616,6 +1616,8 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
                            "consumptionConfirmed": False})
     selected = codex_home(args)
     root, home_resolution = resolve_codex_home(args, selected, thread_id)
+    if getattr(args, "_address_expected_writer", None) is not None:
+        require_address_writer(args, root, thread_id, home_resolution)
     native_home = getattr(args, "codex_native_home", None)
     # Dry-run applies the same storage boundary as the real submission.
     queue_cwd = codex_queue_storage_preflight(args, root, thread_id)
@@ -1636,7 +1638,12 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
         if not any(s["id"] == thread_id for s in discover_codex(discovery_args)):
             raise NoTargetError(f"No saved Codex thread {thread_id} in {root}")
         return result
-    revalidate_codex_home(root, thread_id, home_resolution)
+    try:
+        revalidate_codex_home(root, thread_id, home_resolution)
+    except CcPeerError:
+        if getattr(args, "_address_expected_writer", None) is not None:
+            raise address_refused("address_writer_changed") from None
+        raise
     # Relay receivers on WSL inspect the native Windows state DB through its
     # mounted POSIX path, but the native codex.exe process needs the Windows
     # spelling of that same home.  This private adapter value is derived from
@@ -1646,6 +1653,14 @@ def _queue_codex(args: argparse.Namespace, text: str) -> dict:
     check_codex_consumer_storage(root, thread_id, native_home=native_home,
                                  include_ordinary_preferences=include_ordinary_preferences)
     try:
+        if getattr(args, "_address_expected_writer", None) is not None:
+            # Compare to the selected observation again at the effect boundary;
+            # this is not an atomic native incarnation precondition.
+            try:
+                revalidate_codex_home(root, thread_id, home_resolution)
+            except CcPeerError:
+                raise address_refused("address_writer_changed") from None
+            require_address_writer(args, root, thread_id, home_resolution)
         # Keep leading dashes inside the option value, including with --no-from.
         done = subprocess.run(argv, cwd=None if native_home else str(queue_cwd),
                               env=env, capture_output=True, encoding="utf-8", errors="replace",
@@ -3733,6 +3748,12 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
     # The far end reports its own failures in-band; surface them here rather
     # than letting a caller read an error payload as a success.
     if isinstance(result, dict) and result.get("ok") is False:
+        if (argv[:2] == ["address", "_inspect"] and valid_result
+                and type(result.get("selectionSchemaVersion")) is int and result["selectionSchemaVersion"] == 1
+                and isinstance(result.get("selections"), list) and 1 <= len(result["selections"]) <= 16):
+            # Preserve partial metadata so the address consumer can validate
+            # each exact target and retain good rows. No submission is involved.
+            return result
         if (argv and argv[0] == "send" and result.get("command") == "send"
                 and result.get("schemaVersion") == JSON_RESPONSE_SCHEMA_VERSION
                 and result.get("agent") == "antigravity"
@@ -6104,9 +6125,9 @@ def _preset_directory(create=False):
             _preset_cleanup(os.close, fd, preserve=directory_failed)
 
 
-def _preset_read_at(directory):
+def _preset_read_at(directory, filename="destinations.json", decoder=None):
     try:
-        fd = os.open("destinations.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
     except FileNotFoundError:
         return {}
     read_failed = False
@@ -6126,10 +6147,10 @@ def _preset_read_at(directory):
             raise _preset_error("preset_capacity")
         after = os.fstat(fd)
         _preset_check_fd(fd, private=True)
-        current = os.stat("destinations.json", dir_fd=directory, follow_symlinks=False)
+        current = os.stat(filename, dir_fd=directory, follow_symlinks=False)
         if _preset_identity(before) != _preset_identity(after) or _preset_identity(after) != _preset_identity(current):
             raise _preset_error("preset_storage_changed")
-        return _preset_decode(bytes(raw))
+        return (decoder or _preset_decode)(bytes(raw))
     except BaseException:
         read_failed = True
         raise
@@ -6166,12 +6187,12 @@ def preset_lookup(name):
     return route, preset_revision(name, route)
 
 
-def _preset_lock(directory):
+def _preset_lock(directory, filename="destinations.lock"):
     flags = os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK
     try:
-        fd = os.open("destinations.lock", flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory)
+        fd = os.open(filename, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory)
     except FileExistsError:
-        fd = os.open("destinations.lock", flags, dir_fd=directory)
+        fd = os.open(filename, flags, dir_fd=directory)
     try:
         _preset_private(os.fstat(fd))
         _preset_check_fd(fd, private=True)
@@ -6184,7 +6205,7 @@ def _preset_lock(directory):
                 if time.monotonic() >= deadline:
                     raise _preset_error("preset_busy")
                 time.sleep(0.01)
-        info = os.stat("destinations.lock", dir_fd=directory, follow_symlinks=False)
+        info = os.stat(filename, dir_fd=directory, follow_symlinks=False)
         if _preset_identity(info) != _preset_identity(os.fstat(fd)):
             raise _preset_error("preset_storage_changed")
         _preset_check_fd(fd, private=True)
@@ -6194,13 +6215,13 @@ def _preset_lock(directory):
         raise
 
 
-def _preset_entry_identity(directory):
+def _preset_entry_identity(directory, filename="destinations.json"):
     try:
-        info = os.stat("destinations.json", dir_fd=directory, follow_symlinks=False)
+        info = os.stat(filename, dir_fd=directory, follow_symlinks=False)
     except FileNotFoundError:
         return None
     _preset_private(info)
-    fd = os.open("destinations.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+    fd = os.open(filename, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
     identity_failed = False
     try:
         opened = os.fstat(fd)
@@ -6215,17 +6236,21 @@ def _preset_entry_identity(directory):
     return _preset_identity(info)
 
 
-def preset_mutate(action, name, entry=None, expected_revision=None):
+def preset_mutate(action, name, entry=None, expected_revision=None, *, _storage=None):
     """Explicit management only; serialize writers and CAS replace/remove."""
     _preset_platform()
     _preset_name(name)
     if action not in ("add", "replace", "remove"):
         raise _preset_error("preset_invalid_action")
-    route = preset_validate_entry(entry) if action != "remove" else None
+    validate_entry = _storage["validate_entry"] if _storage else preset_validate_entry
+    revision = _storage["revision"] if _storage else preset_revision
+    revision_prefix = _storage["revision_prefix"] if _storage else "dp1"
+    filename = _storage["filename"] if _storage else "destinations.json"
+    route = validate_entry(entry) if action != "remove" else None
     if action == "remove" and entry is not None:
         raise _preset_error("preset_invalid_route")
     if action in ("replace", "remove") and (not isinstance(expected_revision, str)
-            or re.fullmatch(r"dp1:[0-9a-f]{64}", expected_revision) is None):
+            or re.fullmatch(revision_prefix + r":[0-9a-f]{64}", expected_revision) is None):
         raise _preset_error("preset_revision_required")
     if action == "add" and expected_revision is not None:
         raise _preset_error("preset_invalid_revision")
@@ -6237,10 +6262,12 @@ def preset_mutate(action, name, entry=None, expected_revision=None):
         directory = _preset_directory(create=action == "add")
         if directory is None:
             raise _preset_error("preset_not_found")
-        lock = _preset_lock(directory)
-        original_identity = _preset_entry_identity(directory)
-        entries = _preset_read_at(directory)
-        if _preset_entry_identity(directory) != original_identity:
+        lock = _preset_lock(directory, _storage["lockname"]) if _storage else _preset_lock(directory)
+        def identity():
+            return _preset_entry_identity(directory, filename) if _storage else _preset_entry_identity(directory)
+        original_identity = identity()
+        entries = _preset_read_at(directory, filename, _storage["decoder"]) if _storage else _preset_read_at(directory)
+        if identity() != original_identity:
             raise _preset_error("preset_storage_changed")
         if action == "add":
             if name in entries:
@@ -6248,14 +6275,16 @@ def preset_mutate(action, name, entry=None, expected_revision=None):
         else:
             if name not in entries:
                 raise _preset_error("preset_not_found")
-            if preset_revision(name, entries[name]) != expected_revision:
+            if revision(name, entries[name]) != expected_revision:
                 raise _preset_error("preset_revision_mismatch")
         previous = entries.get(name)
         if action == "remove":
             del entries[name]
         else:
             entries[name] = route
-        raw = json.dumps({"schemaVersion": 1, "presets": entries}, sort_keys=True,
+        if _storage:
+            _storage["validate_entries"](entries)
+        raw = json.dumps({"schemaVersion": 1, _storage["collection"] if _storage else "presets": entries}, sort_keys=True,
                          separators=(",", ":"), ensure_ascii=True).encode("ascii") + b"\n"
         if len(entries) > PRESET_MAX_ENTRIES or len(raw) > PRESET_MAX_BYTES:
             raise _preset_error("preset_capacity")
@@ -6272,7 +6301,7 @@ def preset_mutate(action, name, entry=None, expected_revision=None):
         finally:
             if check is not None:
                 _preset_cleanup(os.close, check, preserve=check_failed)
-        temporary = ".destinations-" + uuid.uuid4().hex + ".tmp"
+        temporary = "." + filename.removesuffix(".json") + "-" + uuid.uuid4().hex + ".tmp"
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                      0o600, dir_fd=directory)
         temporary_failed = False
@@ -6295,9 +6324,9 @@ def preset_mutate(action, name, entry=None, expected_revision=None):
                     _preset_cleanup(stream.close, preserve=stream_failed)
                 else:
                     _preset_cleanup(os.close, fd, preserve=stream_failed)
-            if _preset_entry_identity(directory) != original_identity:
+            if identity() != original_identity:
                 raise _preset_error("preset_storage_changed")
-            os.replace(temporary, "destinations.json", src_dir_fd=directory, dst_dir_fd=directory)
+            os.replace(temporary, filename, src_dir_fd=directory, dst_dir_fd=directory)
             temporary = None
             committed = True
             os.fsync(directory)
@@ -6315,7 +6344,8 @@ def preset_mutate(action, name, entry=None, expected_revision=None):
                 _preset_cleanup(remove_temporary, preserve=temporary_failed)
                 temporary = None
         result_route = previous if action == "remove" else route
-        result = {"name": name, "route": dict(result_route), "revision": preset_revision(name, result_route)}
+        result = {"name": name, _storage["result_key"] if _storage else "route": dict(result_route),
+                  "revision": revision(name, result_route)}
         if action == "remove":
             result["removed"] = True
         return result
@@ -6453,6 +6483,621 @@ def cmd_preset(args):
                  else render_preset_route(payload["name"], payload["route"], payload["revision"]))
     emit(args.json, payload, human, command="preset")
     return 0
+
+
+"""Private selected recipients bound to an explicit route revision; no discovery."""
+import base64
+import copy
+import unicodedata
+
+
+ADDRESS_MAX_BYTES = 65536
+ADDRESS_MAX_ENTRIES = 128
+# Shared storage helpers enforce these limits on both reads and commits.
+assert (ADDRESS_MAX_BYTES, ADDRESS_MAX_ENTRIES) == (PRESET_MAX_BYTES, PRESET_MAX_ENTRIES), "address/preset storage limits differ"
+
+
+def _address_error(reason):
+    return CcPeerError("address configuration refused: " + reason, {"reason": reason})
+
+
+def _address_translate(error):
+    reason = error.details.get("reason", "address_unsafe_storage")
+    if reason.startswith("preset_"):
+        reason = "address_" + reason[len("preset_"):]
+    if reason == "address_commit_unconfirmed":
+        return CcPeerError("address commit unconfirmed; inspect configuration before retrying", {"reason": reason})
+    return _address_error(reason)
+
+
+def address_platform():
+    try:
+        _preset_platform()
+    except CcPeerError as error:
+        raise _address_translate(error) from None
+
+
+def _address_name(name):
+    try:
+        _preset_name(name)
+    except CcPeerError as error:
+        raise _address_translate(error) from None
+
+
+def _address_hash(prefix, value):
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    return prefix + ":" + hashlib.sha256(raw).hexdigest()
+
+
+def _address_selection_parts(preset, preset_rev, route, recipient, selection, ssh_host_key):
+    _address_name(preset)
+    try:
+        route = preset_validate_entry(route)
+        if preset_revision(preset, route) != preset_rev:
+            raise _address_error("address_preset_revision_mismatch")
+    except CcPeerError as error:
+        raise _address_translate(error) from None
+    if (type(recipient) is not dict or set(recipient) != {"agent", "target", "home"}
+            or recipient["agent"] != route["agent"]):
+        raise _address_error("address_invalid_recipient")
+    agent, target, home = recipient["agent"], recipient["target"], recipient["home"]
+    pattern = (r"claude:[1-9][0-9]*" if agent == "claude" else
+               r"codex:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+    if (not isinstance(target, str) or len(target) > 128
+            or re.fullmatch(pattern, target) is None):
+        raise _address_error("address_invalid_recipient")
+    if agent == "claude":
+        if home is not None:
+            raise _address_error("address_invalid_recipient")
+    else:
+        if (not isinstance(home, str) or not home or len(home) > 4096
+                or any(ord(c) < 32 or 127 <= ord(c) <= 159 or 0xD800 <= ord(c) <= 0xDFFF for c in home)
+                or not PurePosixPath(home).is_absolute() or home.startswith("//") or "\\" in home
+                or ".." in PurePosixPath(home).parts or str(PurePosixPath(home)) != home):
+            raise _address_error("address_invalid_recipient")
+    if (type(selection) is not dict or set(selection) != {
+            "generationStatus", "targetGeneration", "writerRevision", "observationRevision"}):
+        raise _address_error("address_invalid_selection")
+    if agent == "claude":
+        if (selection["generationStatus"] != "available" or selection["writerRevision"] is not None
+                or not isinstance(selection["targetGeneration"], str)
+                or re.fullmatch(r"tg1:[0-9a-f]{64}", selection["targetGeneration"]) is None):
+            raise _address_error("address_invalid_selection")
+    elif (selection["generationStatus"] != "unsupported" or selection["targetGeneration"] is not None
+          or not isinstance(selection["writerRevision"], str)
+          or re.fullmatch(r"aw1:[0-9a-f]{64}", selection["writerRevision"]) is None):
+        raise _address_error("address_invalid_selection")
+    if route["transport"] == "local":
+        if ssh_host_key is not None:
+            raise _address_error("address_invalid_host_key")
+    else:
+        if (not isinstance(ssh_host_key, str)
+                or re.fullmatch(r"SHA256:[A-Za-z0-9+/]{43}", ssh_host_key) is None):
+            raise _address_error("address_invalid_host_key")
+        try:
+            digest = base64.b64decode(ssh_host_key[7:] + "=", validate=True)
+            if len(digest) != 32 or base64.b64encode(digest).decode("ascii").rstrip("=") != ssh_host_key[7:]:
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise _address_error("address_invalid_host_key") from None
+    return {"schemaVersion": 1, "preset": preset, "presetRevision": preset_rev,
+            "route": route, "recipient": dict(recipient),
+            "selection": {key: selection[key] for key in (
+                "generationStatus", "targetGeneration", "writerRevision")},
+            "sshHostKey": ssh_host_key}
+
+
+def address_selection_revision(preset, presetRev, route, recipient, selection, sshHostKey):
+    """Bind selected evidence to route and peer key, excluding its own digest."""
+    return _address_hash("as1", _address_selection_parts(
+        preset, presetRev, route, recipient, selection, sshHostKey))
+
+
+def address_validate_label(label):
+    if (not isinstance(label, str) or not label.strip() or len(label) > 128
+            or unicodedata.normalize("NFC", label) != label
+            or any(unicodedata.category(c) in ("Cc", "Cf", "Cs", "Zl", "Zp")
+                   or ord(c) in (0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x3164, 0xFFA0)
+                   or 0xFE00 <= ord(c) <= 0xFE0F or 0xE0100 <= ord(c) <= 0xE01EF for c in label)):
+        raise _address_error("address_invalid_label")
+    return label
+
+
+def address_validate_entry(entry):
+    if (type(entry) is not dict or set(entry) != {"bindingId", "label", "preset",
+            "presetRevision", "route", "recipient", "selection", "sshHostKey"}):
+        raise _address_error("address_invalid_entry")
+    binding = entry["bindingId"]
+    try:
+        parsed = uuid.UUID(binding) if isinstance(binding, str) else None
+        if parsed is None or str(parsed) != binding or parsed.version != 4:
+            raise ValueError()
+    except (ValueError, AttributeError):
+        raise _address_error("address_invalid_binding_id") from None
+    address_validate_label(entry["label"])
+    revision = address_selection_revision(entry["preset"], entry["presetRevision"], entry["route"],
+                                          entry["recipient"], entry["selection"], entry["sshHostKey"])
+    if entry["selection"]["observationRevision"] != revision:
+        raise _address_error("address_selection_revision_mismatch")
+    return copy.deepcopy(entry)
+
+
+def address_revision(name, entry):
+    _address_name(name)
+    return _address_hash("ab1", {"schemaVersion": 1, "name": name,
+                                 "entry": address_validate_entry(entry)})
+
+
+def _address_validate_entries(entries):
+    labels = set()
+    for name, entry in entries.items():
+        _address_name(name)
+        entry = address_validate_entry(entry)
+        if entry["label"] in labels:
+            raise _address_error("address_duplicate_label")
+        labels.add(entry["label"])
+
+
+def _address_decode(raw):
+    try:
+        value = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=_preset_pairs,
+                           parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+        if (type(value) is not dict or set(value) != {"schemaVersion", "addresses"}
+                or type(value["schemaVersion"]) is not int or value["schemaVersion"] != 1
+                or type(value["addresses"]) is not dict):
+            raise ValueError()
+        entries = value["addresses"]
+        if len(entries) > ADDRESS_MAX_ENTRIES:
+            raise _address_error("address_capacity")
+        _address_validate_entries(entries)
+        return entries
+    except (UnicodeError, ValueError, TypeError, RecursionError):
+        raise _address_error("address_corrupt") from None
+    except CcPeerError as error:
+        raise _address_translate(error) from None
+
+
+def address_read():
+    """Read only; absence never initializes a directory, file, or lock."""
+    directory = None
+    failed = False
+    try:
+        _preset_platform()
+        directory = _preset_directory()
+        return {} if directory is None else _preset_read_at(directory, "addresses.json", _address_decode)
+    except OSError:
+        failed = True
+        raise _address_error("address_unsafe_storage") from None
+    except CcPeerError as error:
+        failed = True
+        raise _address_translate(error) from None
+    except BaseException:
+        failed = True
+        raise
+    finally:
+        if directory is not None:
+            try:
+                _preset_cleanup(os.close, directory, preserve=failed)
+            except CcPeerError as error:
+                raise _address_translate(error) from None
+
+
+def address_lookup(name):
+    _address_name(name)
+    entries = address_read()
+    if name not in entries:
+        raise _address_error("address_not_found")
+    entry = entries[name]
+    return entry, address_revision(name, entry)
+
+
+def address_mutate(action, name, entry_withoutBindingId=None, expected_revision=None):
+    _address_name(name)
+    if action not in ("add", "reselect", "remove"):
+        raise _address_error("address_invalid_action")
+    entry = entry_withoutBindingId
+    if action != "remove":
+        if type(entry) is not dict or "bindingId" in entry:
+            raise _address_error("address_invalid_entry")
+        entry = address_validate_entry({**entry, "bindingId": str(uuid.uuid4())})
+    try:
+        return preset_mutate("replace" if action == "reselect" else action, name, entry, expected_revision,
+            _storage={"filename": "addresses.json", "lockname": "addresses.lock", "collection": "addresses",
+                      "decoder": _address_decode, "validate_entry": address_validate_entry,
+                      "revision": address_revision, "revision_prefix": "ab1", "result_key": "entry",
+                      "validate_entries": _address_validate_entries})
+    except CcPeerError as error:
+        raise _address_translate(error) from None
+
+
+"""Metadata-only address selection; observation hashes are never native epochs."""
+
+
+def address_refused(reason):
+    return CcPeerError("Address selection refused: " + reason,
+                       {"reason": reason, "status": "refused", "submitted": False,
+                        "retryAllowed": False})
+
+
+def address_writer_revision_argument(value):
+    if not isinstance(value, str) or re.fullmatch(r"aw1:[0-9a-f]{64}", value) is None:
+        raise argparse.ArgumentTypeError("expected an address writer observation revision")
+    return value
+
+
+def address_codex_writer_revision(root, thread_id, resolution):
+    """Hash existing bounded live-writer observations, without new probes."""
+    if not isinstance(resolution, dict) or resolution.get("selected") != str(root):
+        raise address_refused("address_writer_unavailable")
+    candidates = resolution.get("candidates")
+    if not isinstance(candidates, list) or len(candidates) > 256:
+        raise address_refused("address_writer_unavailable")
+    selected = [row for row in candidates if isinstance(row, dict) and row.get("codexHome") == str(root)]
+    if len(selected) != 1:
+        raise address_refused("address_writer_unavailable")
+    row = selected[0]
+    pid, birth = row.get("ownerPid"), row.get("ownerStartTime")
+    valid_birth = (type(birth) is int and birth > 0) or (
+        isinstance(birth, str) and 0 < len(birth) <= 128
+        and all(32 <= ord(c) < 127 for c in birth))
+    if (row.get("activity") != "live_writer" or row.get("writerLock") != "held"
+            or row.get("ownerStable") is not True or type(pid) is not int or pid <= 1
+            or not valid_birth):
+        raise address_refused("address_writer_unavailable")
+    raw = json.dumps([str(root), thread_id, pid, birth], separators=(",", ":"), ensure_ascii=True)
+    return "aw1:" + hashlib.sha256(raw.encode("ascii")).hexdigest()
+
+
+def require_address_writer(args, root, thread_id, resolution):
+    expected = getattr(args, "_address_expected_writer", None)
+    if expected is None:
+        return
+    if not isinstance(expected, str) or re.fullmatch(r"aw1:[0-9a-f]{64}", expected) is None:
+        raise address_refused("address_invalid_writer_revision")
+    if address_codex_writer_revision(root, thread_id, resolution) != expected:
+        raise address_refused("address_writer_changed")
+
+
+def address_inspect_selection(args):
+    address_platform()
+    agent, targets = args.agent, args.to
+    if (agent not in ("claude", "codex") or not isinstance(targets, list)
+            or not 1 <= len(targets) <= 16
+            or any(not isinstance(t, str) or not t or len(t) > 256 for t in targets)
+            or len(set(targets)) != len(targets)):
+        raise address_refused("address_invalid_selection")
+    if agent == "codex" and not getattr(args, "codex_home", None):
+        raise address_refused("address_explicit_home_required")
+    if any(AGENTS.for_target(target).name != agent for target in targets):
+        raise address_refused("address_agent_conflict")
+    rows = discover(include_unreachable=True) if agent == "claude" else None
+    results = []
+    for target in targets:
+        try:
+            if agent == "claude":
+                selector = target.removeprefix("claude:")
+                if re.fullmatch(r"[0-9]+", selector) is None and getattr(rows, "errors", []):
+                    raise address_refused("address_selection_unavailable")
+                session = resolve_target(rows, selector)
+                generation = claude_generation(session)
+                if generation is None:
+                    raise address_refused("address_generation_unavailable")
+                recipient = {"agent": agent, "target": "claude:" + str(session["pid"]), "home": None}
+                selection = {"generationStatus": "available", "targetGeneration": generation,
+                             "writerRevision": None, "observationRevision": None}
+            else:
+                thread = codex_thread(target)
+                root, resolution = resolve_codex_home(args, codex_home(args), thread)
+                recipient = {"agent": agent, "target": "codex:" + thread, "home": str(root)}
+                selection = {"generationStatus": "unsupported", "targetGeneration": None,
+                             "writerRevision": address_codex_writer_revision(root, thread, resolution),
+                             "observationRevision": None}
+            results.append({"requestedTarget": target, "ok": True, "recipient": recipient,
+                            "selection": selection})
+        except (CcPeerError, OSError):
+            # Do not reflect arbitrary native diagnostics or another recipient.
+            results.append({"requestedTarget": target, "ok": False,
+                            "reason": "address_selection_unavailable"})
+    return {"selectionSchemaVersion": 1, "selections": results,
+            "homeSelector": getattr(args, "codex_home", None) if agent == "codex" else None,
+            "ok": all(row["ok"] for row in results)}
+
+
+def cmd_address_inspect(args):
+    payload = address_inspect_selection(args)
+    emit(True, payload, "", command="address")
+    return 0 if payload["ok"] else EXIT_ERROR
+
+
+def _address_validate_probe(value, route, targets):
+    if (not isinstance(value, dict) or type(value.get("selectionSchemaVersion")) is not int
+            or value["selectionSchemaVersion"] != 1 or type(value.get("ok")) is not bool
+            or not isinstance(value.get("selections"), list)
+            or len(value["selections"]) != len(targets)
+            or "homeSelector" not in value or value["homeSelector"] != route.get("codexHome")):
+        raise address_refused("address_invalid_inspection")
+    for row, requested in zip(value["selections"], targets):
+        if (not isinstance(row, dict) or row.get("requestedTarget") != requested
+                or type(row.get("ok")) is not bool):
+            raise address_refused("address_invalid_inspection")
+        if not row["ok"]:
+            if set(row) != {"requestedTarget", "ok", "reason"} or row["reason"] != "address_selection_unavailable":
+                raise address_refused("address_invalid_inspection")
+            continue
+        if set(row) != {"requestedTarget", "ok", "recipient", "selection"}:
+            raise address_refused("address_invalid_inspection")
+        recipient, selection = row["recipient"], row["selection"]
+        if (not isinstance(recipient, dict) or set(recipient) != {"agent", "target", "home"}
+                or recipient["agent"] != route["agent"] or not isinstance(selection, dict)
+                or set(selection) != {"generationStatus", "targetGeneration", "writerRevision", "observationRevision"}
+                or selection["observationRevision"] is not None):
+            raise address_refused("address_invalid_inspection")
+        target = recipient["target"]
+        if route["agent"] == "claude":
+            valid = (isinstance(target, str) and re.fullmatch(r"claude:[1-9][0-9]{0,9}", target)
+                     and int(target.partition(":")[2]) > 1 and recipient["home"] is None
+                     and selection["generationStatus"] == "available"
+                     and isinstance(selection["targetGeneration"], str)
+                     and re.fullmatch(r"tg1:[0-9a-f]{64}", selection["targetGeneration"])
+                     and selection["writerRevision"] is None)
+            literal_pid = requested.removeprefix("claude:")
+            if re.fullmatch(r"[0-9]+", literal_pid):
+                valid = valid and target == "claude:" + str(int(literal_pid))
+        else:
+            home = recipient["home"]
+            valid_home = (isinstance(home, str) and 0 < len(home) <= 4096
+                and PurePosixPath(home).is_absolute() and not home.startswith("//")
+                and "\\" not in home and ".." not in PurePosixPath(home).parts
+                and str(PurePosixPath(home)) == home
+                and all(not (ord(c) < 32 or 127 <= ord(c) <= 159 or 0xD800 <= ord(c) <= 0xDFFF) for c in home))
+            valid = (isinstance(target, str) and target == "codex:" + codex_thread(target)
+                     and target == "codex:" + codex_thread(requested) and valid_home
+                     and selection["generationStatus"] == "unsupported"
+                     and selection["targetGeneration"] is None
+                     and isinstance(selection["writerRevision"], str)
+                     and re.fullmatch(r"aw1:[0-9a-f]{64}", selection["writerRevision"]))
+        if not valid:
+            raise address_refused("address_invalid_inspection")
+    if value["ok"] != all(row["ok"] for row in value["selections"]):
+        raise address_refused("address_invalid_inspection")
+    return value["selections"]
+
+
+def address_probe_route(route, targets, expected_ssh_key=None):
+    route = preset_validate_entry(route)
+    address_platform()
+    if (not isinstance(targets, list) or not 1 <= len(targets) <= 16
+            or any(not isinstance(t, str) or not t or len(t) > 256 for t in targets)
+            or len(set(targets)) != len(targets)):
+        raise address_refused("address_invalid_selection")
+    if any(AGENTS.for_target(target).name != route["agent"] for target in targets):
+        raise address_refused("address_agent_conflict")
+    options = argparse.Namespace(agent=route["agent"], to=targets, codex_home=route.get("codexHome"),
+        allow_inactive_codex_home=False, wake=False, ssh_opt=[], ssh_identity=True,
+        require_ssh_host_key=expected_ssh_key)
+    fingerprint = None
+    if route["transport"] == "local":
+        if expected_ssh_key is not None:
+            raise address_refused("address_invalid_ssh_identity")
+        try:
+            result = address_inspect_selection(options)
+        except (CcPeerError, OSError):
+            raise address_refused("address_selection_unavailable") from None
+    else:
+        argv = ["address", "_inspect", "--agent", route["agent"], "--json"]
+        for target in targets:
+            argv.append("--to=" + target)
+        if "codexHome" in route:
+            argv.extend(["--codex-home", route["codexHome"]])
+        try:
+            transport = SshTransport(route["host"], options, tailscale_status() or {})
+            result = transport.execute(argv)
+        except (CcPeerError, OSError):
+            raise address_refused("address_selection_unavailable") from None
+        proof = result.get("sshIdentity", {})
+        fingerprint = proof.get("fingerprint")
+        if (proof.get("status") != "verified" or not isinstance(fingerprint, str)
+                or re.fullmatch(SSH_FINGERPRINT_PATTERN, fingerprint) is None
+                or (expected_ssh_key is not None and fingerprint != expected_ssh_key)):
+            raise address_refused("address_ssh_identity_unverified")
+    return {"selections": _address_validate_probe(result, route, targets), "sshHostKey": fingerprint}
+
+
+"""Explicit address lifecycle and immutable per-invocation recipient selection."""
+
+
+def _address_current_route(entry):
+    try:
+        route, revision = preset_lookup(entry["preset"])
+    except CcPeerError as error:
+        if error.details.get("reason") == "preset_not_found":
+            raise address_refused("address_preset_changed") from None
+        raise
+    if route != entry["route"] or revision != entry["presetRevision"]:
+        raise address_refused("address_preset_changed")
+    return route, revision
+
+
+def _address_selection(preset, revision, route, target, expected_key=None):
+    probe = address_probe_route(route, [target], expected_key)
+    row = probe["selections"][0]
+    if not row["ok"]:
+        raise address_refused("address_selection_unavailable")
+    recipient, selection = dict(row["recipient"]), dict(row["selection"])
+    selection["observationRevision"] = address_selection_revision(
+        preset, revision, route, recipient, selection, probe["sshHostKey"])
+    return recipient, selection, probe["sshHostKey"]
+
+
+def _address_render(name, entry, revision):
+    clean = human_text({"name": name, "entry": entry, "revision": revision})
+    item, recipient = clean["entry"], clean["entry"]["recipient"]
+    route = item["route"]
+    where = route.get("host", "this machine")
+    return (f"Address {clean['name']}: {item['label']}\n"
+            f"{route['transport']} / {where} / {recipient['target']}"
+            + (f" / home {recipient['home']}" if recipient["home"] else "")
+            + f"\nRevision: {clean['revision']}\n"
+            + f"Generation: {item['selection']['generationStatus']}; label is user-supplied, not authenticated identity.")
+
+
+def _address_discover(args):
+    names = args.address
+    if (not isinstance(names, list) or not 1 <= len(names) <= 16
+            or len(set(names)) != len(names)):
+        raise address_refused("address_invalid_selection")
+    groups, records = {}, []
+    for name in names:
+        try:
+            entry, revision = address_lookup(name)
+            route, _ = _address_current_route(entry)
+            key = json.dumps([route, entry["sshHostKey"]], sort_keys=True, separators=(",", ":"))
+            group = groups.setdefault(key, {"route": route, "key": entry["sshHostKey"], "targets": [], "records": []})
+            target = entry["recipient"]["target"]
+            if target not in group["targets"]:
+                group["targets"].append(target)
+            record = {"name": name, "label": entry["label"], "revision": revision,
+                      "route": route, "recipient": entry["recipient"], "generationStatus": entry["selection"]["generationStatus"]}
+            records.append(record)
+            group["records"].append((record, entry))
+        except (CcPeerError, OSError) as error:
+            reason = error.details.get("reason") if isinstance(error, CcPeerError) else None
+            records.append({"name": name, "status": "stale" if reason == "address_preset_changed" else "unverified",
+                            "reason": reason if reason == "address_preset_changed" else "address_unavailable"})
+    for group in groups.values():
+        try:
+            probe = address_probe_route(group["route"], group["targets"], group["key"])
+            by_target = {row["requestedTarget"]: row for row in probe["selections"]}
+            for record, entry in group["records"]:
+                row = by_target[entry["recipient"]["target"]]
+                if not row["ok"]:
+                    record.update(status="unverified", reason="address_selection_unavailable")
+                    continue
+                current = address_selection_revision(entry["preset"], entry["presetRevision"],
+                    entry["route"], row["recipient"], row["selection"], probe["sshHostKey"])
+                record["status"] = "matched" if current == entry["selection"]["observationRevision"] else "stale"
+                if record["status"] == "stale":
+                    record["reason"] = "address_selection_changed"
+        except (CcPeerError, OSError):
+            for record, _ in group["records"]:
+                record.update(status="unverified", reason="address_discovery_failed")
+    payload = {"addresses": records, "ok": all(row["status"] == "matched" for row in records)}
+    human = "\n\n".join(human_text(
+        f"{row['name']} / {row.get('label', '')}: {row['status']}"
+        + (" / " + json.dumps(row["route"], ensure_ascii=False, sort_keys=True) if "route" in row else "")
+        + (" / " + row["recipient"]["target"] if "recipient" in row else "")) for row in records)
+    emit(args.json, payload, human, command="address")
+    return 0 if payload["ok"] else EXIT_ERROR
+
+
+def cmd_address(args):
+    address_platform()
+    action = args.address_action
+    if action in ("add", "show", "reselect", "remove"):
+        _address_name(args.name)
+    if action in ("add", "reselect") and re.fullmatch(r"as1:[0-9a-f]{64}", args.expect_selection) is None:
+        raise address_refused("address_invalid_selection_revision")
+    if action in ("reselect", "remove") and re.fullmatch(r"ab1:[0-9a-f]{64}", args.expect_revision) is None:
+        raise address_refused("address_invalid_revision")
+    if action == "add":
+        args.label = address_validate_label(unicodedata.normalize("NFC", args.label if args.label is not None else args.name))
+    if action == "discover":
+        return _address_discover(args)
+    if action == "list":
+        entries = address_read()
+        items = [{"name": name, "entry": entry, "revision": address_revision(name, entry)}
+                 for name, entry in sorted(entries.items())]
+        payload = {"addresses": items}
+        human = "\n\n".join(_address_render(item["name"], item["entry"], item["revision"]) for item in items) or "No addresses."
+    elif action == "show":
+        entry, revision = address_lookup(args.name)
+        payload = {"name": args.name, "entry": entry, "revision": revision}
+        human = _address_render(args.name, entry, revision)
+    elif action == "remove":
+        payload = address_mutate("remove", args.name, None, args.expect_revision)
+        human = "Removed address " + human_text(args.name)
+    else:
+        previous = None
+        if action == "reselect":
+            previous, previous_revision = address_lookup(args.name)
+            if previous_revision != args.expect_revision:
+                raise address_refused("address_revision_mismatch")
+            preset = previous["preset"]
+        else:
+            preset = args.preset
+        route, revision = preset_lookup(preset)
+        recipient, selection, key = _address_selection(preset, revision, route, args.to)
+        payload = {"preset": preset, "presetRevision": revision, "route": route,
+                   "recipient": recipient, "selection": selection, "sshHostKey": key}
+        if action == "resolve":
+            human = human_text(json.dumps(payload, ensure_ascii=False, indent=2))
+        else:
+            if args.expect_selection != selection["observationRevision"]:
+                raise address_refused("address_selection_changed")
+            # A preset edit during network discovery must not create a stale binding.
+            current_route, current_revision = preset_lookup(preset)
+            if current_route != route or current_revision != revision:
+                raise address_refused("address_preset_changed")
+            label = getattr(args, "label", None)
+            if label is None:
+                label = previous["label"] if previous else args.name
+            payload["label"] = unicodedata.normalize("NFC", label)
+            payload = address_mutate(action, args.name, payload, getattr(args, "expect_revision", None))
+            human = _address_render(payload["name"], payload["entry"], payload["revision"])
+    emit(args.json, payload, human, command="address")
+    return 0
+
+
+def prepare_address_route(parser, args, raw_argv):
+    name = getattr(args, "address", None)
+    revision = getattr(args, "address_revision", None)
+    confirmation = getattr(args, "confirm_target", None)
+    if name is None:
+        if revision is not None or confirmation is not None:
+            parser.error("--address-revision and --confirm-target require --address")
+        return
+    _address_name(name)
+    if revision is not None and re.fullmatch(r"ab1:[0-9a-f]{64}", revision) is None:
+        parser.error("--address-revision requires a complete address revision")
+    conflicting = ("--preset", "--preset-revision", "--to", "--host", "--agent", "--codex-home",
+        "--codex-bin", "--ssh-opt", "--ssh-config", "--trust-ssh-config", "--ssh-identity", "--require-ssh-host-key", "--device",
+        "--device-state", "--device-route", "--relay-admission-file", "--relay-login",
+        "--antigravity-home", "--antigravity-generation", "--target-generation", "--request-id",
+        "--wake", "--wake-max-depth", "--wake-timeout", "--allow-inactive-codex-home", "--b64",
+        "--correlation-id", "--request-ack", "--observe-delivery", "--wait-for", "--wait-timeout",
+        "--_address-writer-revision", "--_handoff-native-context", "--_handoff-native-cutoff-ms",
+        "--_handoff-native-total-ms", "--_wake-depth", "--_wake-origin", "--_wake-limit")
+    explicit = preset_explicit_options(parser)
+    for flag in conflicting:
+        if flag in explicit:
+            parser.error("--address conflicts with " + flag)
+    if not args.dry_run and (revision is None or confirmation is None):
+        parser.error("actual --address sends require --address-revision and --confirm-target")
+    address_platform()
+    entry, current = address_lookup(name)
+    if revision is not None and revision != current:
+        raise address_refused("address_revision_mismatch")
+    if confirmation is not None and confirmation != entry["recipient"]["target"]:
+        raise address_refused("address_confirmation_mismatch")
+    route, preset_revision_value = _address_current_route(entry)
+    recipient, selection, key = _address_selection(entry["preset"], preset_revision_value,
+        route, entry["recipient"]["target"], entry["sshHostKey"])
+    if (recipient != entry["recipient"] or selection != entry["selection"] or key != entry["sshHostKey"]):
+        raise address_refused("address_selection_changed")
+    # Recheck local records after discovery, then freeze this invocation's values.
+    latest, latest_revision = address_lookup(name)
+    _address_current_route(latest)
+    if latest_revision != current or latest != entry:
+        raise address_refused("address_revision_mismatch")
+    args.to = recipient["target"].removeprefix("claude:") if recipient["agent"] == "claude" else recipient["target"]
+    args.host = [route["host"]] if route["transport"] == "ssh" else []
+    args.codex_home = recipient["home"]
+    args.target_generation = selection["targetGeneration"]
+    args._address_expected_writer = selection["writerRevision"]
+    args.require_ssh_host_key = key
+    args.ssh_identity = key is not None
+    if not args.json:
+        print(_address_render(name, entry, current), file=sys.stderr)
 
 
 """Verify release bytes before compiling, running, or installing downloaded code."""
@@ -10065,6 +10710,8 @@ def cmd_send(args: argparse.Namespace) -> int:
             remote_argv += adapter.remote_options(args)
             if expected_generation is not None:
                 remote_argv += ["--target-generation", expected_generation]
+            if getattr(args, "_address_expected_writer", None) is not None:
+                remote_argv += ["--_address-writer-revision", args._address_expected_writer]
             if args.dry_run:
                 remote_argv.append("--dry-run")
             result = transport.execute(remote_argv)
@@ -10279,12 +10926,17 @@ def build_parser() -> argparse.ArgumentParser:
     sending.add_argument("--preset", action=PresetSingleUseAction, metavar="NAME", help="use one saved local or SSH route, not a saved receiver")
     sending.add_argument("--preset-revision", action=PresetSingleUseAction, metavar="REV", help="require the route revision from preset show or text dry-run stderr (required for actual preset sends)")
     sending.add_argument(
-        "--to", required=True, metavar="TARGET|REPLY-URI",
+        "--to", metavar="TARGET|REPLY-URI",
         help="session name, PID, codex:UUID, antigravity:UUID, or session-peer://v1/reply address",
     )
     sending.add_argument("--codex-home", help=home_help)
     sending.add_argument("--target-generation", metavar="TOKEN",
                          help="require a previously discovered inbox generation; fail closed if unsupported")
+    sending.add_argument("--address", action=PresetSingleUseAction, help="explicit local saved-recipient reference")
+    sending.add_argument("--address-revision", action=PresetSingleUseAction, help="current address revision required for actual submission")
+    sending.add_argument("--confirm-target", action=PresetSingleUseAction, help="confirm the current canonical recipient, not an override")
+    sending.add_argument("--_address-writer-revision", dest="_address_expected_writer", type=address_writer_revision_argument,
+                         help=argparse.SUPPRESS)
     sending.add_argument(
         "--allow-inactive-codex-home", action="store_true",
         help="with --codex-home, intentionally queue an inactive thread for a future resume",
@@ -10425,6 +11077,33 @@ def build_parser() -> argparse.ArgumentParser:
     setup.add_argument('--route', choices=('auto', 'direct', 'relay'), default='auto')
     setup.add_argument('--seconds', type=int, choices=range(1, 86401), default=3600, metavar='SECONDS')
     setup.set_defaults(func=cmd_setup, json=False, no_update_notice=True, agent=None, all=False)
+    addresses = subparsers.add_parser("address", help="explicit local recipient references; not person identity or permissions")
+    address_sub = addresses.add_subparsers(dest="address_action", required=True)
+    for action in ("resolve", "add", "list", "show", "discover", "reselect", "remove", "_inspect"):
+        sub = address_sub.add_parser(action, help=argparse.SUPPRESS if action == "_inspect" else None)
+        sub.add_argument("--json", action="store_true")
+        sub.add_argument("--output-format", choices=("text", "json"))
+        sub.add_argument("--no-update-notice", action="store_true", default=True)
+        sub.set_defaults(func=cmd_address_inspect if action == "_inspect" else cmd_address,
+                         no_update_notice=True, host=[], ssh_opt=[])
+        if action in ("add", "show", "reselect", "remove"):
+            sub.add_argument("name")
+        if action in ("resolve", "add"):
+            sub.add_argument("--preset", required=True, action=PresetSingleUseAction)
+        if action in ("resolve", "add", "reselect"):
+            sub.add_argument("--to", required=True, action=PresetSingleUseAction)
+        if action in ("add", "reselect"):
+            sub.add_argument("--expect-selection", required=True, action=PresetSingleUseAction)
+        if action == "add":
+            sub.add_argument("--label", action=PresetSingleUseAction)
+        if action in ("reselect", "remove"):
+            sub.add_argument("--expect-revision", required=True, action=PresetSingleUseAction)
+        if action == "discover":
+            sub.add_argument("--address", required=True, action="append")
+        if action == "_inspect":
+            sub.add_argument("--agent", required=True, choices=("claude", "codex"))
+            sub.add_argument("--to", required=True, action="append")
+            sub.add_argument("--codex-home")
     return parser
 
 
@@ -10438,6 +11117,15 @@ def json_error_result(args: argparse.Namespace, payload: dict) -> dict | list[di
         json_result(command, payload, host=host, ok=False)
         for host in hosts
     ])
+
+
+def address_operation_failed(args):
+    message = "Address operation failed; inspect current state before deciding what to do"
+    if args.json:
+        print(json.dumps(json_error_result(args, {"error": message, "reason": "address_operation_failed"}), ensure_ascii=False))
+    else:
+        print("session-peer: " + message, file=sys.stderr)
+    return EXIT_ERROR
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -10484,11 +11172,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.json and output_format == "text":
         parser.error("--json conflicts with --output-format text")
     args.json = args.json or output_format == "json"
+    if args.command == "send":
+        if not getattr(args, "address", None) and args.to is None:
+            parser.error("the following arguments are required: --to")
+        if getattr(args, "address", None) or getattr(args, "address_revision", None) or getattr(args, "confirm_target", None):
+            args._address_explicit_options = sorted(preset_explicit_options(parser))
     # Route checks precede advisory background work, stdin and transport. An
     # opt-out invocation does not even read the presets configuration.
     _CLIENT_UPDATE_NOTICE, _SKILL_UPDATE_NOTICES = None, []
     try:
-        prepare_preset_route(parser, args, raw_argv)
+        if args.command == "send":
+            prepare_address_route(parser, args, raw_argv)
+        if args.command in ("list", "send"):
+            prepare_preset_route(parser, args, raw_argv)
     except KeyboardInterrupt:
         return 130
     except CcPeerError as exc:
@@ -10498,20 +11194,20 @@ def main(argv: list[str] | None = None) -> int:
             print(human_text(f"session-peer: {exc}"), file=sys.stderr)
         return EXIT_ERROR
     except Exception:
-        return preset_operation_failed(args)
-    if args.command == "preset":
+        return address_operation_failed(args) if getattr(args, "address", None) else preset_operation_failed(args)
+    if args.command in ("preset", "address"):
         try:
             return args.func(args)
         except KeyboardInterrupt:
             return 130
         except CcPeerError as exc:
             if args.json:
-                print(json.dumps(json_result("preset", {"error": str(exc), **exc.details}, ok=False), ensure_ascii=False))
+                print(json.dumps(json_result(args.command, {"error": str(exc), **exc.details}, ok=False), ensure_ascii=False))
             else:
                 print(human_text(f"session-peer: {exc}"), file=sys.stderr)
             return EXIT_ERROR
         except Exception:
-            return preset_operation_failed(args)
+            return address_operation_failed(args) if args.command == "address" else preset_operation_failed(args)
     try:
         _CLIENT_UPDATE_NOTICE = prepare_client_update(args) if cli_invocation else None
     except Exception:

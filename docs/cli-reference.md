@@ -186,6 +186,30 @@ Checked ancestors must be owned by root or the current user and not writable by 
 
 On macOS, mounts that ignore ownership are refused with `preset_ownership_unenforced`; an unavailable or unverifiable mount query is refused with `preset_mount_unverifiable`. Mode bits alone are not treated as proof that ownership is enforced. On Linux, ACLs on ancestors are also refused, as are filesystems whose ACL state cannot be verified. After an interrupted management command, inspect the current configuration because the change may already be visible; directory-sync failures are not silently accepted.
 
+### Recipient addressbook (development)
+
+This additional #324 scope is a v1.3 candidate, not part of published v1.2.1. A route preset still stores only a route. The separate, opt-in addressbook binds a user-supplied label to an explicitly selected Claude Code or Codex recipient on a local or SSH Mac/Linux route. Labels do not authenticate people. Paired devices, Antigravity and Windows are refused. Commands without an explicit addressbook operation or `--address` do not read addressbook configuration; no automatic migration or fallback is added.
+
+```bash
+session-peer address resolve --preset work-mac --to 'codex:<full-thread-uuid>' --json
+session-peer address add review --label Review --preset work-mac --to 'codex:<full-thread-uuid>' --expect-selection 'as1:<HASH>'
+session-peer address discover --address review --json
+session-peer send --address review --dry-run --message 'Review the patch'
+session-peer send --address review --address-revision 'ab1:<HASH>' --confirm-target 'codex:<full-thread-uuid>' --message 'Review the patch'
+session-peer address reselect review --expect-revision 'ab1:<OLD_HASH>' --to 'codex:<new-full-thread-uuid>' --expect-selection 'as1:<NEW_HASH>'
+session-peer address remove review --expect-revision 'ab1:<HASH>'
+```
+
+Replace placeholders with the exact reported values. Before `add`, inspect `address resolve` and use its `as1:` observation revision. Before `reselect`, resolve the intended new target with the same preset again and review its new `as1:` value. `as1:` is a revision of observed selection metadata, not authority, a native epoch or proof of consumption. Every successful add or reselect creates a new `bindingId`, covered by the `ab1:` address revision. Removing and recreating an identical address therefore cannot reuse the old revision. A route's `dp1:` remains a value hash: restoring identical preset values gives the same hash, not a new epoch.
+
+`address list` and `address show` read configuration only. `address resolve` and `address discover` explicitly inspect selected recipient metadata without a placeholder message, native CLI/version probe or model/session activation; existing OS process-metadata inspection may run. Discover accepts at most 16 distinct `--address` names, grouping only identical route/home and pinned SSH-key contexts so each group is inspected once. It retains per-address partial failures and returns exit 1 if any selection fails or no longer matches. It neither scans the network nor broadcasts to a group. A missing referenced preset or changed route/revision is refused; the stored old route is never used as a fallback.
+
+Claude addresses retain the selected `tg1:` generation and use the existing connected-peer precondition before submission. Codex addresses retain a full thread UUID, exact home and `aw1:` writer observation, with existing checks repeated before the effect. Codex generation remains **unsupported**: writer observation and revalidation are not an atomic native incarnation guarantee. A changed or unavailable writer requires explicit reselection; no automatic retargeting or replay is attempted. SSH selection requires a host key verified on the actual connection and pins that same key for the actual send. This authenticates neither a person nor the identity of SSH configuration or SQLite storage.
+
+An actual send requires both the current `--address-revision` and exact `--confirm-target`; dry-run may omit them. `--address` cannot be combined with `--to`, `--preset`, explicit host/native/SSH overrides, paired-device, wake, handoff or Reply-To URI routing. Normal message inputs and limits remain unchanged. Unknown outcomes never authorize automatic resend. These commands do not promise composition with the separate #323 delivery-explanation candidate.
+
+Storage is a separate `addresses.json` beside `destinations.json`, with `schemaVersion: 1`, a 64 KiB limit and at most 128 entries. It uses the same owner, permissions, ACL, mount and no-symlink-following checks as presets, without automatically repairing or migrating files. Address names follow the preset-name syntax; display labels are normalized to NFC and limited to 128 characters, rejecting control, bidirectional-control and format characters. An unconfirmed management commit may already be visible: inspect current configuration before retrying. Binding revisions do not add receiver deduplication, ACK or task-completion evidence.
+
 ## Optional interactive shorthand
 
 For releases containing these assets, Bash/zsh and PowerShell users can opt in to a shell-local alias named `sp`. It invokes the currently selected `session-peer` command with the same arguments, stdin, output, exit codes and permissions. It is not a separate parser or a Python/TypeScript selector. Keep the canonical command in scripts, SSH requests and generated reply instructions. Do not install both implementations simultaneously; switch with the original installation manager and verify which command your shell resolves first.

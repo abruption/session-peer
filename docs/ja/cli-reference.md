@@ -176,6 +176,30 @@ UUID は現在の一覧で確認した値に、ハッシュは選択したプリ
 
 macOS で所有権を無視するマウントは `preset_ownership_unenforced`、マウント照会が利用できない、または検証できない場合は `preset_mount_unverifiable` で拒否します。モードビットだけを所有権が強制される証拠とは扱いません。Linux では上位経路の ACL も、ACL 状態を検証できないファイルシステムも拒否します。管理コマンドを中断した後は、変更が既に見えている可能性があるため現在の設定を確認してください。ディレクトリの同期失敗を黙って成功とは扱いません。
 
+### 受信先アドレス帳（開発中）
+
+この #324 の追加範囲は v1.3 の候補で、公開済み v1.2.1 には含まれません。経路プリセットが保存するのは引き続き経路だけです。別途オプトインするアドレス帳は、ユーザーが付けた表示名を、ローカルまたは SSH の Mac/Linux 経路で明示的に選択した Claude Code・Codex の受信先に結び付けます。表示名は人物の身元を認証しません。ペアリング済みデバイス、Antigravity、Windows は拒否します。明示的なアドレス帳操作または `--address` がないコマンドはアドレス帳設定を読みません。自動移行や代替経路への切り替えは追加しません。
+
+```bash
+session-peer address resolve --preset work-mac --to 'codex:<full-thread-uuid>' --json
+session-peer address add review --label Review --preset work-mac --to 'codex:<full-thread-uuid>' --expect-selection 'as1:<HASH>'
+session-peer address discover --address review --json
+session-peer send --address review --dry-run --message 'Review the patch'
+session-peer send --address review --address-revision 'ab1:<HASH>' --confirm-target 'codex:<full-thread-uuid>' --message 'Review the patch'
+session-peer address reselect review --expect-revision 'ab1:<OLD_HASH>' --to 'codex:<new-full-thread-uuid>' --expect-selection 'as1:<NEW_HASH>'
+session-peer address remove review --expect-revision 'ab1:<HASH>'
+```
+
+プレースホルダーは実際に報告された正確な値に置き換えます。`add` の前に `address resolve` の結果を確認し、その `as1:` 観測 revision を使います。`reselect` の前には同じプリセットで希望する新しい宛先をもう一度 resolve し、新しい `as1:` を確認してください。`as1:` は観測した選択メタデータの revision であり、権限、native epoch、消費の証拠ではありません。追加または再選択が成功するたびに新しい `bindingId` が作られ、`ab1:` アドレス revision の計算対象になります。同一のアドレスを削除して作り直しても、以前の revision は再利用できません。経路の `dp1:` は引き続き値のハッシュです。同じプリセット値を復元すると、新しい epoch ではなく同じハッシュになります。
+
+`address list` と `address show` は設定だけを読みます。`address resolve` と `address discover` は、仮のメッセージ、native CLI・バージョンの照会、モデル・セッションの起動を行わず、選択した受信先のメタデータを明示的に調べます。既存の OS プロセスメタデータ検査は行われる場合があります。Discover は重複しない `--address` 名を最大 16 個受け付け、経路・home と固定された SSH 鍵の context がすべて同じ場合だけグループ化し、各グループを一度調べます。アドレスごとの部分失敗を保持し、どれか一つでも検査に失敗するか保存された選択と一致しなくなると終了コード 1 を返します。ネットワーク全体の探索やグループ一斉送信は行いません。参照先プリセットの欠落や経路・revision の変更は拒否し、保存された古い経路には切り替えません。
+
+Claude アドレスは選択した `tg1:` 世代を保存し、投入前に既存の接続相手を検証する前提条件を適用します。Codex アドレスは完全なスレッド UUID、正確な home、`aw1:` writer 観測を保存し、副作用が発生する前に既存の検査を繰り返します。Codex の世代は引き続き**未対応**です。Writer の観測と再検証は、元の native インスタンス世代を原子的に検証する保証ではありません。Writer が変わった、または確認できない場合は明示的な再選択が必要で、自動的な宛先変更や再実行は行いません。SSH の選択には実際の接続で検証されたホスト鍵が必要で、実際の送信でも同じ鍵に固定します。これは人物を認証するものでも、SSH 設定や SQLite 保存先の同一性を証明するものでもありません。
+
+実際の送信には現在の `--address-revision` と正確な `--confirm-target` の両方が必要で、dry-run では省略できます。`--address` は `--to`、`--preset`、明示的なホスト・native・SSH の上書き、ペアリング済みデバイス、wake、handoff、Reply-To URI の経路指定とは併用できません。通常のメッセージ入力と上限は変わりません。不確実な結果でも自動再送は許可されません。これらのコマンドは、別途開発中の #323 配信説明機能との組み合わせを保証しません。
+
+保存先は `destinations.json` の隣にある別の `addresses.json` です。`schemaVersion: 1`、64 KiB の上限、最大 128 件の項目を使用します。プリセットと同じ所有者・権限・ACL・マウントの検査と、シンボリックリンクをたどらない経路検査を適用し、ファイルの自動修復や移行は行いません。アドレス名はプリセット名の構文に従います。表示名は NFC に正規化して 128 文字に制限し、制御文字・双方向制御文字・書式文字を拒否します。管理操作の commit が未確認でも変更が既に見えている可能性があるため、再試行前に現在の設定を確認してください。結び付けの revision は、受信側の重複抑止、ACK、タスク完了の証拠を追加しません。
+
 <a id="install"></a>
 ## 任意の対話型短縮コマンド
 
