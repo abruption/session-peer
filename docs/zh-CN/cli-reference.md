@@ -335,6 +335,19 @@ session-peer device offer-cancel --state /private/device-state --offer-id OFFER-
 <a id="updating"></a>
 ### 更新
 
+在 macOS/Linux 上，可以隐藏指定稳定版本的自动运行时通知，或清除此设置：
+
+```bash
+session-peer update --dismiss-runtime-notice 1.3.1
+session-peer update --clear-runtime-notice-dismissal
+```
+
+上述版本仅为示例，并非发行公告。这两个命令只离线修改本地设置，不检查、安装或批准发行版，不能与远程/SSH 选项或检查选项组合使用。只有规范化后完全匹配的版本才会隐藏；后续版本仍可能显示通知，清除后恢复通常行为。显式本地检查仍报告真实的最新版本及是否过时，通知设置作为独立信息提供。远程检查、技能通知和现有的全局关闭通知设置均不变。远程命令仍可能显示调用方 CLI 自身的缓存通知；此时只读取一次本地设置，而不是按目标分别读取。该设置不会隐藏远程版本或结果。
+
+设置独立于更新缓存，保存到 `$XDG_CONFIG_HOME/session-peer/update-notices.json`；环境变量未设置或为空时使用 `~/.config/session-peer/update-notices.json`。目录和文件必须具有安全的所有权和私有权限。不安全的路径会被拒绝，不会自动修复或改用其他路径。无效的设置文件或采用未来版本模式的设置文件不会隐藏任何通知，两个命令也不会覆盖这些文件；请先检查专用设置文件。Windows 暂不支持按版本设置，但仍可使用普通更新、检查和全局关闭通知功能。
+
+安全检查覆盖 POSIX 所有者和权限位，并非完整的 ACL（附加访问权限）审计或物理存储介质持久性认证。祖先路径中的符号链接和显式指定的相对配置路径会被有意拒绝，不会回退。文件系统必须支持基于目录的输入输出、文件锁和目录 fsync（同步）。检查并备份损坏的设置后，操作人员可手动删除该专用 JSON 文件（仅此文件），然后再次运行设置命令；可能仍有写入进程运行时，不要删除锁文件。系统不会自动修复。
+
 对于通过包管理器安装的版本，请使用安装该命令的同一包管理器：
 
 ```bash
@@ -354,7 +367,7 @@ session-peer update --host web-01 --check         # inspect the remote standalon
 session-peer update --host web-01                 # push this program if versions differ
 ```
 
-远程更新是与**本地程序的版本**进行比较，而非最新的 GitHub Release。即使远程版本更新它也会推送；在分发之前，请先检查并更新本地程序。远程副本不会从 GitHub 获取更新。远程版本探测仅检查 `~/.local/share/session-peer/session_peer.py`，不检查 pip/pipx/uv 安装；远程更新会安装该独立路径及其 CLI 链接。对于通过包管理器安装的远程 CLI，请改用该主机上自带的管理器进行升级。
+远程更新是与**本地程序的版本**进行比较，而非最新的 GitHub Release。仅在远程副本不存在或更旧时推送，若远程版本较新则保持不变。在分发之前，请先检查并更新本地程序。远程副本不会从 GitHub 获取更新。远程版本探测仅检查 `~/.local/share/session-peer/session_peer.py`，不检查 pip/pipx/uv 安装；远程更新会安装该独立路径及其 CLI 链接。对于通过包管理器安装的远程 CLI，请改用该主机上自带的管理器进行升级。
 
 无论是本地还是远程的 `update` 都不会刷新 Claude 技能。从所需发布版本的检出目录重新运行 `install.sh` 可同时刷新独立程序和技能。本地的 `session-peer update --check` 和 `session-peer update` 也会填充自动通知所使用的相同缓存。
 
