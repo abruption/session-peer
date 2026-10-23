@@ -160,6 +160,59 @@ class RelayLifecycle(unittest.IsolatedAsyncioTestCase):
             receiver_task.cancel()
             await asyncio.gather(receiver_task, return_exceptions=True)
 
+    async def test_expired_client_cannot_pair_during_timeout_cleanup(self):
+        relay = Relay([])
+        relay.client_wait = .01
+        cleanup_started, release_cleanup = asyncio.Event(), asyncio.Event()
+        client = FakeWebSocket('client')
+        original_wait_closed = client.wait_closed
+
+        async def delayed_cleanup():
+            try:
+                await original_wait_closed()
+            finally:
+                cleanup_started.set()
+                await release_cleanup.wait()
+
+        client.wait_closed = delayed_cleanup
+        client_task = asyncio.create_task(relay.handler(client))
+        receiver = FakeWebSocket('receiver')
+        receiver_task = None
+        try:
+            await asyncio.wait_for(cleanup_started.wait(), 1)
+            receiver_task = asyncio.create_task(relay.handler(receiver))
+            await self.wait_for(lambda: receiver in relay.connections)
+            self.assertEqual(relay.metrics()['counters']['clientWaitExpired'], 1)
+            self.assertEqual(relay.metrics()['counters']['roomsPaired'], 0)
+            self.assertEqual(client.sent, [])
+            self.assertEqual(receiver.sent, [])
+        finally:
+            release_cleanup.set()
+            await client.close()
+            await receiver.close()
+            await asyncio.wait_for(asyncio.gather(client_task, *([receiver_task] if receiver_task else [])), 1)
+
+    async def test_arrival_after_deadline_cannot_pair_before_timeout_callback(self):
+        relay = Relay([])
+        client = FakeWebSocket('client')
+        receiver = FakeWebSocket('receiver')
+        client_task = asyncio.create_task(relay.handler(client))
+        receiver_task = None
+        try:
+            await self.wait_for(lambda: bool(relay.waiting))
+            slot = relay.waiting['SECRET-ROOM']
+            # Advance the recorded deadline without yielding to the timeout
+            # callback, modelling an arrival scheduled ahead of expired work.
+            slot['deadline'] = time.monotonic() - 1
+            receiver_task = asyncio.create_task(relay.handler(receiver))
+            await self.wait_for(lambda: receiver in relay.connections)
+            self.assertEqual(relay.metrics()['counters']['roomsPaired'], 0)
+            self.assertIsNot(relay.waiting['SECRET-ROOM'], slot)
+        finally:
+            await client.close()
+            await receiver.close()
+            await asyncio.wait_for(asyncio.gather(client_task, *([receiver_task] if receiver_task else [])), 1)
+
     async def test_stalled_receiver_consumes_room_then_next_client_times_out(self):
         relay = Relay([], diagnostic_events=True)
         relay.client_wait = .03  # scaled fixture; production bound stays 10 s
