@@ -36,6 +36,10 @@ class ClientUpdateNotice(unittest.TestCase):
         skill_patch = mock.patch.object(session_peer, "installed_skills", return_value=[])
         skill_patch.start()
         self.addCleanup(skill_patch.stop)
+        preference_patch = mock.patch.object(session_peer, "read_runtime_notice_preference",
+            return_value={"status": "missing", "dismissedVersion": None})
+        preference_patch.start()
+        self.addCleanup(preference_patch.stop)
 
     @staticmethod
     def args(**overrides):
@@ -357,6 +361,12 @@ class SkillUpdateNotice(unittest.TestCase):
 
 
 class PackageManagement(unittest.TestCase):
+    def setUp(self):
+        preference_patch = mock.patch.object(session_peer, "read_runtime_notice_preference",
+            return_value={"status": "missing", "dismissedVersion": None})
+        preference_patch.start()
+        self.addCleanup(preference_patch.stop)
+
     def test_package_update_does_not_download(self):
         import contextlib
         import io

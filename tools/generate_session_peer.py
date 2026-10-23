@@ -31,6 +31,7 @@ SEGMENTS = (
     "messages.py",
     "release_verification.py",
     "updates.py",
+    "update_preferences.py",
     "handoff_stdin.py",
     "handoff_process.py",
     "handoff.py",

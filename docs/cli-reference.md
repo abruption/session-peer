@@ -418,6 +418,41 @@ Exit `0` on send does not confirm consumption or a reply.
 
 ### Updating
 
+On macOS/Linux, hide the automatic runtime notice for one explicitly selected
+stable version, or clear that preference:
+
+```bash
+session-peer update --dismiss-runtime-notice 1.3.1
+session-peer update --clear-runtime-notice-dismissal
+```
+
+The version above is an example, not a release announcement. These local-only,
+offline commands do not check, install or approve a release. They cannot be
+combined with remote/SSH options or the check option. Only the exact normalized
+version is hidden; later releases can still produce a notice, and clearing
+restores the usual behavior. Explicit local checks retain the real latest version
+and outdated result, with separate preference metadata. Remote checks, skill
+notices and the existing global opt-out are unchanged. A remote command may still
+show the calling CLI's own cached notice; its local preference is read once, not
+once per target. Remote versions and results are never hidden by that preference.
+
+The preference is stored separately from the update cache at
+`$XDG_CONFIG_HOME/session-peer/update-notices.json`, or
+`~/.config/session-peer/update-notices.json` when that variable is unset or empty.
+The directory and file must be private and safely owned; unsafe paths are refused,
+not repaired or redirected. Invalid or future-schema files hide nothing and are
+not overwritten by either command: inspect the dedicated preference file first.
+Windows does not yet support this per-version preference; ordinary updates,
+checks and the global opt-out remain available.
+
+Safety checks cover POSIX owner/mode bits, not a full ACL audit or physical-media
+durability certification. Symlinked ancestors and explicitly relative config
+paths are intentionally refused without fallback. The filesystem must support
+directory-relative I/O, file locking and directory fsync. After inspecting and
+backing up a malformed preference, an operator may explicitly remove only that
+dedicated JSON file and run the preference command again; do not remove the lock
+file while writers may be running. No automatic repair is performed.
+
 For package-managed installs, use the same manager that installed the command:
 
 ```bash
@@ -441,9 +476,10 @@ session-peer update --host web-01                 # push this program if version
 ```
 
 Remote update compares against the **local program's version**, not the latest
-GitHub release. It pushes even if the remote version is newer; check first and
-update the local program before distributing it. The remote copy does not fetch
-from GitHub. Remote version probes inspect only
+GitHub release. It pushes only if the remote copy is missing or older, and leaves
+a newer remote version unchanged. Check first and update the local program
+before distributing it. The remote copy does not fetch from GitHub.
+Remote version probes inspect only
 `~/.local/share/session-peer/session_peer.py`, not pip/pipx/uv installations;
 remote update installs that standalone path and its CLI link. For a
 package-managed remote CLI, upgrade it with its own manager on that host instead.

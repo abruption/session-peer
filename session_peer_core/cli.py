@@ -159,9 +159,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     updating = subparsers.add_parser("update", help="update this installation")
     add_common(updating)
-    updating.add_argument(
+    update_action = updating.add_mutually_exclusive_group()
+    update_action.add_argument(
         "--check", action="store_true", help="report the available version, change nothing"
     )
+    update_action.add_argument("--dismiss-runtime-notice", type=runtime_notice_cli_version,
+                              metavar="VERSION", help="dismiss only this runtime release's ambient notice; no installation")
+    update_action.add_argument("--clear-runtime-notice-dismissal", action="store_true",
+                              help="clear the local runtime notice dismissal; no installation")
     updating.set_defaults(func=cmd_update)
 
     for sub in (listing, sending, doctor):
@@ -270,6 +275,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.json and output_format == "text":
         parser.error("--json conflicts with --output-format text")
     args.json = args.json or output_format == "json"
+    if runtime_notice_preference_requested(args):
+        if runtime_notice_preference_routed(args):
+            parser.error("Runtime notice preferences are local only; do not use host or SSH options")
+        args.no_update_notice = True
     try:
         _CLIENT_UPDATE_NOTICE = prepare_client_update(args) if cli_invocation else None
     except Exception:
