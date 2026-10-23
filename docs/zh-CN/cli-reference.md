@@ -76,17 +76,24 @@ session-peer send --host worker --to 'codex:<full-thread-uuid>' --dry-run -m "me
 
 ### 传递说明（开发中）
 
-这是 #323 的开发功能，尚未包含在已发布的 v1.2.1 中。在 `send --dry-run` 中添加 `--explain`，即可查看所选本地或 SSH 目标、现有验证结果、传递方式及观察限制。每个已处理的 SSH 目标都会单独显示说明；意外错误仍可能中断现有的主机循环，导致后续目标未被处理。
+这是 #323 的开发功能，拟纳入 v1.3，尚未包含在已发布的 v1.2.1 中。在 `send --dry-run` 中添加 `--explain`，即可查看所选本地、SSH 或配对设备目标、现有验证结果、传递方式及观察限制。`doctor --explain` 说明现有诊断快照和声明的支持能力，不验证特定目标是否已准备好接收提交。`handoff status --explain` 说明现有 intent 中保存的证据。每个已处理的 SSH 目标都会单独显示说明；意外错误仍可能中断现有的主机循环，导致后续目标未被处理。
 
 ```bash
 session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run --explain
+session-peer send --device RECEIVER_FINGERPRINT --to review --message "Review the patch" --dry-run --explain
+session-peer doctor --explain
+session-peer handoff status --correlation-id PREPARED_UUID --explain
 ```
 
-说明复用当前 dry-run 的结果，不增加诊断、native 版本或 SSH 探测。原有 dry-run 本身可能包含版本检查。实际发送时会重新验证，因此预览成功不代表预留目标，也不保证提交、消费或完成。未指定 `--wake` 时，不检查唤醒资格；指定后也只说明原有预检结果。普通发送不支持 receipt ACK，独立的实验性 handoff 具有不同的能力范围。
+说明复用所选命令的现有结果，不增加诊断、native 版本或 SSH 探测，也不激活目标或另行执行 `list`。原有 dry-run 本身可能包含版本检查。实际发送时会重新验证，因此预览成功不代表预留目标，也不保证提交、消费或完成。声明的支持能力、实际检查结果和未知事实会分别显示。未指定 `--wake` 时，不检查唤醒资格；指定后也只说明原有预检结果。
 
-首期范围仅支持文本输出，且必须指定 `--dry-run`。将 `--explain` 与 `--json` 或 `--output-format json`、配对 `--device`，或 handoff 的 `--correlation-id`、`--request-ack`、`--observe-delivery`、`--wait-for` 组合使用时，会在读取消息或执行目标、账本操作前报告用法错误。不使用新选项的现有命令保留原有输出、JSON 和退出契约。
+配对 dry-run 保留现有的、遵循接收端策略的 `resolve` 操作。现有连接探测只会与声明支持该功能的接收端协商可选的说明 context。此内部 context 带有版本，严格校验允许的字段，大小限制为 8 KiB；不会新增通用 JSON 输出，也不引入新的 handoff schema。只有接收端实际报告且通过验证的代理、目标和 home 才会显示，绝不根据发送端配置猜测。旧接收端仍保留独立确认的 native 结果，未报告的 context 保持未知，不尝试回退、额外探测或重发。
 
-消息输入要求和限制保持不变。按原有方式使用 `--message`、`--message-file` 或 stdin，不自动生成占位正文。说明字段不包含正文或 receipt 秘密值。常规说明输出到 stdout，失败结果或意外提交证据的说明输出到 stderr，不改变现有摘要和错误的输出位置。未知证据仍显示为未知，实际发送结果不确定时禁止自动重发。
+Handoff status 复用只读快照，不创建 intent、receipt capability、wait 或 collector，也不写入账本。提交、输入注入观察、显式 receipt 和最近保存的 wait 分别显示；即使 receipt 已 acknowledged，也不证明任务完成。保存的观察可能已经过时。只有已报告的 receipt 观察时间才会作为观察时间说明；说明生成时间或诊断快照时间不代表传递观察时间。普通发送不会因此获得 receipt ACK 支持。
+
+此范围仅支持文本输出：将 `--explain` 与 `--json` 或 `--output-format json` 组合使用会报告用法错误。只有 `send --explain` 必须指定 `--dry-run`，`doctor --explain` 和 `handoff status --explain` 不需要。Send 仍会在读取消息或执行目标、账本操作前，拒绝将实验性 handoff 的 `--correlation-id`、`--request-ack`、`--observe-delivery`、`--wait-for` 与 `--explain` 组合使用。不使用新选项的现有命令保留原有输出、JSON 和退出契约；说明不会将状态查询成功变成 ACK 证据，也不会改变原命令退出结果的含义。
+
+Send 的消息输入要求和限制保持不变。按原有方式使用 `--message`、`--message-file` 或 stdin，不自动生成占位正文。说明字段不包含正文或 receipt 秘密值。常规说明输出到 stdout，失败结果或意外提交证据的说明输出到 stderr，不改变现有摘要和错误的输出位置。未知证据仍显示为未知，实际发送结果不确定时禁止自动重发。
 
 ### 可选配对设备与 Antigravity (v0.9)
 

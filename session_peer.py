@@ -4276,6 +4276,179 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str], *, handoff_budge
     return _run_remote_dispatch(host, argv, ssh_opts)
 
 
+# Display-only explanation facts. No discovery, transport, ledger or clock I/O.
+
+
+def validated_delivery_context(value):
+    """Accept the complete private receiver context, never guessed fragments."""
+    if not isinstance(value, dict) or set(value) != {
+            "schemaVersion", "agent", "target", "home", "capabilities"}:
+        return None
+    if type(value["schemaVersion"]) is not int or value["schemaVersion"] != 1:
+        return None
+    if value["agent"] not in ("claude", "codex", "antigravity"):
+        return None
+    for key in ("target", "home"):
+        item = value[key]
+        if item is not None:
+            if (not isinstance(item, str) or not item or item.lower().startswith("session-peer:")
+                    or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in item)):
+                return None
+            try:
+                if len(item.encode("utf-8")) > 4096:
+                    return None
+            except UnicodeError:
+                return None
+    if value["target"] is not None:
+        pattern = (r"claude:[1-9][0-9]*" if value["agent"] == "claude" else
+                   value["agent"] + r":[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+        if re.fullmatch(pattern, value["target"]) is None:
+            return None
+    if value["home"] is not None and not (PurePosixPath(value["home"]).is_absolute()
+                                          or PureWindowsPath(value["home"]).is_absolute()):
+        return None
+    caps = value["capabilities"]
+    if not isinstance(caps, dict) or set(caps) != {"send", "wake", "wait", "ack"}:
+        return None
+    if any(type(item) is not bool for item in caps.values()):
+        return None
+    if len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > 8192:
+        return None
+    return {**value, "capabilities": dict(caps)}
+
+
+def explanation_text(value):
+    """Sanitize only opt-in explanations, preserving ordinary output behavior."""
+    text = human_text(value)
+    return "".join("\\u%04x" % ord(c) if ord(c) in (
+        0x200b, 0x200c, 0x200d, 0x200e, 0x200f, 0x202a, 0x202b,
+        0x202c, 0x202d, 0x202e, 0x2060, 0x2066, 0x2067, 0x2068, 0x2069, 0xfeff)
+        else c for c in text)
+
+
+def build_delivery_explanation(args, result, *, mode="readiness", failed=False):
+    """Normalize only allowlisted facts already supplied by the caller.
+
+    Declaration never proves eligibility, and a snapshot never proves delivery.
+    The returned object is internal and is not a new JSON/wire contract.
+    """
+    if mode not in ("readiness", "doctor", "existing_intent"):
+        raise ValueError("unsupported delivery explanation mode")
+    paired = bool(getattr(args, "device", None))
+    context = validated_delivery_context(getattr(args, "_delivery_explanation_context", None)) if paired else None
+    requested = str(getattr(args, "to", "") or "")
+    uri = requested.lower().startswith("session-peer:")
+    agent = (context["agent"] if context else None) if paired else (
+        None if uri or not requested else "codex" if requested.startswith("codex:") else
+        "antigravity" if requested.startswith("antigravity:") else "claude")
+    caps = context["capabilities"] if context else None
+    if not paired and agent is not None:
+        caps = {key: getattr(AGENTS.get(agent).capabilities, key)
+                for key in ("send", "wake", "wait", "ack")}
+    home = context["home"] if context else None
+    if not paired and agent in ("codex", "antigravity"):
+        value = result.get("codexHome" if agent == "codex" else "antigravityHome")
+        home = value if isinstance(value, str) else None
+    facts = {"mode": mode, "paired": paired, "agent": agent,
+             "target": context["target"] if context else None, "home": home,
+             "capabilities": caps, "agents": [], "handoff": None,
+             "selectedRoute": result.get("route") if paired and result.get("route") in ("direct", "relay") else None,
+             "available": not failed, "historyContext": None}
+    if mode == "doctor":
+        declared = result.get("capabilities", {})
+        declared = declared.get("agents", {}) if isinstance(declared, dict) else {}
+        for name in ("claude", "codex", "antigravity"):
+            diagnostic = result.get(name, {})
+            status = diagnostic.get("status") if isinstance(diagnostic, dict) else None
+            allowed_status = {"available", "unavailable", "missing_home", "permission_denied",
+                              "wrong_home", "missing_tool", "unknown", "disabled", "unsupported", "inbox_unavailable"}
+            declaration = declared.get(name, {}) if isinstance(declared, dict) else {}
+            home = diagnostic.get("selectedHome") if isinstance(diagnostic, dict) else None
+            facts["agents"].append({"agent": name, "status": status if isinstance(status, str) and status in allowed_status else "unknown",
+                "home": home if isinstance(home, str) else None,
+                "capabilities": {key: declaration[key] if isinstance(declaration, dict)
+                                 and type(declaration.get(key)) is bool else None
+                                 for key in ("send", "wake", "wait", "ack")}})
+    elif mode == "existing_intent":
+        query = result.get("handoffQuery")
+        if isinstance(query, dict) and query.get("context") in (
+                "ledger_missing", "ledger_corrupt", "id_unknown", "history_unavailable"):
+            facts["historyContext"] = query["context"]
+        public = result.get("handoff")
+        if isinstance(public, dict):
+            snapshot = {}
+            allowed = {"submission": {"not_attempted", "submitted", "refused", "unknown"},
+                       "observation": {"unsupported", "not_requested", "pending", "observed", "failed"},
+                       "ack": {"pending", "unsupported", "not_requested", "acknowledged"},
+                       "wait": {"not_requested", "pending", "satisfied", "timed_out_unknown", "unsupported", "stopped", "failed"}}
+            for key, statuses in allowed.items():
+                value = public.get(key)
+                status = value.get("status") if isinstance(value, dict) else None
+                snapshot[key] = status if isinstance(status, str) and status in statuses else "unknown"
+            ack = public.get("ack", {})
+            observed = ack.get("receivedAtUtcMs") if isinstance(ack, dict) else None
+            snapshot["receivedAtUtcMs"] = observed if type(observed) is int and 0 <= observed <= 9007199254740991 else None
+            snapshot["late"] = ack.get("late") if isinstance(ack, dict) and type(ack.get("late")) is bool else None
+            assurance = ack.get("assurance") if isinstance(ack, dict) else None
+            snapshot["assurance"] = assurance if assurance in ("token_possession", "operator_confirmed") else None
+            if snapshot["ack"] != "acknowledged":
+                snapshot.update(receivedAtUtcMs=None, late=None, assurance=None)
+            wait = public.get("wait", {})
+            goal = wait.get("for") if isinstance(wait, dict) else None
+            snapshot["waitFor"] = goal if goal in ("none", "delivered", "acknowledged") else None
+            reason = wait.get("reason") if isinstance(wait, dict) else None
+            snapshot["waitReason"] = reason if reason in ("insufficient_budget", "deadline_before_effect", "evidence_unsupported", "evidence_failed", "history_unavailable", "stopped_by_operator", "invalid_handoff") else None
+            facts["handoff"] = snapshot
+    return facts
+
+
+def render_delivery_fact_lines(facts):
+    def capability(value):
+        return "supported (declared; eligibility unverified)" if value is True else "unsupported (declared)" if value is False else "unknown (not reported)"
+    if facts["mode"] == "doctor":
+        lines = ["Delivery capabilities (existing diagnostic snapshot)" if facts["available"] else
+                 "Delivery capabilities unavailable (diagnostic snapshot not received)"]
+        for item in facts["agents"]:
+            basis = "diagnostic report" if item["status"] != "unknown" else "not reported"
+            lines.append(item["agent"] + " availability: " + item["status"] + " (" + basis + "; not per-target readiness)")
+            if item["agent"] in ("codex", "antigravity"):
+                lines.append("  Selected home: " + (explanation_text(item["home"]) if item["home"] else "unknown (not reported)"))
+            for key, value in item["capabilities"].items():
+                lines.append("  " + key.capitalize() + ": " + capability(value))
+        return lines + ["Injection observation: unsupported", "Task completion: unknown",
+                        "Last delivery observation: unknown (not reported)",
+                        "A diagnostic snapshot does not guarantee later delivery."]
+    if facts["mode"] == "existing_intent":
+        value = facts["handoff"] or {}
+        lines = ["Delivery evidence (existing intent snapshot)" if facts["available"] else
+                 "Delivery evidence unavailable (history not read)"]
+        if facts["historyContext"]:
+            lines.append("History query: " + facts["historyContext"] + "; no history initialized or repaired.")
+        for key, label in (("submission", "Submission"), ("observation", "Injection observation"),
+                           ("ack", "Explicit receipt"), ("wait", "Latest stored wait")):
+            lines.append(label + ": " + value.get(key, "unknown") + (" (stored observation)" if facts["available"] else " (not available)"))
+        observed = value.get("receivedAtUtcMs")
+        lines.append("Receipt recorded at (stored UTC milliseconds): " + (str(observed) if observed is not None else "unknown (not reported)"))
+        if value.get("assurance"):
+            lines.append("Receipt assurance: " + value["assurance"] + "; does not prove task completion")
+            if value["assurance"] == "token_possession":
+                lines.append("Receipt proves token possession, not original agent/model identity.")
+        if value.get("waitFor"):
+            lines.append("Latest stored wait goal: " + value["waitFor"])
+        if value.get("waitReason"):
+            lines.append("Latest stored wait reason: " + value["waitReason"])
+        if value.get("late") is not None:
+            lines.append("Receipt late relative to first wait: " + str(value["late"]).lower())
+        return lines + ["Task completion: unknown", "Stored evidence may be stale; this view does not refresh delivery.",
+                        "Do not automatically resend after an unknown outcome."]
+    caps = facts["capabilities"] or {}
+    return ["Submission capability: " + capability(caps.get("send")),
+            "Wake capability: " + capability(caps.get("wake")),
+            "Injection observation: unsupported" if not facts["paired"] else "Injection observation: unknown (not reported)",
+            "Last delivery observation: unknown (not reported)",
+            "Task completion: unknown"]
+
+
 # --------------------------------------------------------------------------
 # Output
 # --------------------------------------------------------------------------
@@ -4328,37 +4501,46 @@ def delivery_explanation_has_submission(result: dict) -> bool:
 
 
 def render_delivery_explanation(args: argparse.Namespace, result: dict, *,
-                                host: str | None = None, failed: bool = False) -> str:
+                                host: str | None = None, failed: bool = False,
+                                mode: str = "readiness") -> str:
     """Describe only existing dry-run facts; never inspect or execute a target.
 
     This display-only allowlist deliberately excludes message bodies, native
     errors, credentials, routing URIs and receipt authority. Missing remote
     facts stay unknown rather than being filled from the sender's environment.
     """
+    facts = build_delivery_explanation(args, result, mode=mode, failed=failed)
+    if mode != "readiness":
+        lines = render_delivery_fact_lines(facts)
+        if host:
+            lines.insert(1, "Destination host: " + explanation_text(host))
+        return "\n".join(lines)
     requested = str(getattr(args, "to", ""))
     unresolved_uri = requested.lower().startswith("session-peer:")
     if unresolved_uri:
         requested = "Reply-To URI (resolution unavailable)"
-    agent = (None if unresolved_uri else
-             "codex" if requested.startswith("codex:") else
-             "antigravity" if requested.startswith("antigravity:") else "claude")
-    where = host or (", ".join(getattr(args, "host", None) or []) or "this machine")
+    agent = facts["agent"]
+    if facts["paired"]:
+        requested = facts["target"] or "paired target (not reported by receiver)"
+    where = host or (("device:" + str(args.device)) if facts["paired"] else
+                     (", ".join(getattr(args, "host", None) or []) or "this machine"))
     lines = ["Delivery preview",
-             "Requested destination: " + human_text(requested) + " on " + human_text(where)]
-    target = result.get("target")
+             "Requested destination: " + explanation_text(requested) + " on " + explanation_text(where)]
+    if facts["paired"]:
+        lines.append("Selected paired route: " + (facts["selectedRoute"] + " (reported)" if facts["selectedRoute"] else "unknown (not reported)"))
+    target = None if facts["paired"] else result.get("target")
     if isinstance(target, dict):
         if agent == "claude" and type(target.get("pid")) is int:
             resolved = "Claude PID " + str(target["pid"])
             if isinstance(target.get("name"), str):
-                resolved += " (" + human_text(target["name"]) + ")"
+                resolved += " (" + explanation_text(target["name"]) + ")"
             lines.append("Resolved target: " + resolved)
         elif agent == "codex" and isinstance(target.get("id"), str):
-            lines.append("Resolved target: codex:" + human_text(target["id"]))
-    home_key = "codexHome" if agent == "codex" else "antigravityHome"
+            lines.append("Resolved target: codex:" + explanation_text(target["id"]))
     if agent in ("codex", "antigravity"):
-        home = result.get(home_key)
+        home = facts["home"]
         lines.append(("Codex home: " if agent == "codex" else "Antigravity home: ")
-                     + (human_text(home) if isinstance(home, str) else "unknown (not reported)"))
+                     + (explanation_text(home) if isinstance(home, str) else "unknown (not reported)"))
     started = getattr(args, "_delivery_explanation_started", True)
     unknown = result.get("status") == "unknown" or result.get("reason") in (
         "outcome_unknown", "ssh_identity_evidence_unavailable") or (
@@ -4391,20 +4573,37 @@ def render_delivery_explanation(args: argparse.Namespace, result: dict, *,
                 if not unknown and not unexpected and isinstance(fact, dict) and fact.get("status") == "validated" else
                 "requested; preflight not confirmed")
     lines.extend(["Wake: " + wake,
-                  "Receipt ACK: unavailable for ordinary sends",
+                  ("Receipt ACK: unknown (receiver support not reported)" if facts["paired"]
+                   and facts["capabilities"] is None else "Receipt ACK: unavailable for ordinary sends"),
                   "Consumption / completion: not observed",
                   "A later send repeats validation.",
                   "Do not automatically resend after an unknown outcome."])
     if failed or unexpected:
         lines.append("Next step: inspect the target and existing evidence before deciding what to do."
                      if unknown or unexpected else "Next step: resolve the validation failure before attempting a send.")
+    lines.extend(render_delivery_fact_lines(facts))
+    if facts["paired"] and agent is None:
+        lines.append("Selected agent / home: unknown (receiver context not reported)")
+    generation = getattr(args, "target_generation", None)
+    if generation is not None:
+        lines.append("Target generation: requested; existing validation result applies")
+    else:
+        lines.append("Target generation: not requested" if agent == "claude" and not facts["paired"]
+                     else "Target generation: unsupported for this route")
     return "\n".join(lines)
 
 
 def emit_delivery_explanation(args: argparse.Namespace, result: dict, *,
                               host: str | None = None, failed: bool = False,
-                              stream=None) -> None:
-    print(render_delivery_explanation(args, result, host=host, failed=failed),
+                              stream=None, mode: str = "readiness") -> None:
+    explanation = render_delivery_explanation(args, result, host=host, failed=failed, mode=mode)
+    try:
+        generated = int(time.time() * 1000)
+        if 0 <= generated <= 9007199254740991:
+            explanation += "\nExplanation generated at (UTC milliseconds): " + str(generated) + "; not a delivery observation."
+    except Exception:
+        pass
+    print(explanation,
           file=stream or (sys.stderr if failed or delivery_explanation_has_submission(result) else sys.stdout))
 
 
@@ -5771,6 +5970,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         emit(
             args.json, payload, render_doctor(payload, "this machine"), command="doctor",
         )
+        if getattr(args, "explain", False):
+            args._delivery_explanation_started = True
+            emit_delivery_explanation(args, payload, mode="doctor")
         return 0
 
     exit_code = 0
@@ -5779,9 +5981,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return_host = _doctor_return_host(args) if args.check_return_route else None
     for requested_host in args.host:
         host = requested_host
+        if getattr(args, "explain", False):
+            args._delivery_explanation_started = False
+            args._delivery_explanation_host = requested_host
         try:
             transport = SshTransport(requested_host, args, tailnet_status)
             host, ssh_opts = transport.host, transport.ssh_opts
+            if getattr(args, "explain", False):
+                args._delivery_explanation_started = True
+                args._delivery_explanation_host = display_host(requested_host, host)
             remote_argv = ["doctor", "--no-update-notice"] + agent_remote_options(args)
             if return_host:
                 remote_argv.extend(["--_return-host", return_host])
@@ -5803,6 +6011,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 if len(all_results) > 1:
                     print()
                 print(render_doctor(payload, display_host(requested_host, host)))
+                if getattr(args, "explain", False):
+                    args._delivery_explanation_started = True
+                    emit_delivery_explanation(args, payload, mode="doctor", host=display_host(requested_host, host))
         except CcPeerError as exc:
             exit_code = EXIT_ERROR
             all_results.append(json_result(
@@ -5812,6 +6023,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             ))
             if not args.json:
                 print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
+                if getattr(args, "explain", False):
+                    emit_delivery_explanation(args, {}, mode="doctor", failed=True,
+                                              host=display_host(requested_host, host), stream=sys.stderr)
     if args.json:
         emit_json_results(all_results)
     return exit_code
@@ -7446,6 +7660,10 @@ def handoff_private_stat(path, directory=False):
     return info
 
 
+class HandoffReadDeadlineExceeded(Exception):
+    """The caller's read budget elapsed; not evidence of corrupt history."""
+
+
 class HandoffLedger:
     """Serialized, fsynced snapshots with retained effect fences, not dedup.
 
@@ -7506,12 +7724,19 @@ class HandoffLedger:
                 os.unlink(temporary)
 
     @contextlib.contextmanager
-    def transaction(self, deadline=None):
+    def transaction(self, deadline=None, *, read_only=False):
+        """Validate one locked snapshot; read-only projections never persist retention."""
+        def check_read_deadline():
+            if read_only and deadline is not None and handoff_now() >= deadline:
+                raise HandoffReadDeadlineExceeded()
+
+        check_read_deadline()
         if IS_WINDOWS or fcntl is None:
             raise handoff_error("handoff_platform_unsupported")
         handoff_private_stat(self.root, True)
         lock = self.root / "ledger.lock"
         before = handoff_private_stat(lock)
+        check_read_deadline()
         fd = os.open(str(lock), os.O_RDWR | getattr(os, "O_NOFOLLOW", 0))
         try:
             after = os.fstat(fd)
@@ -7519,38 +7744,52 @@ class HandoffLedger:
                 raise handoff_error("unsafe_handoff_storage")
             limit = deadline if deadline is not None else handoff_now() + 5
             while True:
+                check_read_deadline()
                 try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(fd, (fcntl.LOCK_SH if read_only else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+                    check_read_deadline()
                     break
                 except BlockingIOError:
+                    check_read_deadline()
                     if handoff_now() >= limit:
                         raise handoff_error("handoff_storage_busy")
                     time.sleep(min(0.01, max(0, limit - handoff_now())))
             path = self.root / "ledger.json"
+            check_read_deadline()
             initial = handoff_private_stat(path)
             if initial.st_size > HANDOFF_LEDGER_BYTES:
                 raise handoff_error("handoff_history_unavailable")
+            check_read_deadline()
             read_fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
             with os.fdopen(read_fd, "rb") as stream:
                 current = os.fstat(stream.fileno())
                 if (initial.st_dev, initial.st_ino) != (current.st_dev, current.st_ino):
                     raise handoff_error("unsafe_handoff_storage")
+                check_read_deadline()
                 raw = stream.read(HANDOFF_LEDGER_BYTES + 1)
+            if read_only:
+                # Parse/validation use only this immutable local byte snapshot;
+                # release the shared lock so writers need not wait for them.
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            check_read_deadline()
             try:
                 state = handoff_json(raw, HANDOFF_LEDGER_BYTES)
                 if set(state) != {"schemaVersion", "epoch", "records"} or type(state["schemaVersion"]) is not int or state["schemaVersion"] != 1 or type(state["records"]) is not dict:
                     raise ValueError()
                 handoff_uuid(state["epoch"])
                 for key, record in state["records"].items():
+                    check_read_deadline()
                     handoff_uuid(key)
                     if type(record) is not dict or record.get("id") != key:
                         raise ValueError()
                     self._validate_record(record)
             except (CcPeerError, ValueError, KeyError, TypeError) as exc:
                 raise handoff_error("handoff_ledger_corrupt") from exc
+            check_read_deadline()
             boot, now = handoff_boot_clock(), handoff_now_ns()
             if boot is not None:
                 for record in state["records"].values():
+                    check_read_deadline()
                     if (record["phase"] != "tombstone" and record["historyBoot"] == boot
                             and now >= record["createdNs"] + 30 * 86400 * 1000000000):
                         # Detail expires only under proven boot/monotonic
@@ -7558,8 +7797,10 @@ class HandoffLedger:
                         # survives and still counts toward the intent quota.
                         record.update(phase="tombstone", submission="unknown", native=None,
                                       waits=[], ack=None, capability=None, pendingReceipt=None, observe=False, ackRequested=False)
+            check_read_deadline()
             yield state
-            self._save(state)
+            if not read_only:
+                self._save(state)
         except OSError as exc:
             raise handoff_error("handoff_history_unavailable") from exc
         finally:
@@ -7591,10 +7832,10 @@ class HandoffLedger:
             state["records"][correlation] = record
             return state["epoch"], copy.deepcopy(record)
 
-    def record(self, correlation, deadline=None):
+    def record(self, correlation, deadline=None, *, read_only=False):
         import copy
         handoff_uuid(correlation)
-        with self.transaction(deadline) as state:
+        with self.transaction(deadline, **({"read_only": True} if read_only else {})) as state:
             record = state["records"].get(correlation)
             if record is None:
                 raise handoff_error("handoff_id_unknown")
@@ -7838,8 +8079,9 @@ def handoff_cap_hash(epoch, correlation, generation, cap):
 def handoff_collect(ledger, epoch_id, frame):
     """Receipt-only operations. No native command, transcript or model access."""
     import hmac
-    with ledger.transaction() as state:
-        if frame == {"op": "clock"}:
+    read_only_clock = frame == {"op": "clock", "readOnly": True} and type(frame.get("readOnly")) is bool
+    with ledger.transaction(**({"read_only": True} if read_only_clock else {})) as state:
+        if frame == {"op": "clock"} or read_only_clock:
             return {"ok": True, "clockEpoch": epoch_id}
         if frame.get("op") == "mint":
             if set(frame) != {"op", "ledgerEpoch", "correlationId", "targetGeneration"}:
@@ -7962,9 +8204,16 @@ def handoff_ipc(root, frame, deadline=None):
         raise handoff_error("receipt_channel_unavailable") from exc
 
 
-def handoff_channel_epoch(ledger, deadline=None):
+def handoff_channel_epoch(ledger, deadline=None, *, read_only=False):
     try:
-        result = handoff_ipc(ledger.root, {"op": "clock"}, deadline)
+        frame = {"op": "clock"}
+        if read_only:
+            # Older collectors reject this extra field before committing a
+            # transaction. Never retry their write-through legacy clock query.
+            frame["readOnly"] = True
+            if deadline is None:
+                deadline = handoff_now() + 2
+        result = handoff_ipc(ledger.root, frame, deadline)
         return handoff_uuid(result.get("clockEpoch"))
     except CcPeerError:
         return None
@@ -8217,7 +8466,35 @@ def handoff_receipt_stdin(timeout=5):
         raise handoff_error("invalid_receipt") from exc
 
 
+def cmd_handoff_explanation(args):
+    """Project existing history without saving retention or minting authority.
+
+    Reuses the same read-only ledger/clock primitives as #296 status/watch;
+    receipt schemas, wait history and ordinary output remain unchanged.
+    """
+    ledger = HandoffLedger()
+    correlation = handoff_uuid(args.correlation_id)
+    args._delivery_explanation_started = True
+    try:
+        epoch, record = ledger.record(correlation, read_only=True)
+    except CcPeerError as exc:
+        context = ("id_unknown" if exc.details.get("reason") == "handoff_id_unknown" else
+                   "ledger_corrupt" if exc.details.get("reason") == "handoff_ledger_corrupt" else
+                   "ledger_missing" if isinstance(exc.__cause__, FileNotFoundError) else "history_unavailable")
+        emit_delivery_explanation(args, {"handoffQuery": {"context": context}},
+                                  mode="existing_intent", failed=True, stream=sys.stderr)
+        return 1
+    active_clock = None
+    if record["capability"] and not record["capability"]["revoked"] and not record["ack"]:
+        active_clock = handoff_channel_epoch(ledger, read_only=True)
+    public = handoff_public(epoch, record, active_clock)
+    emit_delivery_explanation(args, {"handoff": public}, mode="existing_intent")
+    return 0
+
+
 def cmd_handoff(args):
+    if args.handoff_action == "status" and getattr(args, "explain", False):
+        return cmd_handoff_explanation(args)
     ledger = HandoffLedger()
     action = args.handoff_action
     if action == "init":
@@ -9739,7 +10016,8 @@ def build_parser() -> argparse.ArgumentParser:
     sending.add_argument("--wake-timeout", type=int, choices=range(1, 61), default=30, metavar="SECONDS",
                          help="wake deadline, 1..60 seconds (default: 30)")
     sending.add_argument("--dry-run", action="store_true", help="resolve the target, send nothing")
-    sending.add_argument("--explain", action="store_true", help="explain an ordinary local/SSH dry-run in text")
+    sending.add_argument("--explain", action="store_true", help="explain existing dry-run evidence in text")
+    doctor.add_argument("--explain", action="store_true", help="explain existing diagnostic capabilities in text")
     sending.set_defaults(func=cmd_send)
 
     handoff = subparsers.add_parser("handoff", help="manage private correlated intents without submitting native messages")
@@ -9750,6 +10028,8 @@ def build_parser() -> argparse.ArgumentParser:
         sub.set_defaults(func=cmd_handoff, no_update_notice=True)
         if action in ("status", "wait"):
             sub.add_argument("--correlation-id", required=True, type=handoff_cli_uuid)
+        if action == "status":
+            sub.add_argument("--explain", action="store_true", help="explain the existing read-only intent snapshot")
         if action == "wait":
             sub.add_argument("--wait-for", choices=("delivered", "acknowledged"), required=True)
             sub.add_argument("--wait-timeout", type=handoff_timeout, default=30)
@@ -9879,15 +10159,16 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--json conflicts with --output-format text")
     args.json = args.json or output_format == "json"
     if getattr(args, "explain", False):
-        if not args.dry_run:
-            parser.error("--explain requires --dry-run")
         if args.json:
             parser.error("--explain requires text output")
-        if getattr(args, "device", None):
-            parser.error("--explain does not support paired-device sends")
-        if handoff_requested(args) or any(getattr(args, key, None) is not None for key in (
-                "_handoff_native_context", "_handoff_native_cutoff_ms", "_handoff_native_total_ms")):
-            parser.error("--explain does not support experimental handoff sends")
+        if args.command == "send":
+            if not args.dry_run:
+                parser.error("--explain requires --dry-run")
+            if handoff_requested(args) or any(getattr(args, key, None) is not None for key in (
+                    "_handoff_native_context", "_handoff_native_cutoff_ms", "_handoff_native_total_ms")):
+                parser.error("--explain does not support experimental handoff sends")
+        elif args.command == "handoff" and args.handoff_action != "status":
+            parser.error("--explain requires handoff status")
         args._delivery_explanation_started = False
         args._delivery_explanation_host = None
     try:
@@ -9913,6 +10194,7 @@ def main(argv: list[str] | None = None) -> int:
             print(human_text(f"session-peer: {message}"), file=sys.stderr)
             if getattr(args, "explain", False):
                 emit_delivery_explanation(args, exc.details, failed=True, stream=sys.stderr,
+                                          mode="doctor" if args.command == "doctor" else "existing_intent" if args.command == "handoff" else "readiness",
                                           host=getattr(args, "_delivery_explanation_host", None))
         exit_code = (
             EXIT_NO_TARGET
@@ -9933,6 +10215,7 @@ def main(argv: list[str] | None = None) -> int:
                 explanation = ({"reason": "outcome_unknown"}
                                if getattr(args, "_delivery_explanation_started", False) else {})
                 emit_delivery_explanation(args, explanation, failed=True, stream=sys.stderr,
+                                          mode="doctor" if args.command == "doctor" else "existing_intent" if args.command == "handoff" else "readiness",
                                           host=getattr(args, "_delivery_explanation_host", None))
         exit_code = EXIT_ERROR
     if show_human_notice and not args.json:

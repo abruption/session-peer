@@ -98,17 +98,24 @@ session-peer send --host worker --to 'codex:<full-thread-uuid>' --dry-run -m "me
 
 ### 전달 설명 (개발 중)
 
-#323의 개발 기능이며 공개 v1.2.1에는 없습니다. `send --dry-run`에 `--explain`을 추가하면 선택한 로컬 또는 SSH 대상, 기존 검증 결과, 전달 방식과 관찰 한계를 사람이 읽기 쉬운 형태로 표시합니다. 처리한 SSH 대상마다 개별 설명을 표시하지만, 예상치 못한 오류가 나면 기존 호스트 반복 처리가 중단되어 이후 대상은 처리하지 않을 수 있습니다.
+#323의 개발 기능으로 v1.3 후보이며, 공개 v1.2.1에는 없습니다. `send --dry-run`에 `--explain`을 추가하면 선택한 로컬·SSH·페어링 기기 대상, 기존 검증 결과, 전달 방식과 관찰 한계를 사람이 읽기 쉬운 형태로 표시합니다. `doctor --explain`은 기존 진단 스냅샷과 선언된 지원 기능을 설명하며, 특정 대상의 전송 준비 상태를 확인하지는 않습니다. `handoff status --explain`은 기존 intent에 저장된 증거를 설명합니다. 처리한 SSH 대상마다 개별 설명을 표시하지만, 예상치 못한 오류가 나면 기존 호스트 반복 처리가 중단되어 이후 대상은 처리하지 않을 수 있습니다.
 
 ```bash
 session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run --explain
+session-peer send --device RECEIVER_FINGERPRINT --to review --message "Review the patch" --dry-run --explain
+session-peer doctor --explain
+session-peer handoff status --correlation-id PREPARED_UUID --explain
 ```
 
-설명은 현재 dry-run 결과를 재사용하며 진단·native 버전·SSH 조회를 추가하지 않습니다. 기존 dry-run 자체에는 버전 검사가 포함될 수 있습니다. 실제 전송 시에는 다시 검증하며, 미리보기 성공이 대상을 예약하거나 제출·소비·완료를 보장하지는 않습니다. `--wake`를 지정하지 않으면 깨우기 가능 여부를 검사하지 않습니다. 지정한 경우에도 기존 사전 검사 결과만 설명합니다. 일반 전송의 receipt ACK는 지원하지 않으며, 별도의 실험적 handoff는 지원 범위가 다릅니다.
+설명은 선택한 명령의 기존 결과를 재사용하며 진단·native 버전·SSH 조회, 대상 활성화나 별도의 `list` 작업을 추가하지 않습니다. 기존 dry-run 자체에는 버전 검사가 포함될 수 있습니다. 실제 전송 시에는 다시 검증하며, 미리보기 성공이 대상을 예약하거나 제출·소비·완료를 보장하지는 않습니다. 선언된 지원 기능, 실제 검사 결과와 확인할 수 없는 사실을 구분해 표시합니다. `--wake`를 지정하지 않으면 깨우기 가능 여부를 검사하지 않습니다. 지정한 경우에도 기존 사전 검사 결과만 설명합니다.
 
-첫 지원 범위는 텍스트 출력 전용이며 `--dry-run`이 필수입니다. `--explain`을 `--json` 또는 `--output-format json`, 페어링 `--device`, handoff `--correlation-id`, `--request-ack`, `--observe-delivery`, `--wait-for`와 함께 지정하면 메시지 입력이나 대상·저널 작업 전에 사용법 오류로 거부합니다. 새 옵션을 사용하지 않은 기존 명령의 출력·JSON·종료 계약은 유지됩니다.
+페어링 dry-run은 기존 수신 기기 정책에 따른 `resolve` 작업을 유지합니다. 기존 연결 확인 과정에서 지원을 알리는 수신 기기와만 선택적 설명 context를 협상합니다. 이 내부 context에는 버전과 허용 필드 검증을 적용하며 크기를 8 KiB로 제한합니다. 일반 JSON 출력이나 handoff 스키마는 추가하지 않습니다. 선택한 수신 측 에이전트·대상·home은 보고되고 검증된 경우에만 표시하며 송신 측 프로필에서 추측하지 않습니다. 구형 수신 기기의 독립적으로 확인된 native 결과는 유지하고, 보고되지 않은 context는 알 수 없음으로 표시합니다. 대체 경로 시도, 추가 조회나 재전송은 하지 않습니다.
 
-메시지 입력 요구사항과 한도는 동일합니다. 평소처럼 `--message`, `--message-file` 또는 stdin을 사용하며 임시 본문을 자동 생성하지 않습니다. 설명 필드에는 본문이나 receipt 비밀값을 넣지 않습니다. 일반 설명은 stdout에, 실패 결과나 예상 밖 제출 증거의 설명은 stderr에 표시하며 기존 요약·오류 출력의 위치는 바꾸지 않습니다. 확인할 수 없는 증거는 그대로 알 수 없음으로 표시하고, 실제 전송 결과가 불확실하면 자동 재전송하지 않습니다.
+Handoff status는 읽기 전용 스냅샷을 재사용하며 intent·receipt capability·wait·collector를 만들거나 ledger에 기록하지 않습니다. 제출, 입력 주입 관찰, 명시적 receipt와 최근 저장된 wait는 구분합니다. Receipt가 acknowledged여도 작업 완료를 증명하지는 않습니다. 저장된 관찰은 오래된 정보일 수 있습니다. 보고된 receipt 관찰 시각만 관찰 시각으로 설명하며, 설명 생성 시각이나 진단 스냅샷 시각을 전달 관찰 시각으로 해석하지 않습니다. 일반 전송에 receipt ACK 지원이 추가되지는 않습니다.
+
+이 범위는 텍스트 출력 전용이므로 `--explain`을 `--json` 또는 `--output-format json`과 함께 지정하면 사용법 오류가 발생합니다. `--dry-run`은 `send --explain`에만 필수이며 `doctor --explain`과 `handoff status --explain`에는 필요하지 않습니다. Send에서는 실험적 handoff 옵션인 `--correlation-id`, `--request-ack`, `--observe-delivery`, `--wait-for`와 `--explain`의 조합을 메시지 입력이나 대상·ledger 작업 전에 계속 거부합니다. 새 옵션을 사용하지 않은 기존 명령의 출력·JSON·종료 계약은 유지됩니다. 설명은 성공한 상태 조회를 ACK 증거로 바꾸거나 원래 명령의 종료 의미를 바꾸지 않습니다.
+
+Send의 메시지 입력 요구사항과 한도는 동일합니다. 평소처럼 `--message`, `--message-file` 또는 stdin을 사용하며 임시 본문을 자동 생성하지 않습니다. 설명 필드에는 본문이나 receipt 비밀값을 넣지 않습니다. 일반 설명은 stdout에, 실패 결과나 예상 밖 제출 증거의 설명은 stderr에 표시하며 기존 요약·오류 출력의 위치는 바꾸지 않습니다. 확인할 수 없는 증거는 그대로 알 수 없음으로 표시하고, 실제 전송 결과가 불확실하면 자동 재전송하지 않습니다.
 
 ### 페어링된 기기 옵션 및 Antigravity (v0.9)
 

@@ -112,7 +112,7 @@ class Receiver:
             raise Rejected('key_rotation_restricted')
         if op == 'probe':
             return {'ok': True, 'device': self.store.device, 'receiverReady': True,
-                    'features': ['identity-rotation-v1']}
+                    'features': ['identity-rotation-v1', 'delivery-explanation-v1']}
         if op == 'status':
             return self.store.status(peer, value['body'])
         if op == 'rotation.prepare':
@@ -138,8 +138,11 @@ class Receiver:
                                 for row in part.get('sessions', []))
             return {'ok': not errors, 'sessions': sessions, 'errors': errors}
         body = value['body']
-        if not isinstance(body, dict) or set(body) != {'target', 'message'}:
+        if (not isinstance(body, dict) or set(body) not in (
+                {'target', 'message'}, {'target', 'message', 'explain'})
+                or ('explain' in body and (op != 'resolve' or body['explain'] is not True))):
             raise Rejected('invalid_body')
+        explanation = {'explain': True} if body.get('explain') is True else {}
         alias, text = body['target'], body['message']
         if not isinstance(alias, str):
             raise Rejected('invalid_target')
@@ -154,11 +157,11 @@ class Receiver:
             raise Rejected('framed_message_too_large')
         # Binding overhead must also fit, before resolve or journal begin.
         try:
-            worker_frame(binding, 'resolve' if op == 'resolve' else 'send', text, key)
+            worker_frame(binding, 'resolve' if op == 'resolve' else 'send', text, key, **explanation)
         except FrameRejected as exc:
             raise Rejected(str(exc)) from None
         if op == 'resolve':
-            result = await self.native.invoke(binding, 'resolve', text, peer_fingerprint=key)
+            result = await self.native.invoke(binding, 'resolve', text, peer_fingerprint=key, **explanation)
             if result.get('reason') == 'codex_executable_not_found':
                 self.lifecycle_event('native_preflight_refused', operation='resolve',
                                      reason='codex_executable_not_found')
@@ -412,7 +415,7 @@ async def finish_pair(store, invite, route, credential):
         await channel.close()
 
 
-async def exchange(store, peer, op, body=None, ident=None, route='auto', credential=None):
+async def exchange(store, peer, op, body=None, ident=None, route='auto', credential=None, *, explain=False):
     if store.recovery_required() and op not in ('probe', 'status', 'rotation.status'):
         raise Rejected('recovery_required')
     record = store.peer(peer)
@@ -441,7 +444,9 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
                 raise Rejected('peer_not_ready')
             if op.startswith('rotation.') and 'identity-rotation-v1' not in response.get('features', []):
                 raise Rejected('rotation_unsupported')
-            return kind, channel, attempt_id
+            features = response.get('features')
+            supported = isinstance(features, list) and 'delivery-explanation-v1' in features
+            return kind, channel, attempt_id, supported
         except TimeoutError:
             with contextlib.suppress(Exception):
                 await channel.close()
@@ -508,7 +513,7 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
             if (not task.cancelled() and task.exception() is None
                     and (winner is None or task.result()[1] is not winner[1])):
                 await task.result()[1].close()
-    kind, channel, selected_attempt_id = winner
+    kind, channel, selected_attempt_id, explanation_supported = winner
     setup = ({'setupAttempts': setup_attempts[kind], 'setupDegraded': True,
               'setupFailureHistory': history[kind]} if setup_attempts[kind] > 1 else {})
     submitted = False
@@ -517,10 +522,14 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
         # Preserve the preflighted request ID/body; Secure.send rechecks framing
         # after refreshing the expiry, before any application bytes are written.
         value['expires'] = time.time() + 60
+        if op == 'resolve' and explain is True and explanation_supported:
+            value['body'] = {**body, 'explain': True}
         # Exactly one application submission, after path selection. No failover resend.
         await channel.send(value)
         submitted = True
         result = await channel.recv()
+        if not (op == 'resolve' and explain is True and explanation_supported):
+            result = {key: item for key, item in result.items() if key != 'deliveryContext'}
         return {**result, 'route': kind, 'receiverAccepted': result.get('ok', False),
                 'relayAttached': kind == 'relay', 'requestId': value['id'],
                 'attemptId': selected_attempt_id, **setup}

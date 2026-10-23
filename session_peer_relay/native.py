@@ -229,9 +229,10 @@ class Native:
     def __init__(self):
         self.slots = asyncio.Semaphore(2)
 
-    async def invoke(self, binding, operation, text=None, *, peer_fingerprint=None):
+    async def invoke(self, binding, operation, text=None, *, peer_fingerprint=None, explain=False):
         try:
-            payload = worker_frame(binding, operation, text, peer_fingerprint)
+            payload = worker_frame(binding, operation, text, peer_fingerprint,
+                                   **({'explain': True} if explain else {}))
         except FrameRejected as exc:
             return {'ok': False, 'status': 'refused', 'submitted': False,
                     'reason': str(exc), 'retryAllowed': False, 'consumptionConfirmed': False}

@@ -50,37 +50,46 @@ def delivery_explanation_has_submission(result: dict) -> bool:
 
 
 def render_delivery_explanation(args: argparse.Namespace, result: dict, *,
-                                host: str | None = None, failed: bool = False) -> str:
+                                host: str | None = None, failed: bool = False,
+                                mode: str = "readiness") -> str:
     """Describe only existing dry-run facts; never inspect or execute a target.
 
     This display-only allowlist deliberately excludes message bodies, native
     errors, credentials, routing URIs and receipt authority. Missing remote
     facts stay unknown rather than being filled from the sender's environment.
     """
+    facts = build_delivery_explanation(args, result, mode=mode, failed=failed)
+    if mode != "readiness":
+        lines = render_delivery_fact_lines(facts)
+        if host:
+            lines.insert(1, "Destination host: " + explanation_text(host))
+        return "\n".join(lines)
     requested = str(getattr(args, "to", ""))
     unresolved_uri = requested.lower().startswith("session-peer:")
     if unresolved_uri:
         requested = "Reply-To URI (resolution unavailable)"
-    agent = (None if unresolved_uri else
-             "codex" if requested.startswith("codex:") else
-             "antigravity" if requested.startswith("antigravity:") else "claude")
-    where = host or (", ".join(getattr(args, "host", None) or []) or "this machine")
+    agent = facts["agent"]
+    if facts["paired"]:
+        requested = facts["target"] or "paired target (not reported by receiver)"
+    where = host or (("device:" + str(args.device)) if facts["paired"] else
+                     (", ".join(getattr(args, "host", None) or []) or "this machine"))
     lines = ["Delivery preview",
-             "Requested destination: " + human_text(requested) + " on " + human_text(where)]
-    target = result.get("target")
+             "Requested destination: " + explanation_text(requested) + " on " + explanation_text(where)]
+    if facts["paired"]:
+        lines.append("Selected paired route: " + (facts["selectedRoute"] + " (reported)" if facts["selectedRoute"] else "unknown (not reported)"))
+    target = None if facts["paired"] else result.get("target")
     if isinstance(target, dict):
         if agent == "claude" and type(target.get("pid")) is int:
             resolved = "Claude PID " + str(target["pid"])
             if isinstance(target.get("name"), str):
-                resolved += " (" + human_text(target["name"]) + ")"
+                resolved += " (" + explanation_text(target["name"]) + ")"
             lines.append("Resolved target: " + resolved)
         elif agent == "codex" and isinstance(target.get("id"), str):
-            lines.append("Resolved target: codex:" + human_text(target["id"]))
-    home_key = "codexHome" if agent == "codex" else "antigravityHome"
+            lines.append("Resolved target: codex:" + explanation_text(target["id"]))
     if agent in ("codex", "antigravity"):
-        home = result.get(home_key)
+        home = facts["home"]
         lines.append(("Codex home: " if agent == "codex" else "Antigravity home: ")
-                     + (human_text(home) if isinstance(home, str) else "unknown (not reported)"))
+                     + (explanation_text(home) if isinstance(home, str) else "unknown (not reported)"))
     started = getattr(args, "_delivery_explanation_started", True)
     unknown = result.get("status") == "unknown" or result.get("reason") in (
         "outcome_unknown", "ssh_identity_evidence_unavailable") or (
@@ -113,20 +122,37 @@ def render_delivery_explanation(args: argparse.Namespace, result: dict, *,
                 if not unknown and not unexpected and isinstance(fact, dict) and fact.get("status") == "validated" else
                 "requested; preflight not confirmed")
     lines.extend(["Wake: " + wake,
-                  "Receipt ACK: unavailable for ordinary sends",
+                  ("Receipt ACK: unknown (receiver support not reported)" if facts["paired"]
+                   and facts["capabilities"] is None else "Receipt ACK: unavailable for ordinary sends"),
                   "Consumption / completion: not observed",
                   "A later send repeats validation.",
                   "Do not automatically resend after an unknown outcome."])
     if failed or unexpected:
         lines.append("Next step: inspect the target and existing evidence before deciding what to do."
                      if unknown or unexpected else "Next step: resolve the validation failure before attempting a send.")
+    lines.extend(render_delivery_fact_lines(facts))
+    if facts["paired"] and agent is None:
+        lines.append("Selected agent / home: unknown (receiver context not reported)")
+    generation = getattr(args, "target_generation", None)
+    if generation is not None:
+        lines.append("Target generation: requested; existing validation result applies")
+    else:
+        lines.append("Target generation: not requested" if agent == "claude" and not facts["paired"]
+                     else "Target generation: unsupported for this route")
     return "\n".join(lines)
 
 
 def emit_delivery_explanation(args: argparse.Namespace, result: dict, *,
                               host: str | None = None, failed: bool = False,
-                              stream=None) -> None:
-    print(render_delivery_explanation(args, result, host=host, failed=failed),
+                              stream=None, mode: str = "readiness") -> None:
+    explanation = render_delivery_explanation(args, result, host=host, failed=failed, mode=mode)
+    try:
+        generated = int(time.time() * 1000)
+        if 0 <= generated <= 9007199254740991:
+            explanation += "\nExplanation generated at (UTC milliseconds): " + str(generated) + "; not a delivery observation."
+    except Exception:
+        pass
+    print(explanation,
           file=stream or (sys.stderr if failed or delivery_explanation_has_submission(result) else sys.stdout))
 
 

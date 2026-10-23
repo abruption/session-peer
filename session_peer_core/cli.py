@@ -132,7 +132,8 @@ def build_parser() -> argparse.ArgumentParser:
     sending.add_argument("--wake-timeout", type=int, choices=range(1, 61), default=30, metavar="SECONDS",
                          help="wake deadline, 1..60 seconds (default: 30)")
     sending.add_argument("--dry-run", action="store_true", help="resolve the target, send nothing")
-    sending.add_argument("--explain", action="store_true", help="explain an ordinary local/SSH dry-run in text")
+    sending.add_argument("--explain", action="store_true", help="explain existing dry-run evidence in text")
+    doctor.add_argument("--explain", action="store_true", help="explain existing diagnostic capabilities in text")
     sending.set_defaults(func=cmd_send)
 
     handoff = subparsers.add_parser("handoff", help="manage private correlated intents without submitting native messages")
@@ -143,6 +144,8 @@ def build_parser() -> argparse.ArgumentParser:
         sub.set_defaults(func=cmd_handoff, no_update_notice=True)
         if action in ("status", "wait"):
             sub.add_argument("--correlation-id", required=True, type=handoff_cli_uuid)
+        if action == "status":
+            sub.add_argument("--explain", action="store_true", help="explain the existing read-only intent snapshot")
         if action == "wait":
             sub.add_argument("--wait-for", choices=("delivered", "acknowledged"), required=True)
             sub.add_argument("--wait-timeout", type=handoff_timeout, default=30)
@@ -272,15 +275,16 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--json conflicts with --output-format text")
     args.json = args.json or output_format == "json"
     if getattr(args, "explain", False):
-        if not args.dry_run:
-            parser.error("--explain requires --dry-run")
         if args.json:
             parser.error("--explain requires text output")
-        if getattr(args, "device", None):
-            parser.error("--explain does not support paired-device sends")
-        if handoff_requested(args) or any(getattr(args, key, None) is not None for key in (
-                "_handoff_native_context", "_handoff_native_cutoff_ms", "_handoff_native_total_ms")):
-            parser.error("--explain does not support experimental handoff sends")
+        if args.command == "send":
+            if not args.dry_run:
+                parser.error("--explain requires --dry-run")
+            if handoff_requested(args) or any(getattr(args, key, None) is not None for key in (
+                    "_handoff_native_context", "_handoff_native_cutoff_ms", "_handoff_native_total_ms")):
+                parser.error("--explain does not support experimental handoff sends")
+        elif args.command == "handoff" and args.handoff_action != "status":
+            parser.error("--explain requires handoff status")
         args._delivery_explanation_started = False
         args._delivery_explanation_host = None
     try:
@@ -306,6 +310,7 @@ def main(argv: list[str] | None = None) -> int:
             print(human_text(f"session-peer: {message}"), file=sys.stderr)
             if getattr(args, "explain", False):
                 emit_delivery_explanation(args, exc.details, failed=True, stream=sys.stderr,
+                                          mode="doctor" if args.command == "doctor" else "existing_intent" if args.command == "handoff" else "readiness",
                                           host=getattr(args, "_delivery_explanation_host", None))
         exit_code = (
             EXIT_NO_TARGET
@@ -326,6 +331,7 @@ def main(argv: list[str] | None = None) -> int:
                 explanation = ({"reason": "outcome_unknown"}
                                if getattr(args, "_delivery_explanation_started", False) else {})
                 emit_delivery_explanation(args, explanation, failed=True, stream=sys.stderr,
+                                          mode="doctor" if args.command == "doctor" else "existing_intent" if args.command == "handoff" else "readiness",
                                           host=getattr(args, "_delivery_explanation_host", None))
         exit_code = EXIT_ERROR
     if show_human_notice and not args.json:

@@ -28,7 +28,6 @@ class DeliveryExplanation(unittest.TestCase):
     def test_invalid_combinations_fail_before_updates_input_or_dispatch(self):
         variants = [[], ["--dry-run", "--json"],
                     ["--dry-run", "--output-format", "json"],
-                    ["--dry-run", "--device", "fixture"],
                     ["--dry-run", "--correlation-id", "00000000-0000-4000-8000-000000000001"],
                     ["--dry-run", "--request-ack"],
                     ["--dry-run", "--observe-delivery"],
@@ -51,7 +50,6 @@ class DeliveryExplanation(unittest.TestCase):
             self.assertEqual(exc.exception.code, 2)
             expected = ("--explain requires --dry-run" if not flags else
                         "--explain requires text output" if "--json" in flags or "--output-format" in flags else
-                        "--explain does not support paired-device sends" if "--device" in flags else
                         "--explain does not support experimental handoff sends")
             self.assertIn("session-peer: error: " + expected, diagnostic.getvalue())
             for action in (updates, skills, read, send, child):
