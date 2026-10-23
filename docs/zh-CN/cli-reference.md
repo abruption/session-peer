@@ -180,7 +180,7 @@ session-peer address remove review --expect-revision 'ab1:<HASH>'
 
 Claude 地址保存选定的 `tg1:` 代次，并在提交前使用现有的连接对端前置检查。Codex 地址保存完整线程 UUID、准确的 home 和 `aw1:` writer 观察，并在产生副作用前重复现有检查。Codex 代次仍**不受支持**：writer 观察和重新验证并不提供对原有 native 实例代次的原子验证保证。Writer 已更改或无法确认时，必须显式重新选择，不会自动改选目标或重放。SSH 选择要求在实际连接上验证主机密钥，并在实际发送时固定使用同一密钥。这既不认证人员身份，也不证明 SSH 配置或 SQLite 存储的同一性。
 
-实际发送必须同时提供当前 `--address-revision` 和准确的 `--confirm-target`，dry-run 可以省略。`--address` 不能与 `--to`、`--preset`、显式主机、native 或 SSH 覆盖项、配对设备、wake、handoff 或 Reply-To URI 路由组合使用。常规消息输入和限制保持不变。结果未知时也不允许自动重发。提供常规消息输入后，可使用 `send --address NAME --dry-run --explain` 查看纯文本传递预览。`--explain` 不支持 JSON 输出，`--address` 的 wake 和 handoff 限制仍然适用。
+实际发送必须同时提供当前 `--address-revision` 和准确的 `--confirm-target`，dry-run 可以省略。`--address` 不能与 `--to`、`--preset`、显式主机、native 或 SSH 覆盖项、配对设备、wake、handoff 或 Reply-To URI 路由组合使用。常规消息输入和限制保持不变。结果未知时也不允许自动重发。提供常规消息输入后，可使用 `send --address NAME --dry-run --explain` 查看纯文本传递预览。`--explain` 不能与 JSON 输出组合使用，`--address` 的 wake 和 handoff 限制仍然适用。
 
 存储是位于 `destinations.json` 旁的独立 `addresses.json`，采用 `schemaVersion: 1`，大小限制为 64 KiB，最多 128 项。它使用与预设相同的所有者、权限、ACL、挂载和不跟随符号链接的路径检查，不自动修复或迁移文件。地址名称遵循预设名称语法；显示标签会规范化为 NFC，最多 128 个字符，并拒绝控制字符、双向控制字符和格式字符。管理操作的 commit 未确认时，更改也可能已经可见，重试前请检查当前配置。绑定 revision 不增加接收侧去重、ACK 或任务完成证据。
 
