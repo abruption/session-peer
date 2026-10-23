@@ -1,9 +1,8 @@
 # 다운로드 지표
 
-README의 PyPI 월간 다운로드 배지는 [Pepy](https://pepy.tech/pepy-api)에서 직접 제공됩니다. 배지를 클릭하면 [session-peer 통계](https://pepy.tech/projects/session-peer)가 열립니다. 공개 월간 배지는 달력 기준의 월이나 실시간 카운터가 아닌 최근 30일을 집계합니다. Pepy의 API 문서에 따르면 공개 배지 엔드포인트는 API 키가 필요 없고, 속도 제한이 없으며, 12시간 동안 캐시됩니다. GitHub 이미지 캐싱으로 인해 가시적인 업데이트가 추가로 지연될 수 있습니다. 배지는 여전히 외부 의존성입니다.
+README의 PyPI 누적 다운로드 배지는 [Pepy](https://pepy.tech/pepy-api)에서 직접 제공됩니다. 배지를 클릭하면 [session-peer 통계](https://pepy.tech/projects/session-peer)가 열립니다. 공개 누적 배지는 Pepy의 누적 다운로드 수를 표시하며, 고유 사용자 수나 실시간 카운터가 아닙니다. Pepy의 API 문서에 따르면 공개 배지 엔드포인트는 API 키가 필요 없고, 속도 제한이 없으며, 12시간 동안 캐시됩니다. GitHub 이미지 캐싱으로 인해 가시적인 업데이트가 추가로 지연될 수 있습니다. 배지는 여전히 외부 의존성입니다.
 
-월간: `https://api.pepy.tech/badge/session-peer/month`.
-주간: `https://api.pepy.tech/badge/session-peer/week` (최근 7일).
+누적: `https://api.pepy.tech/badge/session-peer`.
 
 ## 해석
 
@@ -15,7 +14,7 @@ README의 PyPI 월간 다운로드 배지는 [Pepy](https://pepy.tech/pepy-api)�
 
 ## 별도의 랜딩 페이지 구현
 
-온톨로지 세션이 랜딩 페이지를 소유합니다. 소스 및 제공업체 오류 상태를 명확히 유지하면서, 별도로 레이블이 지정된 최근 7일 및 최근 30일 PyPI 지표에 동일한 Pepy 공개 주간 및 월간 배지를 사용하십시오. 이를 통해 JSON API 키나 별도의 수집기를 피할 수 있습니다. 공개 코드에 Pepy JSON API 키를 노출하지 마십시오. JSON API 접근에는 공개 배지와 다른 인증, 요금제 및 속도 제한 조건이 있습니다. 기존 사이트 분석은 그대로 유지되며, 이번 작업으로 CLI 또는 방문자 이벤트 텔레메트리가 추가되지 않습니다.
+온톨로지 세션이 랜딩 페이지를 소유합니다. 소스 및 제공업체 오류 상태를 명확히 유지하면서, 별도로 레이블이 지정된 최근 7일 및 최근 30일 PyPI 지표에 Pepy 공개 주간 및 월간 배지를 사용하십시오. 이를 통해 JSON API 키나 별도의 수집기를 피할 수 있습니다. 공개 코드에 Pepy JSON API 키를 노출하지 마십시오. JSON API 접근에는 공개 배지와 다른 인증, 요금제 및 속도 제한 조건이 있습니다. 기존 사이트 분석은 그대로 유지되며, 이번 작업으로 CLI 또는 방문자 이벤트 텔레메트리가 추가되지 않습니다.
 
 ## 제공업체 변경 검증 (2026-09-18)
 

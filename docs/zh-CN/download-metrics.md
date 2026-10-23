@@ -1,9 +1,8 @@
 # 下载指标
 
-README 中的 PyPI 月度下载徽章由 [Pepy](https://pepy.tech/pepy-api) 直接提供。点击它可以打开 [session-peer 统计数据](https://pepy.tech/projects/session-peer)。公开月度徽章统计最近 30 天，而不是日历月或实时计数器。Pepy 的 API 文档说明公开徽章端点不需要 API 密钥，没有速率限制，且缓存 12 小时。GitHub 图像缓存可能会进一步延迟可见的更新；徽章仍然是一项外部依赖。
+README 中的 PyPI 累计下载徽章由 [Pepy](https://pepy.tech/pepy-api) 直接提供。点击它可以打开 [session-peer 统计数据](https://pepy.tech/projects/session-peer)。公开累计徽章显示 Pepy 的累计下载量，而不是独立用户数或实时计数器。Pepy 的 API 文档说明公开徽章端点不需要 API 密钥，没有速率限制，且缓存 12 小时。GitHub 图像缓存可能会进一步延迟可见的更新；徽章仍然是一项外部依赖。
 
-月度：`https://api.pepy.tech/badge/session-peer/month`。
-周度：`https://api.pepy.tech/badge/session-peer/week`（最近 7 天）。
+累计：`https://api.pepy.tech/badge/session-peer`。
 
 ## 解读
 
@@ -15,7 +14,7 @@ README 中的 PyPI 月度下载徽章由 [Pepy](https://pepy.tech/pepy-api) 直�
 
 ## 独立的落地页实现
 
-本体（ontology）会话拥有落地页。对其单独标记的最近 7 天和最近 30 天 PyPI 指标使用相同的 Pepy 公开周度与月度徽章，保持来源和提供商错误状态清晰。这避免了 JSON API 密钥或单独的收集器。切勿在公开代码中暴露 Pepy JSON API 密钥；JSON API 访问具有与公开徽章不同的身份验证、方案和速率限制条件。现有的网站分析保持不变；此项工作未添加 CLI 或访客事件遥测。
+本体（ontology）会话拥有落地页。对其单独标记的最近 7 天和最近 30 天 PyPI 指标使用 Pepy 公开周度与月度徽章，保持来源和提供商错误状态清晰。这避免了 JSON API 密钥或单独的收集器。切勿在公开代码中暴露 Pepy JSON API 密钥；JSON API 访问具有与公开徽章不同的身份验证、方案和速率限制条件。现有的网站分析保持不变；此项工作未添加 CLI 或访客事件遥测。
 
 ## 提供商变更验证 (2026-09-18)
 

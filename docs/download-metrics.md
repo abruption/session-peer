@@ -1,15 +1,14 @@
 # Download metrics
 
-The README's PyPI monthly-download badge is served directly by
+The README's cumulative PyPI-download badge is served directly by
 [Pepy](https://pepy.tech/pepy-api). Click it to open
 [session-peer's statistics](https://pepy.tech/projects/session-peer).
-The public monthly badge counts the last 30 days, not a calendar month or a
+The public total badge shows Pepy's cumulative downloads, not unique users or a
 live counter. Pepy's API documentation states that public badge endpoints need
 no API key, have no rate limit and are cached for 12 hours. GitHub image caching
 can further delay visible updates; the badge is still an external dependency.
 
-Monthly: `https://api.pepy.tech/badge/session-peer/month`.
-Weekly: `https://api.pepy.tech/badge/session-peer/week` (last 7 days).
+Total: `https://api.pepy.tech/badge/session-peer`.
 
 ## Interpretation
 
@@ -28,7 +27,7 @@ The version remains unchanged; documentation updates do not require a release.
 
 ## Separate landing implementation
 
-The ontology session owns the landing page. Use the same Pepy public weekly and
+The ontology session owns the landing page. Use Pepy public weekly and
 monthly badges for its separately labeled recent 7-day and recent 30-day PyPI
 metrics, keeping source and provider-error states clear. This avoids a JSON API
 key or a separate collector. Do not expose a Pepy JSON API key in public code;
