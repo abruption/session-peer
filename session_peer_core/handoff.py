@@ -252,6 +252,10 @@ def handoff_private_stat(path, directory=False):
     return info
 
 
+class HandoffReadDeadlineExceeded(Exception):
+    """The caller's read budget elapsed; not evidence of corrupt history."""
+
+
 class HandoffLedger:
     """Serialized, fsynced snapshots with retained effect fences, not dedup.
 
@@ -312,12 +316,19 @@ class HandoffLedger:
                 os.unlink(temporary)
 
     @contextlib.contextmanager
-    def transaction(self, deadline=None):
+    def transaction(self, deadline=None, *, read_only=False):
+        """Validate one locked snapshot; read-only projections never persist retention."""
+        def check_read_deadline():
+            if read_only and deadline is not None and handoff_now() >= deadline:
+                raise HandoffReadDeadlineExceeded()
+
+        check_read_deadline()
         if IS_WINDOWS or fcntl is None:
             raise handoff_error("handoff_platform_unsupported")
         handoff_private_stat(self.root, True)
         lock = self.root / "ledger.lock"
         before = handoff_private_stat(lock)
+        check_read_deadline()
         fd = os.open(str(lock), os.O_RDWR | getattr(os, "O_NOFOLLOW", 0))
         try:
             after = os.fstat(fd)
@@ -325,38 +336,52 @@ class HandoffLedger:
                 raise handoff_error("unsafe_handoff_storage")
             limit = deadline if deadline is not None else handoff_now() + 5
             while True:
+                check_read_deadline()
                 try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(fd, (fcntl.LOCK_SH if read_only else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+                    check_read_deadline()
                     break
                 except BlockingIOError:
+                    check_read_deadline()
                     if handoff_now() >= limit:
                         raise handoff_error("handoff_storage_busy")
                     time.sleep(min(0.01, max(0, limit - handoff_now())))
             path = self.root / "ledger.json"
+            check_read_deadline()
             initial = handoff_private_stat(path)
             if initial.st_size > HANDOFF_LEDGER_BYTES:
                 raise handoff_error("handoff_history_unavailable")
+            check_read_deadline()
             read_fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
             with os.fdopen(read_fd, "rb") as stream:
                 current = os.fstat(stream.fileno())
                 if (initial.st_dev, initial.st_ino) != (current.st_dev, current.st_ino):
                     raise handoff_error("unsafe_handoff_storage")
+                check_read_deadline()
                 raw = stream.read(HANDOFF_LEDGER_BYTES + 1)
+            if read_only:
+                # Parse/validation use only this immutable local byte snapshot;
+                # release the shared lock so writers need not wait for them.
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            check_read_deadline()
             try:
                 state = handoff_json(raw, HANDOFF_LEDGER_BYTES)
                 if set(state) != {"schemaVersion", "epoch", "records"} or type(state["schemaVersion"]) is not int or state["schemaVersion"] != 1 or type(state["records"]) is not dict:
                     raise ValueError()
                 handoff_uuid(state["epoch"])
                 for key, record in state["records"].items():
+                    check_read_deadline()
                     handoff_uuid(key)
                     if type(record) is not dict or record.get("id") != key:
                         raise ValueError()
                     self._validate_record(record)
             except (CcPeerError, ValueError, KeyError, TypeError) as exc:
                 raise handoff_error("handoff_ledger_corrupt") from exc
+            check_read_deadline()
             boot, now = handoff_boot_clock(), handoff_now_ns()
             if boot is not None:
                 for record in state["records"].values():
+                    check_read_deadline()
                     if (record["phase"] != "tombstone" and record["historyBoot"] == boot
                             and now >= record["createdNs"] + 30 * 86400 * 1000000000):
                         # Detail expires only under proven boot/monotonic
@@ -364,8 +389,10 @@ class HandoffLedger:
                         # survives and still counts toward the intent quota.
                         record.update(phase="tombstone", submission="unknown", native=None,
                                       waits=[], ack=None, capability=None, pendingReceipt=None, observe=False, ackRequested=False)
+            check_read_deadline()
             yield state
-            self._save(state)
+            if not read_only:
+                self._save(state)
         except OSError as exc:
             raise handoff_error("handoff_history_unavailable") from exc
         finally:
@@ -397,10 +424,10 @@ class HandoffLedger:
             state["records"][correlation] = record
             return state["epoch"], copy.deepcopy(record)
 
-    def record(self, correlation, deadline=None):
+    def record(self, correlation, deadline=None, *, read_only=False):
         import copy
         handoff_uuid(correlation)
-        with self.transaction(deadline) as state:
+        with self.transaction(deadline, **({"read_only": True} if read_only else {})) as state:
             record = state["records"].get(correlation)
             if record is None:
                 raise handoff_error("handoff_id_unknown")
@@ -644,8 +671,9 @@ def handoff_cap_hash(epoch, correlation, generation, cap):
 def handoff_collect(ledger, epoch_id, frame):
     """Receipt-only operations. No native command, transcript or model access."""
     import hmac
-    with ledger.transaction() as state:
-        if frame == {"op": "clock"}:
+    read_only_clock = frame == {"op": "clock", "readOnly": True} and type(frame.get("readOnly")) is bool
+    with ledger.transaction(**({"read_only": True} if read_only_clock else {})) as state:
+        if frame == {"op": "clock"} or read_only_clock:
             return {"ok": True, "clockEpoch": epoch_id}
         if frame.get("op") == "mint":
             if set(frame) != {"op", "ledgerEpoch", "correlationId", "targetGeneration"}:
@@ -768,9 +796,16 @@ def handoff_ipc(root, frame, deadline=None):
         raise handoff_error("receipt_channel_unavailable") from exc
 
 
-def handoff_channel_epoch(ledger, deadline=None):
+def handoff_channel_epoch(ledger, deadline=None, *, read_only=False):
     try:
-        result = handoff_ipc(ledger.root, {"op": "clock"}, deadline)
+        frame = {"op": "clock"}
+        if read_only:
+            # Older collectors reject this extra field before committing a
+            # transaction. Never retry their write-through legacy clock query.
+            frame["readOnly"] = True
+            if deadline is None:
+                deadline = handoff_now() + 2
+        result = handoff_ipc(ledger.root, frame, deadline)
         return handoff_uuid(result.get("clockEpoch"))
     except CcPeerError:
         return None
@@ -909,7 +944,8 @@ def handoff_public(epoch, record, active_clock=None):
         result["nextActions"] = ["reconcile"]
         if (record.get("ackRequested") and record["capability"] and not record["capability"]["revoked"] and not ack
                 and active_clock is not None and active_clock == record["capability"]["clockEpoch"]
-                and handoff_now_ns() < record["capability"]["expiresNs"] and (not wait or wait["status"] != "unsupported")):
+                and handoff_now_ns() < record["capability"]["expiresNs"]
+                and (not wait or (wait["status"] != "unsupported" and wait.get("reason") != "history_unavailable"))):
             result["nextActions"].append("keep_waiting")
         if wait and wait["status"] == "pending":
             result["nextActions"].append("stop_waiting")
@@ -922,6 +958,55 @@ def handoff_query_error(correlation, context):
             "reason": "handoff_history_unavailable", "handoffQuery": {
                 "schemaVersion": 1, "correlationId": correlation, "status": "unknown", "context": context,
                 "retry": {"allowed": False, "reason": "history_unavailable"}}}
+
+
+def handoff_status_text(public, phase):
+    """Render only validated public metadata; never accept the private record."""
+    handoff_validate_public(public)
+    if phase not in ("prepared", "attempted", "terminal", "tombstone", "quarantined"):
+        raise handoff_error("invalid_handoff")
+    view = human_text(public)
+    observation, ack, wait = view["observation"], view["ack"], view["wait"]
+    unavailable = {"tombstone": "expired history", "quarantined": "quarantined history"}.get(phase)
+    injection = ("unavailable (" + unavailable + ")" if unavailable else
+                 observation["status"] + ("; injection observed" if observation["injectionObserved"]
+                                          else "; injection not confirmed"))
+    receipt = "unavailable (" + unavailable + ")" if unavailable else ack["status"]
+    if not unavailable and ack["status"] == "pending" and "keep_waiting" not in view["nextActions"]:
+        receipt += "; waiting availability not established"
+    lines = [
+        "Handoff " + view["correlationId"],
+        "State: " + view["state"],
+        "Submission: " + view["submission"]["status"],
+        "Injection observation: " + injection,
+        "Receipt (ACK): " + receipt,
+    ]
+    if not unavailable and ack["status"] == "acknowledged":
+        lines.extend([
+            "  Assurance: " + ack["assurance"],
+            "  Late receipt: " + ("yes (relative to the first wait)" if ack["late"] else "no"),
+            "  Received at (UTC milliseconds): " + str(ack["receivedAtUtcMs"]),
+        ])
+    lines.append("Latest wait: unavailable (expired history)" if phase == "tombstone" else
+                 "Latest wait: " + wait["status"] + "; goal: " + wait["for"])
+    if phase != "tombstone" and "operationId" in wait:
+        lines.append("  Operation: " + wait["operationId"])
+    if phase != "tombstone" and "deadlineAtUtcMs" in wait:
+        lines.append("  Deadline (UTC milliseconds): " + str(wait["deadlineAtUtcMs"]))
+    if phase != "tombstone" and "reason" in wait:
+        lines.append("  Reason: " + wait["reason"])
+    if phase == "tombstone":
+        lines.append("History: retained effect fence only; expired detail cannot establish absence of a receipt.")
+    elif phase == "quarantined":
+        lines.append("History: explicitly quarantined restored ledger; reconcile with the operator.")
+    lines.extend([
+        "Retry: not allowed (" + view["retry"]["reason"] + ")",
+        "Next actions: " + (", ".join(view["nextActions"]) or "none advertised"),
+        "Single ledger snapshot; latest stored wait only. No native submission performed.",
+        "Collector clock evidence, when available, is checked separately.",
+        "Submission does not confirm consumption; a receipt does not confirm task completion.",
+    ])
+    return "\n".join(lines)
 
 
 def handoff_start_wait(record, goal, deadline, clock_epoch, *, initial_status=None, reason=None):
@@ -1023,7 +1108,35 @@ def handoff_receipt_stdin(timeout=5):
         raise handoff_error("invalid_receipt") from exc
 
 
+def cmd_handoff_explanation(args):
+    """Project existing history without saving retention or minting authority.
+
+    Reuses the same read-only ledger/clock primitives as #296 status/watch;
+    receipt schemas, wait history and ordinary output remain unchanged.
+    """
+    ledger = HandoffLedger()
+    correlation = handoff_uuid(args.correlation_id)
+    args._delivery_explanation_started = True
+    try:
+        epoch, record = ledger.record(correlation, read_only=True)
+    except CcPeerError as exc:
+        context = ("id_unknown" if exc.details.get("reason") == "handoff_id_unknown" else
+                   "ledger_corrupt" if exc.details.get("reason") == "handoff_ledger_corrupt" else
+                   "ledger_missing" if isinstance(exc.__cause__, FileNotFoundError) else "history_unavailable")
+        emit_delivery_explanation(args, {"handoffQuery": {"context": context}},
+                                  mode="existing_intent", failed=True, stream=sys.stderr)
+        return 1
+    active_clock = None
+    if record["capability"] and not record["capability"]["revoked"] and not record["ack"]:
+        active_clock = handoff_channel_epoch(ledger, read_only=True)
+    public = handoff_public(epoch, record, active_clock)
+    emit_delivery_explanation(args, {"handoff": public}, mode="existing_intent")
+    return 0
+
+
 def cmd_handoff(args):
+    if args.handoff_action == "status" and getattr(args, "explain", False):
+        return cmd_handoff_explanation(args)
     ledger = HandoffLedger()
     action = args.handoff_action
     if action == "init":
@@ -1042,20 +1155,36 @@ def cmd_handoff(args):
         args.correlation_id = frame["correlationId"]
     correlation = handoff_uuid(args.correlation_id)
     try:
-        epoch, record = ledger.record(correlation)
+        epoch, record = ledger.record(correlation, **({"read_only": True} if action == "status" else {}))
     except CcPeerError as exc:
         context = "id_unknown" if exc.details.get("reason") == "handoff_id_unknown" else "ledger_corrupt" if exc.details.get("reason") == "handoff_ledger_corrupt" else "ledger_missing"
         result = handoff_query_error(correlation, context)
         if args.json:
             print(json.dumps(result, ensure_ascii=False))
         else:
-            print("Handoff history unavailable; do not resend.", file=sys.stderr)
+            diagnostic = "Handoff history unavailable; do not resend."
+            if action == "status":
+                reason = {
+                    "handoff_id_unknown": "request ID not found",
+                    "handoff_ledger_corrupt": "invalid ledger",
+                    "handoff_storage_busy": "ledger busy",
+                    "unsafe_handoff_storage": "storage ownership or permissions refused",
+                    "handoff_platform_unsupported": "handoff unsupported on this platform",
+                }.get(exc.details.get("reason"), "history could not be read")
+                diagnostic += " Reason: " + reason + ". No history initialized or repaired."
+            print(diagnostic, file=sys.stderr)
         return 1
     code = handoff_wait(ledger, correlation, args.wait_for, args.wait_timeout) if action == "wait" else 0
-    epoch, record = ledger.record(correlation)
+    if action != "status":
+        epoch, record = ledger.record(correlation)
     result = dict(record["native"] or {})
-    result.update(ok=code == 0, handoff=handoff_public(epoch, record, handoff_channel_epoch(ledger) if record["capability"] and not record["ack"] else None))
-    emit(args.json, result, "Handoff " + result["handoff"]["state"] + "; no native submission performed.", command="handoff")
+    active_clock = None
+    if record["capability"] and not record["ack"] and (action != "status" or not record["capability"]["revoked"]):
+        active_clock = handoff_channel_epoch(ledger, **({"read_only": True} if action == "status" else {}))
+    result.update(ok=code == 0, handoff=handoff_public(epoch, record, active_clock))
+    human = (handoff_status_text(result["handoff"], record["phase"]) if action == "status" and not args.json
+             else "Handoff " + result["handoff"]["state"] + "; no native submission performed.")
+    emit(args.json, result, human, command="handoff")
     return code
 
 

@@ -21,6 +21,8 @@ from .store import Store, Rejected
 from .wire import validate_relay_url, direct_address
 from .transport_errors import NoAuthenticatedRoute, TransportFailure
 from .guidance import with_guidance
+from .pairing_ui import OfferOutcomeUnknown, offer_failure
+from .framing import valid_delivery_context
 
 
 def connection_diagnostics(exc):
@@ -259,6 +261,13 @@ async def manage(kind, args):
         if args.action == 'revoke':
             store.revoke(args.peer)
             return {'ok': True, 'revoked': args.peer}
+        if args.action == 'offer':
+            from .pairing_ui import create_offer
+            return create_offer(store, args)
+        if args.action == 'offer-status':
+            return store.offer_status(args.offer_id)
+        if args.action == 'offer-cancel':
+            return store.cancel_offer(args.offer_id)
         if args.action in ('invite', 'routes'):
             routes = {}
             if args.direct:
@@ -277,6 +286,12 @@ async def manage(kind, args):
             private_write(args.out, json.dumps(store.invite(routes)))
             return {'ok': True, 'invitationSaved': True, 'device': store.device, 'expiresInSeconds': 600}
         if args.action == 'pair':
+            if args.link:
+                from .pairing_ui import receive_link
+                invitation, intended, digest, selected = receive_link(store, args.route)
+                return await pair(store, invitation, selected,
+                    device_credential(args, store, invitation['device']),
+                    offer_digest=digest, expected_client_key=intended)
             invitation = json.loads(private_read(args.invite))
             return await pair(store, invitation, args.route, device_credential(args, store, invitation['device']))
         if args.action == 'status':
@@ -377,6 +392,11 @@ def parser(kind):
     item.add_argument('--admission-file')
     item = command('invite'); item.add_argument('--out', required=True)
     item.add_argument('--direct'); item.add_argument('--relay')
+    item = command('offer'); item.add_argument('--peer-key', required=True)
+    item.add_argument('--direct'); item.add_argument('--relay')
+    item.add_argument('--show-link', action='store_true', help='explicitly display a private link only on the owner terminal')
+    for name in ('offer-status', 'offer-cancel'):
+        item = command(name); item.add_argument('--offer-id', required=True)
     item = command('routes'); item.add_argument('--peer', required=True)
     item.add_argument('--direct'); item.add_argument('--relay')
     item = command('serve'); item.add_argument('--policy', required=True)
@@ -387,7 +407,9 @@ def parser(kind):
     for name in ('pair', 'status'):
         item = command(name)
         if name == 'pair':
-            item.add_argument('--invite', required=True)
+            source = item.add_mutually_exclusive_group(required=True)
+            source.add_argument('--invite')
+            source.add_argument('--link', action='store_true', help='read a private link from an echo-disabled terminal; never pass its value here')
         else:
             item.add_argument('--peer', required=True); item.add_argument('--request-id', required=True)
         item.add_argument('--route', choices=('direct', 'relay') if name == 'pair' else ('auto', 'direct', 'relay'), default='direct' if name == 'pair' else 'auto')
@@ -397,11 +419,21 @@ def parser(kind):
 
 
 def main(kind, argv):
+    if any('session-peer://pair/' in value.lower() for value in argv):
+        emit({'ok': False, 'reason': 'pairing_link_argv_forbidden', 'retryAllowed': False})
+        return 1
     args = parser(kind).parse_args(argv)
     logging.getLogger('websockets').setLevel(logging.CRITICAL+1)
     os.umask(0o077)
     try:
         result = asyncio.run(manage(kind, args))
+    except OfferOutcomeUnknown as exc:
+        emit(offer_failure(exc) or {'ok': False, 'reason': 'pairing_offer_outcome_unknown',
+            'status': 'unknown', 'updated': False, 'retryAllowed': False})
+        return 130 if exc.interrupted is True else 1
+    except (KeyboardInterrupt, EOFError):
+        emit({'ok': False, 'reason': 'operation_interrupted', 'retryAllowed': False})
+        return 130
     except Exception as exc:
         result = {'ok': False, 'reason': str(exc) if isinstance(exc, Rejected) else type(exc).__name__,
                   'retryAllowed': False, **connection_diagnostics(exc)}
@@ -429,9 +461,13 @@ async def core_exchange(args):
                 text = core.wrap_message(text, with_from=True, with_reply=False, explicit_host=None)
             body = {'target': args.to, 'message': text}
         operation = 'resolve' if args.command == 'send' and args.dry_run else args.command
+        credential = device_credential(args, store, args.device)
+        if operation == 'resolve' and getattr(args, 'explain', False):
+            args._delivery_explanation_started = True
         result = await exchange(store, args.device, operation, body,
                                 getattr(args, 'request_id', None), args.device_route,
-                                device_credential(args, store, args.device))
+                                credential,
+                                **({'explain': True} if operation == 'resolve' and getattr(args, 'explain', False) else {}))
         if args.command == 'list' and args.agent:
             result['sessions'] = [row for row in result.get('sessions', []) if row.get('agent') == args.agent]
         return result
@@ -446,6 +482,13 @@ def invoke_core(args):
     except Exception as exc:
         result = {'ok': False, 'reason': str(exc) if isinstance(exc, Rejected) else type(exc).__name__,
                   'retryAllowed': False, 'consumptionConfirmed': False, **connection_diagnostics(exc)}
+    delivery_context = result.pop('deliveryContext', None)
+    explain = (args.command == 'send' and getattr(args, 'dry_run', False)
+               and getattr(args, 'explain', False))
+    if hasattr(args, '_delivery_explanation_context'):
+        del args._delivery_explanation_context
+    if explain and valid_delivery_context(delivery_context):
+        args._delivery_explanation_context = delivery_context
     result = with_guidance(result)
     result.update(device=args.device, host='device:'+args.device, transport='paired_device')
     display = core.human_text(result)
@@ -457,4 +500,6 @@ def invoke_core(args):
             str(row.get('target', ''))+'  '+str(row.get('agent', ''))+'  '+str(row.get('id', row.get('pid', '')))+'  '+str(row.get('status', 'unknown'))
             for row in display.get('sessions', []))
     core.emit(args.json, result, human, command=args.command)
+    if explain:
+        core.emit_delivery_explanation(args, result, failed=not result.get('ok'))
     return 0 if result.get('ok') else 1

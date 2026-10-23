@@ -94,6 +94,29 @@ session-peer send --host worker --to 'codex:<full-thread-uuid>' --dry-run -m "me
 실행 중인 것은 아닙니다. 일반 send는 세션을 활성화하지 않으며, [명시적 `--wake`](wake.md)는
 옵트인 방식이며 소비나 응답을 확인해주지 않습니다.
 
+<a id="delivery-explanation"></a>
+
+### 전달 설명 (개발 중)
+
+#323의 개발 기능으로 v1.3 후보이며, 공개 v1.2.1에는 없습니다. `send --dry-run`에 `--explain`을 추가하면 선택한 로컬·SSH·페어링 기기 대상, 기존 검증 결과, 전달 방식과 관찰 한계를 사람이 읽기 쉬운 형태로 표시합니다. `doctor --explain`은 기존 진단 스냅샷과 선언된 지원 기능을 설명하며, 특정 대상의 전송 준비 상태를 확인하지는 않습니다. `handoff status --explain`은 기존 intent에 저장된 증거를 설명합니다. 처리한 SSH 대상마다 개별 설명을 표시하지만, 예상치 못한 오류가 나면 기존 호스트 반복 처리가 중단되어 이후 대상은 처리하지 않을 수 있습니다.
+
+```bash
+session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run --explain
+session-peer send --device RECEIVER_FINGERPRINT --to review --message "Review the patch" --dry-run --explain
+session-peer doctor --explain
+session-peer handoff status --correlation-id PREPARED_UUID --explain
+```
+
+설명은 선택한 명령의 기존 결과를 재사용하며 진단·native 버전·SSH 조회, 대상 활성화나 별도의 `list` 작업을 추가하지 않습니다. 기존 dry-run 자체에는 버전 검사가 포함될 수 있습니다. 실제 전송 시에는 다시 검증하며, 미리보기 성공이 대상을 예약하거나 제출·소비·완료를 보장하지는 않습니다. 선언된 지원 기능, 실제 검사 결과와 확인할 수 없는 사실을 구분해 표시합니다. `--wake`를 지정하지 않으면 깨우기 가능 여부를 검사하지 않습니다. 지정한 경우에도 기존 사전 검사 결과만 설명합니다.
+
+페어링 dry-run은 기존 수신 기기 정책에 따른 `resolve` 작업을 유지합니다. 기존 연결 확인 과정에서 지원을 알리는 수신 기기와만 선택적 설명 context를 협상합니다. 이 내부 context에는 버전과 허용 필드 검증을 적용하며 크기를 8 KiB로 제한합니다. 일반 JSON 출력이나 handoff 스키마는 추가하지 않습니다. 선택한 수신 측 에이전트·대상·home은 보고되고 검증된 경우에만 표시하며 송신 측 프로필에서 추측하지 않습니다. 구형 수신 기기의 독립적으로 확인된 native 결과는 유지하고, 보고되지 않은 context는 알 수 없음으로 표시합니다. 대체 경로 시도, 추가 조회나 재전송은 하지 않습니다.
+
+Handoff status는 읽기 전용 스냅샷을 재사용하며 intent·receipt capability·wait·collector를 만들거나 ledger에 기록하지 않습니다. 제출, 입력 주입 관찰, 명시적 receipt와 최근 저장된 wait는 구분합니다. Receipt가 acknowledged여도 작업 완료를 증명하지는 않습니다. 저장된 관찰은 오래된 정보일 수 있습니다. 보고된 receipt 관찰 시각만 관찰 시각으로 설명하며, 설명 생성 시각이나 진단 스냅샷 시각을 전달 관찰 시각으로 해석하지 않습니다. 일반 전송에 receipt ACK 지원이 추가되지는 않습니다.
+
+이 범위는 텍스트 출력 전용이므로 `--explain`을 `--json` 또는 `--output-format json`과 함께 지정하면 사용법 오류가 발생합니다. `--dry-run`은 `send --explain`에만 필수이며 `doctor --explain`과 `handoff status --explain`에는 필요하지 않습니다. Send에서는 실험적 handoff 옵션인 `--correlation-id`, `--request-ack`, `--observe-delivery`, `--wait-for`와 `--explain`의 조합을 메시지 입력이나 대상·ledger 작업 전에 계속 거부합니다. 새 옵션을 사용하지 않은 기존 명령의 출력·JSON·종료 계약은 유지됩니다. 설명은 성공한 상태 조회를 ACK 증거로 바꾸거나 원래 명령의 종료 의미를 바꾸지 않습니다.
+
+Send의 메시지 입력 요구사항과 한도는 동일합니다. 평소처럼 `--message`, `--message-file` 또는 stdin을 사용하며 임시 본문을 자동 생성하지 않습니다. 설명 필드에는 본문이나 receipt 비밀값을 넣지 않습니다. 일반 설명은 stdout에, 실패 결과나 예상 밖 제출 증거의 설명은 stderr에 표시하며 기존 요약·오류 출력의 위치는 바꾸지 않습니다. 확인할 수 없는 증거는 그대로 알 수 없음으로 표시하고, 실제 전송 결과가 불확실하면 자동 재전송하지 않습니다.
+
 ### 페어링된 기기 옵션 및 Antigravity (v0.9)
 
 이 기능들은 PyPI v0.9.0부터 제공됩니다. Antigravity는 여전히 실험적이며 페어링된 전송은
@@ -466,8 +489,86 @@ Host web-01
 포함한 Codex 큐 거부는 운영 오류(`1`)입니다. dry-run 중 저장된 스레드가 누락된 경우 `2`를
 반환합니다. 전송 시의 종료 코드 `0`은 소비나 응답을 확인해주지 않습니다.
 
+### 시간 제한 handoff 감시(v1.3 후보)
+
+```sh
+session-peer handoff status --correlation-id PREPARED_UUID --json
+session-peer handoff watch --correlation-id PREPARED_UUID --watch-timeout 30 --interval-ms 1000 --json
+```
+
+로컬 소유자의 POSIX 기록에 있는 기존 준비 UUID를 사용합니다. 상태 조회는 단일 스냅샷을 유지하며 감시는 1..60초(기본 30) 동안 1000..5000밀리초 간격(기본 1000)으로 최대 61번 조회합니다. 두 값은 ASCII 정수만 허용합니다. 감시는 예산 안에 유효한 공개 결과를 구성할 수 있을 때만 최초 스냅샷을 출력하고 이후 공개 메타데이터/historyPhase가 바뀐 경우만 출력하므로 스냅샷이 없을 수도 있습니다. JSON 감시는 operation watch와 event snapshot 또는 end인 공통 schemaVersion 1 NDJSON 봉투를 사용하고 스냅샷에 기존 handoff 객체를 포함하며 status JSON은 유지합니다. 기한 종료의 코드 0은 감시 완료만 뜻하고 ACK나 대기 성공은 아닙니다. SIGINT는 130, 기록·출력 실패는 1, 잘못된 인자는 2입니다. 기록 부재·손상이나 ledgerEpoch 변경 시 감시를 중단합니다. historyPhase는 prepared, attempted, terminal, tombstone 또는 quarantined이며 attempted는 영속적인 시도 방지 기록을 뜻하고 실행 중이라는 의미는 아닙니다.
+
+감시는 읽기 전용이며 의도·대기·수신 확인 생성, 기록 쓰기, 제출·깨우기를 수행하지 않습니다. 호스트·기기·Windows 경로나 Codex ACK를 추가하지 않습니다. 프레임은 16 KiB, 전체는 256 KiB로 제한하고 종료용 2 KiB를 남깁니다. 실제 파일 디스크립터 표준 출력에는 전용 격리 Python 출력 보조 프로세스 하나를 사용합니다. 크기가 제한된 직렬화된 공개 바이트만 받고 공유 디스크립터 플래그를 바꾸거나 기록·네이티브 데이터를 읽지 않습니다. 부모는 IPC까지 원래 총예산으로 제한하고 새 기록 읽기·검증 단계 전에도 기한을 확인합니다. 총 시간 안에서 최종 출력·정리에 100 ms를 남기므로 조회는 더 일찍 끝날 수 있습니다. 시간 초과·SIGINT·오류 시 보조 프로세스를 종료·회수합니다. 다만 중단할 수 없는 OS 작업이 있어 엄격한 실시간 보장을 제공하지는 못합니다. 부분 쓰기나 완료 응답 부재 시 종료를 포함한 후속 프레임을 금지하며 소비자는 잘린 마지막 NDJSON 줄을 거부해야 합니다. 보조 프로세스 완료는 OS 쓰기 완료이며 수신자 소비의 증거가 아닙니다. 스냅샷은 모든 이벤트를 빠짐없이 전달하는 스트림이 아니며 로컬 UTC 관측은 ACK 도착 순서의 증거가 아닙니다. 개인정보, 유지되는 제출·ACK·대기의 의미, 읽기 전용 수집기 조회와 기존 격리 조건은 [handoff 런타임 가이드](handoff-runtime.md)를 참고하세요. 감시는 네이티브 메시지 프로세스나 수집기를 시작하지 않습니다. 이 후보는 배포된 릴리스가 아닙니다. 페이로드·권한 다이제스트를 노출하지 않으며 공개 targetGeneration의 기존 계약은 유지합니다. 읽기 전용 기록은 불변 스냅샷 바이트를 읽은 뒤 파싱·검증 전에 공유 잠금을 해제합니다. 중단 시 최종 출력·정리는 남은 총예산 안에서 최대 100 ms로 제한합니다. 전체 성공에는 완전한 성공 종료 프레임과 종료 코드 0이 모두 필요합니다. 해당 프레임 뒤에도 정리가 실패할 수 있습니다. 0이 아닌 종료는 전체 실패이며 ACK를 상향 해석하거나 독립적으로 유효한 제출 사실을 버리거나 재시도해도 된다는 뜻은 아닙니다.
+
+### 신뢰하는 로컬 SSH 설정 (v1.3 후보, 미출시)
+
+Linux와 macOS에서는 `--host`를 지정한 로컬 CLI의 `list`, `send`, `doctor`, `update` 호출에서 `--ssh-config ABSOLUTE_PATH`와 `--trust-ssh-config`를 함께 사용해 기존 OpenSSH 설정을 선택할 수 있습니다. 두 플래그가 모두 필요합니다. 다음은 예시 경로이며, 따옴표로 감싼 공백도 지원합니다.
+
+```bash
+session-peer list --host worker --ssh-config '/home/alice/SSH Profiles/work.conf' --trust-ssh-config
+session-peer doctor --host worker --ssh-config '/home/alice/SSH Profiles/work.conf' --trust-ssh-config --check-return-route
+```
+
+이 선택은 해당 설정에 로컬 코드 실행 권한을 부여합니다. `Match exec`는 `ssh -G` 사용자 확인이나 `send --dry-run` 중에도 실행될 수 있습니다. 운영자는 `Include` 파일, `ProxyCommand`, 기타 외부 의존성도 신뢰해야 합니다. 검증은 설정 샌드박스가 아니며 의존성을 재귀적으로 검증하지 않습니다. 기존 프로필이나 설정 파일을 수정하지 않습니다.
+
+경로는 절대 경로여야 하며 `..` 구성 요소, 제어 문자, 경로 내 심볼릭 링크를 허용하지 않습니다. 선택한 파일은 현재 유효 사용자가 소유한 일반 파일이어야 하고, 하드 링크 수가 정확히 1개이며, 최대 64 KiB여야 합니다. 그룹·다른 사용자 쓰기 권한과 setuid/setgid/sticky 비트도 거부합니다. 상위 디렉터리는 root 또는 현재 유효 사용자 소유여야 하며 그룹·다른 사용자 쓰기가 금지되어야 합니다. 단, root 소유의 sticky 디렉터리는 예외입니다. Linux에서는 확장 접근 ACL과 디렉터리 기본 ACL을 거부하고, macOS에서는 allow ACL 항목과 소유권이 비활성화된 볼륨을 거부합니다. ACL이나 소유권을 확인할 수 없어도 거부합니다. 이는 보수적 검사이며 전체 유효 권한 해석기는 아닙니다.
+
+하나의 CLI 호출에서 같은 선택을 로컬 `ssh -G` 조회, doctor, 원격 목록·버전 확인, 업데이트 탐색·설치·검증, send/handoff SSH 호출에 재사용합니다. 매 SSH 실행 전에 파일 식별 정보·메타데이터·내용 해시와 저장 경로 안전성을 다시 확인합니다. 변경을 발견하면 기본 설정으로 대체하지 않고 거부합니다. OpenSSH는 원래 경로를 열기 때문에 불변 바이트 스냅샷이 아니며, 검증과 OpenSSH 읽기 사이에 같은 사용자가 변경하는 경쟁 조건은 남습니다.
+
+이 모드는 `StrictHostKeyChecking=yes`, `UpdateHostKeys=no`, `ForwardAgent=no`, `PermitLocalCommand=no`, `BatchMode=yes`를 강제하고 연결 다중화를 비활성화합니다. 기존 명시적 호스트 키 고정이 우선합니다. `--ssh-opt` 허용 목록은 그대로이며, 여기서 `-F`와 `ProxyCommand`는 계속 금지됩니다. 선택한 로컬 경로는 원격 명령·응답 경로·공개 JSON으로 전달되지 않습니다. 역방향 doctor 검사는 원격 장비 자체 설정을 사용하고 이 경로를 상속하지 않습니다. 정방향 성공은 역방향 인증, 메시지 소비, ACK를 입증하지 않습니다.
+
+환경 변수, MCP 요청, ReplyTo 주소, 저장된 프리셋에서는 이 모드를 선택할 수 없습니다. Windows, `setup`, 페어링된 기기 경로, 프리셋 조합, 응답 URI 대상, `--host` 없는 호출은 설정을 읽거나 SSH를 시작하기 전에 거부됩니다. 두 플래그를 생략하면 기존 기본 SSH 동작을 유지합니다.
+
+### 일회용 페어링 링크(v1.3 후보)
+
+양쪽 기기에 `pairing-offer-v1`과 기존 Unix Python 3.11+ relay 추가 의존성이 필요합니다. 다음은 후보 명령이며 공개된 v1.3 지원이 아닙니다.
+
+```sh
+session-peer device rotation-status --state /private/client-state
+session-peer device offer --state /private/device-state --peer-key CLIENT-CURRENT-64-HEX-KEY --direct PRIVATE-IP:3770 --show-link
+session-peer device pair --state /private/client-state --link --route direct
+session-peer device offer-status --state /private/device-state --offer-id OFFER-UUID
+session-peer device offer-cancel --state /private/device-state --offer-id OFFER-UUID
+```
+
+생성 시 양쪽 신원을 확인하고 소유자의 터미널에만 링크를 표시합니다. `--link`에는 값을 붙이지 않습니다. 크기가 제한되고 표시되지 않는 입력을 사용하며, 클라이언트가 별도로 확인한 수신 기기의 현재 키 지문을 입력한 뒤 신뢰를 등록하고 접속합니다. 터미널이 없으면 입력 노출이나 자동 승인 대신 거부합니다. 링크를 명령 인자, 브라우저 기록, 로그나 이슈에 남기지 마십시오. 설정 안내는 링크·비공개 파일을 선택할 수 있으며 기존 파일 명령도 유지합니다. 취소는 해당 초대의 보류 신뢰만 제거합니다. 완료된 페어링은 별도의 명시적 철회가 필요합니다. 기록 없는 만료 링크는 거부하고, 정확히 일치하는 저장 기록이 있어야 이미 완료된 인증 결과만 확인할 수 있습니다. 페어링은 수신 대상 정책이나 네이티브 CLI의 승인을 대신하지 않습니다. 키 교체 제한, 만료·횟수 제한, 중단과 위협 모델은 [기기 페어링 안내](paired-devices.md)를 참조하십시오.
+
 <a id="updating"></a>
 ### 업데이트
+
+macOS/Linux에서는 지정한 안정 버전 하나의 자동 런타임 알림만 숨기거나 그 설정을
+해제할 수 있습니다.
+
+```bash
+session-peer update --dismiss-runtime-notice 1.3.1
+session-peer update --clear-runtime-notice-dismissal
+```
+
+위 버전은 사용 예시이며 릴리스 발표가 아닙니다. 두 명령은 로컬 설정만 오프라인으로
+변경하며 릴리스를 확인·설치·승인하지 않습니다. 원격/SSH 옵션이나 확인 옵션과 함께
+사용할 수 없습니다. 정규화한 버전이 정확히 일치하는 알림만 숨기므로 이후 버전의
+알림은 표시될 수 있고, 설정을 해제하면 기존 동작으로 돌아갑니다. 명시적인 로컬
+확인은 실제 최신 버전과 구버전 여부를 그대로 보고하며 알림 설정은 별도 정보로
+표시합니다. 원격 확인, 스킬 알림, 기존의 전체 알림 비활성화 설정은 바뀌지 않습니다.
+원격 명령에서도 호출한 CLI 자체의 캐시 알림은 표시될 수 있습니다. 이때 로컬 설정은
+대상별이 아닌 한 번만 읽으며, 원격 버전이나 결과는 해당 설정으로 숨기지 않습니다.
+
+설정은 업데이트 캐시와 분리하여
+`$XDG_CONFIG_HOME/session-peer/update-notices.json`에 저장합니다. 환경변수가 없거나
+비어 있으면 `~/.config/session-peer/update-notices.json`을 사용합니다.
+디렉터리와 파일은 안전한 소유권과 비공개 권한이 필요합니다. 안전하지 않은 경로는
+수정하거나 다른 경로로 우회하지 않고 거부합니다. 손상되었거나 향후 스키마를 사용하는
+파일은 알림을 숨기지 않으며 두 명령 모두 덮어쓰지 않으므로 전용 설정 파일을 먼저
+확인하세요. Windows는 아직 버전별 설정을 지원하지 않지만 일반 업데이트·확인과
+전체 알림 비활성화는 계속 사용할 수 있습니다.
+
+안전 검사는 POSIX 소유권과 권한 비트를 확인합니다. ACL(접근 제어 목록)의 전체 검사나
+물리 저장 매체의 내구성 인증은 수행하지 않습니다. 상위 경로의 심볼릭 링크와
+상대 경로로 지정한 설정 위치는 다른 경로로 대체하지 않고 거부합니다. 파일시스템은
+디렉터리 기준 입출력, 파일 잠금, 디렉터리 fsync(동기화)를 지원해야 합니다.
+손상된 설정을 확인하고 백업한 뒤에는 운영자가 해당 전용 JSON 파일만 직접 제거하고
+설정 명령을 다시 실행할 수 있습니다. 쓰기 작업이 실행 중일 수 있다면 잠금 파일을
+제거하지 마세요. 자동 복구는 수행하지 않습니다.
 
 패키지 관리자로 설치한 경우 명령어를 설치한 것과 동일한 관리자를 사용하세요:
 
@@ -492,8 +593,9 @@ session-peer update --host web-01                 # push this program if version
 ```
 
 원격 업데이트는 최신 GitHub 릴리스가 아니라 **로컬 프로그램의 버전**과 비교합니다.
-원격 버전이 더 최신이더라도 푸시하므로, 배포하기 전에 먼저 확인하고 로컬 프로그램을
-업데이트하세요. 원격 복사본은 GitHub에서 가져오지 않습니다. 원격 버전 검사는
+원격 복사본이 없거나 더 오래된 경우에만 푸시하고, 원격이 더 최신이면 그대로 둡니다.
+배포하기 전에 먼저 확인하고 로컬 프로그램을 업데이트하세요.
+원격 복사본은 GitHub에서 가져오지 않습니다. 원격 버전 검사는
 pip/pipx/uv 설치가 아니라 `~/.local/share/session-peer/session_peer.py`만 검사합니다.
 원격 업데이트는 해당 독립 실행형 경로와 CLI 링크를 설치합니다. 패키지 관리자로
 설치된 원격 CLI의 경우 해당 호스트에서 자체 관리자로 업그레이드하세요.

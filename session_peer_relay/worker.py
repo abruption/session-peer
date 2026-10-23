@@ -5,11 +5,33 @@ import sys
 
 import session_peer as core
 from .native import Policy, options, invoke_windows_codex
-from .framing import MAX_WORKER_BYTES, valid_text
+from .framing import MAX_WORKER_BYTES, valid_text, valid_delivery_context
+
+
+def delivery_context(binding, adapter, result):
+    """Use the executing registry and actual native resolution, never guessed homes."""
+    agent = binding['agent']
+    target = None
+    native_target = result.get('target')
+    if result.get('ok') is True:
+        if isinstance(native_target, dict):
+            identifier = native_target.get('pid' if agent == 'claude' else 'id')
+            if (agent == 'claude' and type(identifier) is int and identifier > 0
+                    or agent != 'claude' and isinstance(identifier, str) and identifier):
+                # Claude's public CLI adapter uses an unprefixed PID, whereas
+                # this private cross-agent context always carries an agent tag.
+                target = agent + ':' + str(identifier).lower()
+    home = result.get('codexHome' if agent == 'codex' else 'antigravityHome') if agent != 'claude' else None
+    value = {'schemaVersion': 1, 'agent': agent, 'target': target, 'home': home,
+             'capabilities': {key: getattr(adapter.capabilities, key)
+                              for key in ('send', 'wake', 'wait', 'ack')}}
+    return value if valid_delivery_context(value) else None
 
 
 def main():
     attempted = False
+    explain = False
+    binding = adapter = None
     try:
         raw = sys.stdin.buffer.read(MAX_WORKER_BYTES + 1)
         if len(raw) > MAX_WORKER_BYTES:
@@ -20,6 +42,9 @@ def main():
         Policy({'targets': {'endpoint': binding}, 'peers': {}})
         if op not in ('list', 'send', 'resolve'):
             raise ValueError('invalid_operation')
+        if 'explain' in value and (op != 'resolve' or value['explain'] is not True):
+            raise ValueError('invalid_explain')
+        explain = value.get('explain') is True
         adapter = core.AGENTS.get(binding['agent'])
         args = options(binding)
         args._peer_fingerprint = peer_fingerprint
@@ -72,7 +97,16 @@ def main():
         result = {'ok': False, 'reason': 'native_outcome_unknown' if attempted else 'native_refused',
                   'status': 'unknown' if attempted else 'refused',
                   'consumptionConfirmed': False, 'retryAllowed': False}
+    if explain and adapter is not None:
+        context = delivery_context(binding, adapter, result)
+        if context is not None:
+            result['deliveryContext'] = context
     encoded = json.dumps(result, ensure_ascii=False)
+    if len(encoded.encode()) > 60*1024 and 'deliveryContext' in result:
+        # Optional explanation metadata cannot erase independently usable
+        # native facts merely by taking the result over the legacy byte cap.
+        result.pop('deliveryContext', None)
+        encoded = json.dumps(result, ensure_ascii=False)
     if len(encoded.encode()) > 60*1024:
         encoded = json.dumps({'ok': False, 'reason': 'native_result_too_large',
                               'status': 'unknown', 'retryAllowed': False, 'consumptionConfirmed': False})

@@ -3219,6 +3219,348 @@ def reply_line(explicit_host: str | None) -> str | None:
     return _reply_from_identity(sender_identity(explicit_host))
 
 
+"""Opt-in local SSH configuration validation; never a remote identity proof."""
+
+import hashlib
+from contextvars import ContextVar
+
+SSH_CONFIG_MAX_BYTES = 65536
+SSH_CONFIG_SELECTION = ContextVar("ssh_config_selection", default=None)
+
+def _ssh_config_error(reason):
+    return CcPeerError("trusted SSH configuration refused: " + reason,
+                       {"reason": reason, "retryAllowed": False})
+
+
+def _ssh_config_cleanup(action, *args, preserve=False, **kwargs):
+    """A secondary ordinary cleanup error must not replace an active failure.
+
+    New KeyboardInterrupt/SystemExit are never swallowed. On a normal return,
+    cleanup failure is still reported, without reflecting raw diagnostics.
+    """
+    try:
+        return action(*args, **kwargs)
+    except Exception as error:
+        if not preserve:
+            if isinstance(error, CcPeerError):
+                raise
+            raise _ssh_config_error("ssh_config_cleanup_failed") from None
+
+
+@contextlib.contextmanager
+def _ssh_config_cleanup_scope(action, *args, **kwargs):
+    """Derive preservation from this body, never an ambient caller exception."""
+    try:
+        yield
+    except BaseException:
+        # A caller may already supply this policy for a nested cleanup. The
+        # active body's failure takes precedence without a duplicate keyword.
+        _ssh_config_cleanup(action, *args, **{**kwargs, "preserve": True})
+        raise
+    else:
+        _ssh_config_cleanup(action, *args, **kwargs)
+
+
+def _ssh_config_platform():
+    if IS_WINDOWS or fcntl is None or sys.platform not in ("darwin", "linux"):
+        raise _ssh_config_error("ssh_config_platform_unsupported")
+
+
+def _ssh_config_darwin_mount_flags(fd):
+    """Use the explicit statfs64 ABI, never the ambiguous legacy statfs ABI."""
+    import ctypes
+    try:
+        class Statfs64(ctypes.Structure):
+            # sys/mount.h __DARWIN_STRUCT_STATFS64. The reserved tail remains
+            # 32 bytes across the f_flags_ext addition; no string is inspected.
+            _fields_ = [
+                ("f_bsize", ctypes.c_uint32), ("f_iosize", ctypes.c_int32),
+                ("f_blocks", ctypes.c_uint64), ("f_bfree", ctypes.c_uint64),
+                ("f_bavail", ctypes.c_uint64), ("f_files", ctypes.c_uint64),
+                ("f_ffree", ctypes.c_uint64), ("f_fsid", ctypes.c_int32 * 2),
+                ("f_owner", ctypes.c_uint32), ("f_type", ctypes.c_uint32),
+                ("f_flags", ctypes.c_uint32), ("f_fssubtype", ctypes.c_uint32),
+                ("f_fstypename", ctypes.c_char * 16),
+                ("f_mntonname", ctypes.c_char * 1024),
+                ("f_mntfromname", ctypes.c_char * 1024),
+                ("f_reserved", ctypes.c_uint32 * 8),
+            ]
+        if (ctypes.sizeof(ctypes.c_void_p) != 8 or ctypes.sizeof(Statfs64) != 2168
+                or Statfs64.f_flags.offset != 64):
+            raise _ssh_config_error("ssh_config_mount_unverifiable")
+        api = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+        api.fstatfs64.argtypes = [ctypes.c_int, ctypes.POINTER(Statfs64)]
+        api.fstatfs64.restype = ctypes.c_int
+        value = Statfs64()
+        if api.fstatfs64(fd, ctypes.byref(value)) != 0:
+            raise _ssh_config_error("ssh_config_mount_unverifiable")
+        return value.f_flags
+    except (OSError, AttributeError, TypeError, ValueError, OverflowError):
+        raise _ssh_config_error("ssh_config_mount_unverifiable") from None
+
+
+def _ssh_config_check_ownership(fd):
+    if sys.platform == "darwin" and _ssh_config_darwin_mount_flags(fd) & 0x00200000:
+        # MNT_IGNORE_OWNERSHIP can synthesize owner/mode metadata. Do not call
+        # such metadata an owner-only store, even if its ACL is empty.
+        raise _ssh_config_error("ssh_config_ownership_unenforced")
+
+
+def _ssh_config_check_fd(fd, *, private, directory=False):
+    _ssh_config_check_ownership(fd)
+    _ssh_config_check_acl(fd, private=private, directory=directory)
+
+
+def _ssh_config_darwin_acl_tags(fd):
+    """Read only Darwin's extended ACL, without paths or a child process.
+
+    Darwin returns 0 for an entry, -1/EINVAL at exhaustion (unlike Linux).
+    Validate the independent ACL handle first; release it on every path.
+    Constants and prototypes are from the macOS SDK sys/acl.h.
+    """
+    import ctypes
+    try:
+        api = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+        api.acl_get_fd_np.argtypes = [ctypes.c_int, ctypes.c_int]
+        api.acl_get_fd_np.restype = ctypes.c_void_p
+        api.acl_valid.argtypes = [ctypes.c_void_p]
+        api.acl_valid.restype = ctypes.c_int
+        api.acl_get_entry.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)]
+        api.acl_get_entry.restype = ctypes.c_int
+        api.acl_get_tag_type.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
+        api.acl_get_tag_type.restype = ctypes.c_int
+        api.acl_free.argtypes = [ctypes.c_void_p]
+        api.acl_free.restype = ctypes.c_int
+        ctypes.set_errno(0)
+        acl = api.acl_get_fd_np(fd, 0x100)  # ACL_TYPE_EXTENDED
+        if not acl:
+            # Darwin's fd getter returns NULL/ENOENT when FILESEC_ACL is absent
+            # (Libc posix1e/acl_file.c and gen/filesec.c), not an empty object.
+            if ctypes.get_errno() == errno.ENOENT:
+                return ()
+            raise _ssh_config_error("ssh_config_acl_unverifiable")
+        acl_failed = False
+        try:
+            if api.acl_valid(acl) != 0:
+                raise _ssh_config_error("ssh_config_acl_unverifiable")
+            tags = []
+            for index in range(129):
+                entry = ctypes.c_void_p()
+                ctypes.set_errno(0)
+                result = api.acl_get_entry(acl, 0 if index == 0 else -1, ctypes.byref(entry))
+                if result == -1 and ctypes.get_errno() == errno.EINVAL:
+                    return tuple(tags)
+                if result != 0 or not entry.value or index == 128:
+                    raise _ssh_config_error("ssh_config_acl_unverifiable")
+                tag = ctypes.c_int()
+                if api.acl_get_tag_type(entry, ctypes.byref(tag)) != 0 or tag.value not in (1, 2):
+                    raise _ssh_config_error("ssh_config_acl_unverifiable")
+                tags.append(tag.value)  # ACL_EXTENDED_ALLOW=1, DENY=2
+            raise _ssh_config_error("ssh_config_acl_unverifiable")
+        except BaseException:
+            acl_failed = True
+            raise
+        finally:
+            def release_acl():
+                if api.acl_free(acl) != 0:
+                    raise _ssh_config_error("ssh_config_acl_unverifiable")
+            _ssh_config_cleanup(release_acl, preserve=acl_failed)
+    except (OSError, AttributeError, TypeError, ValueError, OverflowError):
+        raise _ssh_config_error("ssh_config_acl_unverifiable") from None
+
+
+def _ssh_config_check_acl(fd, *, private, directory=False):
+    """Conservative ACL policy, not an effective-permissions interpreter."""
+    if sys.platform == "darwin":
+        tags = _ssh_config_darwin_acl_tags(fd)
+        if any(tag not in (1, 2) for tag in tags):
+            raise _ssh_config_error("ssh_config_acl_unverifiable")
+        if (private and tags) or (not private and 1 in tags):
+            raise _ssh_config_error("ssh_config_unsafe_acl")
+        return
+    if sys.platform == "linux":
+        try:
+            for attribute in (("system.posix_acl_access", "system.posix_acl_default")
+                              if directory else ("system.posix_acl_access",)):
+                try:
+                    os.getxattr(fd, attribute)
+                except OSError as error:
+                    if error.errno == errno.ENODATA:
+                        continue
+                    raise _ssh_config_error("ssh_config_acl_unverifiable") from None
+                raise _ssh_config_error("ssh_config_unsafe_acl")
+        except (AttributeError, TypeError, ValueError):
+            raise _ssh_config_error("ssh_config_acl_unverifiable") from None
+        return
+    raise _ssh_config_error("ssh_config_platform_unsupported")
+
+
+
+def _ssh_config_path(path):
+    if (not isinstance(path, str) or not path or len(path) > 4096
+            or not path.startswith("/") or path.startswith("//")
+            or ".." in path.split("/")
+            or any(ord(c) < 32 or 127 <= ord(c) <= 159
+                   or 0xD800 <= ord(c) <= 0xDFFF for c in path)):
+        raise _ssh_config_error("ssh_config_invalid_path")
+    return path
+
+
+def _ssh_config_overflow_uid():
+    if sys.platform != "linux":
+        return None
+    try:
+        with open("/proc/sys/kernel/overflowuid", "rb") as stream:
+            raw = stream.read(32)
+        if not raw.strip().isdigit() or len(raw) == 32:
+            raise ValueError()
+        return int(raw)
+    except (OSError, ValueError):
+        raise _ssh_config_error("ssh_config_ownership_unverifiable") from None
+
+
+def _ssh_config_identity(info):
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid,
+            info.st_gid, info.st_nlink, info.st_size,
+            info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _ssh_config_metadata(info, overflow_uid, *, directory=False):
+    if overflow_uid is not None and info.st_uid == overflow_uid:
+        raise _ssh_config_error("ssh_config_ownership_unverifiable")
+    if directory:
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid not in (0, os.geteuid())
+                or (info.st_mode & 0o022
+                    and not (info.st_uid == 0 and info.st_mode & stat.S_ISVTX))):
+            raise _ssh_config_error("ssh_config_unsafe_storage")
+    elif (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+          or info.st_nlink != 1 or info.st_mode & 0o7022):
+        raise _ssh_config_error("ssh_config_unsafe_storage")
+
+
+def _ssh_config_snapshot(path):
+    _ssh_config_platform()
+    _ssh_config_path(path)
+    overflow_uid = _ssh_config_overflow_uid()
+    directory = fd = None
+    ancestors = []
+    failed = False
+    try:
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+        directory = os.open("/", flags | os.O_DIRECTORY)
+        parts = path.split("/")[1:]
+        # Reject trailing slash / empty filename, but harmless internal repeated
+        # separators do not change the original path passed to OpenSSH.
+        if not parts[-1]:
+            raise _ssh_config_error("ssh_config_invalid_path")
+        for part in parts[:-1]:
+            info = os.fstat(directory)
+            _ssh_config_metadata(info, overflow_uid, directory=True)
+            _ssh_config_check_fd(directory, private=False, directory=True)
+            if not part:
+                continue
+            ancestors.append((info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid))
+            child = os.open(part, flags | os.O_DIRECTORY, dir_fd=directory)
+            previous, directory = directory, child
+            _ssh_config_cleanup(os.close, previous)
+        info = os.fstat(directory)
+        _ssh_config_metadata(info, overflow_uid, directory=True)
+        ancestors.append((info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid))
+        _ssh_config_check_fd(directory, private=False, directory=True)
+        fd = os.open(parts[-1], flags, dir_fd=directory)
+        before = os.fstat(fd)
+        _ssh_config_metadata(before, overflow_uid)
+        _ssh_config_check_fd(fd, private=False)
+        if before.st_size > SSH_CONFIG_MAX_BYTES:
+            raise _ssh_config_error("ssh_config_capacity")
+        raw = bytearray()
+        while len(raw) <= SSH_CONFIG_MAX_BYTES:
+            chunk = os.read(fd, min(8192, SSH_CONFIG_MAX_BYTES + 1 - len(raw)))
+            if not chunk:
+                break
+            raw.extend(chunk)
+        if len(raw) > SSH_CONFIG_MAX_BYTES:
+            raise _ssh_config_error("ssh_config_capacity")
+        after = os.fstat(fd)
+        _ssh_config_metadata(after, overflow_uid)
+        _ssh_config_check_fd(fd, private=False)
+        current = os.stat(parts[-1], dir_fd=directory, follow_symlinks=False)
+        if (_ssh_config_identity(before) != _ssh_config_identity(after)
+                or _ssh_config_identity(after) != _ssh_config_identity(current)):
+            raise _ssh_config_error("ssh_config_storage_changed")
+        return tuple(ancestors), _ssh_config_identity(after), hashlib.sha256(raw).digest()
+    except OSError:
+        failed = True
+        raise _ssh_config_error("ssh_config_unsafe_storage") from None
+    except BaseException:
+        failed = True
+        raise
+    finally:
+        def close_directory():
+            if directory is not None:
+                os.close(directory)
+        with _ssh_config_cleanup_scope(
+                _ssh_config_cleanup, close_directory, preserve=failed):
+            if fd is not None:
+                _ssh_config_cleanup(os.close, fd, preserve=failed)
+
+
+class _TrustedSshConfig:
+    # Source-streamed consumers may execute without a registered module entry;
+    # dataclass annotation resolution on supported older Python cannot do so.
+    __slots__ = ("_path", "_snapshot")
+
+    def __init__(self, path, snapshot):
+        object.__setattr__(self, "_path", path)
+        object.__setattr__(self, "_snapshot", snapshot)
+
+    @property
+    def path(self):
+        return self._path
+
+    def __setattr__(self, name, value):
+        raise AttributeError("trusted SSH selection is immutable")
+
+    def __delattr__(self, name):
+        raise AttributeError("trusted SSH selection is immutable")
+
+    def __repr__(self):
+        return "<trusted SSH configuration>"
+
+    def revalidate(self):
+        if _ssh_config_snapshot(self.path) != self._snapshot:
+            raise _ssh_config_error("ssh_config_storage_changed")
+
+
+def select_trusted_ssh_config(path):
+    """Validate without executing config, resolving Includes or making copies.
+
+    Revalidation detects changes since selection. OpenSSH subsequently reopens
+    the original path: same-user races and executable config remain user trust.
+    """
+    return _TrustedSshConfig(path, _ssh_config_snapshot(path))
+
+
+def trusted_ssh_command(ssh_opts, host, *remote, prefix=(), identity_options=()):
+    selected = SSH_CONFIG_SELECTION.get()
+    safety = []
+    if selected is not None:
+        selected.revalidate()
+        safety = [
+            "-oStrictHostKeyChecking=yes", "-oUpdateHostKeys=no",
+            "-oForwardAgent=no", "-oPermitLocalCommand=no", "-oBatchMode=yes",
+            "-oControlMaster=no", "-oControlPath=none", "-oControlPersist=no",
+            "-F", selected.path,
+        ]
+    return ["ssh", *prefix, *identity_options, *safety, *ssh_opts, host, *remote]
+
+
+def redact_ssh_config_path(text):
+    """Mask the selected local path; not a general secret/content sanitizer."""
+    selected = SSH_CONFIG_SELECTION.get()
+    return text.replace(selected.path, "<ssh-config>") if selected is not None else text
+
+
 # --------------------------------------------------------------------------
 # Remote dispatch. Ships this file over SSH and runs it there, so the remote
 # machine needs nothing installed beyond python3.
@@ -3323,7 +3665,7 @@ def ssh_user_metadata(host: str, ssh_opts: list[str], *, handoff_budget=None) ->
 
     try:
         completed = subprocess.run(
-            ["ssh", "-G", *ssh_opts, host], capture_output=True,
+            trusted_ssh_command(ssh_opts, host, prefix=("-G",)), capture_output=True,
             encoding="utf-8", errors="replace", timeout=DETECT_TIMEOUT,
         )
     except (OSError, subprocess.SubprocessError):
@@ -3379,7 +3721,7 @@ def ssh_failure_error(host: str, ssh_info: dict, failure: str,
     elif failure == "timeout":
         message = f"SSH connection to {target} timed out"
     else:
-        suffix = f": {detail.strip()[:2000]}" if detail and detail.strip() else ""
+        suffix = f": {redact_ssh_config_path(detail.strip())[:2000]}" if detail and detail.strip() else ""
         message = f"SSH transport failed for {target}{suffix}"
     return CcPeerError(message, {**ssh_info, "sshFailure": failure})
 
@@ -3536,7 +3878,7 @@ def ssh_handoff_configuration(host, ssh_opts, handoff_budget):
     completed = None
     try:
         probe_cutoff = min(cutoff, handoff_now() + DETECT_TIMEOUT)
-        completed = handoff_stream_child(["ssh", "-G", *ssh_opts, host], b"", probe_cutoff,
+        completed = handoff_stream_child(trusted_ssh_command(ssh_opts, host, prefix=("-G",)), b"", probe_cutoff,
                                          min(total, probe_cutoff + 5), handoff_now)
         valid = (completed.returncode in (0, -signal.SIGKILL) and completed.reason is None
                  and not completed.interrupted and not completed.stdout_overflow
@@ -3599,7 +3941,7 @@ def _run_remote_handoff_dispatch(host, argv, ssh_opts, identity_options, budget,
         raise CcPeerError("Cannot read source for private SSH handoff",
                           {"reason": "ssh_handoff_source_unavailable", "retryAllowed": False, "spawned": False}) from exc
     ssh_info = ssh_user_metadata(host, ssh_opts, handoff_budget=budget)
-    completed = handoff_stream_child(["ssh", *identity_options, *ssh_opts, host, remote],
+    completed = handoff_stream_child(trusted_ssh_command(ssh_opts, host, remote, identity_options=identity_options),
                                      source, *budget, handoff_now)
     if context["phase"] == "probe" and completed.interrupted:
         # Probe success is not effect evidence. Operator cancellation must
@@ -3656,7 +3998,7 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
     # result to the remote *shell*, so an argv list is not the protection it
     # looks like: a metacharacter in any element executes over there. Build
     # the remote command as one already-quoted string instead.
-    command = ["ssh", *identity_options, *ssh_opts, host, remote]
+    command = trusted_ssh_command(ssh_opts, host, remote, identity_options=identity_options)
 
     def incomplete_response_error(message: str, details: dict | None = None) -> CcPeerError:
         metadata = {**ssh_info, **(details or {})}
@@ -3710,7 +4052,7 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
     if isinstance(stderr, bytes):
         stderr = stderr.decode("utf-8", errors="replace")
     stderr = stderr if isinstance(stderr, str) else ""
-    detail = stderr.strip() or f"ssh exited {completed.returncode}"
+    detail = redact_ssh_config_path(stderr.strip()) or f"ssh exited {completed.returncode}"
     # A complete response proves the remote command ran, even if the SSH
     # process later exits 255. Login-shell stderr must not hide submission
     # evidence or turn a remote partial failure into an invitation to resend.
@@ -3741,7 +4083,7 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
     if not parsed_result or (isinstance(result, dict)
                              and "schemaVersion" in result and not valid_result) or (
             argv and argv[0] == "send" and not valid_result and not legacy_send_result):
-        raise incomplete_response_error(f"{host}: unexpected output: {stdout[:200]}")
+        raise incomplete_response_error(f"{host}: unexpected output: {redact_ssh_config_path(stdout)[:200]}")
     if isinstance(result, dict):
         result.update(ssh_info)
 
@@ -3789,7 +4131,7 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
         elif "codexHomeResolution" in result:
             details["codexHomeResolution"] = result["codexHomeResolution"]
         raise CcPeerError(
-            f"{host}: {result.get('error', 'remote command failed')}", details
+            f"{host}: {redact_ssh_config_path(str(result.get('error', 'remote command failed')))}", details
         )
     return result
 
@@ -4041,7 +4383,7 @@ finally:
         f'python3 -c {shlex.quote(publisher)} "$T/session_peer.py" '
         f'"$D/session_peer.py" "$B/session-peer" {shlex.quote(expected_line)}'
     )
-    command = ["ssh", *ssh_opts, host, remote_script]
+    command = trusted_ssh_command(ssh_opts, host, remote_script)
     uncertain = {**ssh_info, "commitStatus": "unknown", "retryAllowed": False}
 
     def push_failure(failure: str, detail: str | None = None,
@@ -4084,7 +4426,7 @@ finally:
         failure = classify_ssh_failure(detail, completed.returncode)
         if failure:
             raise push_failure(failure, detail)
-        raise CcPeerError(f"{host}: {detail}", uncertain)
+        raise CcPeerError(f"{host}: {redact_ssh_config_path(detail)}", uncertain)
 
     raise CcPeerError(f"{host}: installed version did not match {__version__}", uncertain)
 
@@ -4151,7 +4493,7 @@ def ssh_identity_configuration(host: str, ssh_opts: list[str], *, handoff_budget
     try:
         completed = (ssh_handoff_configuration(host, ssh_opts, handoff_budget)
                      if handoff_budget is not None else subprocess.run(
-                         ["ssh", "-G", *ssh_opts, host], capture_output=True, timeout=DETECT_TIMEOUT))
+                         trusted_ssh_command(ssh_opts, host, prefix=("-G",)), capture_output=True, timeout=DETECT_TIMEOUT))
         output = completed.stdout
         if isinstance(output, bytes):
             if len(output) > 1024 * 1024:
@@ -4297,6 +4639,179 @@ def run_remote(host: str, argv: list[str], ssh_opts: list[str], *, handoff_budge
     return _run_remote_dispatch(host, argv, ssh_opts)
 
 
+# Display-only explanation facts. No discovery, transport, ledger or clock I/O.
+
+
+def validated_delivery_context(value):
+    """Accept the complete private receiver context, never guessed fragments."""
+    if not isinstance(value, dict) or set(value) != {
+            "schemaVersion", "agent", "target", "home", "capabilities"}:
+        return None
+    if type(value["schemaVersion"]) is not int or value["schemaVersion"] != 1:
+        return None
+    if value["agent"] not in ("claude", "codex", "antigravity"):
+        return None
+    for key in ("target", "home"):
+        item = value[key]
+        if item is not None:
+            if (not isinstance(item, str) or not item or item.lower().startswith("session-peer:")
+                    or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in item)):
+                return None
+            try:
+                if len(item.encode("utf-8")) > 4096:
+                    return None
+            except UnicodeError:
+                return None
+    if value["target"] is not None:
+        pattern = (r"claude:[1-9][0-9]*" if value["agent"] == "claude" else
+                   value["agent"] + r":[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+        if re.fullmatch(pattern, value["target"]) is None:
+            return None
+    if value["home"] is not None and not (PurePosixPath(value["home"]).is_absolute()
+                                          or PureWindowsPath(value["home"]).is_absolute()):
+        return None
+    caps = value["capabilities"]
+    if not isinstance(caps, dict) or set(caps) != {"send", "wake", "wait", "ack"}:
+        return None
+    if any(type(item) is not bool for item in caps.values()):
+        return None
+    if len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > 8192:
+        return None
+    return {**value, "capabilities": dict(caps)}
+
+
+def explanation_text(value):
+    """Sanitize only opt-in explanations, preserving ordinary output behavior."""
+    text = human_text(value)
+    return "".join("\\u%04x" % ord(c) if ord(c) in (
+        0x200b, 0x200c, 0x200d, 0x200e, 0x200f, 0x202a, 0x202b,
+        0x202c, 0x202d, 0x202e, 0x2060, 0x2066, 0x2067, 0x2068, 0x2069, 0xfeff)
+        else c for c in text)
+
+
+def build_delivery_explanation(args, result, *, mode="readiness", failed=False):
+    """Normalize only allowlisted facts already supplied by the caller.
+
+    Declaration never proves eligibility, and a snapshot never proves delivery.
+    The returned object is internal and is not a new JSON/wire contract.
+    """
+    if mode not in ("readiness", "doctor", "existing_intent"):
+        raise ValueError("unsupported delivery explanation mode")
+    paired = bool(getattr(args, "device", None))
+    context = validated_delivery_context(getattr(args, "_delivery_explanation_context", None)) if paired else None
+    requested = str(getattr(args, "to", "") or "")
+    uri = requested.lower().startswith("session-peer:")
+    agent = (context["agent"] if context else None) if paired else (
+        None if uri or not requested else "codex" if requested.startswith("codex:") else
+        "antigravity" if requested.startswith("antigravity:") else "claude")
+    caps = context["capabilities"] if context else None
+    if not paired and agent is not None:
+        caps = {key: getattr(AGENTS.get(agent).capabilities, key)
+                for key in ("send", "wake", "wait", "ack")}
+    home = context["home"] if context else None
+    if not paired and agent in ("codex", "antigravity"):
+        value = result.get("codexHome" if agent == "codex" else "antigravityHome")
+        home = value if isinstance(value, str) else None
+    facts = {"mode": mode, "paired": paired, "agent": agent,
+             "target": context["target"] if context else None, "home": home,
+             "capabilities": caps, "agents": [], "handoff": None,
+             "selectedRoute": result.get("route") if paired and result.get("route") in ("direct", "relay") else None,
+             "available": not failed, "historyContext": None}
+    if mode == "doctor":
+        declared = result.get("capabilities", {})
+        declared = declared.get("agents", {}) if isinstance(declared, dict) else {}
+        for name in ("claude", "codex", "antigravity"):
+            diagnostic = result.get(name, {})
+            status = diagnostic.get("status") if isinstance(diagnostic, dict) else None
+            allowed_status = {"available", "unavailable", "missing_home", "permission_denied",
+                              "wrong_home", "missing_tool", "unknown", "disabled", "unsupported", "inbox_unavailable"}
+            declaration = declared.get(name, {}) if isinstance(declared, dict) else {}
+            home = diagnostic.get("selectedHome") if isinstance(diagnostic, dict) else None
+            facts["agents"].append({"agent": name, "status": status if isinstance(status, str) and status in allowed_status else "unknown",
+                "home": home if isinstance(home, str) else None,
+                "capabilities": {key: declaration[key] if isinstance(declaration, dict)
+                                 and type(declaration.get(key)) is bool else None
+                                 for key in ("send", "wake", "wait", "ack")}})
+    elif mode == "existing_intent":
+        query = result.get("handoffQuery")
+        if isinstance(query, dict) and query.get("context") in (
+                "ledger_missing", "ledger_corrupt", "id_unknown", "history_unavailable"):
+            facts["historyContext"] = query["context"]
+        public = result.get("handoff")
+        if isinstance(public, dict):
+            snapshot = {}
+            allowed = {"submission": {"not_attempted", "submitted", "refused", "unknown"},
+                       "observation": {"unsupported", "not_requested", "pending", "observed", "failed"},
+                       "ack": {"pending", "unsupported", "not_requested", "acknowledged"},
+                       "wait": {"not_requested", "pending", "satisfied", "timed_out_unknown", "unsupported", "stopped", "failed"}}
+            for key, statuses in allowed.items():
+                value = public.get(key)
+                status = value.get("status") if isinstance(value, dict) else None
+                snapshot[key] = status if isinstance(status, str) and status in statuses else "unknown"
+            ack = public.get("ack", {})
+            observed = ack.get("receivedAtUtcMs") if isinstance(ack, dict) else None
+            snapshot["receivedAtUtcMs"] = observed if type(observed) is int and 0 <= observed <= 9007199254740991 else None
+            snapshot["late"] = ack.get("late") if isinstance(ack, dict) and type(ack.get("late")) is bool else None
+            assurance = ack.get("assurance") if isinstance(ack, dict) else None
+            snapshot["assurance"] = assurance if assurance in ("token_possession", "operator_confirmed") else None
+            if snapshot["ack"] != "acknowledged":
+                snapshot.update(receivedAtUtcMs=None, late=None, assurance=None)
+            wait = public.get("wait", {})
+            goal = wait.get("for") if isinstance(wait, dict) else None
+            snapshot["waitFor"] = goal if goal in ("none", "delivered", "acknowledged") else None
+            reason = wait.get("reason") if isinstance(wait, dict) else None
+            snapshot["waitReason"] = reason if reason in ("insufficient_budget", "deadline_before_effect", "evidence_unsupported", "evidence_failed", "history_unavailable", "stopped_by_operator", "invalid_handoff") else None
+            facts["handoff"] = snapshot
+    return facts
+
+
+def render_delivery_fact_lines(facts):
+    def capability(value):
+        return "supported (declared; eligibility unverified)" if value is True else "unsupported (declared)" if value is False else "unknown (not reported)"
+    if facts["mode"] == "doctor":
+        lines = ["Delivery capabilities (existing diagnostic snapshot)" if facts["available"] else
+                 "Delivery capabilities unavailable (diagnostic snapshot not received)"]
+        for item in facts["agents"]:
+            basis = "diagnostic report" if item["status"] != "unknown" else "not reported"
+            lines.append(item["agent"] + " availability: " + item["status"] + " (" + basis + "; not per-target readiness)")
+            if item["agent"] in ("codex", "antigravity"):
+                lines.append("  Selected home: " + (explanation_text(item["home"]) if item["home"] else "unknown (not reported)"))
+            for key, value in item["capabilities"].items():
+                lines.append("  " + key.capitalize() + ": " + capability(value))
+        return lines + ["Injection observation: unsupported", "Task completion: unknown",
+                        "Last delivery observation: unknown (not reported)",
+                        "A diagnostic snapshot does not guarantee later delivery."]
+    if facts["mode"] == "existing_intent":
+        value = facts["handoff"] or {}
+        lines = ["Delivery evidence (existing intent snapshot)" if facts["available"] else
+                 "Delivery evidence unavailable (history not read)"]
+        if facts["historyContext"]:
+            lines.append("History query: " + facts["historyContext"] + "; no history initialized or repaired.")
+        for key, label in (("submission", "Submission"), ("observation", "Injection observation"),
+                           ("ack", "Explicit receipt"), ("wait", "Latest stored wait")):
+            lines.append(label + ": " + value.get(key, "unknown") + (" (stored observation)" if facts["available"] else " (not available)"))
+        observed = value.get("receivedAtUtcMs")
+        lines.append("Receipt recorded at (stored UTC milliseconds): " + (str(observed) if observed is not None else "unknown (not reported)"))
+        if value.get("assurance"):
+            lines.append("Receipt assurance: " + value["assurance"] + "; does not prove task completion")
+            if value["assurance"] == "token_possession":
+                lines.append("Receipt proves token possession, not original agent/model identity.")
+        if value.get("waitFor"):
+            lines.append("Latest stored wait goal: " + value["waitFor"])
+        if value.get("waitReason"):
+            lines.append("Latest stored wait reason: " + value["waitReason"])
+        if value.get("late") is not None:
+            lines.append("Receipt late relative to first wait: " + str(value["late"]).lower())
+        return lines + ["Task completion: unknown", "Stored evidence may be stale; this view does not refresh delivery.",
+                        "Do not automatically resend after an unknown outcome."]
+    caps = facts["capabilities"] or {}
+    return ["Submission capability: " + capability(caps.get("send")),
+            "Wake capability: " + capability(caps.get("wake")),
+            "Injection observation: unsupported" if not facts["paired"] else "Injection observation: unknown (not reported)",
+            "Last delivery observation: unknown (not reported)",
+            "Task completion: unknown"]
+
+
 # --------------------------------------------------------------------------
 # Output
 # --------------------------------------------------------------------------
@@ -4340,6 +4855,119 @@ def render_sessions(sessions: list[dict], where: str) -> str:
         for r in rows
     ]
     return f"Sessions on {where}:\n" + "\n".join(lines)
+
+
+def delivery_explanation_has_submission(result: dict) -> bool:
+    """Recognize reported submission evidence without changing native results."""
+    return (result.get("submitted") is True or result.get("dryRun") is False
+            or result.get("status") in ("queued", "posted", "submitted"))
+
+
+def render_delivery_explanation(args: argparse.Namespace, result: dict, *,
+                                host: str | None = None, failed: bool = False,
+                                mode: str = "readiness") -> str:
+    """Describe only existing dry-run facts; never inspect or execute a target.
+
+    This display-only allowlist deliberately excludes message bodies, native
+    errors, credentials, routing URIs and receipt authority. Missing remote
+    facts stay unknown rather than being filled from the sender's environment.
+    """
+    facts = build_delivery_explanation(args, result, mode=mode, failed=failed)
+    if mode != "readiness":
+        lines = render_delivery_fact_lines(facts)
+        if host:
+            lines.insert(1, "Destination host: " + explanation_text(host))
+        return "\n".join(lines)
+    requested = str(getattr(args, "to", ""))
+    unresolved_uri = requested.lower().startswith("session-peer:")
+    if unresolved_uri:
+        requested = "Reply-To URI (resolution unavailable)"
+    agent = facts["agent"]
+    if facts["paired"]:
+        requested = facts["target"] or "paired target (not reported by receiver)"
+    where = host or (("device:" + str(args.device)) if facts["paired"] else
+                     (", ".join(getattr(args, "host", None) or []) or "this machine"))
+    lines = ["Delivery preview",
+             "Requested destination: " + explanation_text(requested) + " on " + explanation_text(where)]
+    if facts["paired"]:
+        lines.append("Selected paired route: " + (facts["selectedRoute"] + " (reported)" if facts["selectedRoute"] else "unknown (not reported)"))
+    target = None if facts["paired"] else result.get("target")
+    if isinstance(target, dict):
+        if agent == "claude" and type(target.get("pid")) is int:
+            resolved = "Claude PID " + str(target["pid"])
+            if isinstance(target.get("name"), str):
+                resolved += " (" + explanation_text(target["name"]) + ")"
+            lines.append("Resolved target: " + resolved)
+        elif agent == "codex" and isinstance(target.get("id"), str):
+            lines.append("Resolved target: codex:" + explanation_text(target["id"]))
+    if agent in ("codex", "antigravity"):
+        home = facts["home"]
+        lines.append(("Codex home: " if agent == "codex" else "Antigravity home: ")
+                     + (explanation_text(home) if isinstance(home, str) else "unknown (not reported)"))
+    started = getattr(args, "_delivery_explanation_started", True)
+    unknown = result.get("status") == "unknown" or result.get("reason") in (
+        "outcome_unknown", "ssh_identity_evidence_unavailable") or (
+        "submitted" in result and result["submitted"] is None)
+    unexpected = delivery_explanation_has_submission(result)
+    dry_run_reported = result.get("dryRun") is True or result.get("status") in ("dry_run", "validated")
+    if not started:
+        lines.append("Destination checks: not run (command failed before destination checks)")
+        lines.append("Validation: not confirmed")
+    else:
+        lines.append("Validation: " + ("unexpected submission evidence; dry-run not confirmed" if unexpected else
+                                       "result unknown" if unknown else
+                                       "not confirmed" if failed else
+                                       "passed for this dry run" if dry_run_reported else
+                                       "not confirmed (dry-run evidence not reported)"))
+    if unexpected:
+        for key, label in (("dryRun", "dry-run"), ("submitted", "submitted")):
+            if type(result.get(key)) is bool:
+                lines.append("Reported " + label + ": " + str(result[key]).lower())
+        if result.get("status") in ("queued", "posted", "submitted", "unknown"):
+            lines.append("Reported native status: " + result["status"])
+    method = {"claude": "Claude Code inbox", "codex": "native Codex queue",
+              "antigravity": "registered Antigravity bridge"}.get(agent)
+    lines.append("Delivery method: " + (method + " (planned)" if method else "unknown (not resolved)"))
+    if not getattr(args, "wake", False):
+        wake = "not requested; eligibility not checked"
+    else:
+        fact = result.get("wake")
+        wake = ("preflight passed for this dry run; no turn started"
+                if not unknown and not unexpected and isinstance(fact, dict) and fact.get("status") == "validated" else
+                "requested; preflight not confirmed")
+    lines.extend(["Wake: " + wake,
+                  ("Receipt ACK: unknown (receiver support not reported)" if facts["paired"]
+                   and facts["capabilities"] is None else "Receipt ACK: unavailable for ordinary sends"),
+                  "Consumption / completion: not observed",
+                  "A later send repeats validation.",
+                  "Do not automatically resend after an unknown outcome."])
+    if failed or unexpected:
+        lines.append("Next step: inspect the target and existing evidence before deciding what to do."
+                     if unknown or unexpected else "Next step: resolve the validation failure before attempting a send.")
+    lines.extend(render_delivery_fact_lines(facts))
+    if facts["paired"] and agent is None:
+        lines.append("Selected agent / home: unknown (receiver context not reported)")
+    generation = getattr(args, "target_generation", None)
+    if generation is not None:
+        lines.append("Target generation: requested; existing validation result applies")
+    else:
+        lines.append("Target generation: not requested" if agent == "claude" and not facts["paired"]
+                     else "Target generation: unsupported for this route")
+    return "\n".join(lines)
+
+
+def emit_delivery_explanation(args: argparse.Namespace, result: dict, *,
+                              host: str | None = None, failed: bool = False,
+                              stream=None, mode: str = "readiness") -> None:
+    explanation = render_delivery_explanation(args, result, host=host, failed=failed, mode=mode)
+    try:
+        generated = int(time.time() * 1000)
+        if 0 <= generated <= 9007199254740991:
+            explanation += "\nExplanation generated at (UTC milliseconds): " + str(generated) + "; not a delivery observation."
+    except Exception:
+        pass
+    print(explanation,
+          file=stream or (sys.stderr if failed or delivery_explanation_has_submission(result) else sys.stdout))
 
 
 JSON_RESPONSE_SCHEMA_VERSION = 1
@@ -4633,6 +5261,16 @@ def diagnose_codex(args: argparse.Namespace) -> dict:
 
 
 def probe_return_route(destination: str) -> dict:
+    # A reverse probe belongs to the machine running this doctor. A caller's
+    # forward selection is never inherited, even by an in-process invocation.
+    token = SSH_CONFIG_SELECTION.set(None)
+    try:
+        return _probe_return_route(destination)
+    finally:
+        SSH_CONFIG_SELECTION.reset(token)
+
+
+def _probe_return_route(destination: str) -> dict:
     """Test reverse SSH without prompts, key enrollment, or config mutation."""
     check_ssh_argument(destination, "--host")
     if is_self_ssh_destination(destination):
@@ -5705,6 +6343,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         emit(
             args.json, payload, render_doctor(payload, "this machine"), command="doctor",
         )
+        if getattr(args, "explain", False):
+            args._delivery_explanation_started = True
+            emit_delivery_explanation(args, payload, mode="doctor")
         return 0
 
     exit_code = 0
@@ -5713,9 +6354,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return_host = _doctor_return_host(args) if args.check_return_route else None
     for requested_host in args.host:
         host = requested_host
+        if getattr(args, "explain", False):
+            args._delivery_explanation_started = False
+            args._delivery_explanation_host = requested_host
         try:
             transport = SshTransport(requested_host, args, tailnet_status)
             host, ssh_opts = transport.host, transport.ssh_opts
+            if getattr(args, "explain", False):
+                args._delivery_explanation_started = True
+                args._delivery_explanation_host = display_host(requested_host, host)
             remote_argv = ["doctor", "--no-update-notice"] + agent_remote_options(args)
             if return_host:
                 remote_argv.extend(["--_return-host", return_host])
@@ -5737,6 +6384,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 if len(all_results) > 1:
                     print()
                 print(render_doctor(payload, display_host(requested_host, host)))
+                if getattr(args, "explain", False):
+                    args._delivery_explanation_started = True
+                    emit_delivery_explanation(args, payload, mode="doctor", host=display_host(requested_host, host))
         except CcPeerError as exc:
             exit_code = EXIT_ERROR
             all_results.append(json_result(
@@ -5746,6 +6396,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             ))
             if not args.json:
                 print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
+                if getattr(args, "explain", False):
+                    emit_delivery_explanation(args, {}, mode="doctor", failed=True,
+                                              host=display_host(requested_host, host), stream=sys.stderr)
     if args.json:
         emit_json_results(all_results)
     return exit_code
@@ -7308,7 +7961,7 @@ def remote_installed_version(host: str, ssh_opts: list[str],
     )
     try:
         done = subprocess.run(
-            ["ssh", *ssh_opts, host, probe],
+            trusted_ssh_command(ssh_opts, host, probe),
             capture_output=True, timeout=30,
         )
     except FileNotFoundError as exc:
@@ -7664,6 +8317,39 @@ def update_command() -> str:
     return "python -m pip install --upgrade session-peer"
 
 
+def runtime_notice_preference_requested(args) -> bool:
+    return (getattr(args, "dismiss_runtime_notice", None) is not None
+            or getattr(args, "clear_runtime_notice_dismissal", False))
+
+
+def runtime_notice_preference_routed(args) -> bool:
+    return bool(getattr(args, "host", None) or getattr(args, "require_ssh_host_key", None)
+                or any(value for key, value in vars(args).items() if key.startswith("ssh_")))
+
+
+def runtime_notice_preference_state() -> dict:
+    # Preference failures never erase an otherwise valid availability notice.
+    try:
+        return read_runtime_notice_preference()
+    except Exception:
+        return {"status": "invalid", "dismissedVersion": None,
+                "reason": "runtime_notice_preference_unavailable"}
+
+
+def runtime_notice_check_metadata(tag, outdated) -> tuple[dict, str]:
+    preference = runtime_notice_preference_state()
+    parsed = stable_version(tag)
+    selected = preference.get("dismissedVersion")
+    dismissed = bool(outdated and parsed is not None and preference.get("status") == "set"
+                     and selected == normalized_version(parsed))
+    explanation = ((" Automatic notice for this available release is dismissed."
+                    if dismissed else " Stored runtime notice dismissal does not hide this availability result.") +
+        " Selected version: " + selected +
+        ". Clear with: session-peer update --clear-runtime-notice-dismissal."
+        if preference.get("status") == "set" and isinstance(selected, str) else "")
+    return {"runtimeNoticePreference": preference, "runtimeNoticeDismissed": dismissed}, explanation
+
+
 def prepare_client_update(args: argparse.Namespace, now: float | None = None,
                           launcher=None) -> dict | None:
     """Read only local cached state; an expired/missing cache refreshes later."""
@@ -7681,6 +8367,9 @@ def prepare_client_update(args: argparse.Namespace, now: float | None = None,
     current = release_version(__version__)
     latest = release_version(state["latest"])
     if current is None or latest is None or latest <= current:
+        return None
+    preference = runtime_notice_preference_state()
+    if preference.get("status") == "set" and preference.get("dismissedVersion") == state["latest"]:
         return None
     checked_at = datetime.fromtimestamp(state["checkedAt"], timezone.utc)
     return {
@@ -7776,6 +8465,21 @@ def installed_as_distribution() -> bool:
 
 
 def cmd_update(args: argparse.Namespace) -> int:
+    if runtime_notice_preference_requested(args):
+        if (runtime_notice_preference_routed(args) or getattr(args, "check", False)
+                or (getattr(args, "dismiss_runtime_notice", None) is not None
+                    and getattr(args, "clear_runtime_notice_dismissal", False))):
+            raise CcPeerError("Runtime notice preference operations are local and exclusive",
+                             {"reason": "runtime_notice_preference_options_conflict", "updated": False})
+        selected = getattr(args, "dismiss_runtime_notice", None)
+        preference = write_runtime_notice_preference(selected)
+        emit(args.json, {"operation": "runtime_notice_preference", "category": "runtime",
+             "updated": False, **preference},
+             ("Runtime notice dismissal cleared; available runtime releases may be shown again."
+              if selected is None else "Runtime notice dismissed for " + preference["dismissedVersion"] +
+              ". This does not mark the release safe/current or install it. Clear with: session-peer update --clear-runtime-notice-dismissal."),
+             command="update")
+        return 0
     if not args.host and installed_as_distribution():
         command = update_command()
         if args.check:
@@ -7787,11 +8491,12 @@ def cmd_update(args: argparse.Namespace) -> int:
             latest, current = release_version(tag), release_version(__version__)
             outdated = latest is not None and current is not None and current < latest
             state = f"{tag} available" if outdated else "up to date"
+            preference, explanation = runtime_notice_check_metadata(tag, outdated)
             emit(
                 args.json,
                 {"current": __version__, "latest": tag, "outdated": outdated,
-                 "managedBy": "package-manager", "updateCommand": command},
-                human_text(f"session-peer {__version__} — {state}. Upgrade with: {command}"),
+                 "managedBy": "package-manager", "updateCommand": command, **preference},
+                human_text(f"session-peer {__version__} — {state}. Upgrade with: {command}" + explanation),
                 command="update",
             )
             return 0
@@ -7901,10 +8606,11 @@ def cmd_update(args: argparse.Namespace) -> int:
 
     if args.check:
         state = "up to date" if current >= latest else f"{tag} available"
+        preference, explanation = runtime_notice_check_metadata(tag, current < latest)
         emit(
             args.json,
-            {"current": __version__, "latest": tag, "outdated": current < latest},
-            human_text(f"session-peer {__version__} — {state}"),
+            {"current": __version__, "latest": tag, "outdated": current < latest, **preference},
+            human_text(f"session-peer {__version__} — {state}" + explanation),
             command="update",
         )
         return 0
@@ -7935,6 +8641,256 @@ def cmd_update(args: argparse.Namespace) -> int:
         command="update",
     )
     return 0
+
+
+# Local runtime notice preferences; standalone namespace, standard library only.
+RUNTIME_NOTICE_PREFERENCE_BYTES = 4096
+RUNTIME_NOTICE_PREFERENCE_LOCK_SECONDS = 2.0
+
+
+def runtime_notice_cli_version(text):
+    if type(text) is not str or len(text) > 64:
+        raise argparse.ArgumentTypeError("expected an ASCII stable version X.Y.Z")
+    match = re.fullmatch(r"[vV]?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", text, flags=re.ASCII)
+    if match is None:
+        raise argparse.ArgumentTypeError("expected an ASCII stable version X.Y.Z")
+    values = tuple(int(part) for part in match.groups())
+    if any(value > sys.maxsize for value in values):
+        raise argparse.ArgumentTypeError("expected an ASCII stable version X.Y.Z")
+    return ".".join(str(value) for value in values)
+
+
+class RuntimeNoticePreferenceFailure(Exception):
+    def __init__(self, reason):
+        self.reason = reason
+
+
+def _runtime_notice_fail(reason):
+    raise RuntimeNoticePreferenceFailure("runtime_notice_preference_" + reason)
+
+
+def _runtime_notice_supported():
+    return sys.platform in ("linux", "darwin") and fcntl is not None
+
+
+def _runtime_notice_directory_stat(info, *, private=False):
+    owner = os.getuid()
+    if not stat.S_ISDIR(info.st_mode):
+        _runtime_notice_fail("unsafe")
+    if private:
+        # Inherited setgid/sticky bits do not grant group/other access. Keep
+        # owner rwx and no group/other mode bits, without repairing any inode.
+        if info.st_uid != owner or info.st_mode & 0o777 != 0o700:
+            _runtime_notice_fail("unsafe")
+    elif (info.st_uid not in (0, owner) or
+          (info.st_mode & 0o022 and not (info.st_uid == 0 and info.st_mode & stat.S_ISVTX))):
+        _runtime_notice_fail("unsafe")
+
+
+def _runtime_notice_file_stat(info):
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+            or info.st_mode & 0o077 or info.st_nlink != 1):
+        _runtime_notice_fail("unsafe")
+
+
+@contextlib.contextmanager
+def _runtime_notice_directory(*, create=False):
+    configured = os.environ.get("XDG_CONFIG_HOME")
+    base = configured if configured else str(Path.home() / ".config")
+    if (type(base) is not str or not base.startswith("/") or "\x00" in base
+            or any(part in (".", "..") for part in base.split("/"))):
+        _runtime_notice_fail("unsafe")
+    components = [part for part in base.split("/") if part] + ["session-peer"]
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    fd = os.open("/", flags)
+    try:
+        _runtime_notice_directory_stat(os.fstat(fd))
+        for index, name in enumerate(components):
+            try:
+                child = os.open(name, flags, dir_fd=fd)
+            except FileNotFoundError:
+                if not create:
+                    yield None
+                    return
+                try:
+                    os.mkdir(name, mode=0o700, dir_fd=fd)
+                    os.fsync(fd)
+                except FileExistsError:
+                    pass
+                child = os.open(name, flags, dir_fd=fd)
+            except OSError as exc:
+                if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                    _runtime_notice_fail("unsafe")
+                raise
+            try:
+                _runtime_notice_directory_stat(os.fstat(child), private=index == len(components)-1)
+            except BaseException:
+                os.close(child)
+                raise
+            os.close(fd)
+            fd = child
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _runtime_notice_open_file(directory, name, *, create=False):
+    try:
+        before = os.stat(name, dir_fd=directory, follow_symlinks=False)
+    except FileNotFoundError:
+        if not create:
+            return None
+        before = None
+    if before is not None:
+        _runtime_notice_file_stat(before)
+        if not create and before.st_size > RUNTIME_NOTICE_PREFERENCE_BYTES:
+            _runtime_notice_fail("invalid")
+    flags = (os.O_RDWR if create else os.O_RDONLY) | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
+    if create and before is None:
+        flags |= os.O_CREAT | os.O_EXCL
+    try:
+        fd = os.open(name, flags, 0o600, dir_fd=directory)
+    except FileExistsError:
+        if not create or before is not None:
+            raise
+        # Another cooperative first writer may have just created the stable
+        # lock. Validate and bind its existing inode instead of replacing it.
+        before = os.stat(name, dir_fd=directory, follow_symlinks=False)
+        _runtime_notice_file_stat(before)
+        fd = os.open(name, flags & ~(os.O_CREAT | os.O_EXCL), 0o600, dir_fd=directory)
+    try:
+        after = os.fstat(fd)
+        _runtime_notice_file_stat(after)
+        if before is not None and (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+            _runtime_notice_fail("unsafe")
+        if not create and after.st_size > RUNTIME_NOTICE_PREFERENCE_BYTES:
+            _runtime_notice_fail("invalid")
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _runtime_notice_decode(raw):
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            if key in result:
+                _runtime_notice_fail("invalid")
+            result[key] = value
+        return result
+    def constant(value):
+        _runtime_notice_fail("invalid")
+    try:
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=pairs, parse_constant=constant)
+        if (type(value) is not dict or set(value) != {"schemaVersion", "runtime"}
+                or type(value["schemaVersion"]) is not int or value["schemaVersion"] != 1
+                or type(value["runtime"]) is not dict or set(value["runtime"]) != {"dismissedVersion"}):
+            _runtime_notice_fail("invalid")
+        version = value["runtime"]["dismissedVersion"]
+        if version is not None and runtime_notice_cli_version(version) != version:
+            _runtime_notice_fail("invalid")
+        return version
+    except (ValueError, TypeError, UnicodeError, argparse.ArgumentTypeError, RecursionError):
+        _runtime_notice_fail("invalid")
+
+
+def _runtime_notice_read(directory):
+    fd = _runtime_notice_open_file(directory, "update-notices.json")
+    if fd is None:
+        return {"status": "missing", "dismissedVersion": None}
+    try:
+        chunks, size = [], 0
+        while size <= RUNTIME_NOTICE_PREFERENCE_BYTES:
+            chunk = os.read(fd, RUNTIME_NOTICE_PREFERENCE_BYTES + 1 - size)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+        raw = b"".join(chunks)
+        if len(raw) > RUNTIME_NOTICE_PREFERENCE_BYTES:
+            _runtime_notice_fail("invalid")
+        version = _runtime_notice_decode(raw)
+        return {"status": "clear" if version is None else "set", "dismissedVersion": version}
+    finally:
+        os.close(fd)
+
+
+def read_runtime_notice_preference():
+    if not _runtime_notice_supported():
+        return {"status": "unsupported", "dismissedVersion": None, "reason": "runtime_notice_preference_unsupported"}
+    try:
+        with _runtime_notice_directory() as directory:
+            return ({"status": "missing", "dismissedVersion": None} if directory is None
+                    else _runtime_notice_read(directory))
+    except Exception as exc:
+        reason = exc.reason if isinstance(exc, RuntimeNoticePreferenceFailure) else "runtime_notice_preference_unavailable"
+        return {"status": "invalid", "dismissedVersion": None, "reason": reason}
+
+
+def write_runtime_notice_preference(version_or_none):
+    if not _runtime_notice_supported():
+        raise CcPeerError("Runtime notice preference refused", {"reason": "runtime_notice_preference_unsupported", "updated": False})
+    replaced = False
+    try:
+        try:
+            version = None if version_or_none is None else runtime_notice_cli_version(version_or_none)
+        except argparse.ArgumentTypeError:
+            _runtime_notice_fail("invalid")
+        with _runtime_notice_directory(create=True) as directory:
+            lock = _runtime_notice_open_file(directory, "update-notices.lock", create=True)
+            temporary, identity = None, None
+            try:
+                deadline = time.monotonic() + RUNTIME_NOTICE_PREFERENCE_LOCK_SECONDS
+                while True:
+                    try:
+                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            _runtime_notice_fail("busy")
+                        time.sleep(min(0.01, remaining))
+                current = _runtime_notice_read(directory)
+                status = "clear" if version is None else "set"
+                if current["status"] != "missing" and current["dismissedVersion"] == version:
+                    return {"status": status, "dismissedVersion": version, "changed": False}
+                raw = json.dumps({"schemaVersion": 1, "runtime": {"dismissedVersion": version}},
+                                 separators=(",", ":"), allow_nan=False).encode("utf-8")
+                temporary = ".update-notices-" + uuid.uuid4().hex + ".tmp"
+                fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
+                             0o600, dir_fd=directory)
+                try:
+                    info = os.fstat(fd)
+                    identity = (info.st_dev, info.st_ino)
+                    _runtime_notice_file_stat(info)
+                    offset = 0
+                    while offset < len(raw):
+                        count = os.write(fd, raw[offset:])
+                        if count <= 0:
+                            raise OSError()
+                        offset += count
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+                os.replace(temporary, "update-notices.json", src_dir_fd=directory, dst_dir_fd=directory)
+                replaced, temporary = True, None
+                os.fsync(directory)
+                return {"status": status, "dismissedVersion": version, "changed": True}
+            finally:
+                try:
+                    if temporary is not None and identity is not None:
+                        info = os.stat(temporary, dir_fd=directory, follow_symlinks=False)
+                        if (info.st_dev, info.st_ino) == identity and info.st_uid == os.getuid():
+                            os.unlink(temporary, dir_fd=directory)
+                finally:
+                    os.close(lock)
+    except Exception as exc:
+        reason = exc.reason if isinstance(exc, RuntimeNoticePreferenceFailure) else "runtime_notice_preference_write_failed"
+        details = {"reason": reason, "updated": False}
+        if replaced:
+            details["preferenceMayHaveChanged"] = True
+        raise CcPeerError("Runtime notice preference refused", details) from None
 
 
 """Bounded opt-in POSIX message input; ordinary CLI input is unchanged."""
@@ -8687,6 +9643,10 @@ def handoff_private_stat(path, directory=False):
     return info
 
 
+class HandoffReadDeadlineExceeded(Exception):
+    """The caller's read budget elapsed; not evidence of corrupt history."""
+
+
 class HandoffLedger:
     """Serialized, fsynced snapshots with retained effect fences, not dedup.
 
@@ -8747,12 +9707,19 @@ class HandoffLedger:
                 os.unlink(temporary)
 
     @contextlib.contextmanager
-    def transaction(self, deadline=None):
+    def transaction(self, deadline=None, *, read_only=False):
+        """Validate one locked snapshot; read-only projections never persist retention."""
+        def check_read_deadline():
+            if read_only and deadline is not None and handoff_now() >= deadline:
+                raise HandoffReadDeadlineExceeded()
+
+        check_read_deadline()
         if IS_WINDOWS or fcntl is None:
             raise handoff_error("handoff_platform_unsupported")
         handoff_private_stat(self.root, True)
         lock = self.root / "ledger.lock"
         before = handoff_private_stat(lock)
+        check_read_deadline()
         fd = os.open(str(lock), os.O_RDWR | getattr(os, "O_NOFOLLOW", 0))
         try:
             after = os.fstat(fd)
@@ -8760,38 +9727,52 @@ class HandoffLedger:
                 raise handoff_error("unsafe_handoff_storage")
             limit = deadline if deadline is not None else handoff_now() + 5
             while True:
+                check_read_deadline()
                 try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(fd, (fcntl.LOCK_SH if read_only else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+                    check_read_deadline()
                     break
                 except BlockingIOError:
+                    check_read_deadline()
                     if handoff_now() >= limit:
                         raise handoff_error("handoff_storage_busy")
                     time.sleep(min(0.01, max(0, limit - handoff_now())))
             path = self.root / "ledger.json"
+            check_read_deadline()
             initial = handoff_private_stat(path)
             if initial.st_size > HANDOFF_LEDGER_BYTES:
                 raise handoff_error("handoff_history_unavailable")
+            check_read_deadline()
             read_fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
             with os.fdopen(read_fd, "rb") as stream:
                 current = os.fstat(stream.fileno())
                 if (initial.st_dev, initial.st_ino) != (current.st_dev, current.st_ino):
                     raise handoff_error("unsafe_handoff_storage")
+                check_read_deadline()
                 raw = stream.read(HANDOFF_LEDGER_BYTES + 1)
+            if read_only:
+                # Parse/validation use only this immutable local byte snapshot;
+                # release the shared lock so writers need not wait for them.
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            check_read_deadline()
             try:
                 state = handoff_json(raw, HANDOFF_LEDGER_BYTES)
                 if set(state) != {"schemaVersion", "epoch", "records"} or type(state["schemaVersion"]) is not int or state["schemaVersion"] != 1 or type(state["records"]) is not dict:
                     raise ValueError()
                 handoff_uuid(state["epoch"])
                 for key, record in state["records"].items():
+                    check_read_deadline()
                     handoff_uuid(key)
                     if type(record) is not dict or record.get("id") != key:
                         raise ValueError()
                     self._validate_record(record)
             except (CcPeerError, ValueError, KeyError, TypeError) as exc:
                 raise handoff_error("handoff_ledger_corrupt") from exc
+            check_read_deadline()
             boot, now = handoff_boot_clock(), handoff_now_ns()
             if boot is not None:
                 for record in state["records"].values():
+                    check_read_deadline()
                     if (record["phase"] != "tombstone" and record["historyBoot"] == boot
                             and now >= record["createdNs"] + 30 * 86400 * 1000000000):
                         # Detail expires only under proven boot/monotonic
@@ -8799,8 +9780,10 @@ class HandoffLedger:
                         # survives and still counts toward the intent quota.
                         record.update(phase="tombstone", submission="unknown", native=None,
                                       waits=[], ack=None, capability=None, pendingReceipt=None, observe=False, ackRequested=False)
+            check_read_deadline()
             yield state
-            self._save(state)
+            if not read_only:
+                self._save(state)
         except OSError as exc:
             raise handoff_error("handoff_history_unavailable") from exc
         finally:
@@ -8832,10 +9815,10 @@ class HandoffLedger:
             state["records"][correlation] = record
             return state["epoch"], copy.deepcopy(record)
 
-    def record(self, correlation, deadline=None):
+    def record(self, correlation, deadline=None, *, read_only=False):
         import copy
         handoff_uuid(correlation)
-        with self.transaction(deadline) as state:
+        with self.transaction(deadline, **({"read_only": True} if read_only else {})) as state:
             record = state["records"].get(correlation)
             if record is None:
                 raise handoff_error("handoff_id_unknown")
@@ -9079,8 +10062,9 @@ def handoff_cap_hash(epoch, correlation, generation, cap):
 def handoff_collect(ledger, epoch_id, frame):
     """Receipt-only operations. No native command, transcript or model access."""
     import hmac
-    with ledger.transaction() as state:
-        if frame == {"op": "clock"}:
+    read_only_clock = frame == {"op": "clock", "readOnly": True} and type(frame.get("readOnly")) is bool
+    with ledger.transaction(**({"read_only": True} if read_only_clock else {})) as state:
+        if frame == {"op": "clock"} or read_only_clock:
             return {"ok": True, "clockEpoch": epoch_id}
         if frame.get("op") == "mint":
             if set(frame) != {"op", "ledgerEpoch", "correlationId", "targetGeneration"}:
@@ -9203,9 +10187,16 @@ def handoff_ipc(root, frame, deadline=None):
         raise handoff_error("receipt_channel_unavailable") from exc
 
 
-def handoff_channel_epoch(ledger, deadline=None):
+def handoff_channel_epoch(ledger, deadline=None, *, read_only=False):
     try:
-        result = handoff_ipc(ledger.root, {"op": "clock"}, deadline)
+        frame = {"op": "clock"}
+        if read_only:
+            # Older collectors reject this extra field before committing a
+            # transaction. Never retry their write-through legacy clock query.
+            frame["readOnly"] = True
+            if deadline is None:
+                deadline = handoff_now() + 2
+        result = handoff_ipc(ledger.root, frame, deadline)
         return handoff_uuid(result.get("clockEpoch"))
     except CcPeerError:
         return None
@@ -9344,7 +10335,8 @@ def handoff_public(epoch, record, active_clock=None):
         result["nextActions"] = ["reconcile"]
         if (record.get("ackRequested") and record["capability"] and not record["capability"]["revoked"] and not ack
                 and active_clock is not None and active_clock == record["capability"]["clockEpoch"]
-                and handoff_now_ns() < record["capability"]["expiresNs"] and (not wait or wait["status"] != "unsupported")):
+                and handoff_now_ns() < record["capability"]["expiresNs"]
+                and (not wait or (wait["status"] != "unsupported" and wait.get("reason") != "history_unavailable"))):
             result["nextActions"].append("keep_waiting")
         if wait and wait["status"] == "pending":
             result["nextActions"].append("stop_waiting")
@@ -9357,6 +10349,55 @@ def handoff_query_error(correlation, context):
             "reason": "handoff_history_unavailable", "handoffQuery": {
                 "schemaVersion": 1, "correlationId": correlation, "status": "unknown", "context": context,
                 "retry": {"allowed": False, "reason": "history_unavailable"}}}
+
+
+def handoff_status_text(public, phase):
+    """Render only validated public metadata; never accept the private record."""
+    handoff_validate_public(public)
+    if phase not in ("prepared", "attempted", "terminal", "tombstone", "quarantined"):
+        raise handoff_error("invalid_handoff")
+    view = human_text(public)
+    observation, ack, wait = view["observation"], view["ack"], view["wait"]
+    unavailable = {"tombstone": "expired history", "quarantined": "quarantined history"}.get(phase)
+    injection = ("unavailable (" + unavailable + ")" if unavailable else
+                 observation["status"] + ("; injection observed" if observation["injectionObserved"]
+                                          else "; injection not confirmed"))
+    receipt = "unavailable (" + unavailable + ")" if unavailable else ack["status"]
+    if not unavailable and ack["status"] == "pending" and "keep_waiting" not in view["nextActions"]:
+        receipt += "; waiting availability not established"
+    lines = [
+        "Handoff " + view["correlationId"],
+        "State: " + view["state"],
+        "Submission: " + view["submission"]["status"],
+        "Injection observation: " + injection,
+        "Receipt (ACK): " + receipt,
+    ]
+    if not unavailable and ack["status"] == "acknowledged":
+        lines.extend([
+            "  Assurance: " + ack["assurance"],
+            "  Late receipt: " + ("yes (relative to the first wait)" if ack["late"] else "no"),
+            "  Received at (UTC milliseconds): " + str(ack["receivedAtUtcMs"]),
+        ])
+    lines.append("Latest wait: unavailable (expired history)" if phase == "tombstone" else
+                 "Latest wait: " + wait["status"] + "; goal: " + wait["for"])
+    if phase != "tombstone" and "operationId" in wait:
+        lines.append("  Operation: " + wait["operationId"])
+    if phase != "tombstone" and "deadlineAtUtcMs" in wait:
+        lines.append("  Deadline (UTC milliseconds): " + str(wait["deadlineAtUtcMs"]))
+    if phase != "tombstone" and "reason" in wait:
+        lines.append("  Reason: " + wait["reason"])
+    if phase == "tombstone":
+        lines.append("History: retained effect fence only; expired detail cannot establish absence of a receipt.")
+    elif phase == "quarantined":
+        lines.append("History: explicitly quarantined restored ledger; reconcile with the operator.")
+    lines.extend([
+        "Retry: not allowed (" + view["retry"]["reason"] + ")",
+        "Next actions: " + (", ".join(view["nextActions"]) or "none advertised"),
+        "Single ledger snapshot; latest stored wait only. No native submission performed.",
+        "Collector clock evidence, when available, is checked separately.",
+        "Submission does not confirm consumption; a receipt does not confirm task completion.",
+    ])
+    return "\n".join(lines)
 
 
 def handoff_start_wait(record, goal, deadline, clock_epoch, *, initial_status=None, reason=None):
@@ -9458,7 +10499,35 @@ def handoff_receipt_stdin(timeout=5):
         raise handoff_error("invalid_receipt") from exc
 
 
+def cmd_handoff_explanation(args):
+    """Project existing history without saving retention or minting authority.
+
+    Reuses the same read-only ledger/clock primitives as #296 status/watch;
+    receipt schemas, wait history and ordinary output remain unchanged.
+    """
+    ledger = HandoffLedger()
+    correlation = handoff_uuid(args.correlation_id)
+    args._delivery_explanation_started = True
+    try:
+        epoch, record = ledger.record(correlation, read_only=True)
+    except CcPeerError as exc:
+        context = ("id_unknown" if exc.details.get("reason") == "handoff_id_unknown" else
+                   "ledger_corrupt" if exc.details.get("reason") == "handoff_ledger_corrupt" else
+                   "ledger_missing" if isinstance(exc.__cause__, FileNotFoundError) else "history_unavailable")
+        emit_delivery_explanation(args, {"handoffQuery": {"context": context}},
+                                  mode="existing_intent", failed=True, stream=sys.stderr)
+        return 1
+    active_clock = None
+    if record["capability"] and not record["capability"]["revoked"] and not record["ack"]:
+        active_clock = handoff_channel_epoch(ledger, read_only=True)
+    public = handoff_public(epoch, record, active_clock)
+    emit_delivery_explanation(args, {"handoff": public}, mode="existing_intent")
+    return 0
+
+
 def cmd_handoff(args):
+    if args.handoff_action == "status" and getattr(args, "explain", False):
+        return cmd_handoff_explanation(args)
     ledger = HandoffLedger()
     action = args.handoff_action
     if action == "init":
@@ -9477,20 +10546,36 @@ def cmd_handoff(args):
         args.correlation_id = frame["correlationId"]
     correlation = handoff_uuid(args.correlation_id)
     try:
-        epoch, record = ledger.record(correlation)
+        epoch, record = ledger.record(correlation, **({"read_only": True} if action == "status" else {}))
     except CcPeerError as exc:
         context = "id_unknown" if exc.details.get("reason") == "handoff_id_unknown" else "ledger_corrupt" if exc.details.get("reason") == "handoff_ledger_corrupt" else "ledger_missing"
         result = handoff_query_error(correlation, context)
         if args.json:
             print(json.dumps(result, ensure_ascii=False))
         else:
-            print("Handoff history unavailable; do not resend.", file=sys.stderr)
+            diagnostic = "Handoff history unavailable; do not resend."
+            if action == "status":
+                reason = {
+                    "handoff_id_unknown": "request ID not found",
+                    "handoff_ledger_corrupt": "invalid ledger",
+                    "handoff_storage_busy": "ledger busy",
+                    "unsafe_handoff_storage": "storage ownership or permissions refused",
+                    "handoff_platform_unsupported": "handoff unsupported on this platform",
+                }.get(exc.details.get("reason"), "history could not be read")
+                diagnostic += " Reason: " + reason + ". No history initialized or repaired."
+            print(diagnostic, file=sys.stderr)
         return 1
     code = handoff_wait(ledger, correlation, args.wait_for, args.wait_timeout) if action == "wait" else 0
-    epoch, record = ledger.record(correlation)
+    if action != "status":
+        epoch, record = ledger.record(correlation)
     result = dict(record["native"] or {})
-    result.update(ok=code == 0, handoff=handoff_public(epoch, record, handoff_channel_epoch(ledger) if record["capability"] and not record["ack"] else None))
-    emit(args.json, result, "Handoff " + result["handoff"]["state"] + "; no native submission performed.", command="handoff")
+    active_clock = None
+    if record["capability"] and not record["ack"] and (action != "status" or not record["capability"]["revoked"]):
+        active_clock = handoff_channel_epoch(ledger, **({"read_only": True} if action == "status" else {}))
+    result.update(ok=code == 0, handoff=handoff_public(epoch, record, active_clock))
+    human = (handoff_status_text(result["handoff"], record["phase"]) if action == "status" and not args.json
+             else "Handoff " + result["handoff"]["state"] + "; no native submission performed.")
+    emit(args.json, result, human, command="handoff")
     return code
 
 
@@ -9863,6 +10948,356 @@ def cmd_handoff_send(args):
     result.update(ok=code == 0, handoff=handoff_public(epoch, record, authority["clockEpoch"] if authority else None))
     emit(args.json, result, "Handoff " + result["handoff"]["state"] + "; submission is not consumption.", command="send")
     return code
+
+
+# Read-only sampled handoff projection. Included in the standalone namespace.
+HANDOFF_WATCH_FRAME_BYTES = 16 * 1024
+HANDOFF_WATCH_OUTPUT_BYTES = 256 * 1024
+HANDOFF_WATCH_END_RESERVE = 2048
+HANDOFF_WATCH_FINISH_SECONDS = 0.1
+HANDOFF_WATCH_REAP_SECONDS = 0.025
+HANDOFF_WATCH_SLEEP_SLICE_SECONDS = 0.05
+HANDOFF_WATCH_WRITER_SCRIPT = r'''
+import os
+import select
+import signal
+import sys
+import threading
+import time
+try:
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT})
+    parent = int(sys.argv[1])
+    cutoff = float(sys.argv[2])
+    if sys.platform == "darwin":
+        import ctypes
+        class Timebase(ctypes.Structure):
+            _fields_ = [("numer", ctypes.c_uint32), ("denom", ctypes.c_uint32)]
+        library = ctypes.CDLL(None)
+        absolute = library.mach_absolute_time
+        absolute.argtypes, absolute.restype = [], ctypes.c_uint64
+        timebase = library.mach_timebase_info
+        timebase.argtypes, timebase.restype = [ctypes.POINTER(Timebase)], ctypes.c_int
+        info = Timebase()
+        if timebase(ctypes.byref(info)) != 0 or not info.numer or not info.denom:
+            os._exit(1)
+        def now():
+            return (int(absolute()) * int(info.numer) // int(info.denom)) / 1000000000
+    else:
+        def now():
+            return time.monotonic_ns() / 1000000000
+    def supervise():
+        try:
+            while True:
+                remaining = cutoff - now()
+                if os.getppid() != parent or remaining <= 0:
+                    os._exit(1)
+                time.sleep(min(0.01, remaining))
+        except BaseException:
+            os._exit(1)
+    if os.getppid() != parent or now() >= cutoff:
+        os._exit(1)
+    threading.Thread(target=supervise, daemon=True).start()
+except BaseException:
+    os._exit(1)
+def exact(size):
+    result = bytearray()
+    while len(result) < size:
+        chunk = os.read(0, size - len(result))
+        if not chunk:
+            os._exit(0)
+        result.extend(chunk)
+    return bytes(result)
+try:
+    while True:
+        size = int.from_bytes(exact(4), "big")
+        if not 1 <= size <= 16384:
+            os._exit(1)
+        frame = exact(size)
+        offset = 0
+        while offset < size:
+            try:
+                count = os.write(1, frame[offset:])
+            except BlockingIOError:
+                remaining = cutoff - now()
+                if remaining <= 0:
+                    os._exit(1)
+                select.select([], [1], [], remaining)
+                continue
+            if count <= 0:
+                os._exit(1)
+            offset += count
+        os.write(0, b"1")
+except BaseException:
+    os._exit(1)
+'''
+
+
+def handoff_watch_timeout(value):
+    return handoff_timeout(value)
+
+
+def handoff_watch_interval(value):
+    if (type(value) is not str or re.fullmatch(r"[1-9][0-9]{3}", value, flags=re.ASCII) is None
+            or not 1000 <= int(value) <= 5000):
+        raise argparse.ArgumentTypeError("expected an ASCII integer from 1000 to 5000")
+    return int(value)
+
+
+class HandoffWatchOutputError(Exception):
+    pass
+
+
+@contextlib.contextmanager
+def handoff_watch_defer_interrupt():
+    previous_handler = signal.getsignal(signal.SIGINT)
+    pending = [None]
+    def defer(signum, frame):
+        if previous_handler != signal.SIG_IGN:
+            pending[0] = (signum, frame)
+    # Masking this thread alone cannot defer CPython handlers when another
+    # unmasked thread receives a process-directed signal. Record it as well.
+    signal.signal(signal.SIGINT, defer)
+    try:
+        previous_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
+        try:
+            yield
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+    finally:
+        signal.signal(signal.SIGINT, previous_handler)
+        if pending[0] is not None:
+            if callable(previous_handler):
+                previous_handler(*pending[0])
+            elif previous_handler == signal.SIG_DFL:
+                os.kill(os.getpid(), signal.SIGINT)
+
+
+class HandoffWatchOutput:
+    """Owned writer isolates blocking stdout without changing inherited flags.
+
+    A completion ACK proves only an OS write, never consumer processing. Unknown
+    completion suppresses subsequent frames. The final 100ms of the original
+    budget covers the end frame and child cleanup, including 25ms for reaping.
+    A helper watchdog also exits on parent death or the original shared-clock
+    deadline, including when the parent is stopped. OS process creation and
+    uninterruptible I/O remain scheduling limitations.
+    """
+    def __init__(self, stream, deadline):
+        import io
+        self.stream, self.deadline = stream, deadline
+        self.work_deadline = deadline - HANDOFF_WATCH_FINISH_SECONDS
+        self.channel, self.process = None, None
+        self.used, self.damaged = 0, False
+        if isinstance(stream, io.StringIO):
+            return
+        child = None
+        try:
+            fd = stream.fileno()
+            self.channel, child = socket.socketpair()
+            # Register the handle before delivering a pending terminal SIGINT.
+            with handoff_watch_defer_interrupt():
+                self.process = subprocess.Popen(
+                    [sys.executable, "-I", "-S", "-c", HANDOFF_WATCH_WRITER_SCRIPT,
+                     str(os.getpid()), repr(deadline)],
+                    stdin=child, stdout=fd, stderr=subprocess.DEVNULL, env={},
+                    close_fds=True, start_new_session=True)
+        except Exception:
+            self.close()
+            raise HandoffWatchOutputError()
+        except BaseException:
+            self.close()
+            raise
+        finally:
+            if child is not None:
+                try:
+                    child.close()
+                except BaseException:
+                    self.close()
+                    raise
+
+    def close(self):
+        # A pending SIGINT is delivered only after kill/reap has finished.
+        with handoff_watch_defer_interrupt():
+            return self._close()
+
+    def _close(self):
+        if self.channel is not None:
+            channel = self.channel
+            self.channel = None
+            try:
+                channel.close()
+            except OSError:
+                pass
+        if self.process is not None:
+            try:
+                if self.process.poll() is None:
+                    self.process.kill()
+                self.process.wait(timeout=max(0, self.deadline - handoff_now()))
+            except (OSError, subprocess.TimeoutExpired):
+                return False
+        return True
+
+    def write(self, text, *, end=False):
+        raw = (text + "\n").encode("utf-8")
+        limit = HANDOFF_WATCH_OUTPUT_BYTES - (0 if end else HANDOFF_WATCH_END_RESERVE)
+        if len(raw) > HANDOFF_WATCH_FRAME_BYTES or self.used + len(raw) > limit:
+            return "output_limit"
+        if self.damaged:
+            return "output_unavailable"
+        io_deadline = self.deadline - HANDOFF_WATCH_REAP_SECONDS if end else self.work_deadline
+        if handoff_now() >= io_deadline:
+            return "output_unavailable" if end else "duration_elapsed"
+        try:
+            if self.channel is None:
+                self.stream.write(raw.decode("utf-8"))
+            else:
+                self.channel.settimeout(max(0, io_deadline - handoff_now()))
+                self.channel.sendall(len(raw).to_bytes(4, "big") + raw)
+                remaining = io_deadline - handoff_now()
+                if remaining <= 0:
+                    raise HandoffWatchOutputError()
+                self.channel.settimeout(remaining)
+                if self.channel.recv(1) != b"1":
+                    raise HandoffWatchOutputError()
+            self.used += len(raw)
+            return None
+        except Exception:
+            self.damaged = True
+            return "output_unavailable"
+        except BaseException:
+            self.damaged = True
+            raise
+
+
+def handoff_watch_frame(args, payload, *, ok):
+    if args.json:
+        return json.dumps(json_result("handoff", payload, ok=ok), ensure_ascii=False,
+                          separators=(",", ":"), allow_nan=False)
+    if payload["event"] == "snapshot":
+        return ("Watch snapshot " + str(payload["sequence"]) + " (sampled changes)\n" +
+                handoff_status_text(payload["handoff"], payload["historyPhase"]))
+    return ("Handoff watch ended: " + payload["reason"] + "; snapshots: " +
+            str(payload["snapshotsEmitted"]) + "; samples: " + str(payload["samples"]) + ".")
+
+
+def handoff_watch_pause(until):
+    # Some schedulers coalesce a long relative sleep by a proportion of its
+    # duration. Recheck the same absolute deadline after short sleeps rather
+    # than consuming the final-output reserve in one long sleep. This changes
+    # neither the sampling interval nor the original total watch budget.
+    while True:
+        remaining = until - handoff_now()
+        if remaining <= 0:
+            return
+        time.sleep(min(HANDOFF_WATCH_SLEEP_SLICE_SECONDS, remaining))
+
+
+def cmd_handoff_watch(args):
+    if IS_WINDOWS or fcntl is None:
+        payload = {"operation": "watch", "event": "end", "reason": "unsupported",
+                   "snapshotsEmitted": 0, "samples": 0}
+        print(handoff_watch_frame(args, payload, ok=False))
+        return 1
+    # The same absolute deadline covers setup, locking, collector IPC and output.
+    started = handoff_now()
+    duration = args.watch_timeout
+    interval = args.interval_ms
+    if type(duration) is not int or not 1 <= duration <= 60:
+        raise handoff_error("invalid_watch_timeout")
+    if type(interval) is not int or not 1000 <= interval <= 5000:
+        raise handoff_error("invalid_watch_interval")
+    total_deadline = started + duration
+    deadline = total_deadline - HANDOFF_WATCH_FINISH_SECONDS
+    correlation = handoff_uuid(args.correlation_id)
+    snapshots, samples = 0, 0
+    writer, original_epoch, previous, context = None, None, None, None
+    reason = "history_unavailable"
+    try:
+        writer = HandoffWatchOutput(sys.stdout, total_deadline)
+        ledger = HandoffLedger()
+        while handoff_now() < deadline and samples < 61:
+            samples += 1
+            epoch, record = ledger.record(correlation, deadline, read_only=True)
+            if original_epoch is not None and epoch != original_epoch:
+                reason = "history_changed"
+                break
+            original_epoch = epoch
+            if handoff_now() >= deadline:
+                raise HandoffReadDeadlineExceeded()
+            phase = record["phase"]
+            if phase not in ("prepared", "attempted", "terminal", "tombstone", "quarantined"):
+                raise handoff_error("invalid_handoff")
+            active_clock = None
+            if record["capability"] and not record["capability"]["revoked"] and not record["ack"]:
+                active_clock = handoff_channel_epoch(ledger, deadline, read_only=True)
+            if handoff_now() >= deadline:
+                raise HandoffReadDeadlineExceeded()
+            public = handoff_public(epoch, record, active_clock)
+            if handoff_now() >= deadline:
+                raise HandoffReadDeadlineExceeded()
+            projection = (phase, public)
+            if projection != previous:
+                payload = {"operation": "watch", "event": "snapshot", "sequence": snapshots + 1,
+                           "historyPhase": phase, "handoff": public}
+                try:
+                    observed = int(time.time() * 1000)
+                except (ValueError, OverflowError):
+                    observed = None
+                if observed is not None and 0 <= observed <= 9007199254740991:
+                    payload["observedAtUtcMs"] = observed
+                failure = writer.write(handoff_watch_frame(args, payload, ok=True))
+                if failure:
+                    reason = failure
+                    break
+                snapshots += 1
+                previous = projection
+            remaining = deadline - handoff_now()
+            if remaining <= 0:
+                raise HandoffReadDeadlineExceeded()
+            handoff_watch_pause(min(deadline, handoff_now() + interval / 1000))
+        else:
+            reason = "duration_elapsed"
+    except KeyboardInterrupt:
+        reason = "interrupted"
+    except HandoffWatchOutputError:
+        reason = "output_unavailable"
+    except HandoffReadDeadlineExceeded:
+        reason = "duration_elapsed"
+    except Exception:
+        reason = "history_unavailable"
+        # Context is a closed enum. Never emit the underlying exception or path.
+        exc = sys.exc_info()[1]
+        detail = exc.details.get("reason") if isinstance(exc, CcPeerError) else None
+        context = ("id_unknown" if detail == "handoff_id_unknown" else
+                   "ledger_corrupt" if detail == "handoff_ledger_corrupt" else
+                   "ledger_missing" if isinstance(exc, FileNotFoundError) or
+                   isinstance(exc.__cause__, FileNotFoundError) else None)
+    finally:
+        if writer is not None:
+            if reason == "interrupted":
+                writer.deadline = min(writer.deadline, handoff_now() + HANDOFF_WATCH_FINISH_SECONDS)
+            try:
+                payload = {"operation": "watch", "event": "end", "reason": reason,
+                           "snapshotsEmitted": snapshots, "samples": samples}
+                if context is not None:
+                    payload["queryContext"] = context
+                failure = writer.write(handoff_watch_frame(args, payload, ok=reason == "duration_elapsed"), end=True)
+                if failure and reason != "interrupted":
+                    reason = failure
+            except KeyboardInterrupt:
+                reason = "interrupted"
+                writer.deadline = min(writer.deadline, handoff_now() + HANDOFF_WATCH_FINISH_SECONDS)
+            except Exception:
+                reason = "output_unavailable"
+            finally:
+                try:
+                    if not writer.close() and reason != "interrupted":
+                        reason = "output_unavailable"
+                except KeyboardInterrupt:
+                    reason = "interrupted"
+                except Exception:
+                    reason = "output_unavailable"
+    return 0 if reason == "duration_elapsed" else 130 if reason == "interrupted" else 1
 
 
 """Private source-streamed native snapshots, not a receipt/collector route."""
@@ -10687,9 +12122,13 @@ def cmd_send(args: argparse.Namespace) -> int:
     validate_agent_send(adapter, args, text)
 
     if not args.host:
+        if getattr(args, "explain", False):
+            args._delivery_explanation_started = True
         result = LocalTransport().execute("send", adapter, args, text)
         result.update(routing_metadata)
         emit(args.json, result, adapter.submission_text(result, "this machine"), command="send")
+        if getattr(args, "explain", False):
+            emit_delivery_explanation(args, result, failed=result.get("ok") is False)
         if advertised_route and advertised_route["status"] == "unverified" and not args.json:
             print(
                 "session-peer: reverse SSH reply route was not checked; "
@@ -10702,9 +12141,14 @@ def cmd_send(args: argparse.Namespace) -> int:
     for requested_host in args.host:
         host = requested_host
         try:
+            if getattr(args, "explain", False):
+                args._delivery_explanation_started = True
+                args._delivery_explanation_host = requested_host
             transport = SshTransport(requested_host, args, tailnet_status)
             host, ssh_opts = transport.host, transport.ssh_opts
             shown_host = display_host(requested_host, host)
+            if getattr(args, "explain", False):
+                args._delivery_explanation_host = shown_host
             encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
             remote_argv = ["send", "--no-update-notice", "--to", args.to, "--b64", encoded]
             remote_argv += adapter.remote_options(args)
@@ -10734,6 +12178,11 @@ def cmd_send(args: argparse.Namespace) -> int:
                 exit_code = EXIT_ERROR
             if not args.json:
                 print(adapter.submission_text(payload, shown_host))
+                if getattr(args, "explain", False):
+                    # Explain the received facts, before legacy adapter shaping
+                    # replaces fields such as Claude's dryRun with request data.
+                    emit_delivery_explanation(args, result, host=shown_host,
+                                              failed=payload.get("ok") is False or result.get("ok") is False)
         except CcPeerError as exc:
             exit_code = EXIT_ERROR
             all_results.append(json_result(
@@ -10743,6 +12192,10 @@ def cmd_send(args: argparse.Namespace) -> int:
             ))
             if not args.json:
                 print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
+                if getattr(args, "explain", False):
+                    emit_delivery_explanation(args, exc.details,
+                                              host=display_host(requested_host, host),
+                                              failed=True, stream=sys.stderr)
 
     if args.json:
         emit_json_results(all_results)
@@ -10844,6 +12297,16 @@ class MessageArgumentParser(argparse.ArgumentParser):
 
 
 class HumanArgumentParser(MessageArgumentParser):
+    def parse_known_args(self, args=None, namespace=None):
+        values = list(sys.argv[1:] if args is None else args)
+        # Reject accidental credential argv before argparse can quote values in
+        # unknown-option, missing-argument or invalid-choice diagnostics.
+        if (self.prog in ('session-peer', 'session-peer device', 'session-peer setup')
+                and any('session-peer://pair/' in value.lower() for value in values)
+                and (self.prog != 'session-peer' or (values and values[0] in ('device', 'setup')))):
+            self.error('pairing_link_argv_forbidden; use --link without a value')
+        return super().parse_known_args(values, namespace)
+
     def _get_values(self, action, arg_strings):
         if action.option_strings:
             explicit = getattr(self, "_explicit_option_strings", None)
@@ -10854,7 +12317,41 @@ class HumanArgumentParser(MessageArgumentParser):
 
     def error(self, message):
         # Preserve both the message-value and display-only escaping contracts.
+        if 'session-peer://pair/' in message.lower():
+            message = 'pairing_link_argv_forbidden; use --link without a value'
         super().error(human_text(message))
+
+
+class SshConfigArgument(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        if getattr(namespace, self.dest, None) not in (None, False):
+            parser.error(self.option_strings[0] + " may be specified only once")
+        setattr(namespace, self.dest, self.const if self.nargs == 0 else values)
+
+
+def prepare_trusted_ssh_config(parser, args):
+    path = getattr(args, "ssh_config", None)
+    trust = getattr(args, "trust_ssh_config", False)
+    if path is None and not trust:
+        return
+    if path is None or not trust:
+        parser.error("--ssh-config and --trust-ssh-config must be supplied together")
+    if args.command not in ("list", "send", "doctor", "update") or not getattr(args, "host", None):
+        parser.error("--ssh-config requires list/send/doctor/update with explicit --host")
+    if getattr(args, "device", None) or getattr(args, "preset", None) is not None:
+        parser.error("--ssh-config cannot be combined with paired devices or route presets")
+    if str(getattr(args, "to", "")).lower().startswith("session-peer:"):
+        parser.error("--ssh-config cannot be selected through a Reply-To invocation")
+    for host in args.host:
+        check_ssh_argument(host, "--host")
+    check_ssh_options(getattr(args, "ssh_opt", []))
+    if IS_WINDOWS:
+        raise _ssh_config_error("ssh_config_platform_unsupported")
+    if args.command == "send" and handoff_requested(args):
+        # Configuration setup belongs to the ORIGINAL handoff budget; no
+        # metadata/effect child receives a renewed deadline or this local path.
+        args._handoff_fixed_total = handoff_now() + args.wait_timeout
+    SSH_CONFIG_SELECTION.set(select_trusted_ssh_config(path))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -10980,6 +12477,8 @@ def build_parser() -> argparse.ArgumentParser:
     sending.add_argument("--wake-timeout", type=int, choices=range(1, 61), default=30, metavar="SECONDS",
                          help="wake deadline, 1..60 seconds (default: 30)")
     sending.add_argument("--dry-run", action="store_true", help="resolve the target, send nothing")
+    sending.add_argument("--explain", action="store_true", help="explain existing dry-run evidence in text")
+    doctor.add_argument("--explain", action="store_true", help="explain existing diagnostic capabilities in text")
     sending.set_defaults(func=cmd_send)
 
     preset = subparsers.add_parser("preset", help="manage private local route presets without contacting destinations")
@@ -11000,12 +12499,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     handoff = subparsers.add_parser("handoff", help="manage private correlated intents without submitting native messages")
     handoff_sub = handoff.add_subparsers(dest="handoff_action", required=True)
-    for action in ("init", "prepare", "status", "wait", "confirm"):
+    for action in ("init", "prepare", "status", "watch", "wait", "confirm"):
         sub = handoff_sub.add_parser(action)
         sub.add_argument("--json", action="store_true")
-        sub.set_defaults(func=cmd_handoff, no_update_notice=True)
-        if action in ("status", "wait"):
+        sub.set_defaults(func=cmd_handoff_watch if action == "watch" else cmd_handoff, no_update_notice=True)
+        if action in ("status", "watch", "wait"):
             sub.add_argument("--correlation-id", required=True, type=handoff_cli_uuid)
+        if action == "watch":
+            sub.add_argument("--watch-timeout", type=handoff_watch_timeout, default=30,
+                             metavar="SECONDS", help="finite local watch budget, 1..60 seconds (default: 30)")
+            sub.add_argument("--interval-ms", type=handoff_watch_interval, default=1000,
+                             metavar="MILLISECONDS", help="sample every 1000..5000 ms (default: 1000)")
+        if action == "status":
+            sub.add_argument("--explain", action="store_true", help="explain the existing read-only intent snapshot")
         if action == "wait":
             sub.add_argument("--wait-for", choices=("delivered", "acknowledged"), required=True)
             sub.add_argument("--wait-timeout", type=handoff_timeout, default=30)
@@ -11023,10 +12529,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     updating = subparsers.add_parser("update", help="update this installation")
     add_common(updating)
-    updating.add_argument(
+    update_action = updating.add_mutually_exclusive_group()
+    update_action.add_argument(
         "--check", action="store_true", help="report the available version, change nothing"
     )
+    update_action.add_argument("--dismiss-runtime-notice", type=runtime_notice_cli_version,
+                              metavar="VERSION", help="dismiss only this runtime release's ambient notice; no installation")
+    update_action.add_argument("--clear-runtime-notice-dismissal", action="store_true",
+                              help="clear the local runtime notice dismissal; no installation")
     updating.set_defaults(func=cmd_update)
+
+    # Deliberately not add_common: setup must not gain executable config input.
+    for sub in (listing, sending, doctor, updating):
+        sub.add_argument("--ssh-config", action=SshConfigArgument, metavar="ABS_PATH",
+                         help="operator-trusted local executable SSH configuration; requires --trust-ssh-config")
+        sub.add_argument("--trust-ssh-config", action=SshConfigArgument, nargs=0, const=True, default=False,
+                         help="authorize this configuration's local commands, including during ssh -G and dry-run")
 
     for sub in (listing, sending, doctor):
         sub.add_argument('--antigravity-home', help='filter registered Antigravity home on the destination')
@@ -11055,7 +12573,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(setup)
     setup.add_argument('--mode', choices=('local', 'ssh', 'relay'))
     setup.add_argument('--interactive', action='store_true', help='ask before each setup mutation; EOF/Ctrl-C cancels')
-    setup.add_argument('--action', choices=('plan', 'init', 'login', 'enroll', 'targets', 'policy', 'invite', 'pair', 'ready', 'receiver', 'cancel'), default='plan')
+    setup.add_argument('--action', choices=('plan', 'init', 'login', 'enroll', 'targets', 'policy', 'invite', 'offer', 'offer-status', 'offer-cancel', 'pair', 'ready', 'receiver', 'cancel'), default='plan')
     setup.add_argument('--apply', action='store_true', help='explicitly approve the selected setup action, never a message send')
     setup.add_argument('--state')
     setup.add_argument('--server')
@@ -11072,7 +12590,12 @@ def build_parser() -> argparse.ArgumentParser:
     setup.add_argument('--antigravity-home')
     setup.add_argument('--direct')
     setup.add_argument('--relay', help='receiver WSS connect URL, not an account-login URL')
-    setup.add_argument('--invite', help='private existing invitation file for a client')
+    source = setup.add_mutually_exclusive_group()
+    source.add_argument('--invite', help='private existing invitation file for a client')
+    source.add_argument('--link', action='store_true', help='read private pairing link from an echo-disabled terminal; no argument value')
+    setup.add_argument('--peer-key', help='intended client current certificate fingerprint, confirmed independently')
+    setup.add_argument('--show-link', action='store_true', help='explicitly display a private offer link on the owner terminal')
+    setup.add_argument('--offer-id', help='public offer UUID for status/cancellation')
     setup.add_argument('--out', help='new private invitation file for a receiver')
     setup.add_argument('--route', choices=('auto', 'direct', 'relay'), default='auto')
     setup.add_argument('--seconds', type=int, choices=range(1, 86401), default=3600, metavar='SECONDS')
@@ -11129,6 +12652,16 @@ def address_operation_failed(args):
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Invocation-local authority, never an environment setting, MCP default or
+    # leaked state from a previous/reentrant call in the same interpreter.
+    token = SSH_CONFIG_SELECTION.set(None)
+    try:
+        return _main(argv)
+    finally:
+        SSH_CONFIG_SELECTION.reset(token)
+
+
+def _main(argv: list[str] | None = None) -> int:
     global _CLIENT_UPDATE_NOTICE, _SKILL_UPDATE_NOTICES
     cli_invocation = argv is None
     raw_argv = list(sys.argv[1:] if argv is None else argv)
@@ -11172,6 +12705,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.json and output_format == "text":
         parser.error("--json conflicts with --output-format text")
     args.json = args.json or output_format == "json"
+    if getattr(args, "explain", False):
+        if args.json:
+            parser.error("--explain requires text output")
+        if args.command == "send":
+            if not args.dry_run:
+                parser.error("--explain requires --dry-run")
+            if handoff_requested(args) or any(getattr(args, key, None) is not None for key in (
+                    "_handoff_native_context", "_handoff_native_cutoff_ms", "_handoff_native_total_ms")):
+                parser.error("--explain does not support experimental handoff sends")
+        elif args.command == "handoff" and args.handoff_action != "status":
+            parser.error("--explain requires handoff status")
+        args._delivery_explanation_started = False
+        args._delivery_explanation_host = None
+    if runtime_notice_preference_requested(args):
+        if runtime_notice_preference_routed(args):
+            parser.error("Runtime notice preferences are local only; do not use host or SSH options")
+        args.no_update_notice = True
     if args.command == "send":
         if not getattr(args, "address", None) and args.to is None:
             parser.error("the following arguments are required: --to")
@@ -11209,6 +12759,16 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:
             return address_operation_failed(args) if args.command == "address" else preset_operation_failed(args)
     try:
+        prepare_trusted_ssh_config(parser, args)
+    except CcPeerError as exc:
+        if args.json:
+            print(json.dumps(json_error_result(args, {"error": str(exc), **exc.details}), ensure_ascii=False))
+        else:
+            print(human_text(f"session-peer: {exc}"), file=sys.stderr)
+        return EXIT_ERROR
+    except KeyboardInterrupt:
+        return 130
+    try:
         _CLIENT_UPDATE_NOTICE = prepare_client_update(args) if cli_invocation else None
     except Exception:
         # Update discovery is advisory. Even an unexpected cache or launcher
@@ -11223,12 +12783,16 @@ def main(argv: list[str] | None = None) -> int:
         validate_ssh_identity_options(args)
         exit_code = args.func(args)
     except CcPeerError as exc:
-        message = str(exc)
+        message = redact_ssh_config_path(str(exc))
         if args.json:
             payload = json_error_result(args, {"error": message, **exc.details})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
             print(human_text(f"session-peer: {message}"), file=sys.stderr)
+            if getattr(args, "explain", False):
+                emit_delivery_explanation(args, exc.details, failed=True, stream=sys.stderr,
+                                          mode="doctor" if args.command == "doctor" else "existing_intent" if args.command == "handoff" else "readiness",
+                                          host=getattr(args, "_delivery_explanation_host", None))
         exit_code = (
             EXIT_NO_TARGET
             if isinstance(exc, NoTargetError) or "no reachable session" in message
@@ -11238,12 +12802,18 @@ def main(argv: list[str] | None = None) -> int:
         show_human_notice = False
         exit_code = 130
     except Exception as exc:
-        message = f"{type(exc).__name__}: {exc}"
+        message = redact_ssh_config_path(f"{type(exc).__name__}: {exc}")
         if getattr(args, "json", False):
             payload = json_error_result(args, {"error": message})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
             print(human_text(f"session-peer: {message}"), file=sys.stderr)
+            if getattr(args, "explain", False):
+                explanation = ({"reason": "outcome_unknown"}
+                               if getattr(args, "_delivery_explanation_started", False) else {})
+                emit_delivery_explanation(args, explanation, failed=True, stream=sys.stderr,
+                                          mode="doctor" if args.command == "doctor" else "existing_intent" if args.command == "handoff" else "readiness",
+                                          host=getattr(args, "_delivery_explanation_host", None))
         exit_code = EXIT_ERROR
     if show_human_notice and not args.json:
         emit_human_update_notice()

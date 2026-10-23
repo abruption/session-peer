@@ -72,6 +72,29 @@ session-peer send --host worker --to 'codex:<full-thread-uuid>' --dry-run -m "me
 
 **已投递/已入队并不代表已确认。** 已保存的 Codex 线程不一定正在运行。普通的发送不会激活会话；[显式 `--wake`](wake.md) 是可选功能，且不确认消息已被消费或回复。
 
+<a id="delivery-explanation"></a>
+
+### 传递说明（开发中）
+
+这是 #323 的开发功能，拟纳入 v1.3，尚未包含在已发布的 v1.2.1 中。在 `send --dry-run` 中添加 `--explain`，即可查看所选本地、SSH 或配对设备目标、现有验证结果、传递方式及观察限制。`doctor --explain` 说明现有诊断快照和声明的支持能力，不验证特定目标是否已准备好接收提交。`handoff status --explain` 说明现有 intent 中保存的证据。每个已处理的 SSH 目标都会单独显示说明；意外错误仍可能中断现有的主机循环，导致后续目标未被处理。
+
+```bash
+session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run --explain
+session-peer send --device RECEIVER_FINGERPRINT --to review --message "Review the patch" --dry-run --explain
+session-peer doctor --explain
+session-peer handoff status --correlation-id PREPARED_UUID --explain
+```
+
+说明复用所选命令的现有结果，不增加诊断、native 版本或 SSH 探测，也不激活目标或另行执行 `list`。原有 dry-run 本身可能包含版本检查。实际发送时会重新验证，因此预览成功不代表预留目标，也不保证提交、消费或完成。声明的支持能力、实际检查结果和未知事实会分别显示。未指定 `--wake` 时，不检查唤醒资格；指定后也只说明原有预检结果。
+
+配对 dry-run 保留现有的、遵循接收端策略的 `resolve` 操作。现有连接探测只会与声明支持该功能的接收端协商可选的说明 context。此内部 context 带有版本，严格校验允许的字段，大小限制为 8 KiB；不会新增通用 JSON 输出，也不引入新的 handoff schema。只有接收端实际报告且通过验证的代理、目标和 home 才会显示，绝不根据发送端配置猜测。旧接收端仍保留独立确认的 native 结果，未报告的 context 保持未知，不尝试回退、额外探测或重发。
+
+Handoff status 复用只读快照，不创建 intent、receipt capability、wait 或 collector，也不写入账本。提交、输入注入观察、显式 receipt 和最近保存的 wait 分别显示；即使 receipt 已 acknowledged，也不证明任务完成。保存的观察可能已经过时。只有已报告的 receipt 观察时间才会作为观察时间说明；说明生成时间或诊断快照时间不代表传递观察时间。普通发送不会因此获得 receipt ACK 支持。
+
+此范围仅支持文本输出：将 `--explain` 与 `--json` 或 `--output-format json` 组合使用会报告用法错误。只有 `send --explain` 必须指定 `--dry-run`，`doctor --explain` 和 `handoff status --explain` 不需要。Send 仍会在读取消息或执行目标、账本操作前，拒绝将实验性 handoff 的 `--correlation-id`、`--request-ack`、`--observe-delivery`、`--wait-for` 与 `--explain` 组合使用。不使用新选项的现有命令保留原有输出、JSON 和退出契约；说明不会将状态查询成功变成 ACK 证据，也不会改变原命令退出结果的含义。
+
+Send 的消息输入要求和限制保持不变。按原有方式使用 `--message`、`--message-file` 或 stdin，不自动生成占位正文。说明字段不包含正文或 receipt 秘密值。常规说明输出到 stdout，失败结果或意外提交证据的说明输出到 stderr，不改变现有摘要和错误的输出位置。未知证据仍显示为未知，实际发送结果不确定时禁止自动重发。
+
 ### 可选配对设备与 Antigravity (v0.9)
 
 这些功能自 PyPI v0.9.0 起提供。Antigravity 仍处于实验阶段，配对传输仍处于 Beta 阶段；仍需进行操作验证。使用 `pipx install 'session-peer[relay]'` 安装额外组件。`[relay]` 额外组件（Unix、Python 3.11+）支持通过直接连接或自建 WSS 中继进行经过身份验证的配对设备传递。配对会固定设备身份；单独的操作员策略允许特定的代理目标和操作。盲中继无法解密应用消息。在公开端点之前，请遵循[配对设备设置与操作指南](paired-devices.md)。该测试版不提供 NAT 穿透或托管公共服务。
@@ -351,8 +374,65 @@ Host web-01
 
 退出码：`0` 命令成功（包括列出或预检运行 dry-run），`1` 操作错误，`2` CLI 用法错误或未解析的目标被报告为 no-target，以及 `130` 中断（Ctrl-C）。Codex 队列拒绝（包括缺失 rollout）属于操作错误（`1`）；预检运行期间缺失已保存的线程返回 `2`。发送操作退出码为 `0` 并不确认消息已被消费或回复。
 
+### 限时 handoff 观察（v1.3 候选版本）
+
+```sh
+session-peer handoff status --correlation-id PREPARED_UUID --json
+session-peer handoff watch --correlation-id PREPARED_UUID --watch-timeout 30 --interval-ms 1000 --json
+```
+
+使用本地所有者 POSIX 记录中已有的准备 UUID。状态查询仍为一次快照；观察运行 1..60 秒（默认 30），间隔 1000..5000 毫秒（默认 1000），仅接受 ASCII 整数，最多采样 61 次。观察仅在预算允许生成有效公开结果时输出初始快照，随后仅输出公开元数据/historyPhase 的变化；可能不输出任何快照。JSON 观察输出使用通用 schemaVersion 1 NDJSON 封装，其中 operation 为 watch，event 为 snapshot 或 end，快照嵌套原有 handoff 对象；status JSON 不变。到期完成的退出码 0 仅表示观察完成，并非 ACK 或等待成功；SIGINT 为 130，历史、输出故障为 1，无效参数为 2。历史缺失、损坏或 ledgerEpoch 改变会停止观察。 historyPhase 为 prepared、attempted、terminal、tombstone 或 quarantined；attempted 表示已持久保存的尝试屏障，不表示正在执行。
+
+观察为只读操作，不创建意图、等待、收据，不写入记录、提交或唤醒。不增加主机、设备、Windows 路径或 Codex ACK。每帧上限为 16 KiB，总量为 256 KiB，并预留 2 KiB 用于结束帧。真实文件描述符标准输出使用一个专属、隔离的 Python 输出辅助进程；它仅接收有界的已序列化公开字节，不更改共享描述符标志，也不读取记录或原生数据。父进程将 IPC 纳入原始总预算，开始新的记录读取或验证阶段前也检查期限；总时间内预留 100 ms 用于最终输出和清理，因此采样可能提前结束。超时、SIGINT 或错误时终止并回收辅助进程，但不可中断的 OS 操作不具备严格实时保证。部分写入或无完成回复后禁止后续帧、结束帧；消费方必须拒绝被截断的最后一行 NDJSON。辅助进程完成仅表示 OS 写入完成，不证明接收者消费。快照并非无损事件流，本地 UTC 观察不证明 ACK 到达顺序。有关隐私、保留的提交/ACK/等待含义、只读收集器查询及现有隔离限制，参见 [handoff 运行时指南](handoff-runtime.md)。观察不启动原生消息进程或收集器。此候选版本尚未发布。 不公开载荷或权限摘要，公开 targetGeneration 保持既有约定。 只读记录在读取不可变快照字节后、解析和验证前释放共享锁。 中断后的最终输出和清理在剩余总预算内最多使用 100 ms。 整体成功需要完整的成功结束帧和退出码 0：该帧之后清理仍可能失败。非零退出表示整体失败，不表示 ACK 升级、丢弃独立有效的提交事实或允许重试。
+
+### 可信本地 SSH 配置（v1.3 候选，尚未发布）
+
+在 Linux 和 macOS 上，显式指定 `--host` 的本地 CLI `list`、`send`、`doctor` 或 `update` 调用可以同时使用 `--ssh-config ABSOLUTE_PATH` 和 `--trust-ssh-config` 选择现有 OpenSSH 配置。两个标志缺一不可。以下为示例路径，支持用引号包裹的空格：
+
+```bash
+session-peer list --host worker --ssh-config '/home/alice/SSH Profiles/work.conf' --trust-ssh-config
+session-peer doctor --host worker --ssh-config '/home/alice/SSH Profiles/work.conf' --trust-ssh-config --check-return-route
+```
+
+此选择赋予配置本地代码执行权限：即使在 `ssh -G` 用户查询或 `send --dry-run` 中，`Match exec` 也可能执行。操作者还必须信任 `Include` 文件、`ProxyCommand` 及其他外部依赖。验证不是配置沙箱，也不会递归验证这些依赖。不会编辑任何现有配置档案或配置文件。
+
+路径必须是绝对路径，不得包含 `..` 路径段、控制字符或任何路径组件中的符号链接。所选文件必须是当前有效用户拥有的普通文件，硬链接数恰好为 1，大小不超过 64 KiB，且不得具有组或其他用户写权限以及 setuid/setgid/sticky 位。祖先目录须由 root 或当前有效用户拥有，且不得允许组或其他用户写入；root 拥有的 sticky 目录除外。Linux 拒绝扩展访问 ACL 和目录默认 ACL；macOS 拒绝 allow ACL 条目以及禁用所有权的卷。无法验证 ACL 或所有权时也会拒绝。这是保守检查，并非完整的有效权限解释器。
+
+同一次 CLI 调用会在本地 `ssh -G` 查询、doctor、远程列表与版本检查、更新探测/安装/验证，以及 send/handoff SSH 调用中复用同一选择。每次启动 SSH 前都会重新验证文件身份、元数据、内容哈希及存储安全性。检测到变更时拒绝操作，不回退至默认配置。OpenSSH 打开原始路径；这不是不可变字节快照，验证与 OpenSSH 读取之间仍可能发生同一用户修改文件的竞态。
+
+此模式强制 `StrictHostKeyChecking=yes`、`UpdateHostKeys=no`、`ForwardAgent=no`、`PermitLocalCommand=no` 和 `BatchMode=yes`，并禁用连接复用。现有显式主机密钥固定仍具有优先级。`--ssh-opt` 允许列表不变，其中的 `-F` 和 `ProxyCommand` 仍被禁止。所选本地路径不会传给远程命令、回复路由或公开 JSON。反向 doctor 使用远程机器自身的配置，绝不继承此路径。正向成功不能证明反向认证、消息消费或 ACK。
+
+环境变量、MCP 请求、ReplyTo 地址和已存储预设不能选择此模式。Windows、`setup`、配对设备路由、预设组合、回复 URI 目标以及未指定 `--host` 的调用，会在读取配置或启动 SSH 前被拒绝。省略这对标志时保留现有默认 SSH 行为。
+
+### 一次性配对链接（v1.3候选）
+
+两端都需要 `pairing-offer-v1` 及现有Unix Python 3.11+ relay额外依赖。以下为候选命令，不代表已发布的v1.3支持：
+
+```sh
+session-peer device rotation-status --state /private/client-state
+session-peer device offer --state /private/device-state --peer-key CLIENT-CURRENT-64-HEX-KEY --direct PRIVATE-IP:3770 --show-link
+session-peer device pair --state /private/client-state --link --route direct
+session-peer device offer-status --state /private/device-state --offer-id OFFER-UUID
+session-peer device offer-cancel --state /private/device-state --offer-id OFFER-UUID
+```
+
+创建时核对双方身份，只在所有者终端显示链接。`--link` 不接值；使用长度受限的不回显输入，客户端独立核对接收端当前密钥指纹后，才登记信任并联网。无终端时拒绝，不改为回显或自动批准。不要把链接放进参数、浏览器历史、日志或Issue。设置向导提供链接/私密文件选项，现有文件命令仍受支持。取消只影响该提议的待定信任；已完成的配对须显式吊销。没有历史的过期链接会被拒绝，只有完全匹配的保存上下文才能核对已经完成的认证结果。配对不替代接收目标策略或原生CLI的审批。密钥轮换限制、有效期、频率限制、中断与威胁模型见[配对设备指南](paired-devices.md)。
+
 <a id="updating"></a>
 ### 更新
+
+在 macOS/Linux 上，可以隐藏指定稳定版本的自动运行时通知，或清除此设置：
+
+```bash
+session-peer update --dismiss-runtime-notice 1.3.1
+session-peer update --clear-runtime-notice-dismissal
+```
+
+上述版本仅为示例，并非发行公告。这两个命令只离线修改本地设置，不检查、安装或批准发行版，不能与远程/SSH 选项或检查选项组合使用。只有规范化后完全匹配的版本才会隐藏；后续版本仍可能显示通知，清除后恢复通常行为。显式本地检查仍报告真实的最新版本及是否过时，通知设置作为独立信息提供。远程检查、技能通知和现有的全局关闭通知设置均不变。远程命令仍可能显示调用方 CLI 自身的缓存通知；此时只读取一次本地设置，而不是按目标分别读取。该设置不会隐藏远程版本或结果。
+
+设置独立于更新缓存，保存到 `$XDG_CONFIG_HOME/session-peer/update-notices.json`；环境变量未设置或为空时使用 `~/.config/session-peer/update-notices.json`。目录和文件必须具有安全的所有权和私有权限。不安全的路径会被拒绝，不会自动修复或改用其他路径。无效的设置文件或采用未来版本模式的设置文件不会隐藏任何通知，两个命令也不会覆盖这些文件；请先检查专用设置文件。Windows 暂不支持按版本设置，但仍可使用普通更新、检查和全局关闭通知功能。
+
+安全检查覆盖 POSIX 所有者和权限位，并非完整的 ACL（附加访问权限）审计或物理存储介质持久性认证。祖先路径中的符号链接和显式指定的相对配置路径会被有意拒绝，不会回退。文件系统必须支持基于目录的输入输出、文件锁和目录 fsync（同步）。检查并备份损坏的设置后，操作人员可手动删除该专用 JSON 文件（仅此文件），然后再次运行设置命令；可能仍有写入进程运行时，不要删除锁文件。系统不会自动修复。
 
 对于通过包管理器安装的版本，请使用安装该命令的同一包管理器：
 
@@ -373,7 +453,7 @@ session-peer update --host web-01 --check         # inspect the remote standalon
 session-peer update --host web-01                 # push this program if versions differ
 ```
 
-远程更新是与**本地程序的版本**进行比较，而非最新的 GitHub Release。即使远程版本更新它也会推送；在分发之前，请先检查并更新本地程序。远程副本不会从 GitHub 获取更新。远程版本探测仅检查 `~/.local/share/session-peer/session_peer.py`，不检查 pip/pipx/uv 安装；远程更新会安装该独立路径及其 CLI 链接。对于通过包管理器安装的远程 CLI，请改用该主机上自带的管理器进行升级。
+远程更新是与**本地程序的版本**进行比较，而非最新的 GitHub Release。仅在远程副本不存在或更旧时推送，若远程版本较新则保持不变。在分发之前，请先检查并更新本地程序。远程副本不会从 GitHub 获取更新。远程版本探测仅检查 `~/.local/share/session-peer/session_peer.py`，不检查 pip/pipx/uv 安装；远程更新会安装该独立路径及其 CLI 链接。对于通过包管理器安装的远程 CLI，请改用该主机上自带的管理器进行升级。
 
 无论是本地还是远程的 `update` 都不会刷新 Claude 技能。从所需发布版本的检出目录重新运行 `install.sh` 可同时刷新独立程序和技能。本地的 `session-peer update --check` 和 `session-peer update` 也会填充自动通知所使用的相同缓存。
 

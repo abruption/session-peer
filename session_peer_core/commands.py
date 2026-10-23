@@ -106,6 +106,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         emit(
             args.json, payload, render_doctor(payload, "this machine"), command="doctor",
         )
+        if getattr(args, "explain", False):
+            args._delivery_explanation_started = True
+            emit_delivery_explanation(args, payload, mode="doctor")
         return 0
 
     exit_code = 0
@@ -114,9 +117,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return_host = _doctor_return_host(args) if args.check_return_route else None
     for requested_host in args.host:
         host = requested_host
+        if getattr(args, "explain", False):
+            args._delivery_explanation_started = False
+            args._delivery_explanation_host = requested_host
         try:
             transport = SshTransport(requested_host, args, tailnet_status)
             host, ssh_opts = transport.host, transport.ssh_opts
+            if getattr(args, "explain", False):
+                args._delivery_explanation_started = True
+                args._delivery_explanation_host = display_host(requested_host, host)
             remote_argv = ["doctor", "--no-update-notice"] + agent_remote_options(args)
             if return_host:
                 remote_argv.extend(["--_return-host", return_host])
@@ -138,6 +147,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 if len(all_results) > 1:
                     print()
                 print(render_doctor(payload, display_host(requested_host, host)))
+                if getattr(args, "explain", False):
+                    args._delivery_explanation_started = True
+                    emit_delivery_explanation(args, payload, mode="doctor", host=display_host(requested_host, host))
         except CcPeerError as exc:
             exit_code = EXIT_ERROR
             all_results.append(json_result(
@@ -147,6 +159,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             ))
             if not args.json:
                 print(human_text(f"session-peer: {requested_host}: {exc}"), file=sys.stderr)
+                if getattr(args, "explain", False):
+                    emit_delivery_explanation(args, {}, mode="doctor", failed=True,
+                                              host=display_host(requested_host, host), stream=sys.stderr)
     if args.json:
         emit_json_results(all_results)
     return exit_code

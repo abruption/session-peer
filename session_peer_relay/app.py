@@ -88,7 +88,8 @@ class Receiver:
         if value.get('op') == 'pair.prepare' and peer is None:
             return self.store.prepare(value)
         if value.get('op') == 'pair.commit' and peer:
-            return self.store.commit(peer)
+            return self.store.commit(peer, value.get('invitation'), authenticated_key=peer,
+                                     offer=value.get('offer') is True)
         key = peer
         peer = self.store.principal(key)
         self.store.authorize(peer, value.get('op'))
@@ -112,7 +113,7 @@ class Receiver:
             raise Rejected('key_rotation_restricted')
         if op == 'probe':
             return {'ok': True, 'device': self.store.device, 'receiverReady': True,
-                    'features': ['identity-rotation-v1']}
+                    'features': ['identity-rotation-v1', 'delivery-explanation-v1']}
         if op == 'status':
             return self.store.status(peer, value['body'])
         if op == 'rotation.prepare':
@@ -138,8 +139,11 @@ class Receiver:
                                 for row in part.get('sessions', []))
             return {'ok': not errors, 'sessions': sessions, 'errors': errors}
         body = value['body']
-        if not isinstance(body, dict) or set(body) != {'target', 'message'}:
+        if (not isinstance(body, dict) or set(body) not in (
+                {'target', 'message'}, {'target', 'message', 'explain'})
+                or ('explain' in body and (op != 'resolve' or body['explain'] is not True))):
             raise Rejected('invalid_body')
+        explanation = {'explain': True} if body.get('explain') is True else {}
         alias, text = body['target'], body['message']
         if not isinstance(alias, str):
             raise Rejected('invalid_target')
@@ -154,11 +158,11 @@ class Receiver:
             raise Rejected('framed_message_too_large')
         # Binding overhead must also fit, before resolve or journal begin.
         try:
-            worker_frame(binding, 'resolve' if op == 'resolve' else 'send', text, key)
+            worker_frame(binding, 'resolve' if op == 'resolve' else 'send', text, key, **explanation)
         except FrameRejected as exc:
             raise Rejected(str(exc)) from None
         if op == 'resolve':
-            result = await self.native.invoke(binding, 'resolve', text, peer_fingerprint=key)
+            result = await self.native.invoke(binding, 'resolve', text, peer_fingerprint=key, **explanation)
             if result.get('reason') == 'codex_executable_not_found':
                 self.lifecycle_event('native_preflight_refused', operation='resolve',
                                      reason='codex_executable_not_found')
@@ -365,54 +369,129 @@ async def open_channel(store, certificate, routes, route, credential=None, boots
         raise
 
 
-async def pair(store, invite, route, credential=None):
+class PairingWindowExpired(Exception):
+    pass
+
+
+class PairingCompletionKnown(Rejected):
+    """A validated remote receipt must never trigger another preparation."""
+
+
+async def pair(store, invite, route, credential=None, *, offer_digest=None, expected_client_key=None):
     if store.recovery_required():
         raise Rejected('recovery_required')
-    if (type(invite.get('v')) is not int or invite['v'] not in (1, 2) or invite['expires'] < time.time()
+    link_mode = offer_digest is not None or expected_client_key is not None
+    if link_mode:
+        from .pairing_links import encode_link
+        try:
+            encode_link(invite, expected_client_key)
+        except ValueError:
+            raise Rejected('invalid_pairing_link') from None
+    expired = invite['expires'] <= time.time()
+    if (type(invite.get('v')) is not int or invite['v'] not in (1, 2) or (expired and not link_mode)
             or fingerprint(invite['certificate']) != invite.get('keyFingerprint', invite['device'])):
         raise Rejected('invalid_invitation')
-    previous = store.peer(invite['device'])
+    saved_intent = False
+    if link_mode:
+        saved_intent = store.save_offer_intent(invite, offer_digest, expected_client_key)
+        if expired:
+            return await finish_pair(store, invite, route, credential, offer=True)
+    with store._pairing_transaction():
+        previous = store.peer(invite['device'])
     if previous and previous['status'] == 'paired':
-        raise Rejected('invitation_consumed')
-    if previous and previous['status'] == 'pending':
+        if not link_mode or not saved_intent:
+            raise Rejected('invitation_consumed')
+        return await finish_pair(store, invite, route, credential, offer=True)
+    if (previous and previous['status'] == 'pending') or (link_mode and saved_intent):
         # Resume by proving the same key, not by consuming the invitation again.
         try:
-            return await finish_pair(store, invite, route, credential)
+            return await finish_pair(store, invite, route, credential, offer=link_mode)
+        except PairingCompletionKnown:
+            raise
         except Exception:
             pass  # prepare is itself idempotent for this invitation and public key
+    if link_mode and time.time() >= invite['expires']:
+        return await finish_pair(store, invite, route, credential, offer=True)
     store.stage(invite)
-    channel = await open_channel(store, invite['certificate'], invite['routes'], route, credential, True)
+    if link_mode and time.time() >= invite['expires']:
+        return await finish_pair(store, invite, route, credential, offer=True)
+    channel = None
     try:
-        preparation = {'op': 'pair.prepare', 'invitation': invite['id'],
-                       'secret': invite['secret'], 'certificate': store.cert}
-        if store.generation:
-            preparation.update(principal=store.device, generation=store.generation)
-        await channel.send(preparation)
-        prepared = await channel.recv()
-        if not prepared.get('ok'):
-            raise Rejected(prepared.get('reason', 'pairing_failed'))
-        if store.generation and 'identity-rotation-v1' not in prepared.get('features', []):
-            raise Rejected('rotation_unsupported')
-    finally:
-        await channel.close()
-    return await finish_pair(store, invite, route, credential)
+        remaining = invite['expires'] - time.time() if link_mode else None
+        if link_mode and remaining <= 0:
+            raise PairingWindowExpired()
+        try:
+            # One expiry budget covers bootstrap, preparation and its response.
+            async with asyncio.timeout(remaining):
+                if link_mode and time.time() >= invite['expires']:
+                    raise PairingWindowExpired()
+                channel = await open_channel(store, invite['certificate'], invite['routes'], route, credential, True)
+                if link_mode and time.time() >= invite['expires']:
+                    raise PairingWindowExpired()
+                preparation = {'op': 'pair.prepare', 'invitation': invite['id'],
+                               'secret': invite['secret'], 'certificate': store.cert}
+                if link_mode:
+                    preparation['offer'] = True
+                if store.generation:
+                    preparation.update(principal=store.device, generation=store.generation)
+                await channel.send(preparation)
+                prepared = await channel.recv()
+                if not prepared.get('ok'):
+                    if link_mode and saved_intent:
+                        # A consumed remote offer may be hidden by a transient
+                        # commit-channel failure. Preserve exact recovery facts
+                        # for the next explicit invocation; do not retry here.
+                        raise Rejected('pairing_reconciliation_required')
+                    store.discard_pairing_stage(invite['id'])
+                    raise Rejected('pairing_prepare_refused' if link_mode else prepared.get('reason', 'pairing_failed'))
+                if store.generation and 'identity-rotation-v1' not in prepared.get('features', []):
+                    raise Rejected('rotation_unsupported')
+                if link_mode and ('pairing-offer-v1' not in prepared.get('features', []) or
+                                  prepared.get('offerId') != invite['id'] or prepared.get('device') != invite['device']):
+                    raise Rejected('pairing_offer_unsupported')
+        finally:
+            if channel is not None:
+                await channel.close()
+    except (PairingWindowExpired, TimeoutError):
+        if link_mode and time.time() >= invite['expires']:
+            return await finish_pair(store, invite, route, credential, offer=True)
+        raise
+    return await finish_pair(store, invite, route, credential, offer=link_mode)
 
 
-async def finish_pair(store, invite, route, credential):
+async def finish_pair(store, invite, route, credential, *, offer=False):
     # No send/list access before possession of the newly proposed key is proven.
     channel = await open_channel(store, invite['certificate'], invite['routes'], route, credential)
+    completion_known = False
     try:
-        await channel.send({'op': 'pair.commit'})
+        commitment = {'op': 'pair.commit'}
+        if offer:
+            commitment.update(invitation=invite['id'], offer=True)
+        await channel.send(commitment)
         committed = await channel.recv()
         if not committed.get('ok'):
             raise Rejected('pairing_not_committed')
-        store.remember(invite)
+        if offer and (committed.get('offerId') != invite['id'] or committed.get('device') != invite['device']
+                      or 'pairing-offer-v1' not in committed.get('features', [])):
+            raise Rejected('pairing_offer_unsupported')
+        completion_known = True
+        try:
+            store.remember(invite)
+        except Exception:
+            if offer:
+                raise PairingCompletionKnown('pairing_local_reconciliation_required') from None
+            raise
         return committed
     finally:
-        await channel.close()
+        try:
+            await channel.close()
+        except Exception:
+            if offer and completion_known:
+                raise PairingCompletionKnown('pairing_local_reconciliation_required') from None
+            raise
 
 
-async def exchange(store, peer, op, body=None, ident=None, route='auto', credential=None):
+async def exchange(store, peer, op, body=None, ident=None, route='auto', credential=None, *, explain=False):
     if store.recovery_required() and op not in ('probe', 'status', 'rotation.status'):
         raise Rejected('recovery_required')
     record = store.peer(peer)
@@ -441,7 +520,9 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
                 raise Rejected('peer_not_ready')
             if op.startswith('rotation.') and 'identity-rotation-v1' not in response.get('features', []):
                 raise Rejected('rotation_unsupported')
-            return kind, channel, attempt_id
+            features = response.get('features')
+            supported = isinstance(features, list) and 'delivery-explanation-v1' in features
+            return kind, channel, attempt_id, supported
         except TimeoutError:
             with contextlib.suppress(Exception):
                 await channel.close()
@@ -508,7 +589,7 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
             if (not task.cancelled() and task.exception() is None
                     and (winner is None or task.result()[1] is not winner[1])):
                 await task.result()[1].close()
-    kind, channel, selected_attempt_id = winner
+    kind, channel, selected_attempt_id, explanation_supported = winner
     setup = ({'setupAttempts': setup_attempts[kind], 'setupDegraded': True,
               'setupFailureHistory': history[kind]} if setup_attempts[kind] > 1 else {})
     submitted = False
@@ -517,10 +598,14 @@ async def exchange(store, peer, op, body=None, ident=None, route='auto', credent
         # Preserve the preflighted request ID/body; Secure.send rechecks framing
         # after refreshing the expiry, before any application bytes are written.
         value['expires'] = time.time() + 60
+        if op == 'resolve' and explain is True and explanation_supported:
+            value['body'] = {**body, 'explain': True}
         # Exactly one application submission, after path selection. No failover resend.
         await channel.send(value)
         submitted = True
         result = await channel.recv()
+        if not (op == 'resolve' and explain is True and explanation_supported):
+            result = {key: item for key, item in result.items() if key != 'deliveryContext'}
         return {**result, 'route': kind, 'receiverAccepted': result.get('ok', False),
                 'relayAttached': kind == 'relay', 'requestId': value['id'],
                 'attemptId': selected_attempt_id, **setup}
