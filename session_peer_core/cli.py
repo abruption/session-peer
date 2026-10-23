@@ -12,8 +12,20 @@ class MessageArgumentParser(argparse.ArgumentParser):
 
 
 class HumanArgumentParser(MessageArgumentParser):
+    def parse_known_args(self, args=None, namespace=None):
+        values = list(sys.argv[1:] if args is None else args)
+        # Reject accidental credential argv before argparse can quote values in
+        # unknown-option, missing-argument or invalid-choice diagnostics.
+        if (self.prog in ('session-peer', 'session-peer device', 'session-peer setup')
+                and any('session-peer://pair/' in value.lower() for value in values)
+                and (self.prog != 'session-peer' or (values and values[0] in ('device', 'setup')))):
+            self.error('pairing_link_argv_forbidden; use --link without a value')
+        return super().parse_known_args(values, namespace)
+
     def error(self, message):
         # Preserve both the message-value and display-only escaping contracts.
+        if 'session-peer://pair/' in message.lower():
+            message = 'pairing_link_argv_forbidden; use --link without a value'
         super().error(human_text(message))
 
 
@@ -235,7 +247,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(setup)
     setup.add_argument('--mode', choices=('local', 'ssh', 'relay'))
     setup.add_argument('--interactive', action='store_true', help='ask before each setup mutation; EOF/Ctrl-C cancels')
-    setup.add_argument('--action', choices=('plan', 'init', 'login', 'enroll', 'targets', 'policy', 'invite', 'pair', 'ready', 'receiver', 'cancel'), default='plan')
+    setup.add_argument('--action', choices=('plan', 'init', 'login', 'enroll', 'targets', 'policy', 'invite', 'offer', 'offer-status', 'offer-cancel', 'pair', 'ready', 'receiver', 'cancel'), default='plan')
     setup.add_argument('--apply', action='store_true', help='explicitly approve the selected setup action, never a message send')
     setup.add_argument('--state')
     setup.add_argument('--server')
@@ -252,7 +264,12 @@ def build_parser() -> argparse.ArgumentParser:
     setup.add_argument('--antigravity-home')
     setup.add_argument('--direct')
     setup.add_argument('--relay', help='receiver WSS connect URL, not an account-login URL')
-    setup.add_argument('--invite', help='private existing invitation file for a client')
+    source = setup.add_mutually_exclusive_group()
+    source.add_argument('--invite', help='private existing invitation file for a client')
+    source.add_argument('--link', action='store_true', help='read private pairing link from an echo-disabled terminal; no argument value')
+    setup.add_argument('--peer-key', help='intended client current certificate fingerprint, confirmed independently')
+    setup.add_argument('--show-link', action='store_true', help='explicitly display a private offer link on the owner terminal')
+    setup.add_argument('--offer-id', help='public offer UUID for status/cancellation')
     setup.add_argument('--out', help='new private invitation file for a receiver')
     setup.add_argument('--route', choices=('auto', 'direct', 'relay'), default='auto')
     setup.add_argument('--seconds', type=int, choices=range(1, 86401), default=3600, metavar='SECONDS')

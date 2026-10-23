@@ -318,6 +318,20 @@ session-peer doctor --host worker --ssh-config '/home/alice/SSH Profiles/work.co
 
 环境变量、MCP 请求、ReplyTo 地址和已存储预设不能选择此模式。Windows、`setup`、配对设备路由、预设组合、回复 URI 目标以及未指定 `--host` 的调用，会在读取配置或启动 SSH 前被拒绝。省略这对标志时保留现有默认 SSH 行为。
 
+### 一次性配对链接（v1.3候选）
+
+两端都需要 `pairing-offer-v1` 及现有Unix Python 3.11+ relay额外依赖。以下为候选命令，不代表已发布的v1.3支持：
+
+```sh
+session-peer device rotation-status --state /private/client-state
+session-peer device offer --state /private/device-state --peer-key CLIENT-CURRENT-64-HEX-KEY --direct PRIVATE-IP:3770 --show-link
+session-peer device pair --state /private/client-state --link --route direct
+session-peer device offer-status --state /private/device-state --offer-id OFFER-UUID
+session-peer device offer-cancel --state /private/device-state --offer-id OFFER-UUID
+```
+
+创建时核对双方身份，只在所有者终端显示链接。`--link` 不接值；使用长度受限的不回显输入，客户端独立核对接收端当前密钥指纹后，才登记信任并联网。无终端时拒绝，不改为回显或自动批准。不要把链接放进参数、浏览器历史、日志或Issue。设置向导提供链接/私密文件选项，现有文件命令仍受支持。取消只影响该提议的待定信任；已完成的配对须显式吊销。没有历史的过期链接会被拒绝，只有完全匹配的保存上下文才能核对已经完成的认证结果。配对不替代接收目标策略或原生CLI的审批。密钥轮换限制、有效期、频率限制、中断与威胁模型见[配对设备指南](paired-devices.md)。
+
 <a id="updating"></a>
 ### 更新
 

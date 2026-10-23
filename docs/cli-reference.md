@@ -479,6 +479,20 @@ reply-URI destinations, and invocations without `--host` are rejected before
 reading the configuration or starting SSH. Omitting the pair preserves the
 existing default SSH behavior.
 
+### One-time pairing links (v1.3 candidate)
+
+Both endpoints need `pairing-offer-v1` and the existing Unix Python 3.11+ relay extra. These are candidate commands, not published v1.3 support:
+
+```sh
+session-peer device rotation-status --state /private/client-state
+session-peer device offer --state /private/device-state --peer-key CLIENT-CURRENT-64-HEX-KEY --direct PRIVATE-IP:3770 --show-link
+session-peer device pair --state /private/client-state --link --route direct
+session-peer device offer-status --state /private/device-state --offer-id OFFER-UUID
+session-peer device offer-cancel --state /private/device-state --offer-id OFFER-UUID
+```
+
+Creation confirms both identities and shows the link only on the owner terminal. `--link` takes no value: input is hidden and bounded; the client independently confirms the receiver's current fingerprint before trust staging or networking. No terminal means refusal, not echo fallback or automatic consent. Never put a link in argv, browser history, logs or issue reports. Guided setup offers link/private-file choices; existing file commands remain supported. Cancellation affects only that offer's pending trust, not completed pairing; use explicit peer revocation after completion. Expired cold links are refused; only exact saved context can reconcile an already-consumed authenticated result. Pairing never replaces the receiving target policy or native approval. See the [paired-device guide](paired-devices.md) for key-rotation restrictions, expiry, quotas, interruption and the threat model.
+
 ### Updating
 
 For package-managed installs, use the same manager that installed the command:

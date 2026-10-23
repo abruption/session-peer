@@ -433,6 +433,20 @@ session-peer doctor --host worker --ssh-config '/home/alice/SSH Profiles/work.co
 
 환경 변수, MCP 요청, ReplyTo 주소, 저장된 프리셋에서는 이 모드를 선택할 수 없습니다. Windows, `setup`, 페어링된 기기 경로, 프리셋 조합, 응답 URI 대상, `--host` 없는 호출은 설정을 읽거나 SSH를 시작하기 전에 거부됩니다. 두 플래그를 생략하면 기존 기본 SSH 동작을 유지합니다.
 
+### 일회용 페어링 링크(v1.3 후보)
+
+양쪽 기기에 `pairing-offer-v1`과 기존 Unix Python 3.11+ relay 추가 의존성이 필요합니다. 다음은 후보 명령이며 공개된 v1.3 지원이 아닙니다.
+
+```sh
+session-peer device rotation-status --state /private/client-state
+session-peer device offer --state /private/device-state --peer-key CLIENT-CURRENT-64-HEX-KEY --direct PRIVATE-IP:3770 --show-link
+session-peer device pair --state /private/client-state --link --route direct
+session-peer device offer-status --state /private/device-state --offer-id OFFER-UUID
+session-peer device offer-cancel --state /private/device-state --offer-id OFFER-UUID
+```
+
+생성 시 양쪽 신원을 확인하고 소유자의 터미널에만 링크를 표시합니다. `--link`에는 값을 붙이지 않습니다. 크기가 제한되고 표시되지 않는 입력을 사용하며, 클라이언트가 별도로 확인한 수신 기기의 현재 키 지문을 입력한 뒤 신뢰를 등록하고 접속합니다. 터미널이 없으면 입력 노출이나 자동 승인 대신 거부합니다. 링크를 명령 인자, 브라우저 기록, 로그나 이슈에 남기지 마십시오. 설정 안내는 링크·비공개 파일을 선택할 수 있으며 기존 파일 명령도 유지합니다. 취소는 해당 초대의 보류 신뢰만 제거합니다. 완료된 페어링은 별도의 명시적 철회가 필요합니다. 기록 없는 만료 링크는 거부하고, 정확히 일치하는 저장 기록이 있어야 이미 완료된 인증 결과만 확인할 수 있습니다. 페어링은 수신 대상 정책이나 네이티브 CLI의 승인을 대신하지 않습니다. 키 교체 제한, 만료·횟수 제한, 중단과 위협 모델은 [기기 페어링 안내](paired-devices.md)를 참조하십시오.
+
 <a id="updating"></a>
 ### 업데이트
 
