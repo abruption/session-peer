@@ -91,6 +91,45 @@ class HandoffWatch(unittest.TestCase):
         return {path.name: (path.read_bytes(), path.stat().st_ino, path.stat().st_mtime_ns)
                 for path in self.ledger.root.iterdir() if path.is_file()}
 
+    def write_real_output_frames(self, stream):
+        # These positive controls test real descriptor delivery, not whether
+        # an OS scheduler always resumes within the watch's final 75ms. The
+        # command's original deadline and exhausted reserve are tested below
+        # with a deterministic clock, without changing the helper's clock.
+        writer = peer.HandoffWatchOutput(stream, peer.handoff_now() + 3)
+        try:
+            snapshot = {"operation": "watch", "event": "snapshot", "sequence": 1,
+                        "historyPhase": self.record["phase"],
+                        "handoff": peer.handoff_public(self.epoch, self.record, None)}
+            end = {"operation": "watch", "event": "end", "reason": "duration_elapsed",
+                   "snapshotsEmitted": 1, "samples": 1}
+            self.assertIsNone(writer.write(peer.handoff_watch_frame(self.args, snapshot, ok=True)))
+            self.assertIsNone(writer.write(peer.handoff_watch_frame(self.args, end, ok=True), end=True))
+        finally:
+            closed = writer.close()
+            if writer.process.poll() is None:
+                # Cleanup does not turn a missed production deadline into a
+                # passing assertion; do not leave the test's child behind.
+                writer.process.kill()
+                writer.process.wait(timeout=1)
+            self.assertTrue(closed, "output helper was not reaped within its original budget")
+            self.assertIsNotNone(writer.process.poll(), "output helper remains running")
+
+    def read_real_output_frames(self, descriptor):
+        deadline = time.monotonic() + 3
+        raw = bytearray()
+        while raw.count(b"\n") < 2 and len(raw) <= 2 * peer.HANDOFF_WATCH_FRAME_BYTES:
+            remaining = deadline - time.monotonic()
+            self.assertGreater(remaining, 0, "incomplete output frames")
+            ready, _, _ = select.select([descriptor], [], [], remaining)
+            self.assertTrue(ready, "output frames were not readable")
+            chunk = os.read(descriptor, 8192)
+            self.assertTrue(chunk, "output ended before both frames")
+            raw.extend(chunk)
+        self.assertLessEqual(len(raw), 2 * peer.HANDOFF_WATCH_FRAME_BYTES)
+        self.assertTrue(raw.endswith(b"\n"), "truncated output frame")
+        return [json.loads(line) for line in raw.decode().splitlines()]
+
     def test_ascii_parsers(self):
         for value in ("1", "30", "60"):
             self.assertEqual(peer.handoff_watch_timeout(value), int(value))
@@ -379,14 +418,12 @@ class HandoffWatch(unittest.TestCase):
             os.write(slave, b"x")
             os.read(master, 1)
             before = peer.fcntl.fcntl(slave, peer.fcntl.F_GETFL)
-            self.args.watch_timeout = 1
             with mock.patch.object(peer.fcntl, "fcntl", side_effect=AssertionError("inherited flag mutation")):
-                code, _ = self.invoke(stream=stream, real_clock=True)
-            self.assertEqual(code, 0, self.output_diagnostics)
-            rows = [json.loads(line) for line in os.read(master, 8192).decode().splitlines()]
+                self.write_real_output_frames(stream)
+            rows = self.read_real_output_frames(master)
             self.assertEqual([row["event"] for row in rows], ["snapshot", "end"])
+            self.assertTrue(all(row["ok"] for row in rows))
             self.assertEqual(peer.fcntl.fcntl(slave, peer.fcntl.F_GETFL), before)
-            self.assertTrue(all(process.poll() is not None for process in self.output_processes))
         finally:
             stream.close()
             os.close(master)
@@ -618,13 +655,12 @@ writer.close()
             before = peer.fcntl.fcntl(write_fd, peer.fcntl.F_GETFL)
             drainer = threading.Timer(0.1, lambda: os.read(read_fd, 1024 * 1024))
             drainer.start()
-            self.args.watch_timeout = 1
             with mock.patch.object(peer.fcntl, "fcntl", side_effect=AssertionError("inherited flag mutation")):
-                code, unused = self.invoke(stream=stream, real_clock=True)
+                self.write_real_output_frames(stream)
             drainer.join()
-            self.assertEqual(code, 0, self.output_diagnostics)
-            rows = [json.loads(line) for line in os.read(read_fd, 8192).decode().splitlines()]
+            rows = self.read_real_output_frames(read_fd)
             self.assertEqual([row["event"] for row in rows], ["snapshot", "end"])
+            self.assertTrue(all(row["ok"] for row in rows))
             self.assertEqual(peer.fcntl.fcntl(write_fd, peer.fcntl.F_GETFL), before)
         finally:
             if drainer is not None:
@@ -676,6 +712,54 @@ writer.close()
         self.assertEqual(code, 0)
         self.assertEqual([row["event"] for row in frames], ["snapshot", "end"])
         self.assertLess(self.clock.now, 1 - peer.HANDOFF_WATCH_REAP_SECONDS)
+
+    def test_additive_scheduler_delay_exhausts_end_reserve_without_late_output(self):
+        self.args.watch_timeout = 1
+        before = self.snapshot()
+        # Cover both the final-write cutoff (before the total deadline) and
+        # the already-expired total budget; neither permits a late end frame.
+        for wake_at in (1 - peer.HANDOFF_WATCH_REAP_SECONDS + 0.001, 1.05):
+            with self.subTest(wake_at=wake_at):
+                self.clock.now = 0
+                def delayed_sleep(seconds):
+                    self.clock.now = wake_at
+                with mock.patch.object(self.clock, "sleep", side_effect=delayed_sleep), \
+                        mock.patch.object(peer.HandoffLedger, "record", wraps=self.ledger.record) as lookup:
+                    code, frames = self.invoke()
+                lookup.assert_called_once()
+                self.assertEqual(code, 1)
+                self.assertEqual([row["event"] for row in frames], ["snapshot"])
+                self.assertEqual([(row["end"], row["result"]) for row in self.output_diagnostics],
+                                 [(False, None), (True, "output_unavailable")])
+                self.assertEqual(self.output_diagnostics[-1]["result"], "output_unavailable")
+                self.assertTrue(self.output_diagnostics[-1]["end"])
+                self.assertLess(self.output_diagnostics[-1]["remainingMs"],
+                                peer.HANDOFF_WATCH_REAP_SECONDS * 1000)
+                self.assertEqual(self.clock.now, wake_at, "watch reset or extended its original budget")
+                self.assertTrue(before == self.snapshot(), "watch mutated history after output expiry")
+
+    def test_command_and_real_writer_complete_at_controlled_sample_limit(self):
+        read_fd, write_fd = os.pipe()
+        stream = os.fdopen(write_fd, "w")
+        self.args.watch_timeout = 10
+        before = self.snapshot()
+        try:
+            # Only pacing is synthetic. The command, clock, output helper,
+            # deadline, frame ACKs and cleanup remain real. The unchanged
+            # 61-sample bound ends the loop away from the last 75ms window.
+            with mock.patch.object(peer, "handoff_watch_pause", return_value=None):
+                code, _ = self.invoke(stream=stream, real_clock=True)
+            self.assertEqual(code, 0, self.output_diagnostics)
+            rows = self.read_real_output_frames(read_fd)
+            self.assertEqual([row["event"] for row in rows], ["snapshot", "end"])
+            self.assertTrue(all(row["ok"] for row in rows))
+            self.assertEqual(rows[-1]["samples"], 61)
+            self.assertEqual(rows[-1]["reason"], "duration_elapsed")
+            self.assertTrue(all(process.poll() is not None for process in self.output_processes))
+            self.assertTrue(before == self.snapshot(), "command output mutated history")
+        finally:
+            stream.close()
+            os.close(read_fd)
 
 
 if __name__ == "__main__":
