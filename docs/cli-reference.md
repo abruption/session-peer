@@ -416,6 +416,17 @@ error, `2` CLI usage error or an unresolved target reported as no-target, and
 is an operational error (`1`); a missing saved thread during dry-run returns `2`.
 Exit `0` on send does not confirm consumption or a reply.
 
+### Bounded handoff watch (v1.3 candidate)
+
+```sh
+session-peer handoff status --correlation-id PREPARED_UUID --json
+session-peer handoff watch --correlation-id PREPARED_UUID --watch-timeout 30 --interval-ms 1000 --json
+```
+
+Use an existing prepared UUID in the local owner's POSIX ledger. Status remains one snapshot; watch polls for 1..60 seconds (default 30) at 1000..5000 millisecond intervals (default 1000), accepting ASCII integers only and taking at most 61 samples. Watch emits an initial snapshot only if the budget permits a valid public projection, then changed public metadata/historyPhase only; it may emit no snapshots. JSON watch output uses the common schemaVersion 1 NDJSON envelope with operation watch and event snapshot or end, nesting the unchanged handoff object in snapshots; status JSON is unchanged. Timeout completion is exit 0 for watch completion only, not ACK or wait success; SIGINT is 130, history/output failure 1, invalid arguments 2. Missing/corrupt history or ledgerEpoch change stops watching. historyPhase is prepared, attempted, terminal, tombstone or quarantined; attempted means a durable attempt fence, not active execution.
+
+Watch is read-only: no intents, waits, receipts, ledger writes, submission or wake. It adds no host/device/Windows route or Codex ACK. Limits are 16 KiB per frame and 256 KiB total with a 2 KiB end reserve. Real-fd stdout uses one owned isolated output-only Python helper that sees only bounded public serialized bytes, never changes shared descriptor flags and reads no ledger/native data. The parent enforces the original total budget including IPC, checks it before new ledger read/validation stages, and reserves 100 ms within it for final output and cleanup, so sampling may end earlier. It terminates and reaps its helper on timeout, SIGINT or error; uninterruptible OS operations prevent a hard-real-time guarantee. Partial or unacknowledged writes prohibit subsequent/end frames; consumers must reject truncated final NDJSON lines. Helper completion means OS write completion, not recipient consumption. Snapshots are not a lossless event stream, and local UTC observations do not prove ACK arrival order. See the [handoff runtime guide](handoff-runtime.md) for privacy, retained submission/ACK/wait meanings, read-only collector queries and the existing quarantine gate. Watch launches no native message process or collector. This candidate is not a published release. No payload/capability digests are exposed; public targetGeneration keeps its existing contract. The read-only ledger releases its shared lock after reading immutable snapshot bytes, before parsing and validation. Interrupted final output and cleanup are capped at 100 ms within the remaining total budget. Overall success requires a complete successful end frame and exit 0: cleanup may fail after that frame. A nonzero exit means overall failure, without promoting ACK, discarding independently valid submission facts or permitting retry.
+
 ### Updating
 
 For package-managed installs, use the same manager that installed the command:

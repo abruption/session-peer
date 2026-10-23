@@ -50,7 +50,19 @@ session-peer handoff status --correlation-id PREPARED_UUID
 
 收集器时钟查询也是只读的。旧版收集器可能拒绝该查询，因此可用的下一步操作可能不包含 `keep_waiting`。状态查询不会改用会写入记录的查询，也不会重启收集器。记录快照与可选的收集器时钟观测是分开的，并非原子性的联合观测。等待因 history_unavailable 失败后，若收集器时钟恢复可用，状态查询现在会保留已知提交事实和失败的等待，同时不提供 keep_waiting。其他等待创建语义不变。保留标记中的最近等待详情显示为因历史过期而不可用，不作为未请求等待的证据。
 
-这是一次本地查询，不是持续观察或远程监控。Windows handoff 和 Codex ACK 仍不支持。[#296](https://github.com/abruption/session-peer/issues/296) 保持开放，以跟踪未来限制运行范围的 watch 模式。
+状态查询仍是本地单次查询。v1.3 候选版本增加了下述限时本地观察；Windows handoff 和 Codex ACK 仍不支持。[#296](https://github.com/abruption/session-peer/issues/296) 在评审、合并前保持开放，此候选版本尚未发布。
+
+## 在限定时间内观察一条请求
+
+```sh
+session-peer handoff watch --correlation-id PREPARED_UUID --watch-timeout 30 --interval-ms 1000 --json
+```
+
+观察仅轮询已有的本地所有者 POSIX 记录。超时接受 ASCII 整数 1..60 秒（默认 30），间隔接受 ASCII 整数 1000..5000 毫秒（默认 1000）。最多采样 61 次，仅在预算允许生成有效公开结果时输出初始快照，随后只输出公开元数据或 historyPhase 的变化；可能不输出任何快照。并非无损事件流。已知提交事实、ACK 依据、相对第一次等待的 ACK 迟到情况、最新保存的等待分别保持状态视图的含义。本地 UTC 观察时间不是 ACK 到达时间或顺序证据。 historyPhase 为 prepared、attempted、terminal、tombstone 或 quarantined；attempted 表示已持久保存的尝试屏障，不表示正在执行。
+
+JSON 输出是采用通用 schemaVersion 1 封装并包含 watch 专用字段的 NDJSON：operation 为 watch，event 为 snapshot 或 end。快照嵌套不变的公开 handoff 对象，普通 status JSON 保持不变。到期完成返回 0，仅表示观察结束，不表示 ACK 到达或等待成功。SIGINT 返回 130，历史或输出故障返回 1。历史缺失、损坏或 ledgerEpoch 改变时停止观察，不虚构 handoff 或 epoch。对已隔离 satisfied 等待的现有拒绝仍是上述 #181 生命周期条件。
+
+每个输出帧上限为 16 KiB，总输出上限为 256 KiB，其中为结束帧预留 2 KiB。真实文件描述符标准输出使用一个专属、隔离的 Python 输出辅助进程；它仅接收有界的已序列化公开字节，不更改共享描述符标志，也不读取记录或原生数据。父进程将辅助进程 IPC 纳入原始总期限，开始新的记录读取或验证阶段前也检查期限。总时间内预留 100 ms 用于最终输出和清理，因此采样可能提前结束。超时、SIGINT 或错误时，父进程终止并回收自己的辅助进程。不可中断的 OS 操作仍不具备严格实时保证。部分写入或未收到完成回复后，不再发送任何后续帧，包括结束帧；消费方必须拒绝被截断的最后一行 NDJSON。辅助进程完成回复仅证明 OS 写入完成，不证明接收者消费。观察不读取原生正文或对话记录，不公开权限或载荷、权限摘要，公开 targetGeneration 保持既有约定；不创建意图、等待或收据，不提交、唤醒、初始化、修复或写入记录。可使用已运行的本地收集器既有的只读时钟查询，但不会启动收集器或原生消息进程。不支持主机、设备路由或 Windows 观察，也不增加 Codex ACK 支持。 只读记录在读取不可变快照字节后、解析和验证前释放共享锁。 中断后的最终输出和清理在剩余总预算内最多使用 100 ms。 整体成功需要完整的成功结束帧和退出码 0：该帧之后清理仍可能失败。非零退出表示整体失败，不表示 ACK 升级、丢弃独立有效的提交事实或允许重试。
 
 ## 证据、隐私和时间限制
 

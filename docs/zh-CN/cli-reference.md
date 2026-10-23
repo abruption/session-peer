@@ -288,6 +288,17 @@ Host web-01
 
 退出码：`0` 命令成功（包括列出或预检运行 dry-run），`1` 操作错误，`2` CLI 用法错误或未解析的目标被报告为 no-target，以及 `130` 中断（Ctrl-C）。Codex 队列拒绝（包括缺失 rollout）属于操作错误（`1`）；预检运行期间缺失已保存的线程返回 `2`。发送操作退出码为 `0` 并不确认消息已被消费或回复。
 
+### 限时 handoff 观察（v1.3 候选版本）
+
+```sh
+session-peer handoff status --correlation-id PREPARED_UUID --json
+session-peer handoff watch --correlation-id PREPARED_UUID --watch-timeout 30 --interval-ms 1000 --json
+```
+
+使用本地所有者 POSIX 记录中已有的准备 UUID。状态查询仍为一次快照；观察运行 1..60 秒（默认 30），间隔 1000..5000 毫秒（默认 1000），仅接受 ASCII 整数，最多采样 61 次。观察仅在预算允许生成有效公开结果时输出初始快照，随后仅输出公开元数据/historyPhase 的变化；可能不输出任何快照。JSON 观察输出使用通用 schemaVersion 1 NDJSON 封装，其中 operation 为 watch，event 为 snapshot 或 end，快照嵌套原有 handoff 对象；status JSON 不变。到期完成的退出码 0 仅表示观察完成，并非 ACK 或等待成功；SIGINT 为 130，历史、输出故障为 1，无效参数为 2。历史缺失、损坏或 ledgerEpoch 改变会停止观察。 historyPhase 为 prepared、attempted、terminal、tombstone 或 quarantined；attempted 表示已持久保存的尝试屏障，不表示正在执行。
+
+观察为只读操作，不创建意图、等待、收据，不写入记录、提交或唤醒。不增加主机、设备、Windows 路径或 Codex ACK。每帧上限为 16 KiB，总量为 256 KiB，并预留 2 KiB 用于结束帧。真实文件描述符标准输出使用一个专属、隔离的 Python 输出辅助进程；它仅接收有界的已序列化公开字节，不更改共享描述符标志，也不读取记录或原生数据。父进程将 IPC 纳入原始总预算，开始新的记录读取或验证阶段前也检查期限；总时间内预留 100 ms 用于最终输出和清理，因此采样可能提前结束。超时、SIGINT 或错误时终止并回收辅助进程，但不可中断的 OS 操作不具备严格实时保证。部分写入或无完成回复后禁止后续帧、结束帧；消费方必须拒绝被截断的最后一行 NDJSON。辅助进程完成仅表示 OS 写入完成，不证明接收者消费。快照并非无损事件流，本地 UTC 观察不证明 ACK 到达顺序。有关隐私、保留的提交/ACK/等待含义、只读收集器查询及现有隔离限制，参见 [handoff 运行时指南](handoff-runtime.md)。观察不启动原生消息进程或收集器。此候选版本尚未发布。 不公开载荷或权限摘要，公开 targetGeneration 保持既有约定。 只读记录在读取不可变快照字节后、解析和验证前释放共享锁。 中断后的最终输出和清理在剩余总预算内最多使用 100 ms。 整体成功需要完整的成功结束帧和退出码 0：该帧之后清理仍可能失败。非零退出表示整体失败，不表示 ACK 升级、丢弃独立有效的提交事实或允许重试。
+
 <a id="updating"></a>
 ### 更新
 

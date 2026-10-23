@@ -252,6 +252,10 @@ def handoff_private_stat(path, directory=False):
     return info
 
 
+class HandoffReadDeadlineExceeded(Exception):
+    """The caller's read budget elapsed; not evidence of corrupt history."""
+
+
 class HandoffLedger:
     """Serialized, fsynced snapshots with retained effect fences, not dedup.
 
@@ -314,11 +318,17 @@ class HandoffLedger:
     @contextlib.contextmanager
     def transaction(self, deadline=None, *, read_only=False):
         """Validate one locked snapshot; read-only projections never persist retention."""
+        def check_read_deadline():
+            if read_only and deadline is not None and handoff_now() >= deadline:
+                raise HandoffReadDeadlineExceeded()
+
+        check_read_deadline()
         if IS_WINDOWS or fcntl is None:
             raise handoff_error("handoff_platform_unsupported")
         handoff_private_stat(self.root, True)
         lock = self.root / "ledger.lock"
         before = handoff_private_stat(lock)
+        check_read_deadline()
         fd = os.open(str(lock), os.O_RDWR | getattr(os, "O_NOFOLLOW", 0))
         try:
             after = os.fstat(fd)
@@ -326,38 +336,52 @@ class HandoffLedger:
                 raise handoff_error("unsafe_handoff_storage")
             limit = deadline if deadline is not None else handoff_now() + 5
             while True:
+                check_read_deadline()
                 try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(fd, (fcntl.LOCK_SH if read_only else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+                    check_read_deadline()
                     break
                 except BlockingIOError:
+                    check_read_deadline()
                     if handoff_now() >= limit:
                         raise handoff_error("handoff_storage_busy")
                     time.sleep(min(0.01, max(0, limit - handoff_now())))
             path = self.root / "ledger.json"
+            check_read_deadline()
             initial = handoff_private_stat(path)
             if initial.st_size > HANDOFF_LEDGER_BYTES:
                 raise handoff_error("handoff_history_unavailable")
+            check_read_deadline()
             read_fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
             with os.fdopen(read_fd, "rb") as stream:
                 current = os.fstat(stream.fileno())
                 if (initial.st_dev, initial.st_ino) != (current.st_dev, current.st_ino):
                     raise handoff_error("unsafe_handoff_storage")
+                check_read_deadline()
                 raw = stream.read(HANDOFF_LEDGER_BYTES + 1)
+            if read_only:
+                # Parse/validation use only this immutable local byte snapshot;
+                # release the shared lock so writers need not wait for them.
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            check_read_deadline()
             try:
                 state = handoff_json(raw, HANDOFF_LEDGER_BYTES)
                 if set(state) != {"schemaVersion", "epoch", "records"} or type(state["schemaVersion"]) is not int or state["schemaVersion"] != 1 or type(state["records"]) is not dict:
                     raise ValueError()
                 handoff_uuid(state["epoch"])
                 for key, record in state["records"].items():
+                    check_read_deadline()
                     handoff_uuid(key)
                     if type(record) is not dict or record.get("id") != key:
                         raise ValueError()
                     self._validate_record(record)
             except (CcPeerError, ValueError, KeyError, TypeError) as exc:
                 raise handoff_error("handoff_ledger_corrupt") from exc
+            check_read_deadline()
             boot, now = handoff_boot_clock(), handoff_now_ns()
             if boot is not None:
                 for record in state["records"].values():
+                    check_read_deadline()
                     if (record["phase"] != "tombstone" and record["historyBoot"] == boot
                             and now >= record["createdNs"] + 30 * 86400 * 1000000000):
                         # Detail expires only under proven boot/monotonic
@@ -365,6 +389,7 @@ class HandoffLedger:
                         # survives and still counts toward the intent quota.
                         record.update(phase="tombstone", submission="unknown", native=None,
                                       waits=[], ack=None, capability=None, pendingReceipt=None, observe=False, ackRequested=False)
+            check_read_deadline()
             yield state
             if not read_only:
                 self._save(state)
