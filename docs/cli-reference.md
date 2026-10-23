@@ -170,6 +170,69 @@ are ordinary command errors (JSON when requested, exit 1). No messages are
 submitted in either case. JSON results still describe submission rather than
 receipt; these flags introduce no structured JSON message-input protocol.
 
+<a id="route-presets"></a>
+
+## Local route presets (development)
+
+Development for #324; unavailable in published v1.2.1. The opt-in `preset` commands remember routes, not recipients. Use `--preset` to select one saved local or SSH route for ordinary Claude Code or Codex listing/sending on Mac/Linux. Windows preset operations are refused; ordinary Windows commands remain unchanged.
+
+```bash
+session-peer preset add work-mac --host user@work-mac --agent codex --codex-home /Users/user/.codex
+session-peer preset list
+session-peer preset show work-mac --json
+session-peer list --preset work-mac
+session-peer send --preset work-mac --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run
+session-peer send --preset work-mac --preset-revision 'dp1:<HASH>' --to 'codex:<full-thread-uuid>' --message "Review the patch"
+session-peer preset replace work-mac --expect-revision 'dp1:<HASH>' --host user@new-mac --agent codex --codex-home /Users/user/.codex
+session-peer preset remove work-mac --expect-revision 'dp1:<CURRENT-HASH>'
+```
+
+Replace the UUID with a current discovery result and the hash with the exact revision printed by the selected preset. A real send requires `--preset-revision`; a dry run may omit it. The `dp1:` hash covers the preset name and exact validated route values, not DNS, SSH configuration, host keys, native ownership, permission, generation or ACK. Changed route values require a fresh review; restoring identical values yields the same hash. Replacement/removal require `--expect-revision`, and adding an existing name is refused.
+
+Recipient names, PIDs, UUIDs and generation tokens are never saved. `--to` remains mandatory; a name is freshly resolved by existing rules, not bound to an earlier session. Existing explicit `--target-generation`, writer/storage checks and unknown/no-automatic-resend behavior are retained. A preset label does not authenticate a person or prove delivery.
+
+Storage is `$XDG_CONFIG_HOME/session-peer/destinations.json`, or `~/.config/session-peer/destinations.json` when the variable is unset; the configured base must be absolute. The application directory is owner-only 0700 and files are owner-only 0600 or stricter. Symlinks, unsafe ownership/permissions, duplicate/unknown JSON keys, malformed UTF-8, more than 128 entries or more than 64 KiB are refused without falling back to another route. Names match `[a-z][a-z0-9_-]{0,63}`. The schema stores only transport/agent, one SSH host when needed, and an absolute Codex home for Codex routes:
+
+```json
+{"schemaVersion":1,"presets":{"work-mac":{"transport":"ssh","agent":"codex","host":"user@work-mac","codexHome":"/Users/user/.codex"}}}
+```
+
+Combining a preset with explicit `--host`, `--codex-home`, `--agent`, `--ssh-opt` or `--codex-bin` is an error even if the values match; Reply-To URIs, paired devices, Antigravity, wake and experimental handoff combinations are also excluded. No credentials, executable paths, SSH commands/options, approval settings or receipt secrets are stored. Existing operator-owned SSH configuration still applies.
+
+`preset list` and `preset show` read configuration only: no native discovery, SSH, update notices or background refresh; missing storage is not initialized by a read. By contrast, `list --preset` explicitly runs the ordinary discovery for that one route, including any existing remote probes and partial-failure behavior. No other presets are contacted and no group broadcast is added.
+
+Text list/send operations print the chosen route and revision to stderr before the existing action. Existing native result JSON, stdout and exit contracts are unchanged; preset flags, revisions and local file paths are not forwarded over SSH. Each invocation uses one read snapshot. Later replacement/removal does not cancel an already expanded invocation; actual submission still revalidates the native target. This is not atomic storage/owner attestation, receiver deduplication, consumption, ACK or task completion.
+
+A `preset_commit_unconfirmed` error means an atomic replacement may already be visible but its durability could not be confirmed. Inspect the current configuration before retrying; no automatic rollback is attempted.
+
+Checked ancestors must be owned by root or the current user and not writable by others, except a root-owned sticky temporary directory; the immediate configuration parent must belong to the current user. All path components are opened without following symlinks. Extended ACL entries on private storage are conservatively refused; macOS ancestors may contain deny-only ACLs, but allow entries or unverifiable ACLs are refused. Linux POSIX ACLs are also checked. An empty or relative `XDG_CONFIG_HOME` is refused rather than silently selecting another path. Existing permissions are not repaired automatically: choose a safe, private absolute configuration root, or inspect and repair malformed configuration offline after keeping a private backup. Do not publish its contents.
+
+On macOS, mounts that ignore ownership are refused with `preset_ownership_unenforced`; an unavailable or unverifiable mount query is refused with `preset_mount_unverifiable`. Mode bits alone are not treated as proof that ownership is enforced. On Linux, ACLs on ancestors are also refused, as are filesystems whose ACL state cannot be verified. After an interrupted management command, inspect the current configuration because the change may already be visible; directory-sync failures are not silently accepted.
+
+### Recipient addressbook (development)
+
+This additional #324 scope is a v1.3 candidate, not part of published v1.2.1. A route preset still stores only a route. The separate, opt-in addressbook binds a user-supplied label to an explicitly selected Claude Code or Codex recipient on a local or SSH Mac/Linux route. Labels do not authenticate people. Paired devices, Antigravity and Windows are refused. Commands without an explicit addressbook operation or `--address` do not read addressbook configuration; no automatic migration or fallback is added.
+
+```bash
+session-peer address resolve --preset work-mac --to 'codex:<full-thread-uuid>' --json
+session-peer address add review --label Review --preset work-mac --to 'codex:<full-thread-uuid>' --expect-selection 'as1:<HASH>'
+session-peer address discover --address review --json
+session-peer send --address review --dry-run --message 'Review the patch'
+session-peer send --address review --address-revision 'ab1:<HASH>' --confirm-target 'codex:<full-thread-uuid>' --message 'Review the patch'
+session-peer address reselect review --expect-revision 'ab1:<OLD_HASH>' --to 'codex:<new-full-thread-uuid>' --expect-selection 'as1:<NEW_HASH>'
+session-peer address remove review --expect-revision 'ab1:<HASH>'
+```
+
+Replace placeholders with the exact reported values. Before `add`, inspect `address resolve` and use its `as1:` observation revision. Before `reselect`, resolve the intended new target with the same preset again and review its new `as1:` value. `as1:` is a revision of observed selection metadata, not authority, a native epoch or proof of consumption. Every successful add or reselect creates a new `bindingId`, covered by the `ab1:` address revision. Removing and recreating an identical address therefore cannot reuse the old revision. A route's `dp1:` remains a value hash: restoring identical preset values gives the same hash, not a new epoch.
+
+`address list` and `address show` read configuration only. `address resolve` and `address discover` explicitly inspect selected recipient metadata without a placeholder message, native CLI/version probe or model/session activation; existing OS process-metadata inspection may run. Discover accepts at most 16 distinct `--address` names, grouping only identical route/home and pinned SSH-key contexts so each group is inspected once. It retains per-address partial failures and returns exit 1 if any selection fails or no longer matches. It neither scans the network nor broadcasts to a group. A missing referenced preset or changed route/revision is refused; the stored old route is never used as a fallback.
+
+Claude addresses retain the selected `tg1:` generation and use the existing connected-peer precondition before submission. Codex addresses retain a full thread UUID, exact home and `aw1:` writer observation, with existing checks repeated before the effect. Codex generation remains **unsupported**: writer observation and revalidation are not an atomic native incarnation guarantee. A changed or unavailable writer requires explicit reselection; no automatic retargeting or replay is attempted. SSH selection requires a host key verified on the actual connection and pins that same key for the actual send. This authenticates neither a person nor the identity of SSH configuration or SQLite storage.
+
+An actual send requires both the current `--address-revision` and exact `--confirm-target`; dry-run may omit them. `--address` cannot be combined with `--to`, `--preset`, explicit host/native/SSH overrides, paired-device, wake, handoff or Reply-To URI routing. Normal message inputs and limits remain unchanged. Unknown outcomes never authorize automatic resend. These commands do not promise composition with the separate #323 delivery-explanation candidate.
+
+Storage is a separate `addresses.json` beside `destinations.json`, with `schemaVersion: 1`, a 64 KiB limit and at most 128 entries. It uses the same owner, permissions, ACL, mount and no-symlink-following checks as presets, without automatically repairing or migrating files. Address names follow the preset-name syntax; display labels are normalized to NFC and limited to 128 characters, rejecting control, bidirectional-control and format characters. An unconfirmed management commit may already be visible: inspect current configuration before retrying. Binding revisions do not add receiver deduplication, ACK or task-completion evidence.
+
 ## Optional interactive shorthand
 
 For releases containing these assets, Bash/zsh and PowerShell users can opt in to a shell-local alias named `sp`. It invokes the currently selected `session-peer` command with the same arguments, stdin, output, exit codes and permissions. It is not a separate parser or a Python/TypeScript selector. Keep the canonical command in scripts, SSH requests and generated reply instructions. Do not install both implementations simultaneously; switch with the original installation manager and verify which command your shell resolves first.

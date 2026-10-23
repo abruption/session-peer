@@ -160,6 +160,69 @@ session-peer list --output-format json
 여전히 제출만을 설명합니다. 이 플래그들은 구조화된 JSON 메시지 입력 프로토콜을 도입하지
 않습니다.
 
+<a id="route-presets"></a>
+
+## 로컬 경로 프리셋 (개발 중)
+
+#324의 개발 기능이며 공개 v1.2.1에는 없습니다. 선택적으로 사용하는 `preset` 명령은 수신자가 아니라 접속 경로를 저장합니다. Mac/Linux에서 `--preset`으로 로컬 또는 SSH 경로 하나를 골라 일반 Claude Code·Codex 목록 조회나 전송에 사용합니다. Windows의 프리셋 작업은 거부하며 기존 Windows 명령은 바꾸지 않습니다.
+
+```bash
+session-peer preset add work-mac --host user@work-mac --agent codex --codex-home /Users/user/.codex
+session-peer preset list
+session-peer preset show work-mac --json
+session-peer list --preset work-mac
+session-peer send --preset work-mac --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run
+session-peer send --preset work-mac --preset-revision 'dp1:<HASH>' --to 'codex:<full-thread-uuid>' --message "Review the patch"
+session-peer preset replace work-mac --expect-revision 'dp1:<HASH>' --host user@new-mac --agent codex --codex-home /Users/user/.codex
+session-peer preset remove work-mac --expect-revision 'dp1:<CURRENT-HASH>'
+```
+
+UUID는 현재 목록에서 확인한 값으로, 해시는 선택한 프리셋에 표시된 정확한 revision으로 바꿉니다. 실제 전송에는 `--preset-revision`이 필요하고 dry-run에서는 생략할 수 있습니다. `dp1:` 해시는 프리셋 이름과 검증된 경로의 정확한 값만 포함하며 DNS·SSH 설정·호스트 키·native 소유권·권한·세대·ACK를 증명하지 않습니다. 경로 값이 바뀌면 다시 확인해야 하고, 동일한 값을 복원하면 해시도 같습니다. 수정·삭제에는 `--expect-revision`이 필요하며 같은 이름의 추가는 거부합니다.
+
+수신자의 이름·PID·UUID·세대 토큰은 저장하지 않습니다. `--to`는 계속 필수이며 이름은 기존 규칙으로 현재 대상을 새로 찾는 값이지 이전 세션에 고정된 주소가 아닙니다. 명시적인 기존 `--target-generation`, writer·저장소 검사, 결과가 불확실할 때 자동 재전송하지 않는 원칙은 유지합니다. 프리셋 이름은 사람의 신원이나 전달 사실을 증명하지 않습니다.
+
+저장 위치는 `$XDG_CONFIG_HOME/session-peer/destinations.json`이며 변수가 없으면 `~/.config/session-peer/destinations.json`입니다. 지정한 기본 경로는 절대 경로여야 합니다. 앱 디렉터리는 소유자 전용 0700, 파일은 소유자 전용 0600 또는 더 제한적인 권한을 사용합니다. 심볼릭 링크, 안전하지 않은 소유권·권한, 중복·알 수 없는 JSON 키, 잘못된 UTF-8, 128개 초과 항목, 64 KiB 초과 파일은 다른 경로로 우회하지 않고 거부합니다. 이름은 `[a-z][a-z0-9_-]{0,63}` 형식입니다. 스키마에는 전송 방식·에이전트, 필요한 경우 SSH 호스트 하나, Codex 경로의 절대 home만 저장합니다:
+
+```json
+{"schemaVersion":1,"presets":{"work-mac":{"transport":"ssh","agent":"codex","host":"user@work-mac","codexHome":"/Users/user/.codex"}}}
+```
+
+프리셋과 명시적인 `--host`, `--codex-home`, `--agent`, `--ssh-opt`, `--codex-bin`은 값이 같아도 함께 사용할 수 없습니다. Reply-To URI, 페어링 기기, Antigravity, wake, 실험적 handoff 조합도 제외합니다. 자격증명·실행 파일 경로·SSH 명령이나 옵션·승인 설정·receipt 비밀값은 저장하지 않습니다. 기존 운영자 소유 SSH 설정은 그대로 적용됩니다.
+
+`preset list`와 `preset show`는 설정만 읽으며 native 목록 조회·SSH·업데이트 알림·백그라운드 갱신을 실행하지 않습니다. 읽기 작업은 없는 저장소를 초기화하지 않습니다. 반면 `list --preset`은 기존 원격 조회와 부분 실패 처리를 포함해 선택한 경로 하나의 일반 목록 조회를 명시적으로 실행합니다. 다른 프리셋에 접속하거나 그룹에 일괄 전송하지 않습니다.
+
+텍스트 목록 조회·전송은 기존 작업 전에 선택한 경로와 revision을 stderr에 표시합니다. 기존 native 결과 JSON·stdout·종료 계약은 유지하며 프리셋 플래그·revision·로컬 파일 경로를 SSH로 전달하지 않습니다. 호출마다 읽은 스냅샷 하나를 사용합니다. 나중에 프리셋을 수정·삭제해도 이미 확장한 호출은 취소되지 않으며 실제 제출은 native 대상을 다시 검증합니다. 이는 저장소·소유권의 원자적 증명, 수신측 중복 억제, 소비, ACK, 작업 완료를 보장하지 않습니다.
+
+`preset_commit_unconfirmed` 오류는 원자적 교체가 이미 보일 수 있지만 디스크에 안전하게 기록됐는지 확인하지 못했다는 뜻입니다. 재시도 전에 현재 설정을 확인하세요. 자동으로 되돌리지는 않습니다.
+
+검사하는 상위 경로는 root 또는 현재 사용자 소유이며 다른 사용자가 쓸 수 없어야 합니다. root 소유의 sticky 임시 디렉터리는 예외이고, 설정의 직계 부모는 현재 사용자 소유여야 합니다. 모든 경로 구성 요소는 심볼릭 링크를 따라가지 않고 엽니다. 전용 저장소의 확장 ACL 항목은 보수적으로 거부합니다. Mac 상위 경로의 deny-only ACL은 허용하지만 allow 항목이나 확인할 수 없는 ACL은 거부하며 Linux POSIX ACL도 검사합니다. 비어 있거나 상대 경로인 `XDG_CONFIG_HOME`은 다른 위치로 조용히 우회하지 않고 거부합니다. 기존 권한을 자동으로 고치지 않으므로 안전한 사용자 전용 절대 경로를 선택하세요. 잘못된 설정은 비공개 백업을 보관한 뒤 오프라인에서 확인·수정하고, 내용은 공개하지 마세요.
+
+Mac에서 소유권을 무시하는 마운트는 `preset_ownership_unenforced`로, 마운트 조회를 수행하거나 검증할 수 없으면 `preset_mount_unverifiable`로 거부합니다. 파일 모드만으로 소유권 강제를 증명했다고 취급하지 않습니다. Linux에서는 상위 경로의 ACL도 거부하며 ACL 상태를 검증할 수 없는 파일시스템도 거부합니다. 관리 명령을 중단했을 때는 변경이 이미 보일 수 있으므로 현재 설정을 확인하세요. 디렉터리 동기화 실패를 조용히 성공으로 처리하지 않습니다.
+
+### 수신 대상 주소록 (개발 중)
+
+이 추가 #324 범위는 v1.3 후보이며 공개 v1.2.1에는 없습니다. 경로 프리셋은 계속 경로만 저장합니다. 별도로 선택해 사용하는 주소록은 사용자 지정 표시 이름을 로컬 또는 SSH Mac/Linux 경로에서 명시적으로 선택한 Claude Code·Codex 수신 대상에 연결합니다. 표시 이름은 사람의 신원을 인증하지 않습니다. 페어링 기기, Antigravity와 Windows는 거부합니다. 명시적인 주소록 작업이나 `--address`가 없는 명령은 주소록 설정을 읽지 않으며, 자동 이전이나 대체 경로 시도를 추가하지 않습니다.
+
+```bash
+session-peer address resolve --preset work-mac --to 'codex:<full-thread-uuid>' --json
+session-peer address add review --label Review --preset work-mac --to 'codex:<full-thread-uuid>' --expect-selection 'as1:<HASH>'
+session-peer address discover --address review --json
+session-peer send --address review --dry-run --message 'Review the patch'
+session-peer send --address review --address-revision 'ab1:<HASH>' --confirm-target 'codex:<full-thread-uuid>' --message 'Review the patch'
+session-peer address reselect review --expect-revision 'ab1:<OLD_HASH>' --to 'codex:<new-full-thread-uuid>' --expect-selection 'as1:<NEW_HASH>'
+session-peer address remove review --expect-revision 'ab1:<HASH>'
+```
+
+자리표시자를 실제로 보고된 정확한 값으로 바꿉니다. `add` 전에 `address resolve` 결과를 검토하고 해당 `as1:` 관찰 revision을 사용합니다. `reselect` 전에는 같은 프리셋으로 원하는 새 대상을 다시 resolve하고 새 `as1:` 값을 검토합니다. `as1:`은 관찰된 선택 메타데이터의 revision이며 권한, native epoch나 소비 증거가 아닙니다. 추가 또는 재선택에 성공할 때마다 새 `bindingId`를 만들고 이를 `ab1:` 주소 revision에 포함합니다. 따라서 동일한 주소를 삭제 후 다시 만들어도 이전 revision을 재사용할 수 없습니다. 경로의 `dp1:`은 계속 값의 해시이며, 동일한 프리셋 값을 복원하면 새 epoch가 아니라 같은 해시를 얻습니다.
+
+`address list`와 `address show`는 설정만 읽습니다. `address resolve`와 `address discover`는 임시 메시지, native CLI·버전 조회나 모델·세션 활성화 없이 선택한 수신 대상의 메타데이터를 명시적으로 확인합니다. 기존 OS 프로세스 메타데이터 확인은 수행될 수 있습니다. Discover는 서로 다른 `--address` 이름을 최대 16개까지 받으며, 경로·home과 고정된 SSH 키 context가 모두 같은 경우에만 묶어 그룹당 한 번 확인합니다. 주소별 부분 실패를 유지하고, 하나라도 확인에 실패하거나 저장된 선택과 달라지면 종료 코드 1을 반환합니다. 네트워크 검색이나 그룹 일괄 전송은 하지 않습니다. 참조 프리셋이 없거나 경로·revision이 달라지면 거부하며, 저장된 이전 경로로 대체하지 않습니다.
+
+Claude 주소는 선택한 `tg1:` 세대를 저장하고 제출 전에 기존 연결 상대 확인 조건을 적용합니다. Codex 주소는 전체 스레드 UUID, 정확한 home과 `aw1:` writer 관찰을 저장하며 효과가 발생하기 전에 기존 검사를 반복합니다. Codex 세대는 계속 **미지원**입니다. Writer 관찰과 재검증은 원래 native 인스턴스 세대를 원자적으로 검증하는 보장이 아닙니다. Writer가 달라지거나 확인할 수 없으면 명시적으로 다시 선택해야 하며, 자동 대상 변경이나 재실행은 하지 않습니다. SSH 선택은 실제 연결에서 검증한 호스트 키를 요구하며 실제 전송에도 같은 키를 고정합니다. 이것으로 사람을 인증하거나 SSH 설정·SQLite 저장소의 동일성을 증명하지는 않습니다.
+
+실제 전송에는 현재 `--address-revision`과 정확한 `--confirm-target`이 모두 필요하며 dry-run에서는 생략할 수 있습니다. `--address`는 `--to`, `--preset`, 명시적 호스트·native·SSH 재정의, 페어링 기기, wake, handoff나 Reply-To URI 경로와 함께 사용할 수 없습니다. 일반 메시지 입력과 한도는 그대로 유지됩니다. 결과가 불확실해도 자동 재전송은 허용되지 않습니다. 이 명령들은 별도의 #323 전달 설명 후보 기능과의 조합을 보장하지 않습니다.
+
+저장소는 `destinations.json` 옆의 별도 `addresses.json`이며 `schemaVersion: 1`, 64 KiB 한도와 최대 128개 항목을 사용합니다. 프리셋과 같은 소유자·권한·ACL·마운트 검사 및 심볼릭 링크를 따르지 않는 경로 검사를 적용하고 파일을 자동 복구하거나 이전하지 않습니다. 주소 이름은 프리셋 이름 문법을 따릅니다. 표시 이름은 NFC로 정규화하고 128자로 제한하며 제어 문자·양방향 제어 문자·서식 문자를 거부합니다. 관리 작업의 commit을 확인하지 못했어도 변경이 이미 보일 수 있으므로 재시도 전에 현재 설정을 확인하세요. 수신자 바인딩 revision은 수신 측 중복 방지, ACK나 작업 완료 증거를 추가하지 않습니다.
+
 <a id="install"></a>
 ## 선택적 대화형 단축 명령
 

@@ -22,6 +22,14 @@ class HumanArgumentParser(MessageArgumentParser):
             self.error('pairing_link_argv_forbidden; use --link without a value')
         return super().parse_known_args(values, namespace)
 
+    def _get_values(self, action, arg_strings):
+        if action.option_strings:
+            explicit = getattr(self, "_explicit_option_strings", None)
+            if explicit is None:
+                explicit = self._explicit_option_strings = set()
+            explicit.update(action.option_strings)
+        return super()._get_values(action, arg_strings)
+
     def error(self, message):
         # Preserve both the message-value and display-only escaping contracts.
         if 'session-peer://pair/' in message.lower():
@@ -96,6 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(listing)
     listing.add_argument("--agent", choices=AGENTS.names(), default=None,
                          help="filter by agent (default: all registered adapters)")
+    listing.add_argument("--preset", action=PresetSingleUseAction, metavar="NAME", help="use one saved local or SSH route, not a saved receiver")
     home_help = ("select one Codex home on the destination (default: CODEX_HOME or ~/.codex); "
                  "set explicitly for Orca/multiple homes")
     listing.add_argument("--codex-home", help="list only this destination home (default: known default, CODEX_HOME, Orca and configured homes)")
@@ -126,13 +135,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     sending = subparsers.add_parser("send", help="send one message to a session")
     add_common(sending)
+    sending.add_argument("--preset", action=PresetSingleUseAction, metavar="NAME", help="use one saved local or SSH route, not a saved receiver")
+    sending.add_argument("--preset-revision", action=PresetSingleUseAction, metavar="REV", help="require the route revision from preset show or text dry-run stderr (required for actual preset sends)")
     sending.add_argument(
-        "--to", required=True, metavar="TARGET|REPLY-URI",
+        "--to", metavar="TARGET|REPLY-URI",
         help="session name, PID, codex:UUID, antigravity:UUID, or session-peer://v1/reply address",
     )
     sending.add_argument("--codex-home", help=home_help)
     sending.add_argument("--target-generation", metavar="TOKEN",
                          help="require a previously discovered inbox generation; fail closed if unsupported")
+    sending.add_argument("--address", action=PresetSingleUseAction, help="explicit local saved-recipient reference")
+    sending.add_argument("--address-revision", action=PresetSingleUseAction, help="current address revision required for actual submission")
+    sending.add_argument("--confirm-target", action=PresetSingleUseAction, help="confirm the current canonical recipient, not an override")
+    sending.add_argument("--_address-writer-revision", dest="_address_expected_writer", type=address_writer_revision_argument,
+                         help=argparse.SUPPRESS)
     sending.add_argument(
         "--allow-inactive-codex-home", action="store_true",
         help="with --codex-home, intentionally queue an inactive thread for a future resume",
@@ -179,6 +195,22 @@ def build_parser() -> argparse.ArgumentParser:
     sending.add_argument("--explain", action="store_true", help="explain existing dry-run evidence in text")
     doctor.add_argument("--explain", action="store_true", help="explain existing diagnostic capabilities in text")
     sending.set_defaults(func=cmd_send)
+
+    preset = subparsers.add_parser("preset", help="manage private local route presets without contacting destinations")
+    preset_sub = preset.add_subparsers(dest="preset_action", required=True)
+    for action in ("add", "list", "show", "replace", "remove"):
+        sub = preset_sub.add_parser(action)
+        sub.add_argument("--json", action="store_true")
+        sub.add_argument("--output-format", choices=("text", "json"))
+        sub.set_defaults(func=cmd_preset, no_update_notice=True)
+        if action != "list":
+            sub.add_argument("name")
+        if action in ("add", "replace"):
+            sub.add_argument("--host", action=PresetSingleUseAction)
+            sub.add_argument("--agent", action=PresetSingleUseAction, choices=("claude", "codex"), required=True)
+            sub.add_argument("--codex-home", action=PresetSingleUseAction)
+        if action in ("replace", "remove"):
+            sub.add_argument("--expect-revision", action=PresetSingleUseAction, required=True, metavar="REV")
 
     handoff = subparsers.add_parser("handoff", help="manage private correlated intents without submitting native messages")
     handoff_sub = handoff.add_subparsers(dest="handoff_action", required=True)
@@ -283,6 +315,33 @@ def build_parser() -> argparse.ArgumentParser:
     setup.add_argument('--route', choices=('auto', 'direct', 'relay'), default='auto')
     setup.add_argument('--seconds', type=int, choices=range(1, 86401), default=3600, metavar='SECONDS')
     setup.set_defaults(func=cmd_setup, json=False, no_update_notice=True, agent=None, all=False)
+    addresses = subparsers.add_parser("address", help="explicit local recipient references; not person identity or permissions")
+    address_sub = addresses.add_subparsers(dest="address_action", required=True)
+    for action in ("resolve", "add", "list", "show", "discover", "reselect", "remove", "_inspect"):
+        sub = address_sub.add_parser(action, help=argparse.SUPPRESS if action == "_inspect" else None)
+        sub.add_argument("--json", action="store_true")
+        sub.add_argument("--output-format", choices=("text", "json"))
+        sub.add_argument("--no-update-notice", action="store_true", default=True)
+        sub.set_defaults(func=cmd_address_inspect if action == "_inspect" else cmd_address,
+                         no_update_notice=True, host=[], ssh_opt=[])
+        if action in ("add", "show", "reselect", "remove"):
+            sub.add_argument("name")
+        if action in ("resolve", "add"):
+            sub.add_argument("--preset", required=True, action=PresetSingleUseAction)
+        if action in ("resolve", "add", "reselect"):
+            sub.add_argument("--to", required=True, action=PresetSingleUseAction)
+        if action in ("add", "reselect"):
+            sub.add_argument("--expect-selection", required=True, action=PresetSingleUseAction)
+        if action == "add":
+            sub.add_argument("--label", action=PresetSingleUseAction)
+        if action in ("reselect", "remove"):
+            sub.add_argument("--expect-revision", required=True, action=PresetSingleUseAction)
+        if action == "discover":
+            sub.add_argument("--address", required=True, action="append")
+        if action == "_inspect":
+            sub.add_argument("--agent", required=True, choices=("claude", "codex"))
+            sub.add_argument("--to", required=True, action="append")
+            sub.add_argument("--codex-home")
     return parser
 
 
@@ -296,6 +355,15 @@ def json_error_result(args: argparse.Namespace, payload: dict) -> dict | list[di
         json_result(command, payload, host=host, ok=False)
         for host in hosts
     ])
+
+
+def address_operation_failed(args):
+    message = "Address operation failed; inspect current state before deciding what to do"
+    if args.json:
+        print(json.dumps(json_error_result(args, {"error": message, "reason": "address_operation_failed"}), ensure_ascii=False))
+    else:
+        print("session-peer: " + message, file=sys.stderr)
+    return EXIT_ERROR
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -346,6 +414,8 @@ def _main(argv: list[str] | None = None) -> int:
 
     parser = build_parser()
     args = parser.parse_args(raw_argv)
+    if getattr(args, "preset", None) is not None:
+        args._preset_explicit_options = sorted(preset_explicit_options(parser))
     output_format = getattr(args, "output_format", None)
     if args.json and output_format == "text":
         parser.error("--json conflicts with --output-format text")
@@ -367,6 +437,42 @@ def _main(argv: list[str] | None = None) -> int:
         if runtime_notice_preference_routed(args):
             parser.error("Runtime notice preferences are local only; do not use host or SSH options")
         args.no_update_notice = True
+    if args.command == "send":
+        if not getattr(args, "address", None) and args.to is None:
+            parser.error("the following arguments are required: --to")
+        if getattr(args, "address", None) or getattr(args, "address_revision", None) or getattr(args, "confirm_target", None):
+            args._address_explicit_options = sorted(preset_explicit_options(parser))
+    # Route checks precede advisory background work, stdin and transport. An
+    # opt-out invocation does not even read the presets configuration.
+    _CLIENT_UPDATE_NOTICE, _SKILL_UPDATE_NOTICES = None, []
+    try:
+        if args.command == "send":
+            prepare_address_route(parser, args, raw_argv)
+        if args.command in ("list", "send"):
+            prepare_preset_route(parser, args, raw_argv)
+    except KeyboardInterrupt:
+        return 130
+    except CcPeerError as exc:
+        if args.json:
+            print(json.dumps(json_error_result(args, {"error": str(exc), **exc.details}), ensure_ascii=False))
+        else:
+            print(human_text(f"session-peer: {exc}"), file=sys.stderr)
+        return EXIT_ERROR
+    except Exception:
+        return address_operation_failed(args) if getattr(args, "address", None) else preset_operation_failed(args)
+    if args.command in ("preset", "address"):
+        try:
+            return args.func(args)
+        except KeyboardInterrupt:
+            return 130
+        except CcPeerError as exc:
+            if args.json:
+                print(json.dumps(json_result(args.command, {"error": str(exc), **exc.details}, ok=False), ensure_ascii=False))
+            else:
+                print(human_text(f"session-peer: {exc}"), file=sys.stderr)
+            return EXIT_ERROR
+        except Exception:
+            return address_operation_failed(args) if args.command == "address" else preset_operation_failed(args)
     try:
         prepare_trusted_ssh_config(parser, args)
     except CcPeerError as exc:

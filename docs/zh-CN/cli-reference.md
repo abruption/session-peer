@@ -115,6 +115,69 @@ session-peer list --output-format json
 
 `--json --output-format json` 是合法的；无论先后顺序，将 `--json` 与 `--output-format text` 组合都会报错。无效或矛盾的输出选项属于 argparse 用法错误（stderr，退出码 2）；消息来源冲突属于普通命令错误（请求时为 JSON，退出码 1）。无论哪种情况均不会提交任何消息。JSON 结果仍然描述提交情况而非接收情况；这些标志并未引入结构化的 JSON 消息输入协议。
 
+<a id="route-presets"></a>
+
+## 本地路径预设（开发中）
+
+这是 #324 的开发功能，尚未包含在已发布的 v1.2.1 中。可选的 `preset` 命令保存的是连接路径，而不是接收者。在 Mac/Linux 上，使用 `--preset` 选择一个本地或 SSH 路径，用于常规 Claude Code、Codex 会话列表查询或发送。Windows 预设操作会被拒绝，现有 Windows 命令保持不变。
+
+```bash
+session-peer preset add work-mac --host user@work-mac --agent codex --codex-home /Users/user/.codex
+session-peer preset list
+session-peer preset show work-mac --json
+session-peer list --preset work-mac
+session-peer send --preset work-mac --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run
+session-peer send --preset work-mac --preset-revision 'dp1:<HASH>' --to 'codex:<full-thread-uuid>' --message "Review the patch"
+session-peer preset replace work-mac --expect-revision 'dp1:<HASH>' --host user@new-mac --agent codex --codex-home /Users/user/.codex
+session-peer preset remove work-mac --expect-revision 'dp1:<CURRENT-HASH>'
+```
+
+将 UUID 替换为当前列表中确认的值，将哈希替换为所选预设显示的准确 revision。实际发送必须提供 `--preset-revision`，dry-run 可以省略。`dp1:` 哈希仅涵盖预设名称和已验证路径的准确值，不证明 DNS、SSH 配置、主机密钥、native 所有权、权限、代际或 ACK。路径值变化后必须重新确认；恢复相同值会得到相同哈希。修改、删除需要 `--expect-revision`，重复名称的新增操作会被拒绝。
+
+接收者的名称、PID、UUID、代际令牌均不保存。`--to` 仍然必填；名称按现有规则重新查找当前目标，并非绑定到先前会话的地址。现有显式 `--target-generation`、writer 和存储检查，以及结果不确定时禁止自动重发的原则保持不变。预设名称不证明人员身份或消息已送达。
+
+存储位置为 `$XDG_CONFIG_HOME/session-peer/destinations.json`；变量未设置时使用 `~/.config/session-peer/destinations.json`。指定的基础路径必须是绝对路径。应用目录采用仅所有者可访问的 0700 权限，文件采用仅所有者可访问的 0600 或更严格权限。符号链接、不安全的所有权或权限、重复或未知 JSON 键、无效 UTF-8、超过 128 项或超过 64 KiB 的文件均被拒绝，不回退到其他路径。名称格式为 `[a-z][a-z0-9_-]{0,63}`。模式仅保存传输方式、代理类型、需要时的一个 SSH 主机，以及 Codex 路径的绝对 home:
+
+```json
+{"schemaVersion":1,"presets":{"work-mac":{"transport":"ssh","agent":"codex","host":"user@work-mac","codexHome":"/Users/user/.codex"}}}
+```
+
+预设不能与显式 `--host`、`--codex-home`、`--agent`、`--ssh-opt` 或 `--codex-bin` 组合，即使值相同也不例外；Reply-To URI、配对设备、Antigravity、wake 和实验性 handoff 组合也不在范围内。不保存凭据、可执行文件路径、SSH 命令或选项、审批设置或 receipt 秘密值。现有操作员拥有的 SSH 配置仍然适用。
+
+`preset list` 和 `preset show` 只读取配置，不执行 native 发现、SSH、更新通知或后台刷新，也不会因读取而初始化缺失的存储。相比之下，`list --preset` 会显式执行所选单一路径的常规发现，包括现有的远程探测和部分失败处理。不会连接其他预设，也不会添加群组广播。
+
+文本列表查询和发送会在现有操作之前，将所选路径和 revision 输出到 stderr。现有 native 结果 JSON、stdout 和退出契约保持不变；预设标志、revision 和本地文件路径不会通过 SSH 转发。每次调用使用一次读取的快照。之后修改或删除预设不会取消已展开的调用，实际提交仍会重新验证 native 目标。这不保证存储或所有权的原子证明、接收侧去重、消费、ACK 或任务完成。
+
+`preset_commit_unconfirmed` 表示原子替换可能已经可见，但无法确认其持久性。重试前请检查当前配置；不会自动回滚。
+
+受检上级路径必须归 root 或当前用户所有，且不能由其他用户写入；root 所有的 sticky 临时目录除外，配置的直接父目录必须归当前用户所有。打开所有路径组成部分时均不跟随符号链接。专用存储中的扩展 ACL 条目会被保守地拒绝；macOS 上级路径允许 deny-only ACL，但 allow 条目或无法验证的 ACL 会被拒绝，同时也会检查 Linux POSIX ACL。空值或相对路径的 `XDG_CONFIG_HOME` 会被拒绝，不会静默改用其他位置。不会自动修复现有权限：请选择安全的用户专用绝对配置路径，或保留私有备份后离线检查、修复无效配置；不要公开其内容。
+
+在 macOS 上，忽略所有权的挂载会以 `preset_ownership_unenforced` 被拒绝，无法查询或验证挂载状态时则以 `preset_mount_unverifiable` 被拒绝。不会仅凭模式位断定所有权已强制执行。Linux 也会拒绝上级路径中的 ACL，以及无法验证 ACL 状态的文件系统。中断管理命令后请检查当前配置，因为更改可能已经可见；目录同步失败不会被静默当作成功。
+
+### 接收者地址簿（开发中）
+
+这项 #324 的新增范围是 v1.3 的候选功能，尚未包含在已发布的 v1.2.1 中。路径预设仍只保存路径。单独启用的地址簿将用户提供的显示标签绑定到在本地或 SSH Mac/Linux 路径上明确选择的 Claude Code 或 Codex 接收者。标签不认证人员身份。配对设备、Antigravity 和 Windows 均被拒绝。未显式执行地址簿操作或使用 `--address` 的命令不会读取地址簿配置，也不添加自动迁移或回退。
+
+```bash
+session-peer address resolve --preset work-mac --to 'codex:<full-thread-uuid>' --json
+session-peer address add review --label Review --preset work-mac --to 'codex:<full-thread-uuid>' --expect-selection 'as1:<HASH>'
+session-peer address discover --address review --json
+session-peer send --address review --dry-run --message 'Review the patch'
+session-peer send --address review --address-revision 'ab1:<HASH>' --confirm-target 'codex:<full-thread-uuid>' --message 'Review the patch'
+session-peer address reselect review --expect-revision 'ab1:<OLD_HASH>' --to 'codex:<new-full-thread-uuid>' --expect-selection 'as1:<NEW_HASH>'
+session-peer address remove review --expect-revision 'ab1:<HASH>'
+```
+
+请将占位符替换为实际报告的准确值。在 `add` 前检查 `address resolve` 的结果，并使用其中的 `as1:` 观察 revision。在 `reselect` 前，先使用同一预设再次 resolve 所需的新目标，并检查新的 `as1:` 值。`as1:` 是所观察到的选择元数据的 revision，不是授权、native epoch 或消费证据。每次成功新增或重新选择都会生成新的 `bindingId`，并将其纳入 `ab1:` 地址 revision。因此，即使删除后重建完全相同的地址，也不能复用旧 revision。路径的 `dp1:` 仍是值的哈希：恢复相同预设值会得到相同哈希，而不是新的 epoch。
+
+`address list` 和 `address show` 只读取配置。`address resolve` 和 `address discover` 显式检查所选接收者的元数据，不生成占位消息、不执行 native CLI 或版本探测，也不激活模型或会话；现有的 OS 进程元数据检查仍可能运行。Discover 最多接受 16 个不同的 `--address` 名称，仅在路径、home 和固定的 SSH 密钥 context 完全相同时分组，每组检查一次。它保留每个地址的部分失败；只要有一个选择检查失败或不再匹配，就返回退出码 1。它不会扫描网络或进行群组广播。引用的预设缺失，或路径、revision 发生变化时会被拒绝，绝不回退到保存的旧路径。
+
+Claude 地址保存选定的 `tg1:` 代次，并在提交前使用现有的连接对端前置检查。Codex 地址保存完整线程 UUID、准确的 home 和 `aw1:` writer 观察，并在产生副作用前重复现有检查。Codex 代次仍**不受支持**：writer 观察和重新验证并不提供对原有 native 实例代次的原子验证保证。Writer 已更改或无法确认时，必须显式重新选择，不会自动改选目标或重放。SSH 选择要求在实际连接上验证主机密钥，并在实际发送时固定使用同一密钥。这既不认证人员身份，也不证明 SSH 配置或 SQLite 存储的同一性。
+
+实际发送必须同时提供当前 `--address-revision` 和准确的 `--confirm-target`，dry-run 可以省略。`--address` 不能与 `--to`、`--preset`、显式主机、native 或 SSH 覆盖项、配对设备、wake、handoff 或 Reply-To URI 路由组合使用。常规消息输入和限制保持不变。结果未知时也不允许自动重发。这些命令不保证与单独开发的 #323 传递说明候选功能组合使用。
+
+存储是位于 `destinations.json` 旁的独立 `addresses.json`，采用 `schemaVersion: 1`，大小限制为 64 KiB，最多 128 项。它使用与预设相同的所有者、权限、ACL、挂载和不跟随符号链接的路径检查，不自动修复或迁移文件。地址名称遵循预设名称语法；显示标签会规范化为 NFC，最多 128 个字符，并拒绝控制字符、双向控制字符和格式字符。管理操作的 commit 未确认时，更改也可能已经可见，重试前请检查当前配置。绑定 revision 不增加接收侧去重、ACK 或任务完成证据。
+
 <a id="install"></a>
 ## 可选的交互式短命令
 

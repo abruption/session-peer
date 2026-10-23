@@ -527,6 +527,12 @@ def _run_remote_dispatch(host: str, argv: list[str], ssh_opts: list[str], *, ide
     # The far end reports its own failures in-band; surface them here rather
     # than letting a caller read an error payload as a success.
     if isinstance(result, dict) and result.get("ok") is False:
+        if (argv[:2] == ["address", "_inspect"] and valid_result
+                and type(result.get("selectionSchemaVersion")) is int and result["selectionSchemaVersion"] == 1
+                and isinstance(result.get("selections"), list) and 1 <= len(result["selections"]) <= 16):
+            # Preserve partial metadata so the address consumer can validate
+            # each exact target and retain good rows. No submission is involved.
+            return result
         if (argv and argv[0] == "send" and result.get("command") == "send"
                 and result.get("schemaVersion") == JSON_RESPONSE_SCHEMA_VERSION
                 and result.get("agent") == "antigravity"

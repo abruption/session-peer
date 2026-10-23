@@ -160,6 +160,69 @@ session-peer list --output-format json
 送信されません。JSON 結果は受信ではなく送信を表すことに変わりはありません。
 これらのフラグによって構造化された JSON メッセージ入力プロトコルが導入されるわけではありません。
 
+<a id="route-presets"></a>
+
+## ローカル経路プリセット（開発中）
+
+#324 の開発機能であり、公開済み v1.2.1 には含まれません。任意の `preset` コマンドが保存するのは受信者ではなく接続経路です。Mac/Linux では `--preset` でローカルまたは SSH の経路を一つ選び、通常の Claude Code・Codex の一覧取得や送信に利用します。Windows のプリセット操作は拒否し、既存の Windows コマンドは変更しません。
+
+```bash
+session-peer preset add work-mac --host user@work-mac --agent codex --codex-home /Users/user/.codex
+session-peer preset list
+session-peer preset show work-mac --json
+session-peer list --preset work-mac
+session-peer send --preset work-mac --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run
+session-peer send --preset work-mac --preset-revision 'dp1:<HASH>' --to 'codex:<full-thread-uuid>' --message "Review the patch"
+session-peer preset replace work-mac --expect-revision 'dp1:<HASH>' --host user@new-mac --agent codex --codex-home /Users/user/.codex
+session-peer preset remove work-mac --expect-revision 'dp1:<CURRENT-HASH>'
+```
+
+UUID は現在の一覧で確認した値に、ハッシュは選択したプリセットに表示された正確な revision に置き換えます。実際の送信には `--preset-revision` が必要で、dry-run では省略できます。`dp1:` ハッシュが対象とするのはプリセット名と検証済み経路の正確な値だけであり、DNS、SSH 設定、ホスト鍵、native 所有権、権限、世代、ACK は証明しません。経路の値が変わったら再確認が必要で、同じ値に戻すと同じハッシュになります。変更・削除には `--expect-revision` が必要で、同じ名前の追加は拒否します。
+
+受信者の名前、PID、UUID、世代トークンは保存しません。`--to` は引き続き必須で、名前は既存の規則で現在の宛先を検索する値であり、以前のセッションに固定されたアドレスではありません。既存の明示的な `--target-generation`、writer・保存先の検査、不確実な結果で自動再送しない原則を維持します。プリセット名は人物の身元や配信を証明しません。
+
+保存先は `$XDG_CONFIG_HOME/session-peer/destinations.json` で、変数が未設定なら `~/.config/session-peer/destinations.json` です。指定する基点は絶対パスに限ります。アプリ用ディレクトリは所有者専用の 0700、ファイルは所有者専用の 0600 またはそれより厳しい権限です。シンボリックリンク、安全でない所有権・権限、JSON の重複・未知のキー、不正な UTF-8、128 件を超える項目、64 KiB を超えるファイルは、別経路に切り替えず拒否します。名前の形式は `[a-z][a-z0-9_-]{0,63}` です。スキーマが保存するのは接続方式・エージェント、必要な場合の SSH ホスト一つ、Codex 経路の絶対 home だけです:
+
+```json
+{"schemaVersion":1,"presets":{"work-mac":{"transport":"ssh","agent":"codex","host":"user@work-mac","codexHome":"/Users/user/.codex"}}}
+```
+
+プリセットと明示的な `--host`、`--codex-home`、`--agent`、`--ssh-opt`、`--codex-bin` は値が同じでも併用できません。Reply-To URI、ペアリング済み機器、Antigravity、wake、実験的 handoff との組み合わせも対象外です。認証情報、実行ファイルのパス、SSH コマンドやオプション、承認設定、receipt の秘密値は保存しません。既存の運用者所有の SSH 設定は引き続き適用されます。
+
+`preset list` と `preset show` は設定を読むだけで、native の検索、SSH、更新通知、バックグラウンド更新は実行しません。読み取りで存在しない保存先を初期化することもありません。一方、`list --preset` は既存のリモート照会や部分失敗の処理を含め、選択した一経路の通常の一覧取得を明示的に実行します。他のプリセットへの接続やグループ一斉送信は行いません。
+
+テキスト形式の一覧取得・送信では、既存の処理前に選択した経路と revision を stderr に表示します。既存の native 結果 JSON、stdout、終了契約は維持し、プリセットのフラグ、revision、ローカルファイルのパスは SSH に転送しません。各呼び出しは読み取った一つのスナップショットを使います。後から変更・削除しても既に展開した呼び出しは取り消されず、実際の投入は native 宛先を再検証します。これは保存先・所有権の原子的な証明、受信側の重複抑止、消費、ACK、タスク完了を保証するものではありません。
+
+`preset_commit_unconfirmed` は、原子的な置換が既に見えている可能性がある一方、永続化を確認できなかったことを示します。再試行する前に現在の設定を確認してください。自動的には元に戻しません。
+
+検査する上位経路は root または現在のユーザーが所有し、他のユーザーが書き込めない必要があります。root 所有の sticky 一時ディレクトリは例外で、設定の直上ディレクトリは現在のユーザー所有に限ります。全ての経路要素をシンボリックリンクを追わずに開きます。専用保存先の拡張 ACL エントリーは保守的に拒否します。macOS の上位経路では deny-only ACL を許可しますが、allow エントリーや検証できない ACL は拒否し、Linux POSIX ACL も検査します。空または相対パスの `XDG_CONFIG_HOME` は別の場所に黙って切り替えず拒否します。既存の権限は自動修復しません。安全なユーザー専用の絶対経路を選ぶか、非公開のバックアップを保持してから不正な設定をオフラインで確認・修正し、内容は公開しないでください。
+
+macOS で所有権を無視するマウントは `preset_ownership_unenforced`、マウント照会が利用できない、または検証できない場合は `preset_mount_unverifiable` で拒否します。モードビットだけを所有権が強制される証拠とは扱いません。Linux では上位経路の ACL も、ACL 状態を検証できないファイルシステムも拒否します。管理コマンドを中断した後は、変更が既に見えている可能性があるため現在の設定を確認してください。ディレクトリの同期失敗を黙って成功とは扱いません。
+
+### 受信先アドレス帳（開発中）
+
+この #324 の追加範囲は v1.3 の候補で、公開済み v1.2.1 には含まれません。経路プリセットが保存するのは引き続き経路だけです。別途オプトインするアドレス帳は、ユーザーが付けた表示名を、ローカルまたは SSH の Mac/Linux 経路で明示的に選択した Claude Code・Codex の受信先に結び付けます。表示名は人物の身元を認証しません。ペアリング済みデバイス、Antigravity、Windows は拒否します。明示的なアドレス帳操作または `--address` がないコマンドはアドレス帳設定を読みません。自動移行や代替経路への切り替えは追加しません。
+
+```bash
+session-peer address resolve --preset work-mac --to 'codex:<full-thread-uuid>' --json
+session-peer address add review --label Review --preset work-mac --to 'codex:<full-thread-uuid>' --expect-selection 'as1:<HASH>'
+session-peer address discover --address review --json
+session-peer send --address review --dry-run --message 'Review the patch'
+session-peer send --address review --address-revision 'ab1:<HASH>' --confirm-target 'codex:<full-thread-uuid>' --message 'Review the patch'
+session-peer address reselect review --expect-revision 'ab1:<OLD_HASH>' --to 'codex:<new-full-thread-uuid>' --expect-selection 'as1:<NEW_HASH>'
+session-peer address remove review --expect-revision 'ab1:<HASH>'
+```
+
+プレースホルダーは実際に報告された正確な値に置き換えます。`add` の前に `address resolve` の結果を確認し、その `as1:` 観測 revision を使います。`reselect` の前には同じプリセットで希望する新しい宛先をもう一度 resolve し、新しい `as1:` を確認してください。`as1:` は観測した選択メタデータの revision であり、権限、native epoch、消費の証拠ではありません。追加または再選択が成功するたびに新しい `bindingId` が作られ、`ab1:` アドレス revision の計算対象になります。同一のアドレスを削除して作り直しても、以前の revision は再利用できません。経路の `dp1:` は引き続き値のハッシュです。同じプリセット値を復元すると、新しい epoch ではなく同じハッシュになります。
+
+`address list` と `address show` は設定だけを読みます。`address resolve` と `address discover` は、仮のメッセージ、native CLI・バージョンの照会、モデル・セッションの起動を行わず、選択した受信先のメタデータを明示的に調べます。既存の OS プロセスメタデータ検査は行われる場合があります。Discover は重複しない `--address` 名を最大 16 個受け付け、経路・home と固定された SSH 鍵の context がすべて同じ場合だけグループ化し、各グループを一度調べます。アドレスごとの部分失敗を保持し、どれか一つでも検査に失敗するか保存された選択と一致しなくなると終了コード 1 を返します。ネットワーク全体の探索やグループ一斉送信は行いません。参照先プリセットの欠落や経路・revision の変更は拒否し、保存された古い経路には切り替えません。
+
+Claude アドレスは選択した `tg1:` 世代を保存し、投入前に既存の接続相手を検証する前提条件を適用します。Codex アドレスは完全なスレッド UUID、正確な home、`aw1:` writer 観測を保存し、副作用が発生する前に既存の検査を繰り返します。Codex の世代は引き続き**未対応**です。Writer の観測と再検証は、元の native インスタンス世代を原子的に検証する保証ではありません。Writer が変わった、または確認できない場合は明示的な再選択が必要で、自動的な宛先変更や再実行は行いません。SSH の選択には実際の接続で検証されたホスト鍵が必要で、実際の送信でも同じ鍵に固定します。これは人物を認証するものでも、SSH 設定や SQLite 保存先の同一性を証明するものでもありません。
+
+実際の送信には現在の `--address-revision` と正確な `--confirm-target` の両方が必要で、dry-run では省略できます。`--address` は `--to`、`--preset`、明示的なホスト・native・SSH の上書き、ペアリング済みデバイス、wake、handoff、Reply-To URI の経路指定とは併用できません。通常のメッセージ入力と上限は変わりません。不確実な結果でも自動再送は許可されません。これらのコマンドは、別途開発中の #323 配信説明機能との組み合わせを保証しません。
+
+保存先は `destinations.json` の隣にある別の `addresses.json` です。`schemaVersion: 1`、64 KiB の上限、最大 128 件の項目を使用します。プリセットと同じ所有者・権限・ACL・マウントの検査と、シンボリックリンクをたどらない経路検査を適用し、ファイルの自動修復や移行は行いません。アドレス名はプリセット名の構文に従います。表示名は NFC に正規化して 128 文字に制限し、制御文字・双方向制御文字・書式文字を拒否します。管理操作の commit が未確認でも変更が既に見えている可能性があるため、再試行前に現在の設定を確認してください。結び付けの revision は、受信側の重複抑止、ACK、タスク完了の証拠を追加しません。
+
 <a id="install"></a>
 ## 任意の対話型短縮コマンド
 

@@ -110,6 +110,8 @@ def cmd_send(args: argparse.Namespace) -> int:
             remote_argv += adapter.remote_options(args)
             if expected_generation is not None:
                 remote_argv += ["--target-generation", expected_generation]
+            if getattr(args, "_address_expected_writer", None) is not None:
+                remote_argv += ["--_address-writer-revision", args._address_expected_writer]
             if args.dry_run:
                 remote_argv.append("--dry-run")
             result = transport.execute(remote_argv)
