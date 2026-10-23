@@ -15,7 +15,7 @@
     "docs/compatibility-v1.md": "7e551aad37a369faff7e370728376763efb54c2c9e9cfd8556a0c19aabc3d103",
     "docs/contracts/handoff-v1.md": "46a953010c49214bd8f969412f26713384fbe09a0ba78ebf0fef75da40d0d889",
     "docs/diagnostics.md": "0949e53612eeab2cd7c7bbda498e14d71e9cb1b1189aa7722030cb8702cd8481",
-    "docs/download-metrics.md": "ded60e7b84d14ce779f8d639516b4e390358a06ef76b677dc9c1f997fb626a9f",
+    "docs/download-metrics.md": "a537300d3fe2b60273b6f4bd84e0ae0944364fda3881d7fb7e32ce665dc2c724",
     "docs/handoff-runtime.md": "a236e48392c91eca0f7c3734a6008a991955ae66d16fd71f97691aac5bf0091f",
     "docs/mcp.md": "a64010cdd63f2cde6a0052450bed2d05faa0f19c93c76143cb0d585d36f8ff62",
     "docs/multi-home-list.md": "f8d8e3adf727e4842ea7c4d45e8f6523b11d0513bf2509d4d1204645875e6489",
@@ -54,7 +54,7 @@
     "docs/validation/85-antigravity.md": "f89b175191cd98ab03d4029b487065133814b3c8dd8de8cd0a5cc367e2579e4f",
     "docs/wake.md": "cde135da2ea7be21c815bb265e694f737dbe467d8e76bb82eb118e3b86e29d22",
     "plugins/session-peer/README.md": "a4eeae54caac9ad824d740f7f319561f060bc9c2bbbbf7def2bdd8e36dbcd1c6",
-    "README.md": "0141cec936141c2bb13283b29440ad5c398f38bbc27ddb20013ff5e46175dadc",
+    "README.md": "4ccfb9f1a617fcc04de5bbb3ee2118ec3fc1eee41c6e902071f97c3ad645c590",
     "RELEASING.md": "9e99dd741b4d221064664176b9c09f972ae4d82379f0ac4479853832dacad042",
     "SECURITY.md": "8f018f6f98002312e143609b9734aeb971ca5217e146597c06b57b5645031046"
   }
