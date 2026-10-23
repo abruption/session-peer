@@ -160,7 +160,12 @@ class NativeRelay(unittest.IsolatedAsyncioTestCase):
 
     async def test_relay_native_delivery_ciphertext_and_cross_route_dedup(self):
         ident=str(uuid.uuid4());body={'target':'review','message':'SP_NATIVE_RELAY_SENTINEL'}
-        result=await self.call('send',body,ident,'relay');self.assertTrue(result['ok'])
+        result=await self.call('send',body,ident,'relay')
+        # Keep failure evidence to protocol codes/booleans, without payloads,
+        # identities, paths, or native exception text.
+        details = {key: result.get(key) for key in (
+            'ok', 'status', 'reason', 'submitted', 'retryAllowed', 'consumptionConfirmed')}
+        self.assertTrue(result['ok'], details)
         duplicate=await self.call('send',body,ident,'direct');self.assertTrue(duplicate['duplicate'])
         self.assertEqual(len(self.effects),1)
         self.assertNotIn(b'SP_NATIVE_RELAY_SENTINEL',b''.join(self.frames))
