@@ -7,23 +7,20 @@
     "zh-CN"
   ],
   "sources": {
-    "README.md": "9ccd334628d9bb03bba3a08d0fd67a46ab48124733e4cf0b6565f034680db441",
-    "RELEASING.md": "b2371ba9b2392e3b95394bb6bb3c2927b0c87ff3a8b307bc90defdad6f0ab8a6",
-    "SECURITY.md": "8f018f6f98002312e143609b9734aeb971ca5217e146597c06b57b5645031046",
-    "docs/README.md": "03a461054c1570741c2022685014a1b947f0234145b83f4c8297241d5edcf327",
     "docs/agent-adapters.md": "bf185d3121c94829bb412071a25c4d943302e10a6b2e713111e653b8f8c3ea91",
     "docs/ai-assistant-guide.md": "9624ec96b92fb688fae3be3c94cb3564c77985091be451fbf1f056a1af9b9d9c",
     "docs/antigravity.md": "f2b5122a0ce6e6fb5bd4d8ed50ce2c8bd2dc9c98ec8ce328405cf7c2cd24229d",
     "docs/architecture/agent-transports.md": "01a4e3942e87acb476595859f2e37f9653ea1e3bc19ebc68dced1adf20a6966f",
-    "docs/cli-reference.md": "7cfa6c096a6924068631730e0becb3127a8ab4e1bc41610fc5539f16638e67f6",
+    "docs/cli-reference.md": "1e192fd8e9975bd3cc50b67a417d320db349a33df771ef44362ae1ff1d9542dc",
     "docs/compatibility-v1.md": "7e551aad37a369faff7e370728376763efb54c2c9e9cfd8556a0c19aabc3d103",
     "docs/contracts/handoff-v1.md": "46a953010c49214bd8f969412f26713384fbe09a0ba78ebf0fef75da40d0d889",
     "docs/diagnostics.md": "0949e53612eeab2cd7c7bbda498e14d71e9cb1b1189aa7722030cb8702cd8481",
     "docs/download-metrics.md": "ded60e7b84d14ce779f8d639516b4e390358a06ef76b677dc9c1f997fb626a9f",
-    "docs/handoff-runtime.md": "80800abed85d4af1a2e2001448b39f6cf02ae12912cde0fde90c6863124e5220",
+    "docs/handoff-runtime.md": "a236e48392c91eca0f7c3734a6008a991955ae66d16fd71f97691aac5bf0091f",
     "docs/mcp.md": "a64010cdd63f2cde6a0052450bed2d05faa0f19c93c76143cb0d585d36f8ff62",
     "docs/multi-home-list.md": "f8d8e3adf727e4842ea7c4d45e8f6523b11d0513bf2509d4d1204645875e6489",
-    "docs/paired-devices.md": "fc174600f246292b3b877a2321e1a21861ce6e5fa5c586f56c89a0bd7181907b",
+    "docs/paired-devices.md": "08c2643d08f769deb725c6123193c1ea9593c775afde84a158a41fe6e7d1be82",
+    "docs/README.md": "03a461054c1570741c2022685014a1b947f0234145b83f4c8297241d5edcf327",
     "docs/relay-auth.md": "e6da5291ce6a9da31e79e66ceeff7e9fef7e95046359acbf04d708c96ffab62f",
     "docs/relay-development-plan.md": "0abf750b36275ea4e467a0020e560277f08689f2d574aed7674133705383b1ff",
     "docs/relay-edge-policy.md": "c1c7f7a1c4303943c78ca334dab4034f66c0c272e40c007d07c3da2a496155eb",
@@ -52,9 +49,13 @@
     "docs/releases/v1.1.2.md": "3ffe3d6daa8e403e9f3c5e83ec81c3afa9f10750627b31362990ec5b92326f3a",
     "docs/releases/v1.2.0.md": "9a153493fb3d25306306a05f6c1f5672d7d7becfe008f371770ce2d13d7e9b38",
     "docs/releases/v1.2.1.md": "70a3026c2d874a6fd7addcaef840ecfa84bf4f33a0165605217379acffa4fddb",
+    "docs/releases/v1.3.0.md": "2e468dcf868a59394b681a4bb73683683f08e2d2f51bbf6f76adb984b70d737b",
     "docs/validation/69-rc.md": "e490c6a9ad0fec9108b91c74922cedac7ddf214ed405f8f5523da22f48a4b222",
     "docs/validation/85-antigravity.md": "f89b175191cd98ab03d4029b487065133814b3c8dd8de8cd0a5cc367e2579e4f",
     "docs/wake.md": "cde135da2ea7be21c815bb265e694f737dbe467d8e76bb82eb118e3b86e29d22",
-    "plugins/session-peer/README.md": "a4eeae54caac9ad824d740f7f319561f060bc9c2bbbbf7def2bdd8e36dbcd1c6"
+    "plugins/session-peer/README.md": "a4eeae54caac9ad824d740f7f319561f060bc9c2bbbbf7def2bdd8e36dbcd1c6",
+    "README.md": "0141cec936141c2bb13283b29440ad5c398f38bbc27ddb20013ff5e46175dadc",
+    "RELEASING.md": "1cc2a3738078100de7c6c2600fb96bef58f00b1b8ce253509158d25068393c18",
+    "SECURITY.md": "8f018f6f98002312e143609b9734aeb971ca5217e146597c06b57b5645031046"
   }
 }

@@ -1,5 +1,11 @@
 # Releasing session-peer
 
+## v1.3.0 preparation
+
+Prepared on 2026-10-23 against published 1.2.1. The [release notes](docs/releases/v1.3.0.md) describe the six merged feature PRs and remaining boundaries. Integrated source base: `a0e7af032fd372334782cc3ac3d97b21c71dd797`, before the version-preparation commit. Its CI and CodeQL passed; final preparation review, exact protected-main CI, dependency audits, generated standalone and package/install checks remain required. Skill and plugin versions remain independent.
+
+The owner authorized version preparation, tagging and publication; that authorization does not waive repository protections or the required human PyPI environment approval. Freeze publication-neutral notes before building. After preparation workflow dispatch, wait for attach-draft success and verify all seven immutable assets, SHA256SUMS, release-provenance.json and authenticated attestations against the exact tag and commit. Record actual publication evidence separately. Local builds are rehearsal evidence; package publication does not deploy services or update installed devices. The sections below preserve historical procedures and do not instruct reuse of old tags.
+
 Version 1.1.0 is published. GitHub published v1.1.0 on 2026-10-09 at 06:46:41 UTC, from commit 8ca77cf31254c8287a2593fe484bb30a7dba2727; PyPI published the wheel and sdist at 08:04:35 and 08:04:37 UTC. See the [GitHub release](https://github.com/abruption/session-peer/releases/tag/v1.1.0) and [PyPI version record](https://pypi.org/pypi/session-peer/1.1.0/json). Publication is not operational deployment or completion of every experimental handoff gate.
 
 The sections from source/configuration gates through publication recovery below preserve the historical 2026-10-09 release procedure, not a request to run it again. Do not recreate, move or reuse v1.1.0 or rerun its publication examples. For a future version, use a new reviewed version and repeat the gates with fresh evidence and explicit authorization. Preparation, immutable GitHub publication, required human PyPI environment review and operational deployment remain separate. Protected main requires reviewed, up-to-date PRs and the aggregate release gate, including Python platform matrices, documentation, shell, package/standalone/MCP/Relay/Control tests, integrations and Python/Node dependency audits.

@@ -34,11 +34,11 @@ in this ~22-second animation, not a screen recording; send success alone is not 
 ### Install
 
 Python 3.9+. The core local/SSH CLI has no third-party Python dependencies.
-Source version: **1.2.1**. At the 2026-10-19 publication checkpoint, the last verified published stable release was **1.2.0**.
+Source version: **1.3.0**. At the 2026-10-23 preparation checkpoint, the last verified published stable release was **1.2.1**.
 
-See the [publication record and historical preparation](docs/releases/v1.2.0.md) for published version 1.2.0. Package publication and operational deployment are separate.
+Version 1.3.0 adds delivery explanations, local/SSH route presets and recipient addresses, bounded handoff observation, trusted SSH configuration, pairing links and per-version notice preferences. See the [release scope and verification gates](docs/releases/v1.3.0.md) for supported combinations and limits. Package publication and operational deployment are separate.
 
-Check [GitHub Releases](https://github.com/abruption/session-peer/releases) and [PyPI](https://pypi.org/project/session-peer/) for available versions. The [preparation notes](docs/releases/v1.2.1.md) record the dated patch scope and remaining gates; a source version alone does not establish package availability.
+Check [GitHub Releases](https://github.com/abruption/session-peer/releases) and [PyPI](https://pypi.org/project/session-peer/) for available versions; a source version alone does not establish package availability.
 
 Experimental handoff is opt-in: local POSIX Claude supports receipt ACKs; Codex and SSH support correlation-only submission, not ACK observation. See the [handoff guide](docs/handoff-runtime.md) for the shipped scope and remaining acceptance gates.
 

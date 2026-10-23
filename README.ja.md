@@ -34,11 +34,11 @@ session-peer 1.0.2による実際のローカル通信です。CodexがClaude Co
 ### インストール
 
 Python 3.9以上が必要です。基本のローカル・SSH CLIに外部Python依存パッケージはありません。
-ソースバージョン：**1.2.1**。2026-10-19の公開状況の確認時点で、最後に確認した公開済み安定版は**1.2.0**でした。
+ソースバージョン：**1.3.0**。2026-10-23の準備時点で、最後に確認した公開済み安定版は**1.2.1**でした。
 
-公開済み1.2.0の[公開記録・過去の準備](docs/ja/releases/v1.2.0.md)を参照してください。パッケージ公開と本番環境への配備は別です。
+1.3.0では配信説明、ローカル・SSH経路プリセットと受信者アドレス帳、時間制限付きhandoff観察、信頼したSSH設定、ペアリングリンク、バージョン別通知設定を追加します。対応する組み合わせと制限は[リリース範囲と検証条件](docs/ja/releases/v1.3.0.md)を参照してください。パッケージ公開と本番環境への配備は別です。
 
-入手できるバージョンは[GitHub Releases](https://github.com/abruption/session-peer/releases)と[PyPI](https://pypi.org/project/session-peer/)で確認してください。[準備記録](docs/ja/releases/v1.2.1.md)は記載日時点のパッチ範囲と残る条件を説明します。ソースのバージョンだけではパッケージの公開状況は確認できません。
+入手できるバージョンは[GitHub Releases](https://github.com/abruption/session-peer/releases)と[PyPI](https://pypi.org/project/session-peer/)で確認してください。ソースのバージョンだけではパッケージの公開状況は確認できません。
 
 実験的なhandoffは明示的に選択する機能です。ローカルPOSIX Claudeは受領ACKに対応し、CodexとSSHは相関IDによる送信のみ対応してACKの観察には対応しません。公開済みの範囲と残る検証条件は[handoffガイド](docs/ja/handoff-runtime.md)を参照してください。
 

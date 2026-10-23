@@ -1,5 +1,11 @@
 # 发布session-peer
 
+## v1.3.0 准备
+
+于2026-10-23以已发布的1.2.1为基准准备。[发布说明](docs/zh-CN/releases/v1.3.0.md)介绍六个已合并功能PR及剩余限制。集成源码基准为版本准备提交之前的 `a0e7af032fd372334782cc3ac3d97b21c71dd797`。该基准的CI与CodeQL已通过；仍需最终准备审核、受保护main准确提交的CI、依赖审计、生成的独立文件、软件包及安装检查。技能与插件版本保持独立。
+
+所有者已授权版本准备、打标签和发布，但未免除仓库保护或必需的人工PyPI环境审批。构建前冻结不预先宣告发布的说明。触发preparation workflow后，等待attach-draft成功，将七个不可变产物、SHA256SUMS、release-provenance.json及经过认证的attestation与准确标签和提交核对。另行记录实际发布证据。本地构建是预演证据；软件包发布不包括服务部署或已安装设备更新。以下章节保留历史流程，不是重用旧标签的指示。
+
 1.1.0已发布。GitHub于2026-10-09 06:46:41 UTC发布了提交8ca77cf31254c8287a2593fe484bb30a7dba2727的v1.1.0；PyPI分别于08:04:35和08:04:37 UTC发布wheel与sdist。请参阅[GitHub版本](https://github.com/abruption/session-peer/releases/tag/v1.1.0)和[PyPI版本记录](https://pypi.org/pypi/session-peer/1.1.0/json)。发布不表示已部署到生产环境，也不表示实验性handoff的所有验收条件已完成。
 
 以下从源码/配置门禁到发布验证/恢复的部分保留2026-10-09发布流程的历史记录，并非重新执行的请求。不要重新创建、移动或重用v1.1.0，也不要再次执行其发布示例。后续版本需采用新审核的版本、最新证据和明确授权，重新检查各项门禁。准备、不可变GitHub发布、必需的人工PyPI环境审核与生产环境部署相互独立。受保护的main要求PR经过审核并与main保持最新，同时通过汇总发布门禁；门禁涵盖Python平台测试矩阵、文档、shell、包/单文件/MCP/Relay/Control、集成测试以及Python/Node依赖审计。

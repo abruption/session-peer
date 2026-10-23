@@ -50,7 +50,7 @@ Status does not submit or wake, initialize or repair a ledger, mint receipt auth
 
 The collector clock query is also read-only. An older collector may reject that query, so `keep_waiting` may be absent from the available next actions; status does not fall back to a writing query or restart the collector. The ledger snapshot and optional collector clock observation are separate, not an atomic combined observation. After a wait fails with history_unavailable and the collector clock becomes available again, status now preserves known submission and that failed wait without offering keep_waiting. Other wait-creation semantics are unchanged. A tombstone's latest-wait detail is shown as unavailable due to expired history, not as evidence that no wait was requested.
 
-Status remains a single local query. The v1.3 candidate adds bounded local watching below; Windows handoff and Codex ACK remain unsupported. [#296](https://github.com/abruption/session-peer/issues/296) remains open pending review and merge, and this candidate is not a published release.
+Status remains a single local query. Version 1.3.0 adds bounded local watching below; Windows handoff and Codex ACK remain unsupported. See [#296](https://github.com/abruption/session-peer/issues/296) for the implementation history.
 
 ## Watch one request for a bounded period
 

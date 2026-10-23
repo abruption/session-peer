@@ -235,8 +235,8 @@ class StableCandidate(unittest.TestCase):
     def test_published_release_keeps_experimental_acceptance_gates(self):
         for suffix in ("", ".ko", ".ja", ".zh-CN"):
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
-            self.assertIn("**1.2.0**", text)
-            self.assertIn("releases/v1.2.0.md", text)
+            self.assertIn("**1.3.0**", text)
+            self.assertIn("releases/v1.3.0.md", text)
             self.assertIn("handoff-runtime.md", text)
             self.assertIn("POSIX", text)
             self.assertNotIn("**1.0.4**", text)
@@ -255,8 +255,8 @@ class StableCandidate(unittest.TestCase):
             self.assertIn(marker, english)
 
     def test_package_and_generated_core_version_agree(self):
-        self.assertEqual(session_peer.__version__, "1.2.1")
-        self.assertIn('__version__ = "1.2.1"',
+        self.assertEqual(session_peer.__version__, "1.3.0")
+        self.assertIn('__version__ = "1.3.0"',
                       (ROOT / "session_peer_core/common.py").read_text(encoding="utf-8"))
 
     def test_all_current_readmes_and_runbooks_use_stable_version(self):
@@ -264,7 +264,7 @@ class StableCandidate(unittest.TestCase):
             for stem in ("README", "RELEASING"):
                 with self.subTest(stem=stem, suffix=suffix):
                     text = (ROOT / (stem + suffix + ".md")).read_text(encoding="utf-8")
-                    self.assertIn("1.2.0", text)
+                    self.assertIn("1.3.0", text)
                     self.assertNotIn("1.0.0rc4", text)
                     if stem == "RELEASING":
                         self.assertIn("--draft=false --prerelease=false --latest", text)
@@ -287,24 +287,24 @@ class StableCandidate(unittest.TestCase):
 
     def test_stable_release_keeps_operational_deployment_separate(self):
         profiles = (
-            ("", "Source version: **1.2.1**.",
-             "At the 2026-10-19 publication checkpoint, the last verified published stable release was **1.2.0**.",
+            ("", "Source version: **1.3.0**.",
+             "At the 2026-10-23 preparation checkpoint, the last verified published stable release was **1.2.1**.",
              "Development candidate 1.2.1 is unpublished"),
-            (".ko", "소스 버전: **1.2.1**.",
-             "2026-10-19 공개 상태 확인 시점의 마지막 확인 공개 안정판은 **1.2.0**이었습니다.",
+            (".ko", "소스 버전: **1.3.0**.",
+             "2026-10-23 준비 시점의 마지막 확인 공개 안정판은 **1.2.1**이었습니다.",
              "개발 후보 1.2.1은 미공개입니다"),
-            (".ja", "ソースバージョン：**1.2.1**。",
-             "2026-10-19の公開状況の確認時点で、最後に確認した公開済み安定版は**1.2.0**でした。",
+            (".ja", "ソースバージョン：**1.3.0**。",
+             "2026-10-23の準備時点で、最後に確認した公開済み安定版は**1.2.1**でした。",
              "開発候補1.2.1は未公開です"),
-            (".zh-CN", "源码版本：**1.2.1**。",
-             "在2026-10-19的发布状态检查时，最后确认的已发布稳定版本为**1.2.0**。",
+            (".zh-CN", "源码版本：**1.3.0**。",
+             "在2026-10-23的准备检查时，最后确认的已发布稳定版本为**1.2.1**。",
              "开发候选版本1.2.1尚未发布"),
         )
         for suffix, source_version, dated_checkpoint, stale_unpublished in profiles:
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
             self.assertIn(source_version, text)
             self.assertIn(dated_checkpoint, text)
-            for stale_version in ("1.2.0", "1.2.1"):
+            for stale_version in ("1.2.0", "1.2.1", "1.3.0"):
                 self.assertNotIn(stale_unpublished.replace("1.2.1", stale_version), text)
             self.assertIn("https://github.com/abruption/session-peer/releases", text)
             self.assertIn("https://pypi.org/project/session-peer/", text)
