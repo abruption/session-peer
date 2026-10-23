@@ -168,12 +168,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     handoff = subparsers.add_parser("handoff", help="manage private correlated intents without submitting native messages")
     handoff_sub = handoff.add_subparsers(dest="handoff_action", required=True)
-    for action in ("init", "prepare", "status", "wait", "confirm"):
+    for action in ("init", "prepare", "status", "watch", "wait", "confirm"):
         sub = handoff_sub.add_parser(action)
         sub.add_argument("--json", action="store_true")
-        sub.set_defaults(func=cmd_handoff, no_update_notice=True)
-        if action in ("status", "wait"):
+        sub.set_defaults(func=cmd_handoff_watch if action == "watch" else cmd_handoff, no_update_notice=True)
+        if action in ("status", "watch", "wait"):
             sub.add_argument("--correlation-id", required=True, type=handoff_cli_uuid)
+        if action == "watch":
+            sub.add_argument("--watch-timeout", type=handoff_watch_timeout, default=30,
+                             metavar="SECONDS", help="finite local watch budget, 1..60 seconds (default: 30)")
+            sub.add_argument("--interval-ms", type=handoff_watch_interval, default=1000,
+                             metavar="MILLISECONDS", help="sample every 1000..5000 ms (default: 1000)")
         if action == "wait":
             sub.add_argument("--wait-for", choices=("delivered", "acknowledged"), required=True)
             sub.add_argument("--wait-timeout", type=handoff_timeout, default=30)
