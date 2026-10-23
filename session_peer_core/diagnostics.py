@@ -185,6 +185,16 @@ def diagnose_codex(args: argparse.Namespace) -> dict:
 
 
 def probe_return_route(destination: str) -> dict:
+    # A reverse probe belongs to the machine running this doctor. A caller's
+    # forward selection is never inherited, even by an in-process invocation.
+    token = SSH_CONFIG_SELECTION.set(None)
+    try:
+        return _probe_return_route(destination)
+    finally:
+        SSH_CONFIG_SELECTION.reset(token)
+
+
+def _probe_return_route(destination: str) -> dict:
     """Test reverse SSH without prompts, key enrollment, or config mutation."""
     check_ssh_argument(destination, "--host")
     if is_self_ssh_destination(destination):

@@ -17,7 +17,7 @@ def remote_installed_version(host: str, ssh_opts: list[str],
     )
     try:
         done = subprocess.run(
-            ["ssh", *ssh_opts, host, probe],
+            trusted_ssh_command(ssh_opts, host, probe),
             capture_output=True, timeout=30,
         )
     except FileNotFoundError as exc:
