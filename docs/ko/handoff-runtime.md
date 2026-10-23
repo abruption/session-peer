@@ -50,7 +50,7 @@ session-peer handoff status --correlation-id PREPARED_UUID
 
 수집기의 시계 조회도 읽기 전용입니다. 이전 수집기는 이 조회를 거부할 수 있어 가능한 다음 조치에 `keep_waiting`이 없을 수 있습니다. 이때 상태 조회는 기록을 쓰는 질의로 전환하거나 수집기를 재시작하지 않습니다. 기록 스냅샷과 선택적 수집기 시계 관측은 별도이며, 원자적으로 함께 관측한 증거가 아닙니다. 대기가 history_unavailable로 실패한 뒤 수집기 시계를 다시 확인할 수 있게 된 경우, 이제 상태 조회는 확인된 제출과 실패한 대기를 보존하면서 keep_waiting을 안내하지 않습니다. 다른 대기 생성 의미는 바꾸지 않습니다. 보존 표식의 최신 대기 상세는 만료된 기록으로 인해 확인 불가로 표시하며, 대기를 요청하지 않았다는 증거로 해석하지 않습니다.
 
-상태 조회는 로컬 단일 조회를 유지합니다. v1.3 후보에는 아래의 시간 제한 로컬 감시가 추가되며, Windows handoff와 Codex ACK는 여전히 미지원입니다. [#296](https://github.com/abruption/session-peer/issues/296)은 검토·병합 전까지 열어두며 이 후보는 배포된 릴리스가 아닙니다.
+상태 조회는 로컬 단일 조회를 유지합니다. v1.3.0에는 아래의 시간 제한 로컬 감시가 추가되며, Windows handoff와 Codex ACK는 여전히 미지원입니다. 구현 이력은 [#296](https://github.com/abruption/session-peer/issues/296)을 참고하세요.
 
 ## 요청 한 건을 정해진 시간 동안 감시
 

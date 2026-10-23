@@ -24,6 +24,8 @@ installation paths.
 
 ## Development and history
 
+- [v1.3.0 release notes](releases/v1.3.0.md) describe the six merged features, supported combinations and release verification.
+
 - [v1.2.1 preparation notes](releases/v1.2.1.md) record the 2026-10-19 patch candidate for Orca Claude discovery, skill metadata reading and the compatibility skill copy; publication remains separate.
 
 - [v1.2.0 published record and historical preparation](releases/v1.2.0.md) record the 2026-10-16 publication separately from preparation started on 2026-10-15 and updated on 2026-10-16, the merged six-PR scope and remaining acceptance gates.

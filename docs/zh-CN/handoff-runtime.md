@@ -50,7 +50,7 @@ session-peer handoff status --correlation-id PREPARED_UUID
 
 收集器时钟查询也是只读的。旧版收集器可能拒绝该查询，因此可用的下一步操作可能不包含 `keep_waiting`。状态查询不会改用会写入记录的查询，也不会重启收集器。记录快照与可选的收集器时钟观测是分开的，并非原子性的联合观测。等待因 history_unavailable 失败后，若收集器时钟恢复可用，状态查询现在会保留已知提交事实和失败的等待，同时不提供 keep_waiting。其他等待创建语义不变。保留标记中的最近等待详情显示为因历史过期而不可用，不作为未请求等待的证据。
 
-状态查询仍是本地单次查询。v1.3 候选版本增加了下述限时本地观察；Windows handoff 和 Codex ACK 仍不支持。[#296](https://github.com/abruption/session-peer/issues/296) 在评审、合并前保持开放，此候选版本尚未发布。
+状态查询仍是本地单次查询。v1.3.0 增加了下述限时本地观察；Windows handoff 和 Codex ACK 仍不支持。实现记录请参见 [#296](https://github.com/abruption/session-peer/issues/296)。
 
 ## 在限定时间内观察一条请求
 

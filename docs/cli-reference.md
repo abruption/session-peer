@@ -62,9 +62,11 @@ is opt-in and does not confirm consumption or a reply.
 
 <a id="delivery-explanation"></a>
 
-### Delivery explanation (development)
+<a id="delivery-explanation-development"></a>
 
-Development for #323, a v1.3 candidate; unavailable in published v1.2.1. Add `--explain` to `send --dry-run` for a human-readable summary of the selected local, SSH or paired-device destination, existing validation result, delivery method and observation limits. `doctor --explain` describes the existing diagnostic snapshot and declared capabilities, not per-target readiness. `handoff status --explain` describes an existing intent's stored evidence. Each processed SSH destination receives its own summary; an unexpected error can still stop the existing host loop before later destinations are processed.
+### Delivery explanation (v1.3.0)
+
+Available in v1.3.0. Add `--explain` to `send --dry-run` for a human-readable summary of the selected local, SSH or paired-device destination, existing validation result, delivery method and observation limits. `doctor --explain` describes the existing diagnostic snapshot and declared capabilities, not per-target readiness. `handoff status --explain` describes an existing intent's stored evidence. Each processed SSH destination receives its own summary; an unexpected error can still stop the existing host loop before later destinations are processed.
 
 ```bash
 session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run --explain
@@ -172,9 +174,11 @@ receipt; these flags introduce no structured JSON message-input protocol.
 
 <a id="route-presets"></a>
 
-## Local route presets (development)
+<a id="local-route-presets-development"></a>
 
-Development for #324; unavailable in published v1.2.1. The opt-in `preset` commands remember routes, not recipients. Use `--preset` to select one saved local or SSH route for ordinary Claude Code or Codex listing/sending on Mac/Linux. Windows preset operations are refused; ordinary Windows commands remain unchanged.
+## Local route presets (v1.3.0)
+
+Available in v1.3.0. The opt-in `preset` commands remember routes, not recipients. Use `--preset` to select one saved local or SSH route for ordinary Claude Code or Codex listing/sending on Mac/Linux. Windows preset operations are refused; ordinary Windows commands remain unchanged.
 
 ```bash
 session-peer preset add work-mac --host user@work-mac --agent codex --codex-home /Users/user/.codex
@@ -209,9 +213,11 @@ Checked ancestors must be owned by root or the current user and not writable by 
 
 On macOS, mounts that ignore ownership are refused with `preset_ownership_unenforced`; an unavailable or unverifiable mount query is refused with `preset_mount_unverifiable`. Mode bits alone are not treated as proof that ownership is enforced. On Linux, ACLs on ancestors are also refused, as are filesystems whose ACL state cannot be verified. After an interrupted management command, inspect the current configuration because the change may already be visible; directory-sync failures are not silently accepted.
 
-### Recipient addressbook (development)
+<a id="recipient-addressbook-development"></a>
 
-This additional #324 scope is a v1.3 candidate, not part of published v1.2.1. A route preset still stores only a route. The separate, opt-in addressbook binds a user-supplied label to an explicitly selected Claude Code or Codex recipient on a local or SSH Mac/Linux route. Labels do not authenticate people. Paired devices, Antigravity and Windows are refused. Commands without an explicit addressbook operation or `--address` do not read addressbook configuration; no automatic migration or fallback is added.
+### Recipient addressbook (v1.3.0)
+
+Available in v1.3.0. A route preset still stores only a route. The separate, opt-in addressbook binds a user-supplied label to an explicitly selected Claude Code or Codex recipient on a local or SSH Mac/Linux route. Labels do not authenticate people. Paired devices, Antigravity and Windows are refused. Commands without an explicit addressbook operation or `--address` do not read addressbook configuration; no automatic migration or fallback is added.
 
 ```bash
 session-peer address resolve --preset work-mac --to 'codex:<full-thread-uuid>' --json
@@ -229,7 +235,7 @@ Replace placeholders with the exact reported values. Before `add`, inspect `addr
 
 Claude addresses retain the selected `tg1:` generation and use the existing connected-peer precondition before submission. Codex addresses retain a full thread UUID, exact home and `aw1:` writer observation, with existing checks repeated before the effect. Codex generation remains **unsupported**: writer observation and revalidation are not an atomic native incarnation guarantee. A changed or unavailable writer requires explicit reselection; no automatic retargeting or replay is attempted. SSH selection requires a host key verified on the actual connection and pins that same key for the actual send. This authenticates neither a person nor the identity of SSH configuration or SQLite storage.
 
-An actual send requires both the current `--address-revision` and exact `--confirm-target`; dry-run may omit them. `--address` cannot be combined with `--to`, `--preset`, explicit host/native/SSH overrides, paired-device, wake, handoff or Reply-To URI routing. Normal message inputs and limits remain unchanged. Unknown outcomes never authorize automatic resend. These commands do not promise composition with the separate #323 delivery-explanation candidate.
+An actual send requires both the current `--address-revision` and exact `--confirm-target`; dry-run may omit them. `--address` cannot be combined with `--to`, `--preset`, explicit host/native/SSH overrides, paired-device, wake, handoff or Reply-To URI routing. Normal message inputs and limits remain unchanged. Unknown outcomes never authorize automatic resend. Use `send --address NAME --dry-run --explain` with a normal message input for a text-only delivery preview. `--explain` rejects JSON output; the `--address` wake and handoff restrictions still apply.
 
 Storage is a separate `addresses.json` beside `destinations.json`, with `schemaVersion: 1`, a 64 KiB limit and at most 128 entries. It uses the same owner, permissions, ACL, mount and no-symlink-following checks as presets, without automatically repairing or migrating files. Address names follow the preset-name syntax; display labels are normalized to NFC and limited to 128 characters, rejecting control, bidirectional-control and format characters. An unconfirmed management commit may already be visible: inspect current configuration before retrying. Binding revisions do not add receiver deduplication, ACK or task-completion evidence.
 
@@ -502,7 +508,9 @@ error, `2` CLI usage error or an unresolved target reported as no-target, and
 is an operational error (`1`); a missing saved thread during dry-run returns `2`.
 Exit `0` on send does not confirm consumption or a reply.
 
-### Bounded handoff watch (v1.3 candidate)
+<a id="bounded-handoff-watch-v13-candidate"></a>
+
+### Bounded handoff watch (v1.3.0)
 
 ```sh
 session-peer handoff status --correlation-id PREPARED_UUID --json
@@ -511,9 +519,11 @@ session-peer handoff watch --correlation-id PREPARED_UUID --watch-timeout 30 --i
 
 Use an existing prepared UUID in the local owner's POSIX ledger. Status remains one snapshot; watch polls for 1..60 seconds (default 30) at 1000..5000 millisecond intervals (default 1000), accepting ASCII integers only and taking at most 61 samples. Watch emits an initial snapshot only if the budget permits a valid public projection, then changed public metadata/historyPhase only; it may emit no snapshots. JSON watch output uses the common schemaVersion 1 NDJSON envelope with operation watch and event snapshot or end, nesting the unchanged handoff object in snapshots; status JSON is unchanged. Timeout completion is exit 0 for watch completion only, not ACK or wait success; SIGINT is 130, history/output failure 1, invalid arguments 2. Missing/corrupt history or ledgerEpoch change stops watching. historyPhase is prepared, attempted, terminal, tombstone or quarantined; attempted means a durable attempt fence, not active execution.
 
-Watch is read-only: no intents, waits, receipts, ledger writes, submission or wake. It adds no host/device/Windows route or Codex ACK. Limits are 16 KiB per frame and 256 KiB total with a 2 KiB end reserve. Real-fd stdout uses one owned isolated output-only Python helper that sees only bounded public serialized bytes, never changes shared descriptor flags and reads no ledger/native data. The parent enforces the original total budget including IPC, checks it before new ledger read/validation stages, and reserves 100 ms within it for final output and cleanup, so sampling may end earlier. It terminates and reaps its helper on timeout, SIGINT or error; uninterruptible OS operations prevent a hard-real-time guarantee. Partial or unacknowledged writes prohibit subsequent/end frames; consumers must reject truncated final NDJSON lines. Helper completion means OS write completion, not recipient consumption. Snapshots are not a lossless event stream, and local UTC observations do not prove ACK arrival order. See the [handoff runtime guide](handoff-runtime.md) for privacy, retained submission/ACK/wait meanings, read-only collector queries and the existing quarantine gate. Watch launches no native message process or collector. This candidate is not a published release. No payload/capability digests are exposed; public targetGeneration keeps its existing contract. The read-only ledger releases its shared lock after reading immutable snapshot bytes, before parsing and validation. Interrupted final output and cleanup are capped at 100 ms within the remaining total budget. Overall success requires a complete successful end frame and exit 0: cleanup may fail after that frame. A nonzero exit means overall failure, without promoting ACK, discarding independently valid submission facts or permitting retry.
+Watch is read-only: no intents, waits, receipts, ledger writes, submission or wake. It adds no host/device/Windows route or Codex ACK. Limits are 16 KiB per frame and 256 KiB total with a 2 KiB end reserve. Real-fd stdout uses one owned isolated output-only Python helper that sees only bounded public serialized bytes, never changes shared descriptor flags and reads no ledger/native data. The parent enforces the original total budget including IPC, checks it before new ledger read/validation stages, and reserves 100 ms within it for final output and cleanup, so sampling may end earlier. It terminates and reaps its helper on timeout, SIGINT or error; uninterruptible OS operations prevent a hard-real-time guarantee. Partial or unacknowledged writes prohibit subsequent/end frames; consumers must reject truncated final NDJSON lines. Helper completion means OS write completion, not recipient consumption. Snapshots are not a lossless event stream, and local UTC observations do not prove ACK arrival order. See the [handoff runtime guide](handoff-runtime.md) for privacy, retained submission/ACK/wait meanings, read-only collector queries and the existing quarantine gate. Watch launches no native message process or collector. No payload/capability digests are exposed; public targetGeneration keeps its existing contract. The read-only ledger releases its shared lock after reading immutable snapshot bytes, before parsing and validation. Interrupted final output and cleanup are capped at 100 ms within the remaining total budget. Overall success requires a complete successful end frame and exit 0: cleanup may fail after that frame. A nonzero exit means overall failure, without promoting ACK, discarding independently valid submission facts or permitting retry.
 
-### Trusted local SSH configuration (v1.3 candidate, not published)
+<a id="trusted-local-ssh-configuration-v13-candidate-not-published"></a>
+
+### Trusted local SSH configuration (v1.3.0)
 
 On Linux and macOS, an explicit local CLI invocation of `list`, `send`, `doctor`,
 or `update` with `--host` can select an existing OpenSSH configuration by pairing
@@ -565,9 +575,11 @@ reply-URI destinations, and invocations without `--host` are rejected before
 reading the configuration or starting SSH. Omitting the pair preserves the
 existing default SSH behavior.
 
-### One-time pairing links (v1.3 candidate)
+<a id="one-time-pairing-links-v13-candidate"></a>
 
-Both endpoints need `pairing-offer-v1` and the existing Unix Python 3.11+ relay extra. These are candidate commands, not published v1.3 support:
+### One-time pairing links (v1.3.0)
+
+Both endpoints need `pairing-offer-v1` and the existing Unix Python 3.11+ relay extra. The following commands are available in v1.3.0:
 
 ```sh
 session-peer device rotation-status --state /private/client-state

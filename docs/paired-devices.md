@@ -73,9 +73,11 @@ admission counters retain refusals and cleanup failures without identities;
 opt-in `receiver_admission` events report fixed counters and allowlisted reasons
 at most once per minute. No automatic application retry is enabled.
 
-## One-time pairing links (v1.3 candidate)
+<a id="one-time-pairing-links-v13-candidate"></a>
 
-The link workflow below is a development candidate, not a published v1.3 release. Both endpoints need the new `pairing-offer-v1` protocol. Existing private invitation files remain supported. This feature uses the existing Unix Python 3.11+ relay extra; it adds no Windows support, broker, web page, public listener or hosted service.
+## One-time pairing links (v1.3.0)
+
+The link workflow below is available in v1.3.0. Both endpoints need the new `pairing-offer-v1` protocol. Existing private invitation files remain supported. This feature uses the existing Unix Python 3.11+ relay extra; it adds no Windows support, broker, web page, public listener or hosted service.
 
 First initialize each endpoint and exchange their public identities through a trusted channel. `device rotation-status` shows the current key fingerprint as well as the stable device principal. These may differ after rotation. Review the receiving target policy separately: pairing does not grant access to every session, change native approvals or authorize agent execution.
 

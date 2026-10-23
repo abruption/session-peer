@@ -74,9 +74,11 @@ session-peer send --host worker --to 'codex:<full-thread-uuid>' --dry-run -m "me
 
 <a id="delivery-explanation"></a>
 
-### 传递说明（开发中）
+<a id="传递说明开发中"></a>
 
-这是 #323 的开发功能，拟纳入 v1.3，尚未包含在已发布的 v1.2.1 中。在 `send --dry-run` 中添加 `--explain`，即可查看所选本地、SSH 或配对设备目标、现有验证结果、传递方式及观察限制。`doctor --explain` 说明现有诊断快照和声明的支持能力，不验证特定目标是否已准备好接收提交。`handoff status --explain` 说明现有 intent 中保存的证据。每个已处理的 SSH 目标都会单独显示说明；意外错误仍可能中断现有的主机循环，导致后续目标未被处理。
+### 传递说明（v1.3.0）
+
+此功能从 v1.3.0 起可用。在 `send --dry-run` 中添加 `--explain`，即可查看所选本地、SSH 或配对设备目标、现有验证结果、传递方式及观察限制。`doctor --explain` 说明现有诊断快照和声明的支持能力，不验证特定目标是否已准备好接收提交。`handoff status --explain` 说明现有 intent 中保存的证据。每个已处理的 SSH 目标都会单独显示说明；意外错误仍可能中断现有的主机循环，导致后续目标未被处理。
 
 ```bash
 session-peer send --host worker --to 'codex:<full-thread-uuid>' --message "Review the patch" --dry-run --explain
@@ -117,9 +119,11 @@ session-peer list --output-format json
 
 <a id="route-presets"></a>
 
-## 本地路径预设（开发中）
+<a id="本地路径预设开发中"></a>
 
-这是 #324 的开发功能，尚未包含在已发布的 v1.2.1 中。可选的 `preset` 命令保存的是连接路径，而不是接收者。在 Mac/Linux 上，使用 `--preset` 选择一个本地或 SSH 路径，用于常规 Claude Code、Codex 会话列表查询或发送。Windows 预设操作会被拒绝，现有 Windows 命令保持不变。
+## 本地路径预设（v1.3.0）
+
+此功能从 v1.3.0 起可用。可选的 `preset` 命令保存的是连接路径，而不是接收者。在 Mac/Linux 上，使用 `--preset` 选择一个本地或 SSH 路径，用于常规 Claude Code、Codex 会话列表查询或发送。Windows 预设操作会被拒绝，现有 Windows 命令保持不变。
 
 ```bash
 session-peer preset add work-mac --host user@work-mac --agent codex --codex-home /Users/user/.codex
@@ -154,9 +158,11 @@ session-peer preset remove work-mac --expect-revision 'dp1:<CURRENT-HASH>'
 
 在 macOS 上，忽略所有权的挂载会以 `preset_ownership_unenforced` 被拒绝，无法查询或验证挂载状态时则以 `preset_mount_unverifiable` 被拒绝。不会仅凭模式位断定所有权已强制执行。Linux 也会拒绝上级路径中的 ACL，以及无法验证 ACL 状态的文件系统。中断管理命令后请检查当前配置，因为更改可能已经可见；目录同步失败不会被静默当作成功。
 
-### 接收者地址簿（开发中）
+<a id="接收者地址簿开发中"></a>
 
-这项 #324 的新增范围是 v1.3 的候选功能，尚未包含在已发布的 v1.2.1 中。路径预设仍只保存路径。单独启用的地址簿将用户提供的显示标签绑定到在本地或 SSH Mac/Linux 路径上明确选择的 Claude Code 或 Codex 接收者。标签不认证人员身份。配对设备、Antigravity 和 Windows 均被拒绝。未显式执行地址簿操作或使用 `--address` 的命令不会读取地址簿配置，也不添加自动迁移或回退。
+### 接收者地址簿（v1.3.0）
+
+此功能从 v1.3.0 起可用。路径预设仍只保存路径。单独启用的地址簿将用户提供的显示标签绑定到在本地或 SSH Mac/Linux 路径上明确选择的 Claude Code 或 Codex 接收者。标签不认证人员身份。配对设备、Antigravity 和 Windows 均被拒绝。未显式执行地址簿操作或使用 `--address` 的命令不会读取地址簿配置，也不添加自动迁移或回退。
 
 ```bash
 session-peer address resolve --preset work-mac --to 'codex:<full-thread-uuid>' --json
@@ -174,7 +180,7 @@ session-peer address remove review --expect-revision 'ab1:<HASH>'
 
 Claude 地址保存选定的 `tg1:` 代次，并在提交前使用现有的连接对端前置检查。Codex 地址保存完整线程 UUID、准确的 home 和 `aw1:` writer 观察，并在产生副作用前重复现有检查。Codex 代次仍**不受支持**：writer 观察和重新验证并不提供对原有 native 实例代次的原子验证保证。Writer 已更改或无法确认时，必须显式重新选择，不会自动改选目标或重放。SSH 选择要求在实际连接上验证主机密钥，并在实际发送时固定使用同一密钥。这既不认证人员身份，也不证明 SSH 配置或 SQLite 存储的同一性。
 
-实际发送必须同时提供当前 `--address-revision` 和准确的 `--confirm-target`，dry-run 可以省略。`--address` 不能与 `--to`、`--preset`、显式主机、native 或 SSH 覆盖项、配对设备、wake、handoff 或 Reply-To URI 路由组合使用。常规消息输入和限制保持不变。结果未知时也不允许自动重发。这些命令不保证与单独开发的 #323 传递说明候选功能组合使用。
+实际发送必须同时提供当前 `--address-revision` 和准确的 `--confirm-target`，dry-run 可以省略。`--address` 不能与 `--to`、`--preset`、显式主机、native 或 SSH 覆盖项、配对设备、wake、handoff 或 Reply-To URI 路由组合使用。常规消息输入和限制保持不变。结果未知时也不允许自动重发。提供常规消息输入后，可使用 `send --address NAME --dry-run --explain` 查看纯文本传递预览。`--explain` 不能与 JSON 输出组合使用，`--address` 的 wake 和 handoff 限制仍然适用。
 
 存储是位于 `destinations.json` 旁的独立 `addresses.json`，采用 `schemaVersion: 1`，大小限制为 64 KiB，最多 128 项。它使用与预设相同的所有者、权限、ACL、挂载和不跟随符号链接的路径检查，不自动修复或迁移文件。地址名称遵循预设名称语法；显示标签会规范化为 NFC，最多 128 个字符，并拒绝控制字符、双向控制字符和格式字符。管理操作的 commit 未确认时，更改也可能已经可见，重试前请检查当前配置。绑定 revision 不增加接收侧去重、ACK 或任务完成证据。
 
@@ -374,7 +380,9 @@ Host web-01
 
 退出码：`0` 命令成功（包括列出或预检运行 dry-run），`1` 操作错误，`2` CLI 用法错误或未解析的目标被报告为 no-target，以及 `130` 中断（Ctrl-C）。Codex 队列拒绝（包括缺失 rollout）属于操作错误（`1`）；预检运行期间缺失已保存的线程返回 `2`。发送操作退出码为 `0` 并不确认消息已被消费或回复。
 
-### 限时 handoff 观察（v1.3 候选版本）
+<a id="限时-handoff-观察v13-候选版本"></a>
+
+### 限时 handoff 观察（v1.3.0）
 
 ```sh
 session-peer handoff status --correlation-id PREPARED_UUID --json
@@ -383,9 +391,11 @@ session-peer handoff watch --correlation-id PREPARED_UUID --watch-timeout 30 --i
 
 使用本地所有者 POSIX 记录中已有的准备 UUID。状态查询仍为一次快照；观察运行 1..60 秒（默认 30），间隔 1000..5000 毫秒（默认 1000），仅接受 ASCII 整数，最多采样 61 次。观察仅在预算允许生成有效公开结果时输出初始快照，随后仅输出公开元数据/historyPhase 的变化；可能不输出任何快照。JSON 观察输出使用通用 schemaVersion 1 NDJSON 封装，其中 operation 为 watch，event 为 snapshot 或 end，快照嵌套原有 handoff 对象；status JSON 不变。到期完成的退出码 0 仅表示观察完成，并非 ACK 或等待成功；SIGINT 为 130，历史、输出故障为 1，无效参数为 2。历史缺失、损坏或 ledgerEpoch 改变会停止观察。 historyPhase 为 prepared、attempted、terminal、tombstone 或 quarantined；attempted 表示已持久保存的尝试屏障，不表示正在执行。
 
-观察为只读操作，不创建意图、等待、收据，不写入记录、提交或唤醒。不增加主机、设备、Windows 路径或 Codex ACK。每帧上限为 16 KiB，总量为 256 KiB，并预留 2 KiB 用于结束帧。真实文件描述符标准输出使用一个专属、隔离的 Python 输出辅助进程；它仅接收有界的已序列化公开字节，不更改共享描述符标志，也不读取记录或原生数据。父进程将 IPC 纳入原始总预算，开始新的记录读取或验证阶段前也检查期限；总时间内预留 100 ms 用于最终输出和清理，因此采样可能提前结束。超时、SIGINT 或错误时终止并回收辅助进程，但不可中断的 OS 操作不具备严格实时保证。部分写入或无完成回复后禁止后续帧、结束帧；消费方必须拒绝被截断的最后一行 NDJSON。辅助进程完成仅表示 OS 写入完成，不证明接收者消费。快照并非无损事件流，本地 UTC 观察不证明 ACK 到达顺序。有关隐私、保留的提交/ACK/等待含义、只读收集器查询及现有隔离限制，参见 [handoff 运行时指南](handoff-runtime.md)。观察不启动原生消息进程或收集器。此候选版本尚未发布。 不公开载荷或权限摘要，公开 targetGeneration 保持既有约定。 只读记录在读取不可变快照字节后、解析和验证前释放共享锁。 中断后的最终输出和清理在剩余总预算内最多使用 100 ms。 整体成功需要完整的成功结束帧和退出码 0：该帧之后清理仍可能失败。非零退出表示整体失败，不表示 ACK 升级、丢弃独立有效的提交事实或允许重试。
+观察为只读操作，不创建意图、等待、收据，不写入记录、提交或唤醒。不增加主机、设备、Windows 路径或 Codex ACK。每帧上限为 16 KiB，总量为 256 KiB，并预留 2 KiB 用于结束帧。真实文件描述符标准输出使用一个专属、隔离的 Python 输出辅助进程；它仅接收有界的已序列化公开字节，不更改共享描述符标志，也不读取记录或原生数据。父进程将 IPC 纳入原始总预算，开始新的记录读取或验证阶段前也检查期限；总时间内预留 100 ms 用于最终输出和清理，因此采样可能提前结束。超时、SIGINT 或错误时终止并回收辅助进程，但不可中断的 OS 操作不具备严格实时保证。部分写入或无完成回复后禁止后续帧、结束帧；消费方必须拒绝被截断的最后一行 NDJSON。辅助进程完成仅表示 OS 写入完成，不证明接收者消费。快照并非无损事件流，本地 UTC 观察不证明 ACK 到达顺序。有关隐私、保留的提交/ACK/等待含义、只读收集器查询及现有隔离限制，参见 [handoff 运行时指南](handoff-runtime.md)。观察不启动原生消息进程或收集器。不公开载荷或权限摘要，公开 targetGeneration 保持既有约定。 只读记录在读取不可变快照字节后、解析和验证前释放共享锁。 中断后的最终输出和清理在剩余总预算内最多使用 100 ms。 整体成功需要完整的成功结束帧和退出码 0：该帧之后清理仍可能失败。非零退出表示整体失败，不表示 ACK 升级、丢弃独立有效的提交事实或允许重试。
 
-### 可信本地 SSH 配置（v1.3 候选，尚未发布）
+<a id="可信本地-ssh-配置v13-候选尚未发布"></a>
+
+### 可信本地 SSH 配置（v1.3.0）
 
 在 Linux 和 macOS 上，显式指定 `--host` 的本地 CLI `list`、`send`、`doctor` 或 `update` 调用可以同时使用 `--ssh-config ABSOLUTE_PATH` 和 `--trust-ssh-config` 选择现有 OpenSSH 配置。两个标志缺一不可。以下为示例路径，支持用引号包裹的空格：
 
@@ -404,9 +414,11 @@ session-peer doctor --host worker --ssh-config '/home/alice/SSH Profiles/work.co
 
 环境变量、MCP 请求、ReplyTo 地址和已存储预设不能选择此模式。Windows、`setup`、配对设备路由、预设组合、回复 URI 目标以及未指定 `--host` 的调用，会在读取配置或启动 SSH 前被拒绝。省略这对标志时保留现有默认 SSH 行为。
 
-### 一次性配对链接（v1.3候选）
+<a id="一次性配对链接v13候选"></a>
 
-两端都需要 `pairing-offer-v1` 及现有Unix Python 3.11+ relay额外依赖。以下为候选命令，不代表已发布的v1.3支持：
+### 一次性配对链接（v1.3.0）
+
+两端都需要 `pairing-offer-v1` 及现有Unix Python 3.11+ relay额外依赖。以下命令从 v1.3.0 起可用：
 
 ```sh
 session-peer device rotation-status --state /private/client-state
