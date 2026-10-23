@@ -225,7 +225,7 @@ session-peer address remove review --expect-revision 'ab1:<HASH>'
 
 Claude 주소는 선택한 `tg1:` 세대를 저장하고 제출 전에 기존 연결 상대 확인 조건을 적용합니다. Codex 주소는 전체 스레드 UUID, 정확한 home과 `aw1:` writer 관찰을 저장하며 효과가 발생하기 전에 기존 검사를 반복합니다. Codex 세대는 계속 **미지원**입니다. Writer 관찰과 재검증은 원래 native 인스턴스 세대를 원자적으로 검증하는 보장이 아닙니다. Writer가 달라지거나 확인할 수 없으면 명시적으로 다시 선택해야 하며, 자동 대상 변경이나 재실행은 하지 않습니다. SSH 선택은 실제 연결에서 검증한 호스트 키를 요구하며 실제 전송에도 같은 키를 고정합니다. 이것으로 사람을 인증하거나 SSH 설정·SQLite 저장소의 동일성을 증명하지는 않습니다.
 
-실제 전송에는 현재 `--address-revision`과 정확한 `--confirm-target`이 모두 필요하며 dry-run에서는 생략할 수 있습니다. `--address`는 `--to`, `--preset`, 명시적 호스트·native·SSH 재정의, 페어링 기기, wake, handoff나 Reply-To URI 경로와 함께 사용할 수 없습니다. 일반 메시지 입력과 한도는 그대로 유지됩니다. 결과가 불확실해도 자동 재전송은 허용되지 않습니다. 일반 메시지 입력과 함께 `send --address NAME --dry-run --explain`을 사용하면 텍스트 전달 미리보기를 볼 수 있습니다. 위의 JSON·wake·handoff 제한은 그대로 적용됩니다.
+실제 전송에는 현재 `--address-revision`과 정확한 `--confirm-target`이 모두 필요하며 dry-run에서는 생략할 수 있습니다. `--address`는 `--to`, `--preset`, 명시적 호스트·native·SSH 재정의, 페어링 기기, wake, handoff나 Reply-To URI 경로와 함께 사용할 수 없습니다. 일반 메시지 입력과 한도는 그대로 유지됩니다. 결과가 불확실해도 자동 재전송은 허용되지 않습니다. 일반 메시지 입력과 함께 `send --address NAME --dry-run --explain`을 사용하면 텍스트 전달 미리보기를 볼 수 있습니다. `--explain`은 JSON 출력과 함께 사용할 수 없으며, `--address`의 wake·handoff 제한은 그대로 적용됩니다.
 
 저장소는 `destinations.json` 옆의 별도 `addresses.json`이며 `schemaVersion: 1`, 64 KiB 한도와 최대 128개 항목을 사용합니다. 프리셋과 같은 소유자·권한·ACL·마운트 검사 및 심볼릭 링크를 따르지 않는 경로 검사를 적용하고 파일을 자동 복구하거나 이전하지 않습니다. 주소 이름은 프리셋 이름 문법을 따릅니다. 표시 이름은 NFC로 정규화하고 128자로 제한하며 제어 문자·양방향 제어 문자·서식 문자를 거부합니다. 관리 작업의 commit을 확인하지 못했어도 변경이 이미 보일 수 있으므로 재시도 전에 현재 설정을 확인하세요. 수신자 바인딩 revision은 수신 측 중복 방지, ACK나 작업 완료 증거를 추가하지 않습니다.
 

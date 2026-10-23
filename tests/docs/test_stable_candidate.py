@@ -232,7 +232,7 @@ class StableCandidate(unittest.TestCase):
                 self.assertIn("state_db_missing", text)
                 self.assertIn("POSIX", text)
 
-    def test_published_release_keeps_experimental_acceptance_gates(self):
+    def test_source_version_keeps_experimental_acceptance_gates(self):
         for suffix in ("", ".ko", ".ja", ".zh-CN"):
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
             self.assertIn("**1.3.0**", text)
@@ -259,7 +259,7 @@ class StableCandidate(unittest.TestCase):
         self.assertIn('__version__ = "1.3.0"',
                       (ROOT / "session_peer_core/common.py").read_text(encoding="utf-8"))
 
-    def test_all_current_readmes_and_runbooks_use_stable_version(self):
+    def test_current_readmes_and_runbooks_match_source_version(self):
         for suffix in ("", ".ko", ".ja", ".zh-CN"):
             for stem in ("README", "RELEASING"):
                 with self.subTest(stem=stem, suffix=suffix):

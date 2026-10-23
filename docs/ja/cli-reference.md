@@ -225,7 +225,7 @@ session-peer address remove review --expect-revision 'ab1:<HASH>'
 
 Claude アドレスは選択した `tg1:` 世代を保存し、投入前に既存の接続相手を検証する前提条件を適用します。Codex アドレスは完全なスレッド UUID、正確な home、`aw1:` writer 観測を保存し、副作用が発生する前に既存の検査を繰り返します。Codex の世代は引き続き**未対応**です。Writer の観測と再検証は、元の native インスタンス世代を原子的に検証する保証ではありません。Writer が変わった、または確認できない場合は明示的な再選択が必要で、自動的な宛先変更や再実行は行いません。SSH の選択には実際の接続で検証されたホスト鍵が必要で、実際の送信でも同じ鍵に固定します。これは人物を認証するものでも、SSH 設定や SQLite 保存先の同一性を証明するものでもありません。
 
-実際の送信には現在の `--address-revision` と正確な `--confirm-target` の両方が必要で、dry-run では省略できます。`--address` は `--to`、`--preset`、明示的なホスト・native・SSH の上書き、ペアリング済みデバイス、wake、handoff、Reply-To URI の経路指定とは併用できません。通常のメッセージ入力と上限は変わりません。不確実な結果でも自動再送は許可されません。通常のメッセージ入力とともに `send --address NAME --dry-run --explain` を使うと、テキスト形式の配信プレビューを確認できます。上記の JSON・wake・handoff の制限は引き続き適用されます。
+実際の送信には現在の `--address-revision` と正確な `--confirm-target` の両方が必要で、dry-run では省略できます。`--address` は `--to`、`--preset`、明示的なホスト・native・SSH の上書き、ペアリング済みデバイス、wake、handoff、Reply-To URI の経路指定とは併用できません。通常のメッセージ入力と上限は変わりません。不確実な結果でも自動再送は許可されません。通常のメッセージ入力とともに `send --address NAME --dry-run --explain` を使うと、テキスト形式の配信プレビューを確認できます。`--explain` は JSON 出力と併用できず、`--address` の wake・handoff 制限も引き続き適用されます。
 
 保存先は `destinations.json` の隣にある別の `addresses.json` です。`schemaVersion: 1`、64 KiB の上限、最大 128 件の項目を使用します。プリセットと同じ所有者・権限・ACL・マウントの検査と、シンボリックリンクをたどらない経路検査を適用し、ファイルの自動修復や移行は行いません。アドレス名はプリセット名の構文に従います。表示名は NFC に正規化して 128 文字に制限し、制御文字・双方向制御文字・書式文字を拒否します。管理操作の commit が未確認でも変更が既に見えている可能性があるため、再試行前に現在の設定を確認してください。結び付けの revision は、受信側の重複抑止、ACK、タスク完了の証拠を追加しません。
 
