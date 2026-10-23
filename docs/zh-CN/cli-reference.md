@@ -288,6 +288,20 @@ Host web-01
 
 退出码：`0` 命令成功（包括列出或预检运行 dry-run），`1` 操作错误，`2` CLI 用法错误或未解析的目标被报告为 no-target，以及 `130` 中断（Ctrl-C）。Codex 队列拒绝（包括缺失 rollout）属于操作错误（`1`）；预检运行期间缺失已保存的线程返回 `2`。发送操作退出码为 `0` 并不确认消息已被消费或回复。
 
+### 一次性配对链接（v1.3候选）
+
+两端都需要 `pairing-offer-v1` 及现有Unix Python 3.11+ relay额外依赖。以下为候选命令，不代表已发布的v1.3支持：
+
+```sh
+session-peer device rotation-status --state /private/client-state
+session-peer device offer --state /private/device-state --peer-key CLIENT-CURRENT-64-HEX-KEY --direct PRIVATE-IP:3770 --show-link
+session-peer device pair --state /private/client-state --link --route direct
+session-peer device offer-status --state /private/device-state --offer-id OFFER-UUID
+session-peer device offer-cancel --state /private/device-state --offer-id OFFER-UUID
+```
+
+创建时核对双方身份，只在所有者终端显示链接。`--link` 不接值；使用长度受限的不回显输入，客户端独立核对接收端当前密钥指纹后，才登记信任并联网。无终端时拒绝，不改为回显或自动批准。不要把链接放进参数、浏览器历史、日志或Issue。设置向导提供链接/私密文件选项，现有文件命令仍受支持。取消只影响该提议的待定信任；已完成的配对须显式吊销。没有历史的过期链接会被拒绝，只有完全匹配的保存上下文才能核对已经完成的认证结果。配对不替代接收策略或代理审批。密钥轮换限制、有效期、频率限制、中断与威胁模型见[配对设备指南](paired-devices.md)。
+
 <a id="updating"></a>
 ### 更新
 

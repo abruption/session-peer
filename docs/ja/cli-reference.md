@@ -404,6 +404,20 @@ SSH `User` 設定に誘導し、再試行されることはありません。
 dry-run 中の保存済みスレッドの欠落は `2` を返します。send における終了コード `0` は、
 消費または返信を確認するものではありません。
 
+### ワンタイムペアリングリンク（v1.3候補）
+
+両端で `pairing-offer-v1` と既存のUnix Python 3.11+ relay追加依存関係が必要です。以下は候補コマンドであり、公開済みのv1.3対応ではありません。
+
+```sh
+session-peer device rotation-status --state /private/client-state
+session-peer device offer --state /private/device-state --peer-key CLIENT-CURRENT-64-HEX-KEY --direct PRIVATE-IP:3770 --show-link
+session-peer device pair --state /private/client-state --link --route direct
+session-peer device offer-status --state /private/device-state --offer-id OFFER-UUID
+session-peer device offer-cancel --state /private/device-state --offer-id OFFER-UUID
+```
+
+作成時に双方のIDを確認し、所有者の端末だけにリンクを表示します。`--link` に値は付けません。上限付きの非表示入力を使い、クライアントが独立して確認した受信端末の現在の鍵のフィンガープリントを入力してから信頼登録・接続を行います。端末がなければ入力表示や自動承認に切り替えず拒否します。リンクを引数、ブラウザー履歴、ログ、Issueに残さないでください。設定ガイドはリンク・非公開ファイルを選択でき、既存のファイル用コマンドも維持します。取消しはそのオファーの保留信頼だけに適用され、完了済みペアリングには明示的な失効操作が必要です。履歴のない期限切れリンクは拒否し、完全一致する保存記録がある場合だけ完了済みの認証結果を確認できます。ペアリングは受信ポリシーやエージェント承認の代わりにはなりません。鍵更新の制限、期限、回数制限、中断、脅威モデルは[ペアリングガイド](paired-devices.md)を参照してください。
+
 <a id="updating"></a>
 ### 更新
 
