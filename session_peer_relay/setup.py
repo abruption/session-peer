@@ -27,6 +27,7 @@ from .identity import private_path, private_read, private_write, fingerprint
 from .native import Policy
 from .store import Store, Rejected
 from .wire import direct_address, validate_relay_url
+from .pairing_ui import OfferOutcomeUnknown, offer_failure
 
 
 def document(path):
@@ -377,6 +378,64 @@ async def execute(args):
                 work.phase('policy', 'complete')
                 return {'ok': True, 'policyPath': str(policy), 'policyPreview': preview,
                         'changed': changed, 'receiverCommand': shlex.join(receiver_command(args, root, policy))}
+            if args.action in ('offer-status', 'offer-cancel'):
+                if store.recovery_required():
+                    raise Rejected('recovery_required')
+                ident = getattr(args, 'offer_id', None) or work.saved.get('offerId')
+                if not ident:
+                    raise Rejected('setup_offer_id_required')
+                matches_intent = ident == work.saved.get('offerId')
+                try:
+                    result = (store.offer_status(ident) if args.action == 'offer-status'
+                              else store.cancel_offer(ident))
+                except Rejected as exc:
+                    if str(exc) != 'pairing_offer_unknown' or not matches_intent:
+                        raise
+                    if work.saved['phases'].get('offer') == 'not_created':
+                        # This classification comes from the original definitive
+                        # rejection, never from the absence of retained history.
+                        result = {'ok': True, 'offerId': ident, 'status': 'not_created'}
+                    else:
+                        result = {'ok': False, 'offerId': ident, 'status': 'unknown',
+                            'reason': 'pairing_offer_history_unavailable',
+                            'remoteCancellationConfirmed': False,
+                            'nextAction': 'Offer history is unavailable: it may never have been created or its receipt may have expired. Stopping local waiting does not prove non-creation, cancel a remote offer, or revoke paired trust. Inspect peers before explicitly creating a new offer.'}
+                        if args.action == 'offer-cancel':
+                            work.phase('offer', 'stopped_unknown')
+                            result['stoppedWaiting'] = True
+                if result.get('recoveryRequired') or result.get('historical'):
+                    raise Rejected('recovery_required')
+                if matches_intent and result['status'] in ('not_created', 'cancelled', 'expired', 'consumed'):
+                    work.phase('offer', result['status'])
+                return result
+            if args.action == 'offer':
+                from .pairing_ui import create_offer
+                identity = store.offer_identity(args.peer_key)
+                if args.peer and args.peer != identity['principal']:
+                    raise Rejected('setup_offer_policy_identity_mismatch')
+                if work.saved['phases'].get('offer') == 'pending':
+                    raise Rejected('setup_offer_reconcile_required')
+                ident, commit_known = str(uuid.uuid4()), False
+                def before_create():
+                    work.saved['offerId'] = ident
+                    work.phase('offer', 'pending')
+                def created(ident):
+                    nonlocal commit_known
+                    # Set before saving: a journal failure must not classify a
+                    # committed offer as absent or automatically mint another.
+                    commit_known = True
+                    work.save()
+                try:
+                    result = create_offer(store, args, offer_id=ident,
+                        before_create=before_create, created=created)
+                except OfferOutcomeUnknown:
+                    raise  # The durable preallocated ID remains pending.
+                except Rejected:
+                    if not commit_known and work.saved.get('offerId') == ident:
+                        work.phase('offer', 'not_created')
+                    raise
+                work.phase('offer', 'complete')
+                return result
             if args.action == 'invite':
                 if not args.out or not args.relay and not args.direct:
                     raise Rejected('setup_invitation_path_and_route_required')
@@ -396,6 +455,18 @@ async def execute(args):
                 return {'ok': True, 'invitationSaved': True, 'expiresInSeconds': 600,
                         'nextAction': 'Transfer this private file securely to the client; do not paste its secret in logs or chat.'}
             if args.action == 'pair':
+                if getattr(args, 'link', False):
+                    from .pairing_ui import receive_link
+                    invitation, intended, envelope_digest, selected_route = receive_link(store, args.route)
+                    # App owns the durable exact intent and expired reconciliation.
+                    # The setup journal never stores the credential envelope.
+                    credential = control.DeviceCredential(store, invitation['device'], 'client') if 'relay' in invitation['routes'] else None
+                    result = await pair(store, invitation, selected_route, credential,
+                        offer_digest=envelope_digest, expected_client_key=intended)
+                    if result.get('ok') is True:
+                        args._paired_receiver = invitation['device']
+                        work.phase('pair', 'complete')
+                    return result
                 if not args.invite:
                     raise Rejected('setup_invitation_required')
                 path = Path(args.invite).expanduser().absolute()
@@ -479,6 +550,9 @@ async def interactive(args):
         print(json.dumps(core.human_text(await execute(args)), ensure_ascii=False))
     args.role = ask('Role receiver/client', args.role)
     if args.role == 'receiver':
+        method = ask('Pairing method link/file', 'file' if args.out else 'link')
+        if method not in ('link', 'file'):
+            raise Rejected('setup_pairing_method_invalid')
         args.action, args.apply = 'targets', False
         rows = (await execute(args))['sessions']
         print(json.dumps(core.human_text(rows), ensure_ascii=False))
@@ -493,7 +567,16 @@ async def interactive(args):
         args.antigravity_home = row.get('antigravityHome')
         if row['agent'] == 'codex':
             args.codex_bin = ask('Exact Codex executable path (empty uses current PATH)', args.codex_bin or '') or None
-        args.peer = ask('Trusted client device principal (obtain from its init result)', args.peer or '')
+        if method == 'link':
+            args.peer_key = ask('Trusted client current certificate fingerprint (obtain independently)', args.peer_key or '')
+            state = Store(Path(args.state).expanduser())
+            try:
+                identity = state.offer_identity(args.peer_key)
+            finally:
+                state.close()
+            args.peer = identity['principal']
+        else:
+            args.peer = ask('Trusted client device principal (obtain from its init result)', args.peer or '')
         args.capability = ['list', 'send'] if consent('Also allow this peer to send to this target') else ['list']
         args.policy = ask('New policy path', args.policy or str(Path(args.state).expanduser()/'receiver-policy.json'))
         args.relay = ask('Receiver WSS /v1/connect URL (empty for direct)', args.relay or '') or None
@@ -506,24 +589,32 @@ async def interactive(args):
         args.apply = True
         policy_result = await execute(args)
         print(json.dumps(core.human_text(policy_result), ensure_ascii=False))
-        args.out = ask('New private invitation file', args.out or str(Path(args.state).expanduser()/'invite.json'))
-        if not consent('Create the one-time invitation (securely transfer it within 10 minutes)'):
-            return {'ok': False, 'cancelled': True, 'operationCancelled': False}
-        args.action = 'invite'
+        if method == 'link':
+            args.show_link, args.action = True, 'offer'
+        else:
+            args.out = ask('New private invitation file', args.out or str(Path(args.state).expanduser()/'invite.json'))
+            if not consent('Create the one-time invitation (securely transfer it within 10 minutes)'):
+                return {'ok': False, 'cancelled': True, 'operationCancelled': False}
+            args.action = 'invite'
         result = await execute(args)
         result['receiverCommand'] = policy_result['receiverCommand']
         result['nextAction'] = 'Start this foreground receiver in another terminal; Ctrl-C stops it. No service/autostart was installed. Then the client runs setup --role client --interactive.'
         return result
     if args.role != 'client':
         raise Rejected('invalid_setup_role')
-    args.invite = ask('Securely received private invitation path', args.invite or '')
-    if not consent('Pair with the device certificate and routes in this invitation'):
-        return {'ok': False, 'cancelled': True, 'operationCancelled': False}
+    method = ask('Pairing method link/file', 'file' if args.invite else 'link')
+    if method not in ('link', 'file'):
+        raise Rejected('setup_pairing_method_invalid')
+    args.link = method == 'link'
+    if not args.link:
+        args.invite = ask('Securely received private invitation path', args.invite or '')
+        if not consent('Pair with the device certificate and routes in this invitation'):
+            return {'ok': False, 'cancelled': True, 'operationCancelled': False}
     args.action = 'pair'
     result = await execute(args)
     if not result.get('ok'):
         return result
-    args.peer = document(Path(args.invite).expanduser())['device']
+    args.peer = args._paired_receiver if args.link else document(Path(args.invite).expanduser())['device']
     if not consent('Perform metadata/probe-only readiness check (no message)'):
         return {'ok': True, 'paired': True, 'readinessChecked': False}
     args.action = 'ready'
@@ -534,6 +625,11 @@ def run(args):
     os.umask(0o077)
     try:
         return asyncio.run(interactive(args) if args.interactive else execute(args))
+    except OfferOutcomeUnknown as exc:
+        public = offer_failure(exc) or {'ok': False, 'reason': 'pairing_offer_outcome_unknown',
+            'status': 'unknown', 'updated': False, 'retryAllowed': False}
+        return {**public, '_exit': 130 if exc.interrupted is True else 1,
+            'nextAction': 'Inspect the saved offer ID using offer-status; explicitly cancel an active offer before creating a new link. No credential is re-displayed automatically.'}
     except (KeyboardInterrupt, EOFError):
         return {'ok': False, 'cancelled': True, 'operationCancelled': False, '_exit': 130,
                 'nextAction': 'Setup stopped waiting, not rolling back committed operations. Resume enrollment with the same state/name; expired login needs explicit login again.'}

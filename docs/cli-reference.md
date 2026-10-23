@@ -439,7 +439,119 @@ error, `2` CLI usage error or an unresolved target reported as no-target, and
 is an operational error (`1`); a missing saved thread during dry-run returns `2`.
 Exit `0` on send does not confirm consumption or a reply.
 
+### Bounded handoff watch (v1.3 candidate)
+
+```sh
+session-peer handoff status --correlation-id PREPARED_UUID --json
+session-peer handoff watch --correlation-id PREPARED_UUID --watch-timeout 30 --interval-ms 1000 --json
+```
+
+Use an existing prepared UUID in the local owner's POSIX ledger. Status remains one snapshot; watch polls for 1..60 seconds (default 30) at 1000..5000 millisecond intervals (default 1000), accepting ASCII integers only and taking at most 61 samples. Watch emits an initial snapshot only if the budget permits a valid public projection, then changed public metadata/historyPhase only; it may emit no snapshots. JSON watch output uses the common schemaVersion 1 NDJSON envelope with operation watch and event snapshot or end, nesting the unchanged handoff object in snapshots; status JSON is unchanged. Timeout completion is exit 0 for watch completion only, not ACK or wait success; SIGINT is 130, history/output failure 1, invalid arguments 2. Missing/corrupt history or ledgerEpoch change stops watching. historyPhase is prepared, attempted, terminal, tombstone or quarantined; attempted means a durable attempt fence, not active execution.
+
+Watch is read-only: no intents, waits, receipts, ledger writes, submission or wake. It adds no host/device/Windows route or Codex ACK. Limits are 16 KiB per frame and 256 KiB total with a 2 KiB end reserve. Real-fd stdout uses one owned isolated output-only Python helper that sees only bounded public serialized bytes, never changes shared descriptor flags and reads no ledger/native data. The parent enforces the original total budget including IPC, checks it before new ledger read/validation stages, and reserves 100 ms within it for final output and cleanup, so sampling may end earlier. It terminates and reaps its helper on timeout, SIGINT or error; uninterruptible OS operations prevent a hard-real-time guarantee. Partial or unacknowledged writes prohibit subsequent/end frames; consumers must reject truncated final NDJSON lines. Helper completion means OS write completion, not recipient consumption. Snapshots are not a lossless event stream, and local UTC observations do not prove ACK arrival order. See the [handoff runtime guide](handoff-runtime.md) for privacy, retained submission/ACK/wait meanings, read-only collector queries and the existing quarantine gate. Watch launches no native message process or collector. This candidate is not a published release. No payload/capability digests are exposed; public targetGeneration keeps its existing contract. The read-only ledger releases its shared lock after reading immutable snapshot bytes, before parsing and validation. Interrupted final output and cleanup are capped at 100 ms within the remaining total budget. Overall success requires a complete successful end frame and exit 0: cleanup may fail after that frame. A nonzero exit means overall failure, without promoting ACK, discarding independently valid submission facts or permitting retry.
+
+### Trusted local SSH configuration (v1.3 candidate, not published)
+
+On Linux and macOS, an explicit local CLI invocation of `list`, `send`, `doctor`,
+or `update` with `--host` can select an existing OpenSSH configuration by pairing
+`--ssh-config ABSOLUTE_PATH` with `--trust-ssh-config`. Both flags are required.
+For example, using a placeholder path (quoted spaces are supported):
+
+```bash
+session-peer list --host worker --ssh-config '/home/alice/SSH Profiles/work.conf' --trust-ssh-config
+session-peer doctor --host worker --ssh-config '/home/alice/SSH Profiles/work.conf' --trust-ssh-config --check-return-route
+```
+
+This grants local code-execution authority to the selected configuration:
+`Match exec` can run even during `ssh -G` identity discovery or `send --dry-run`.
+The operator must also trust `Include` files, `ProxyCommand`, and other external
+dependencies. Validation is not a configuration sandbox and does not recursively
+validate those dependencies. No existing profile or configuration file is edited.
+
+The path must be absolute, with no `..` components, control characters, or
+symlinks in any component. The selected file must be a regular file owned by the
+current effective user, have exactly one hard link, be at most 64 KiB, and have
+neither group/other write permissions nor setuid/setgid/sticky bits. Ancestor
+directories must be owned by root or the current effective user and must not be
+group/other writable, except for root-owned sticky directories. Linux rejects
+extended access ACLs and directory default ACLs; macOS rejects allow ACL entries
+and volumes with ownership disabled. ACL or ownership checks that cannot be
+verified refuse the selection. These are conservative checks, not a full
+effective-permissions interpreter.
+
+One selection is reused throughout that CLI call for local `ssh -G` discovery,
+doctor, remote listing/version checks, update probes/install/verification, and
+send/handoff SSH calls. Before each SSH spawn it revalidates file identity,
+metadata, content hash, and storage safety. Detected changes refuse the operation
+without falling back to default configuration. OpenSSH opens the original path;
+this is not an immutable byte snapshot and a same-user change between validation
+and OpenSSH's read remains possible.
+
+This mode forces `StrictHostKeyChecking=yes`, `UpdateHostKeys=no`,
+`ForwardAgent=no`, `PermitLocalCommand=no`, and `BatchMode=yes`, and disables
+connection multiplexing. Existing explicit host-key pins retain priority. The
+`--ssh-opt` allowlist is unchanged: `-F` and `ProxyCommand` remain forbidden there.
+The selected local path is not forwarded to the remote command, reply route, or
+public JSON. Reverse doctor checks use the remote machine's own configuration;
+they never inherit this path. Forward success does not prove reverse
+authentication, message consumption, or an ACK.
+
+Environment variables, MCP requests, ReplyTo addresses, and stored presets cannot
+select this mode. Windows, `setup`, paired-device routes, preset combinations,
+reply-URI destinations, and invocations without `--host` are rejected before
+reading the configuration or starting SSH. Omitting the pair preserves the
+existing default SSH behavior.
+
+### One-time pairing links (v1.3 candidate)
+
+Both endpoints need `pairing-offer-v1` and the existing Unix Python 3.11+ relay extra. These are candidate commands, not published v1.3 support:
+
+```sh
+session-peer device rotation-status --state /private/client-state
+session-peer device offer --state /private/device-state --peer-key CLIENT-CURRENT-64-HEX-KEY --direct PRIVATE-IP:3770 --show-link
+session-peer device pair --state /private/client-state --link --route direct
+session-peer device offer-status --state /private/device-state --offer-id OFFER-UUID
+session-peer device offer-cancel --state /private/device-state --offer-id OFFER-UUID
+```
+
+Creation confirms both identities and shows the link only on the owner terminal. `--link` takes no value: input is hidden and bounded; the client independently confirms the receiver's current fingerprint before trust staging or networking. No terminal means refusal, not echo fallback or automatic consent. Never put a link in argv, browser history, logs or issue reports. Guided setup offers link/private-file choices; existing file commands remain supported. Cancellation affects only that offer's pending trust, not completed pairing; use explicit peer revocation after completion. Expired cold links are refused; only exact saved context can reconcile an already-consumed authenticated result. Pairing never replaces the receiving target policy or native approval. See the [paired-device guide](paired-devices.md) for key-rotation restrictions, expiry, quotas, interruption and the threat model.
+
 ### Updating
+
+On macOS/Linux, hide the automatic runtime notice for one explicitly selected
+stable version, or clear that preference:
+
+```bash
+session-peer update --dismiss-runtime-notice 1.3.1
+session-peer update --clear-runtime-notice-dismissal
+```
+
+The version above is an example, not a release announcement. These local-only,
+offline commands do not check, install or approve a release. They cannot be
+combined with remote/SSH options or the check option. Only the exact normalized
+version is hidden; later releases can still produce a notice, and clearing
+restores the usual behavior. Explicit local checks retain the real latest version
+and outdated result, with separate preference metadata. Remote checks, skill
+notices and the existing global opt-out are unchanged. A remote command may still
+show the calling CLI's own cached notice; its local preference is read once, not
+once per target. Remote versions and results are never hidden by that preference.
+
+The preference is stored separately from the update cache at
+`$XDG_CONFIG_HOME/session-peer/update-notices.json`, or
+`~/.config/session-peer/update-notices.json` when that variable is unset or empty.
+The directory and file must be private and safely owned; unsafe paths are refused,
+not repaired or redirected. Invalid or future-schema files hide nothing and are
+not overwritten by either command: inspect the dedicated preference file first.
+Windows does not yet support this per-version preference; ordinary updates,
+checks and the global opt-out remain available.
+
+Safety checks cover POSIX owner/mode bits, not a full ACL audit or physical-media
+durability certification. Symlinked ancestors and explicitly relative config
+paths are intentionally refused without fallback. The filesystem must support
+directory-relative I/O, file locking and directory fsync. After inspecting and
+backing up a malformed preference, an operator may explicitly remove only that
+dedicated JSON file and run the preference command again; do not remove the lock
+file while writers may be running. No automatic repair is performed.
 
 For package-managed installs, use the same manager that installed the command:
 
@@ -464,9 +576,10 @@ session-peer update --host web-01                 # push this program if version
 ```
 
 Remote update compares against the **local program's version**, not the latest
-GitHub release. It pushes even if the remote version is newer; check first and
-update the local program before distributing it. The remote copy does not fetch
-from GitHub. Remote version probes inspect only
+GitHub release. It pushes only if the remote copy is missing or older, and leaves
+a newer remote version unchanged. Check first and update the local program
+before distributing it. The remote copy does not fetch from GitHub.
+Remote version probes inspect only
 `~/.local/share/session-peer/session_peer.py`, not pip/pipx/uv installations;
 remote update installs that standalone path and its CLI link. For a
 package-managed remote CLI, upgrade it with its own manager on that host instead.

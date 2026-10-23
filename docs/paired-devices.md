@@ -73,6 +73,56 @@ admission counters retain refusals and cleanup failures without identities;
 opt-in `receiver_admission` events report fixed counters and allowlisted reasons
 at most once per minute. No automatic application retry is enabled.
 
+## One-time pairing links (v1.3 candidate)
+
+The link workflow below is a development candidate, not a published v1.3 release. Both endpoints need the new `pairing-offer-v1` protocol. Existing private invitation files remain supported. This feature uses the existing Unix Python 3.11+ relay extra; it adds no Windows support, broker, web page, public listener or hosted service.
+
+First initialize each endpoint and exchange their public identities through a trusted channel. `device rotation-status` shows the current key fingerprint as well as the stable device principal. These may differ after rotation. Review the receiving target policy separately: pairing does not grant access to every session, change native approvals or authorize agent execution.
+
+On the receiver, explicitly confirm its identity and the intended client's current key, then display the link on the controlling terminal:
+
+```sh
+session-peer device offer --state /private/device-state \
+  --peer-key CLIENT-CURRENT-64-HEX-KEY --direct PRIVATE-IP:3770 --show-link
+```
+
+Transfer the long `session-peer://pair/v1#...` link privately. On the client, enter it at the hidden terminal prompt; never place the link after `--link` or elsewhere in command arguments:
+
+```sh
+session-peer device pair --state /private/client-state --link --route direct
+session-peer device offer-status --state /private/device-state --offer-id OFFER-UUID
+session-peer device offer-cancel --state /private/device-state --offer-id OFFER-UUID
+```
+
+The client verifies that its own current key matches the bound client key and asks for the receiver's current fingerprint obtained independently, before showing the candidate receiver identity or routes. Only a matching entry reveals both identities and routes for final confirmation. This avoids inviting users to copy an untrusted candidate from the prompt, but cannot prove where they obtained their input. A link cannot authenticate its own claimed identity. Confirmation precedes trust staging and network access; the receiver also rechecks the confirmed client identity atomically when creating the offer. Without a usable controlling terminal, the link workflow refuses rather than echoing a secret or accepting an automatic approval. Guided setup offers a link/private-file choice and uses the same confirmation path; the existing file commands remain available for automation.
+
+The intended principal/generation is derived from an exact active local key anchor, or fingerprint/generation zero for a new key. A known pending, retired or revoked key is not treated as new. A rotated receiver or client without the required existing binding is refused in this workflow; a typed fingerprint cannot manufacture a stable principal's authority. Use the existing trusted-file/recovery procedure where appropriate, not copied private keys or device state.
+
+### Lifecycle and interruption
+
+An offer carries a 256-bit secret, expires after ten minutes according to the receiver's system clock, and is bound to one intended current key. Its states are open, reserved, consumed, cancelled and expired. Reservation, authenticated invitation-bound commit, cancellation and expiry are serialized in the receiver database. A second invitation cannot take over an owned pending reservation, and an already paired device is never downgraded to pending. Cancellation removes only that offer's pending trust, not pre-existing key anchors or a completed pairing. After completion, use the existing explicit `device revoke --peer RECEIVER-OR-CLIENT-PRINCIPAL` on the relevant endpoint to revoke trust.
+
+Only a saved intent matching the offer ID, protected envelope digest, receiver principal/key and current client key can reconcile an interrupted completion. An expired link entered without that matching history is refused before networking. Expired reconciliation can only obtain the already-consumed result through authenticated commit; it cannot prepare again, renew the offer or undo revocation. After the receiver prunes that receipt, exact-offer reconciliation is unavailable even if the receiver still considers the peer paired. This release does not reconstruct historical receipts or provide a late-repair command. Preserve both endpoints' state and seek an explicit operator recovery plan; blindly revoking a key can make recovery harder. No native message is sent or automatically retried.
+
+Creation is limited to five offers/minute and eight active offers. Prepare attempts are persistently limited to 32/minute globally and eight/minute per offer; failed guesses count. The global limit also applies to existing private-file pairing. A full bucket is not updated or extended by rejected attempts. Unknown IDs allocate no per-ID state. Terminal receipts are retained for seven days, with a 1,024-offer cap; eligible offer metadata and invitations are pruned together. Limits can temporarily refuse legitimate pairing, including under unauthenticated load; already-paired native requests do not use these prepare buckets. These are resource limits, not identity or delivery evidence, and assume a trustworthy receiver clock. The receiver checks expiry immediately before trust-changing decisions; durable commit can finish later. Client clock skew can reject earlier.
+
+The client also caps exact-intent records at 1,024 without silent eviction; an existing matching intent may still resume at capacity. This initial implementation has no automatic pruning or explicit client-intent cleanup command: unlike receiver receipts, records are not removed after seven days, so new link pairings can eventually be refused. A full history refuses new intents with `pairing_intent_capacity` rather than discarding reconciliation evidence. During an upgrade, an old pending file-based reservation is adopted only when one live invitation, certificate, active key and expiry prove its ownership. Ambiguous or unprovable live pending state is preserved and refused for operator reconciliation, not silently reassigned. Provably expired pending trust can be retired transactionally while preserving key anchors; paired and revoked peers are not removed. A different live file invitation cannot take over a pending reservation, so changing invitations may require waiting for expiry. Do not erase the device database or retry an original native message to work around a refusal.
+
+If guided offer creation stops after confirmation, the private setup journal retains a public offer ID before database creation. A definitive creation refusal is retryable. For uncertain outcomes, use the explicit setup status/cancel actions below; they can use the saved ID if the option is omitted. Missing history is unknown, not proof of non-creation: a receipt may have been pruned. Status keeps waiting; explicit cancellation of a missing saved ID stops only local waiting, not remote authority or paired trust. The returned ID remains in the current journal until a new explicitly confirmed creation replaces it; this is not a permanent audit log. A known active offer remains pending until explicit cancellation, and a retained terminal result resolves that intent. A different ID cannot clear it. A caught manual display failure also returns its public ID for status/cancel; only the guided journal survives a process crash. No action automatically creates another offer or reprints its secret.
+
+Restored/quarantined state remains recovery-gated before expiry cleanup, pruning or quota writes. Its offer status is historical diagnostic evidence only, not current authority, and cannot resolve guided setup. Pairing mutation and cancellation are refused while the fence is present; recovery remains a separate explicit procedure.
+
+```sh
+session-peer setup --mode relay --state /private/device-state --action offer-status --offer-id OFFER-UUID --apply
+session-peer setup --mode relay --state /private/device-state --action offer-cancel --offer-id OFFER-UUID --apply
+```
+
+### Threat model and secret handling
+
+There is no rendezvous broker or short numeric code. The bounded custom-URI envelope carries the existing invitation and intended public key; it is not fetched or opened in a browser, and no OS URL handler is installed. The link is a credential: terminal recording, clipboard history and browser history can retain it even though its payload follows the URI's `#` fragment delimiter. Never paste it into an address bar, logs, analytics, chats with untrusted participants or issue reports. Ordinary JSON, diagnostics and setup journals do not contain the link or raw secret; a private intent may retain only its protected digest and public identity context.
+
+Existing pinned end-to-end TLS and client private-key possession remain mandatory. A compromised intermediary can delay, replay or deny service and observe routing metadata, but receives neither endpoint private keys nor agent-message plaintext. Replacing a receiver certificate fails independent fingerprint confirmation. A leaked genuine link cannot authorize a different client key. Knowledge of the intended public certificate may permit reservation/denial of service, but not possession proof or native access. Endpoint/private-key or trusted-confirmation-channel compromise is outside this protection. No new hosted availability, consumption, ACK or exactly-once guarantee is claimed.
+
 ## Connection failures and safe setup retry
 
 `no_authenticated_route` retains `retryAllowed:false` and

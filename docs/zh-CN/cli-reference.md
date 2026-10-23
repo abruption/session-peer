@@ -311,8 +311,65 @@ Host web-01
 
 退出码：`0` 命令成功（包括列出或预检运行 dry-run），`1` 操作错误，`2` CLI 用法错误或未解析的目标被报告为 no-target，以及 `130` 中断（Ctrl-C）。Codex 队列拒绝（包括缺失 rollout）属于操作错误（`1`）；预检运行期间缺失已保存的线程返回 `2`。发送操作退出码为 `0` 并不确认消息已被消费或回复。
 
+### 限时 handoff 观察（v1.3 候选版本）
+
+```sh
+session-peer handoff status --correlation-id PREPARED_UUID --json
+session-peer handoff watch --correlation-id PREPARED_UUID --watch-timeout 30 --interval-ms 1000 --json
+```
+
+使用本地所有者 POSIX 记录中已有的准备 UUID。状态查询仍为一次快照；观察运行 1..60 秒（默认 30），间隔 1000..5000 毫秒（默认 1000），仅接受 ASCII 整数，最多采样 61 次。观察仅在预算允许生成有效公开结果时输出初始快照，随后仅输出公开元数据/historyPhase 的变化；可能不输出任何快照。JSON 观察输出使用通用 schemaVersion 1 NDJSON 封装，其中 operation 为 watch，event 为 snapshot 或 end，快照嵌套原有 handoff 对象；status JSON 不变。到期完成的退出码 0 仅表示观察完成，并非 ACK 或等待成功；SIGINT 为 130，历史、输出故障为 1，无效参数为 2。历史缺失、损坏或 ledgerEpoch 改变会停止观察。 historyPhase 为 prepared、attempted、terminal、tombstone 或 quarantined；attempted 表示已持久保存的尝试屏障，不表示正在执行。
+
+观察为只读操作，不创建意图、等待、收据，不写入记录、提交或唤醒。不增加主机、设备、Windows 路径或 Codex ACK。每帧上限为 16 KiB，总量为 256 KiB，并预留 2 KiB 用于结束帧。真实文件描述符标准输出使用一个专属、隔离的 Python 输出辅助进程；它仅接收有界的已序列化公开字节，不更改共享描述符标志，也不读取记录或原生数据。父进程将 IPC 纳入原始总预算，开始新的记录读取或验证阶段前也检查期限；总时间内预留 100 ms 用于最终输出和清理，因此采样可能提前结束。超时、SIGINT 或错误时终止并回收辅助进程，但不可中断的 OS 操作不具备严格实时保证。部分写入或无完成回复后禁止后续帧、结束帧；消费方必须拒绝被截断的最后一行 NDJSON。辅助进程完成仅表示 OS 写入完成，不证明接收者消费。快照并非无损事件流，本地 UTC 观察不证明 ACK 到达顺序。有关隐私、保留的提交/ACK/等待含义、只读收集器查询及现有隔离限制，参见 [handoff 运行时指南](handoff-runtime.md)。观察不启动原生消息进程或收集器。此候选版本尚未发布。 不公开载荷或权限摘要，公开 targetGeneration 保持既有约定。 只读记录在读取不可变快照字节后、解析和验证前释放共享锁。 中断后的最终输出和清理在剩余总预算内最多使用 100 ms。 整体成功需要完整的成功结束帧和退出码 0：该帧之后清理仍可能失败。非零退出表示整体失败，不表示 ACK 升级、丢弃独立有效的提交事实或允许重试。
+
+### 可信本地 SSH 配置（v1.3 候选，尚未发布）
+
+在 Linux 和 macOS 上，显式指定 `--host` 的本地 CLI `list`、`send`、`doctor` 或 `update` 调用可以同时使用 `--ssh-config ABSOLUTE_PATH` 和 `--trust-ssh-config` 选择现有 OpenSSH 配置。两个标志缺一不可。以下为示例路径，支持用引号包裹的空格：
+
+```bash
+session-peer list --host worker --ssh-config '/home/alice/SSH Profiles/work.conf' --trust-ssh-config
+session-peer doctor --host worker --ssh-config '/home/alice/SSH Profiles/work.conf' --trust-ssh-config --check-return-route
+```
+
+此选择赋予配置本地代码执行权限：即使在 `ssh -G` 用户查询或 `send --dry-run` 中，`Match exec` 也可能执行。操作者还必须信任 `Include` 文件、`ProxyCommand` 及其他外部依赖。验证不是配置沙箱，也不会递归验证这些依赖。不会编辑任何现有配置档案或配置文件。
+
+路径必须是绝对路径，不得包含 `..` 路径段、控制字符或任何路径组件中的符号链接。所选文件必须是当前有效用户拥有的普通文件，硬链接数恰好为 1，大小不超过 64 KiB，且不得具有组或其他用户写权限以及 setuid/setgid/sticky 位。祖先目录须由 root 或当前有效用户拥有，且不得允许组或其他用户写入；root 拥有的 sticky 目录除外。Linux 拒绝扩展访问 ACL 和目录默认 ACL；macOS 拒绝 allow ACL 条目以及禁用所有权的卷。无法验证 ACL 或所有权时也会拒绝。这是保守检查，并非完整的有效权限解释器。
+
+同一次 CLI 调用会在本地 `ssh -G` 查询、doctor、远程列表与版本检查、更新探测/安装/验证，以及 send/handoff SSH 调用中复用同一选择。每次启动 SSH 前都会重新验证文件身份、元数据、内容哈希及存储安全性。检测到变更时拒绝操作，不回退至默认配置。OpenSSH 打开原始路径；这不是不可变字节快照，验证与 OpenSSH 读取之间仍可能发生同一用户修改文件的竞态。
+
+此模式强制 `StrictHostKeyChecking=yes`、`UpdateHostKeys=no`、`ForwardAgent=no`、`PermitLocalCommand=no` 和 `BatchMode=yes`，并禁用连接复用。现有显式主机密钥固定仍具有优先级。`--ssh-opt` 允许列表不变，其中的 `-F` 和 `ProxyCommand` 仍被禁止。所选本地路径不会传给远程命令、回复路由或公开 JSON。反向 doctor 使用远程机器自身的配置，绝不继承此路径。正向成功不能证明反向认证、消息消费或 ACK。
+
+环境变量、MCP 请求、ReplyTo 地址和已存储预设不能选择此模式。Windows、`setup`、配对设备路由、预设组合、回复 URI 目标以及未指定 `--host` 的调用，会在读取配置或启动 SSH 前被拒绝。省略这对标志时保留现有默认 SSH 行为。
+
+### 一次性配对链接（v1.3候选）
+
+两端都需要 `pairing-offer-v1` 及现有Unix Python 3.11+ relay额外依赖。以下为候选命令，不代表已发布的v1.3支持：
+
+```sh
+session-peer device rotation-status --state /private/client-state
+session-peer device offer --state /private/device-state --peer-key CLIENT-CURRENT-64-HEX-KEY --direct PRIVATE-IP:3770 --show-link
+session-peer device pair --state /private/client-state --link --route direct
+session-peer device offer-status --state /private/device-state --offer-id OFFER-UUID
+session-peer device offer-cancel --state /private/device-state --offer-id OFFER-UUID
+```
+
+创建时核对双方身份，只在所有者终端显示链接。`--link` 不接值；使用长度受限的不回显输入，客户端独立核对接收端当前密钥指纹后，才登记信任并联网。无终端时拒绝，不改为回显或自动批准。不要把链接放进参数、浏览器历史、日志或Issue。设置向导提供链接/私密文件选项，现有文件命令仍受支持。取消只影响该提议的待定信任；已完成的配对须显式吊销。没有历史的过期链接会被拒绝，只有完全匹配的保存上下文才能核对已经完成的认证结果。配对不替代接收目标策略或原生CLI的审批。密钥轮换限制、有效期、频率限制、中断与威胁模型见[配对设备指南](paired-devices.md)。
+
 <a id="updating"></a>
 ### 更新
+
+在 macOS/Linux 上，可以隐藏指定稳定版本的自动运行时通知，或清除此设置：
+
+```bash
+session-peer update --dismiss-runtime-notice 1.3.1
+session-peer update --clear-runtime-notice-dismissal
+```
+
+上述版本仅为示例，并非发行公告。这两个命令只离线修改本地设置，不检查、安装或批准发行版，不能与远程/SSH 选项或检查选项组合使用。只有规范化后完全匹配的版本才会隐藏；后续版本仍可能显示通知，清除后恢复通常行为。显式本地检查仍报告真实的最新版本及是否过时，通知设置作为独立信息提供。远程检查、技能通知和现有的全局关闭通知设置均不变。远程命令仍可能显示调用方 CLI 自身的缓存通知；此时只读取一次本地设置，而不是按目标分别读取。该设置不会隐藏远程版本或结果。
+
+设置独立于更新缓存，保存到 `$XDG_CONFIG_HOME/session-peer/update-notices.json`；环境变量未设置或为空时使用 `~/.config/session-peer/update-notices.json`。目录和文件必须具有安全的所有权和私有权限。不安全的路径会被拒绝，不会自动修复或改用其他路径。无效的设置文件或采用未来版本模式的设置文件不会隐藏任何通知，两个命令也不会覆盖这些文件；请先检查专用设置文件。Windows 暂不支持按版本设置，但仍可使用普通更新、检查和全局关闭通知功能。
+
+安全检查覆盖 POSIX 所有者和权限位，并非完整的 ACL（附加访问权限）审计或物理存储介质持久性认证。祖先路径中的符号链接和显式指定的相对配置路径会被有意拒绝，不会回退。文件系统必须支持基于目录的输入输出、文件锁和目录 fsync（同步）。检查并备份损坏的设置后，操作人员可手动删除该专用 JSON 文件（仅此文件），然后再次运行设置命令；可能仍有写入进程运行时，不要删除锁文件。系统不会自动修复。
 
 对于通过包管理器安装的版本，请使用安装该命令的同一包管理器：
 
@@ -333,7 +390,7 @@ session-peer update --host web-01 --check         # inspect the remote standalon
 session-peer update --host web-01                 # push this program if versions differ
 ```
 
-远程更新是与**本地程序的版本**进行比较，而非最新的 GitHub Release。即使远程版本更新它也会推送；在分发之前，请先检查并更新本地程序。远程副本不会从 GitHub 获取更新。远程版本探测仅检查 `~/.local/share/session-peer/session_peer.py`，不检查 pip/pipx/uv 安装；远程更新会安装该独立路径及其 CLI 链接。对于通过包管理器安装的远程 CLI，请改用该主机上自带的管理器进行升级。
+远程更新是与**本地程序的版本**进行比较，而非最新的 GitHub Release。仅在远程副本不存在或更旧时推送，若远程版本较新则保持不变。在分发之前，请先检查并更新本地程序。远程副本不会从 GitHub 获取更新。远程版本探测仅检查 `~/.local/share/session-peer/session_peer.py`，不检查 pip/pipx/uv 安装；远程更新会安装该独立路径及其 CLI 链接。对于通过包管理器安装的远程 CLI，请改用该主机上自带的管理器进行升级。
 
 无论是本地还是远程的 `update` 都不会刷新 Claude 技能。从所需发布版本的检出目录重新运行 `install.sh` 可同时刷新独立程序和技能。本地的 `session-peer update --check` 和 `session-peer update` 也会填充自动通知所使用的相同缓存。
 

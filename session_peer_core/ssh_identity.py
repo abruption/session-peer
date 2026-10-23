@@ -60,7 +60,7 @@ def ssh_identity_configuration(host: str, ssh_opts: list[str], *, handoff_budget
     try:
         completed = (ssh_handoff_configuration(host, ssh_opts, handoff_budget)
                      if handoff_budget is not None else subprocess.run(
-                         ["ssh", "-G", *ssh_opts, host], capture_output=True, timeout=DETECT_TIMEOUT))
+                         trusted_ssh_command(ssh_opts, host, prefix=("-G",)), capture_output=True, timeout=DETECT_TIMEOUT))
         output = completed.stdout
         if isinstance(output, bytes):
             if len(output) > 1024 * 1024:

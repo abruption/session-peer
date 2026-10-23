@@ -17,7 +17,7 @@ def remote_installed_version(host: str, ssh_opts: list[str],
     )
     try:
         done = subprocess.run(
-            ["ssh", *ssh_opts, host, probe],
+            trusted_ssh_command(ssh_opts, host, probe),
             capture_output=True, timeout=30,
         )
     except FileNotFoundError as exc:
@@ -373,6 +373,39 @@ def update_command() -> str:
     return "python -m pip install --upgrade session-peer"
 
 
+def runtime_notice_preference_requested(args) -> bool:
+    return (getattr(args, "dismiss_runtime_notice", None) is not None
+            or getattr(args, "clear_runtime_notice_dismissal", False))
+
+
+def runtime_notice_preference_routed(args) -> bool:
+    return bool(getattr(args, "host", None) or getattr(args, "require_ssh_host_key", None)
+                or any(value for key, value in vars(args).items() if key.startswith("ssh_")))
+
+
+def runtime_notice_preference_state() -> dict:
+    # Preference failures never erase an otherwise valid availability notice.
+    try:
+        return read_runtime_notice_preference()
+    except Exception:
+        return {"status": "invalid", "dismissedVersion": None,
+                "reason": "runtime_notice_preference_unavailable"}
+
+
+def runtime_notice_check_metadata(tag, outdated) -> tuple[dict, str]:
+    preference = runtime_notice_preference_state()
+    parsed = stable_version(tag)
+    selected = preference.get("dismissedVersion")
+    dismissed = bool(outdated and parsed is not None and preference.get("status") == "set"
+                     and selected == normalized_version(parsed))
+    explanation = ((" Automatic notice for this available release is dismissed."
+                    if dismissed else " Stored runtime notice dismissal does not hide this availability result.") +
+        " Selected version: " + selected +
+        ". Clear with: session-peer update --clear-runtime-notice-dismissal."
+        if preference.get("status") == "set" and isinstance(selected, str) else "")
+    return {"runtimeNoticePreference": preference, "runtimeNoticeDismissed": dismissed}, explanation
+
+
 def prepare_client_update(args: argparse.Namespace, now: float | None = None,
                           launcher=None) -> dict | None:
     """Read only local cached state; an expired/missing cache refreshes later."""
@@ -390,6 +423,9 @@ def prepare_client_update(args: argparse.Namespace, now: float | None = None,
     current = release_version(__version__)
     latest = release_version(state["latest"])
     if current is None or latest is None or latest <= current:
+        return None
+    preference = runtime_notice_preference_state()
+    if preference.get("status") == "set" and preference.get("dismissedVersion") == state["latest"]:
         return None
     checked_at = datetime.fromtimestamp(state["checkedAt"], timezone.utc)
     return {
@@ -485,6 +521,21 @@ def installed_as_distribution() -> bool:
 
 
 def cmd_update(args: argparse.Namespace) -> int:
+    if runtime_notice_preference_requested(args):
+        if (runtime_notice_preference_routed(args) or getattr(args, "check", False)
+                or (getattr(args, "dismiss_runtime_notice", None) is not None
+                    and getattr(args, "clear_runtime_notice_dismissal", False))):
+            raise CcPeerError("Runtime notice preference operations are local and exclusive",
+                             {"reason": "runtime_notice_preference_options_conflict", "updated": False})
+        selected = getattr(args, "dismiss_runtime_notice", None)
+        preference = write_runtime_notice_preference(selected)
+        emit(args.json, {"operation": "runtime_notice_preference", "category": "runtime",
+             "updated": False, **preference},
+             ("Runtime notice dismissal cleared; available runtime releases may be shown again."
+              if selected is None else "Runtime notice dismissed for " + preference["dismissedVersion"] +
+              ". This does not mark the release safe/current or install it. Clear with: session-peer update --clear-runtime-notice-dismissal."),
+             command="update")
+        return 0
     if not args.host and installed_as_distribution():
         command = update_command()
         if args.check:
@@ -496,11 +547,12 @@ def cmd_update(args: argparse.Namespace) -> int:
             latest, current = release_version(tag), release_version(__version__)
             outdated = latest is not None and current is not None and current < latest
             state = f"{tag} available" if outdated else "up to date"
+            preference, explanation = runtime_notice_check_metadata(tag, outdated)
             emit(
                 args.json,
                 {"current": __version__, "latest": tag, "outdated": outdated,
-                 "managedBy": "package-manager", "updateCommand": command},
-                human_text(f"session-peer {__version__} — {state}. Upgrade with: {command}"),
+                 "managedBy": "package-manager", "updateCommand": command, **preference},
+                human_text(f"session-peer {__version__} — {state}. Upgrade with: {command}" + explanation),
                 command="update",
             )
             return 0
@@ -610,10 +662,11 @@ def cmd_update(args: argparse.Namespace) -> int:
 
     if args.check:
         state = "up to date" if current >= latest else f"{tag} available"
+        preference, explanation = runtime_notice_check_metadata(tag, current < latest)
         emit(
             args.json,
-            {"current": __version__, "latest": tag, "outdated": current < latest},
-            human_text(f"session-peer {__version__} — {state}"),
+            {"current": __version__, "latest": tag, "outdated": current < latest, **preference},
+            human_text(f"session-peer {__version__} — {state}" + explanation),
             command="update",
         )
         return 0

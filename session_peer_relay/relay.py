@@ -281,12 +281,25 @@ class Relay:
         connection.lab_diagnostic_capable = capable
         return None
 
+    def close_waiting_room(self, key, slot, reason):
+        if self.waiting.get(key) is slot:
+            self.waiting.pop(key, None)
+            self.counters['roomsClosedBeforeAttach'] += 1
+            self.diagnostic_event('room_close', roomId=slot['id'],
+                reason=reason, ageMs=max(0, round((time.monotonic()-slot['opened'])*1000)),
+                attemptId=slot['attemptId'])
+
     async def handler(self, ws):
         self.connections.add(ws)
         account = ws.lab_account
         key = account['room']
         other_role = 'client' if account['role'] == 'receiver' else 'receiver'
         slot = self.waiting.get(key)
+        if slot is not None and time.monotonic() >= slot['deadline']:
+            # A delayed timeout callback must not let a new arrival revive an
+            # expired room while its original handler is still cleaning up.
+            self.close_waiting_room(key, slot, slot['expiryReason'])
+            slot = None
         watcher = None
         paired = False
         attach_sent = False
@@ -306,6 +319,8 @@ class Relay:
             slot = {'members': {}, 'joined': {}, 'closedByRelay': set(), 'ready': asyncio.Event(),
                     'opened': time.monotonic(), 'id': secrets.token_hex(8),
                     'attemptId': getattr(ws, 'lab_attempt_id', None)}
+            slot['deadline'] = slot['opened'] + (self.receiver_wait if account['role'] == 'receiver' else self.client_wait)
+            slot['expiryReason'] = 'receiver_idle_expiry' if account['role'] == 'receiver' else 'client_wait_expiry'
             self.waiting[key] = slot
             self.counters['roomsOpened'] += 1
             self.counters['receiverRoomsOpened' if account['role'] == 'receiver' else 'clientFirstRooms'] += 1
@@ -341,6 +356,8 @@ class Relay:
                         close_reason = 'receiver_idle_expiry' if account['role'] == 'receiver' else 'client_wait_expiry'
                         counter = 'receiverIdleExpired' if account['role'] == 'receiver' else 'clientWaitExpired'
                         self.counters[counter] += 1
+                    # Remove eligibility before cancellation cleanup can yield.
+                    self.close_waiting_room(key, slot, close_reason)
                     return
                 paired = True
             finally:
@@ -412,12 +429,7 @@ class Relay:
             self.connections.discard(ws)
             if slot['members'].get(account['role']) is ws:
                 slot['members'].pop(account['role'], None)
-                if self.waiting.get(key) is slot:
-                    self.waiting.pop(key, None)
-                    self.counters['roomsClosedBeforeAttach'] += 1
-                    self.diagnostic_event('room_close', roomId=slot['id'],
-                        reason=close_reason, ageMs=max(0, round((time.monotonic()-slot['opened'])*1000)),
-                        attemptId=slot['attemptId'])
+                self.close_waiting_room(key, slot, close_reason)
                 other = slot['members'].get(other_role)
                 if other:
                     slot['closedByRelay'].add(other_role)
