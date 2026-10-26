@@ -33,7 +33,7 @@ in this ~22-second animation, not a screen recording; send success alone is not 
 ### Install
 
 Python 3.9+. The core local/SSH CLI has no third-party Python dependencies.
-Source version: **1.3.0**. At the 2026-10-23 preparation checkpoint, the last verified published stable release was **1.2.1**.
+Source version: **1.3.1**. At the 2026-10-27 preparation checkpoint, the last verified published stable release was **1.3.0**. See the [maintenance release notes](docs/releases/v1.3.1.md) for the Control source dependency fix and the compatibility skill asset in the GitHub release. Neither component is included in the Python wheel or sdist.
 
 Version 1.3.0 adds delivery explanations, local/SSH route presets and recipient addresses, bounded handoff observation, trusted SSH configuration, pairing links and per-version notice preferences. See the [release scope and verification gates](docs/releases/v1.3.0.md) for supported combinations and limits. Package publication and operational deployment are separate.
 
