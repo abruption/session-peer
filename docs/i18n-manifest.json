@@ -7,6 +7,10 @@
     "zh-CN"
   ],
   "sources": {
+    "README.md": "96b6b4b72f46059f9df4ebdcf79f0c7f86efd8f3a99e26a4029df7d0bbe532d7",
+    "RELEASING.md": "75e5f96df663070e67a40560dca15a5bdc1b0d41e240b4b28db75c919ffbcbd7",
+    "SECURITY.md": "8f018f6f98002312e143609b9734aeb971ca5217e146597c06b57b5645031046",
+    "docs/README.md": "edccfc92bd4e45850b5f5aa31f90cc4fc644e46a1d55529eedee0ca7a0b34c1b",
     "docs/agent-adapters.md": "bf185d3121c94829bb412071a25c4d943302e10a6b2e713111e653b8f8c3ea91",
     "docs/ai-assistant-guide.md": "9624ec96b92fb688fae3be3c94cb3564c77985091be451fbf1f056a1af9b9d9c",
     "docs/antigravity.md": "f2b5122a0ce6e6fb5bd4d8ed50ce2c8bd2dc9c98ec8ce328405cf7c2cd24229d",
@@ -20,7 +24,6 @@
     "docs/mcp.md": "a64010cdd63f2cde6a0052450bed2d05faa0f19c93c76143cb0d585d36f8ff62",
     "docs/multi-home-list.md": "f8d8e3adf727e4842ea7c4d45e8f6523b11d0513bf2509d4d1204645875e6489",
     "docs/paired-devices.md": "08c2643d08f769deb725c6123193c1ea9593c775afde84a158a41fe6e7d1be82",
-    "docs/README.md": "775fbf51947b2adca22df3fa5a3bcbec3262a22280b488ba3169997afe6ebbe5",
     "docs/relay-auth.md": "e6da5291ce6a9da31e79e66ceeff7e9fef7e95046359acbf04d708c96ffab62f",
     "docs/relay-development-plan.md": "0abf750b36275ea4e467a0020e560277f08689f2d574aed7674133705383b1ff",
     "docs/relay-edge-policy.md": "c1c7f7a1c4303943c78ca334dab4034f66c0c272e40c007d07c3da2a496155eb",
@@ -50,12 +53,10 @@
     "docs/releases/v1.2.0.md": "9a153493fb3d25306306a05f6c1f5672d7d7becfe008f371770ce2d13d7e9b38",
     "docs/releases/v1.2.1.md": "70a3026c2d874a6fd7addcaef840ecfa84bf4f33a0165605217379acffa4fddb",
     "docs/releases/v1.3.0.md": "a422901b83c85cfb48ac0ad2f99dbc82dca46c4929a3016acd15010e4a18188b",
+    "docs/releases/v1.3.1.md": "1600b3f6e708ded1cd5d0cad7b5f2d78244e0e4b01d122d727f2a692fccaf652",
     "docs/validation/69-rc.md": "e490c6a9ad0fec9108b91c74922cedac7ddf214ed405f8f5523da22f48a4b222",
     "docs/validation/85-antigravity.md": "f89b175191cd98ab03d4029b487065133814b3c8dd8de8cd0a5cc367e2579e4f",
     "docs/wake.md": "cde135da2ea7be21c815bb265e694f737dbe467d8e76bb82eb118e3b86e29d22",
-    "plugins/session-peer/README.md": "a4eeae54caac9ad824d740f7f319561f060bc9c2bbbbf7def2bdd8e36dbcd1c6",
-    "README.md": "4ccfb9f1a617fcc04de5bbb3ee2118ec3fc1eee41c6e902071f97c3ad645c590",
-    "RELEASING.md": "9e99dd741b4d221064664176b9c09f972ae4d82379f0ac4479853832dacad042",
-    "SECURITY.md": "8f018f6f98002312e143609b9734aeb971ca5217e146597c06b57b5645031046"
+    "plugins/session-peer/README.md": "a4eeae54caac9ad824d740f7f319561f060bc9c2bbbbf7def2bdd8e36dbcd1c6"
   }
 }

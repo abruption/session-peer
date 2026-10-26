@@ -1,5 +1,9 @@
 # Releasing session-peer
 
+## v1.3.1 preparation
+
+Prepared on 2026-10-27 against published v1.3.0. The [maintenance notes](docs/releases/v1.3.1.md) cover the Node Control Zod fix (#338/#339), published compatibility skill v0.4.0 (#334/#335), and download badges (#336/#337). Merge the dependency fix before this preparation. Require current review and protected-main CI, then verified immutable artifacts and required human PyPI environment approval. Python publication does not update a running Control service or independently managed skills. Historical release procedures below must not reuse old tags.
+
 ## v1.3.0 preparation
 
 Prepared on 2026-10-23 against published 1.2.1. The [release notes](docs/releases/v1.3.0.md) describe the six merged feature PRs and remaining boundaries. Integrated source base: `a0e7af032fd372334782cc3ac3d97b21c71dd797`, before the version-preparation commit. Its CI and CodeQL passed; final preparation review, exact protected-main CI, dependency audits, generated standalone and package/install checks remain required. Skill and plugin versions remain independent.
