@@ -21,7 +21,7 @@ async def client(host, port):
         data = await asyncio.wait_for(reader.readexactly(14), 2)
         emit(event="result", echo=data == b"direct341-echo")
         return data == b"direct341-echo"
-    except (OSError, TimeoutError, asyncio.IncompleteReadError) as error:
+    except (OSError, asyncio.TimeoutError, asyncio.IncompleteReadError) as error:
         emit(event="result", echo=False, error=type(error).__name__)
         return False
     finally:
@@ -29,7 +29,7 @@ async def client(host, port):
             writer.close()
             try:
                 await asyncio.wait_for(writer.wait_closed(), 1)
-            except (OSError, TimeoutError):
+            except (OSError, asyncio.TimeoutError):
                 pass
 
 

@@ -45,7 +45,7 @@ Read-only signature verification failed for both installed Homebrew Python.app i
 
 ## Reproduction scaffold
 
-`tcp_probe.py` is the plain-TCP probe used for the control comparisons, with command-line bounds and Python 3.9-compatible loop setup. It creates no session-peer state or credentials. Its historical framework setup was changed from Runner to explicit loop construction for the system-Python comparison; the echo payload and observation points are unchanged. It is not executed by repository CI.
+`tcp_probe.py` is the plain-TCP probe used for the control comparisons, with command-line bounds and Python 3.9-compatible loop setup. It creates no session-peer state or credentials. Its historical framework setup was changed from Runner to explicit loop construction for the system-Python comparison; the echo payload and observation points are unchanged. The client and cleanup handlers explicitly catch `asyncio.TimeoutError`, including its distinct pre-3.11 class. CI regression-tests a stalled loopback client only; the manual self/server/tailnet experiments are not run by CI.
 
 Select the intended interpreter explicitly. Run self-connect comparisons with loopback and then the machine's own tailnet address, followed by separately authorized server/client comparisons on the other Mac. Record connect, accepted callback, bytes, echo and closure separately. The scaffold reports its own ready/connect/callback/byte-count/echo/close observations; do not publish personal endpoint addresses or raw private logs. No TLS secret, invitation or native message is part of this scaffold.
 
