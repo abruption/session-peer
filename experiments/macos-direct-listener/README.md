@@ -43,6 +43,19 @@ Both machines reported the tested interpreter path as permitted by the applicati
 
 Read-only signature verification failed for both installed Homebrew Python.app images, while the MacBook's python.org image passed. On a newly copied mini-only test bundle, regenerating its ad-hoc signature made strict signature verification pass but the same raw TCP accept test still failed. No installed interpreter or firewall entry was changed. Invalid signature metadata alone therefore was not established as the cause, and re-signing was not established as a repair.
 
+## After owner firewall approval — original runtime and same bind
+
+Later on 2026-10-27, the owner observed and allowed the macOS incoming-connection prompt for Python.app. Without installing the diagnostic candidate, both Macs then passed the previously failing Homebrew raw-TCP controls. Two new pairing fixtures used the same tailnet bind addresses and per-machine ports as the earlier released-CLI failures, with the original Homebrew Python 3.14.9/OpenSSL 4.1.0, session-peer 1.3.1, cryptography 50.0.2 and websockets 17.3. No wildcard, forwarding process or python.org runtime was used.
+
+| Released-CLI receiver after owner approval | Result |
+| --- | --- |
+| Mac mini, same tailnet bind and port | Pairing exit 0, client/server paired, authenticated probe successful, receiver exited normally, native calls 0. |
+| MacBook, same tailnet bind and port | Pairing exit 0, client/server paired, authenticated probe successful, receiver exited normally, native calls 0. |
+
+The loaded receiver source on both machines matched the published v1.3.1 tag: app.py SHA-256 `818600f5f1cdbdb2584a6ce8bc8a218b7515b009718bd0a435a3752fe36fd007`, cli.py SHA-256 `1b3f9b7d2960a018193f8476bc72ec714de397fdfe465b7f083ecd62ab018c00`. These released-runtime runs had no new diagnostic counters; their absent counter field must not be confused with the candidate's earlier zero or 3/3/0 observations. The prior user pending state was not retried or reset.
+
+This comparison supports pending Application Firewall approval as the practical blocker in the tested incident, rather than a defect repaired by the diagnostic PR. The owner reported approval; this experiment does not claim to have independently inspected each firewall decision entry. [Apple documents that incoming attempts are denied until the prompt is answered](https://support.apple.com/en-euro/guide/mac-help/mh34041/27/mac/27). The firewall remained enabled. The earlier distribution/signature and proxy observations remain historical controls, not required remedies or a universal diagnosis.
+
 ## Reproduction scaffold
 
 `tcp_probe.py` is the plain-TCP probe used for the control comparisons, with command-line bounds and Python 3.9-compatible loop setup. It creates no session-peer state or credentials. Its historical framework setup was changed from Runner to explicit loop construction for the system-Python comparison; the echo payload and observation points are unchanged. The client and cleanup handlers explicitly catch `asyncio.TimeoutError`, including its distinct pre-3.11 class. CI regression-tests a stalled loopback client only; the manual self/server/tailnet experiments are not run by CI.
@@ -51,8 +64,8 @@ Select the intended interpreter explicitly. Run self-connect comparisons with lo
 
 ## Interpretation and remaining work
 
-The observations establish that the original pairing timeout is reproducible, that the pairing protocol can work between these Macs in the stated controls, and that TCP connection establishment or listener creation is not sufficient readiness evidence. They do not identify a universal macOS/Tailscale/Python root cause or certify a production forwarding deployment.
+The pre-approval observations establish that the original pairing timeout is reproducible and that TCP connection establishment or listener creation is not sufficient readiness evidence. The later same-bind released-runtime comparison associates recovery with the owner's firewall approval in this incident. It does not establish a universal macOS/Tailscale/Python diagnosis or certify a production forwarding deployment.
 
-The accompanying code change adds explicit startup uncertainty and bounded opt-in Direct accept/TLS diagnostics. It does not modify binds, firewall policy, runtime selection, authentication, TLS deadlines or retries. The original issue remains open for the unresolved listener behavior and a separately reviewed upstream report if further evidence isolates its owner.
+The accompanying code change adds explicit startup uncertainty and bounded opt-in Direct accept/TLS diagnostics. It does not modify binds, firewall policy, runtime selection, authentication, TLS deadlines or retries. The original issue remains open pending the diagnostic/documentation PR; the tested native-listener blocker cleared after owner approval. No upstream Tailscale or CPython defect was established or reported.
 
 Relevant primary references are [Tailscale's macOS variants](https://tailscale.com/docs/concepts/macos-variants), [Apple TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy), [CPython's framework launcher](https://github.com/python/cpython/blob/v3.14.9/Mac/Tools/pythonw.c), and [Apple's code-signing/firewall discussion](https://developer.apple.com/library/archive/documentation/Security/Conceptual/CodeSigningGuide/AboutCS/AboutCS.html). In particular, TN3179 does not make incoming TCP accept depend on Local Network permission, so these results are not a verified TCC diagnosis.
