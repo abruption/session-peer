@@ -22,6 +22,8 @@
 
 ## 开发与历史
 
+- [v1.3.2维护说明](releases/v1.3.2.md)说明macOS防火墙授权、Direct监听器/TLS诊断、MCP SDK下限，以及位于Python分发包之外且需要单独部署的Control安全更新。
+
 - [v1.3.1维护说明](releases/v1.3.1.md)介绍Control依赖修复、兼容技能更新以及发布与运行环境部署的界限。
 
 - [v1.3.0发行说明](releases/v1.3.0.md)介绍已合并的六项功能、支持的组合和发行验证。

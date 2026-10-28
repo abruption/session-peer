@@ -235,7 +235,7 @@ class StableCandidate(unittest.TestCase):
     def test_source_version_keeps_experimental_acceptance_gates(self):
         for suffix in ("", ".ko", ".ja", ".zh-CN"):
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
-            self.assertIn("**1.3.0**", text)
+            self.assertIn("**" + session_peer.__version__ + "**", text)
             self.assertIn("releases/v1.3.0.md", text)
             self.assertIn("handoff-runtime.md", text)
             self.assertIn("POSIX", text)
@@ -255,8 +255,8 @@ class StableCandidate(unittest.TestCase):
             self.assertIn(marker, english)
 
     def test_package_and_generated_core_version_agree(self):
-        self.assertEqual(session_peer.__version__, "1.3.1")
-        self.assertIn('__version__ = "1.3.1"',
+        self.assertEqual(session_peer.__version__, "1.3.2")
+        self.assertIn('__version__ = "1.3.2"',
                       (ROOT / "session_peer_core/common.py").read_text(encoding="utf-8"))
 
     def test_current_readmes_and_runbooks_match_source_version(self):
@@ -264,7 +264,7 @@ class StableCandidate(unittest.TestCase):
             for stem in ("README", "RELEASING"):
                 with self.subTest(stem=stem, suffix=suffix):
                     text = (ROOT / (stem + suffix + ".md")).read_text(encoding="utf-8")
-                    self.assertIn("1.3.1", text)
+                    self.assertIn("1.3.2", text)
                     self.assertNotIn("1.0.0rc4", text)
                     if stem == "RELEASING":
                         self.assertIn("--draft=false --prerelease=false --latest", text)
@@ -287,17 +287,17 @@ class StableCandidate(unittest.TestCase):
 
     def test_stable_release_keeps_operational_deployment_separate(self):
         profiles = (
-            ("", "Source version: **1.3.1**.",
-             "At the 2026-10-27 preparation checkpoint, the last verified published stable release was **1.3.0**.",
+            ("", "Source version: **1.3.2**.",
+             "At the 2026-10-28 preparation checkpoint, the last verified published stable release was **1.3.1**.",
              "Development candidate 1.2.1 is unpublished"),
-            (".ko", "소스 버전: **1.3.1**.",
-             "2026-10-27 준비 시점의 마지막 확인 공개 안정판은 **1.3.0**이었습니다.",
+            (".ko", "소스 버전: **1.3.2**.",
+             "2026-10-28 준비 시점의 마지막 확인 공개 안정판은 **1.3.1**이었습니다.",
              "개발 후보 1.2.1은 미공개입니다"),
-            (".ja", "ソースバージョン：**1.3.1**。",
-             "2026-10-27の準備時点で、最後に確認した公開済み安定版は**1.3.0**でした。",
+            (".ja", "ソースバージョン：**1.3.2**。",
+             "2026-10-28の準備時点で、最後に確認した公開済み安定版は**1.3.1**でした。",
              "開発候補1.2.1は未公開です"),
-            (".zh-CN", "源码版本：**1.3.1**。",
-             "在2026-10-27的准备检查时，最后确认的已发布稳定版本为**1.3.0**。",
+            (".zh-CN", "源码版本：**1.3.2**。",
+             "在2026-10-28的准备检查时，最后确认的已发布稳定版本为**1.3.1**。",
              "开发候选版本1.2.1尚未发布"),
         )
         for suffix, source_version, dated_checkpoint, stale_unpublished in profiles:

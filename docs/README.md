@@ -24,6 +24,8 @@ installation paths.
 
 ## Development and history
 
+- [v1.3.2 maintenance notes](releases/v1.3.2.md) explain macOS firewall approval, Direct listener/TLS diagnostics, the MCP SDK floor and the Control security update outside Python archives, which requires a separate rollout.
+
 - [v1.3.1 maintenance notes](releases/v1.3.1.md) cover the Control dependency fix, compatibility skill update and publication/deployment boundaries.
 
 - [v1.3.0 release notes](releases/v1.3.0.md) describe the six merged features, supported combinations and release verification.

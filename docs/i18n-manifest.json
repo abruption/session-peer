@@ -7,10 +7,10 @@
     "zh-CN"
   ],
   "sources": {
-    "README.md": "96b6b4b72f46059f9df4ebdcf79f0c7f86efd8f3a99e26a4029df7d0bbe532d7",
-    "RELEASING.md": "75e5f96df663070e67a40560dca15a5bdc1b0d41e240b4b28db75c919ffbcbd7",
+    "README.md": "bbab4acce7d5bbb1b4a03bd22c48fc71feacc98e231e42d23468309f80be30d1",
+    "RELEASING.md": "521f2c857e034714f63118eff5a9fcf8a0a4763b1e6c55b1797eee2a00aab424",
     "SECURITY.md": "8f018f6f98002312e143609b9734aeb971ca5217e146597c06b57b5645031046",
-    "docs/README.md": "edccfc92bd4e45850b5f5aa31f90cc4fc644e46a1d55529eedee0ca7a0b34c1b",
+    "docs/README.md": "b2113e46b366055cab95b77ab5940236bc8c18217144b9a6dbd08264773968c6",
     "docs/agent-adapters.md": "bf185d3121c94829bb412071a25c4d943302e10a6b2e713111e653b8f8c3ea91",
     "docs/ai-assistant-guide.md": "9624ec96b92fb688fae3be3c94cb3564c77985091be451fbf1f056a1af9b9d9c",
     "docs/antigravity.md": "f2b5122a0ce6e6fb5bd4d8ed50ce2c8bd2dc9c98ec8ce328405cf7c2cd24229d",
@@ -54,6 +54,7 @@
     "docs/releases/v1.2.1.md": "70a3026c2d874a6fd7addcaef840ecfa84bf4f33a0165605217379acffa4fddb",
     "docs/releases/v1.3.0.md": "a422901b83c85cfb48ac0ad2f99dbc82dca46c4929a3016acd15010e4a18188b",
     "docs/releases/v1.3.1.md": "1600b3f6e708ded1cd5d0cad7b5f2d78244e0e4b01d122d727f2a692fccaf652",
+    "docs/releases/v1.3.2.md": "fe97d1feec0c3a5ebe04d3b573d2c9872a95b110b9ed57a2ce4989f376e1b96f",
     "docs/validation/69-rc.md": "e490c6a9ad0fec9108b91c74922cedac7ddf214ed405f8f5523da22f48a4b222",
     "docs/validation/85-antigravity.md": "f89b175191cd98ab03d4029b487065133814b3c8dd8de8cd0a5cc367e2579e4f",
     "docs/wake.md": "cde135da2ea7be21c815bb265e694f737dbe467d8e76bb82eb118e3b86e29d22",
