@@ -26,6 +26,13 @@ control integration suite additionally requires `npm ci` in `control/` and
 `SESSION_PEER_CONTROL_INTEGRATION=1`; without that explicit opt-in, the live
 Node/Python fixture is skipped.
 
+The MCP CI matrix tests Python 3.10/3.13 on macOS/Linux with both the exact SDK
+floor (`.github/requirements/mcp-minimum.txt`) and latest compatible 1.x.
+Transitive dependencies resolve normally, not at their individual minima.
+Both runtime graphs (including pip/setuptools bootstrap packages) are audited
+separately from the pinned build/audit requirements and retained
+as CI artifacts. Existing latest-resolution and release audits remain required.
+
 After building exactly one wheel and one sdist, validate the full distribution
 contract with:
 

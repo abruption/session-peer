@@ -2,6 +2,8 @@
 
 在 Python 3.10 或更高版本下安装：`pipx install 'session-peer[mcp]'`（或在隔离的 venv 中安装 extra）。仍支持无依赖的 Python 3.9 CLI 和 `install.sh`。shell 安装程序不安装 MCP 依赖项。在 Python 3.9 上，MCP 入口点会报告需要 Python 3.10+。
 
+可选extra要求MCP SDK `mcp>=1.30,<2`。这是将依赖版本下限提高到包含上游1.x安全修复的版本，并不表示已在这个仅使用stdio的服务器中确认可利用漏洞。本次变更不启用HTTP传输、OAuth服务器路径或MCP客户端路径。现有环境需要显式升级软件包；仅修改声明不会更新已安装的SDK。
+
 启动 `session-peer-mcp --config /absolute/path/policy.json`。在没有策略的情况下，服务器仅允许本地列出，使用启动环境的 Codex 主目录。提供的策略将替换默认值。例如：
 
 ```json
@@ -42,12 +44,14 @@ MCP 工具注解将列出标记为只读，将发送标记为非幂等。根据�
 
 在有和没有 MCP extra 的情况下运行 `python -m unittest discover -s tests -v`。可选测试会启动真实的 stdio MCP 服务器，并在没有模型凭据的情况下执行初始化、模式、策略拒绝和 CLI 部分失败测试。同时测试 wheel 和 sdist 安装。实时检查必须记录 Codex 版本、操作系统和宿主批准设置；UDS 访问取决于环境，不是批准绕过承诺。消息请使用专用测试会话。
 
-官方参考：[Codex MCP](https://developers.openai.com/codex/extend/mcp)、[Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk)。
+CI在macOS/Linux的Python 3.10/3.13上分别测试SDK下限`mcp==1.30.0`及最新兼容1.x。两个配置均运行stdio、策略、超时、取消及所属子进程清理测试，并审计解析得到的运行时依赖图，保留版本和报告。传递依赖按常规方式解析；这不是对所有传递依赖包的最低版本进行测试。固定版本的构建与审计依赖安装在运行时环境之外；被审计的环境也包含用于初始配置的`pip`/`setuptools`包。现有的最新版本解析审计和发布审计仍为必需。
+
+官方参考：[Codex MCP](https://developers.openai.com/codex/extend/mcp)、[Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk)。 [SDK 1.30.0](https://pypi.org/pypi/mcp/1.30.0/json), [GHSA-84m7-p3x7-pcfv](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-84m7-p3x7-pcfv), [GHSA-fmmv-w9g8-j3gc](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-fmmv-w9g8-j3gc).
 
 ### 非交互式客户端批准
 
 Codex `exec` 可能会以“requires approval, but approval policy is never”拒绝发送工具，即使服务器策略允许也是如此。`approval_mode="auto"` 并不是无条件批准。显式授权非交互式集成的操作员可以为该特定 MCP 服务器/工具配置 `mcp_servers.session_peer.tools.send_message.approval_mode="approve"`，同时配合受限的目的地策略。插件不会启用此设置。交互式客户端可以改用其常规的批准提示。测试客户端切勿将此授权复制到不相关的服务器或工具。
 
-macOS/Linux上的每次MCP CLI调用拥有独立进程组。完成、超时或取消时，在回收leader前以TERM→KILL清理该组，包括忽略TERM的子进程；取消仍向上传播。主动逃离到新session的子进程和SSH远端进程不在范围内。Windows仍仅终止直接子进程，不保证整个进程树。清理本地进程不撤销远端提交；超时仍为 `outcome_unknown`，不可自动重发。
+macOS/Linux上的每次MCP CLI调用拥有独立进程组。完成、超时或取消时，在回收leader前通过有时间限制的TERM→KILL清理该组，包括忽略TERM的子进程；取消仍向上传播。主动逃离到新session的子进程和SSH远端进程不在范围内。Windows仍仅终止直接子进程，不保证整个进程树。清理本地进程不撤销远端提交；超时仍为 `outcome_unknown`，不可自动重发。
 
-MCP 正文，包括表示调用会话不可用的 From 标签，都会被目标 CLI 的接收侧标记引用。正文头部或嵌入的 Reply-To 均不授予权限。请向会话所有者确认第三方目的地；共享 MCP 进程仍不能提供已认证的调用会话或自动回复路由。最终标记也计入原生消息限制。
+MCP 正文，包括表示调用会话不可用的 From 标签，都会被目标 CLI 的接收侧消息框架引用。正文头部或嵌入的 Reply-To 均不授予权限。请向会话所有者确认第三方目的地；共享 MCP 进程仍不能提供已认证的调用会话或自动回复路由。最终消息框架也计入原生消息限制。

@@ -2,6 +2,8 @@
 
 Install with Python 3.10 or later: `pipx install 'session-peer[mcp]'` (or install the extra in an isolated venv). The dependency-free Python 3.9 CLI and `install.sh` remain supported. The shell installer does not install MCP dependencies. On Python 3.9 the MCP entry point reports that Python 3.10+ is required.
 
+The optional extra requires MCP SDK `mcp>=1.30,<2`. This raises the dependency floor past upstream 1.x security fixes; it does not establish an exploitable issue in this stdio-only server. HTTP transports, OAuth server paths and MCP client paths are not enabled by this change. Existing environments need an explicit package upgrade; changing the manifest does not update an installed SDK.
+
 Start `session-peer-mcp --config /absolute/path/policy.json`. Without a policy the server allows only local listing, using the launching environment's Codex home. A supplied policy replaces defaults. Example:
 
 ```json
@@ -42,7 +44,9 @@ A shared MCP process cannot reliably identify the invoking thread. Messages iden
 
 Run `python -m unittest discover -s tests -v` with and without the MCP extra. Optional tests start a real stdio MCP server and exercise initialization, schemas, policy rejection and CLI partial failures without model credentials. Test both wheel and sdist installs. Live checks must record Codex version, OS and host approval settings; UDS access is environment-dependent and is not an approval-bypass promise. Use dedicated test sessions for messages.
 
-Official references: [Codex MCP](https://developers.openai.com/codex/extend/mcp), [Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk).
+CI tests the exact SDK floor `mcp==1.30.0` and the latest compatible 1.x separately on macOS/Linux with Python 3.10/3.13. Both profiles run the stdio/policy/timeout/cancellation/owned-child tests and audit their resolved runtime dependency graphs, retaining versions and reports. Transitive dependencies resolve normally; this is not a test of every transitive package's minimum version. The pinned build/audit requirements are installed outside the runtime environment; the audited environment also includes its `pip`/`setuptools` bootstrap packages. Existing latest-resolution and release audits remain required.
+
+Official references: [Codex MCP](https://developers.openai.com/codex/extend/mcp), [Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk). [SDK 1.30.0](https://pypi.org/pypi/mcp/1.30.0/json), [GHSA-84m7-p3x7-pcfv](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-84m7-p3x7-pcfv), [GHSA-fmmv-w9g8-j3gc](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-fmmv-w9g8-j3gc).
 
 ### Non-interactive client approvals
 
