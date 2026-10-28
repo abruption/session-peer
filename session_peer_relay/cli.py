@@ -322,6 +322,7 @@ async def manage(kind, args):
                         task = asyncio.create_task(receiver.relay_listener(args.relay, token))
                     emit({'ok': True, 'ready': True, 'device': store.device,
                           'directPort': server.sockets[0].getsockname()[1],
+                          'directReadyConfirmed': False,
                           'relayConfigured': bool(task), 'relayReadyConfirmed': False})
                     await lifetime(args.seconds)
                 finally:

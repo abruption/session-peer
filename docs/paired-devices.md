@@ -203,6 +203,22 @@ and timeout on both endpoints, so a stalled leg is detected in about 20 seconds
 rather than about 40. These reduce reconnect gaps; they do not repair a stalled
 network path.
 
+### macOS Direct listener checks (#341)
+
+This section describes an unreleased change after v1.3.1. The `device serve` startup `ready:true` confirms local listener setup only. The change adds `directReadyConfirmed:false`; older receivers may omit the field. TCP connect, startup readiness and successful peer TLS are separate observations. A TLS handshake may be the unauthenticated pairing bootstrap, so it does not itself establish pairing, native-target access or ACK. Existing paired setup readiness uses authenticated probe/list requests.
+
+With `--diagnostic-events`, the change emits `direct_transport` lifecycle records. The `phase` is `accepted` for entry into the TCP callback or `peer_tls` for handshake success/failure. Bounded per-receiver counters are `accepted`, `tlsCompleted` and `tlsFailed`. Monotonic throttling allows at most one record per phase per 60 seconds: at most two per minute, with TLS successes and failures sharing the same phase limit. Normal closing attempts one additional `summary` snapshot, including zero counts; repeated closure does not emit it again. This is a shutdown snapshot, not a heartbeat or lossless event history. Counts need not balance because of admission refusals, unfinished/cancelled handshakes and saturation. Best-effort Direct records contain no endpoint addresses, peer IDs, message data or exception text. Missing records alone do not prove that no connection was accepted.
+
+Before the firewall alert was approved, in isolated tests on 2026-10-27, pairing against Homebrew Python 3.14.9 receivers timed out at the client's TLS phase with `peer_tls/timeout` in both directions; explicitly testing `0.0.0.0` did not fix it. A python.org Python 3.13.7 receiver on one Mac completed pairing and an authenticated probe from the other. The reverse direction succeeded only with a separately selected, short-lived private TCP forwarder into a loopback TLS receiver. That forwarder passed opaque TLS bytes without terminating TLS. These are different tested topologies, not universal support or a proven macOS/Tailscale/Python root cause. See [#341](https://github.com/abruption/session-peer/issues/341) for the scoped observations.
+
+After the owner allowed incoming connections for `Python.app`, both Macs completed direct pairing and an authenticated probe using the original released v1.3.1 Homebrew Python 3.14.9 runtime, tailnet bind addresses and the same per-machine ports as the earlier failures. These runs used fresh test identities, no forwarder or alternate interpreter, and zero native calls. This before/after result supports pending macOS Application Firewall consent as the cause of this incident; the diagnostic PR did not repair the network path.
+
+[Apple's firewall guide](https://support.apple.com/en-euro/guide/mac-help/mh34041/27/mac/27) explains that incoming attempts are denied until the alert is answered. When an expected receiver triggers this prompt, its owner should verify the actual Python application and explicitly allow it if intended. Keep the firewall enabled, the selected private bind, pinned TLS and receiver policy; the permission does not grant native-agent access.
+
+Record the actual running Python image/distribution, macOS version, Tailscale version/variant, bind address and whether the check is self-connect or remote. A reported firewall permission is not end-to-end readiness. Do not automatically widen a listener to `0.0.0.0`, change firewall/access policy, switch runtimes or infer a supported forwarding configuration. Preserve `pending` state and `retryAllowed:false` after uncertain pairing; an independent fixture does not authorize retrying that state or clearing it.
+
+Event counts are bounded; the existing synchronous stderr logger does not impose a hard deadline on a blocked output sink.
+
 ## Install
 
 Install session-peer v0.9.0 or later from PyPI in an isolated environment on both devices:

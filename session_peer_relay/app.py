@@ -46,6 +46,9 @@ class Receiver:
         self.rejected = 0
         self.relay_failure_last_logged = float('-inf')
         self.diagnostic_events = diagnostic_events
+        self.direct_diagnostic_counters = dict.fromkeys(('accepted', 'tlsCompleted', 'tlsFailed'), 0)
+        self.direct_diagnostic_last_logged = dict.fromkeys(('accepted', 'peer_tls'), float('-inf'))
+        self.direct_diagnostic_summary_attempted = False
 
     def lifecycle_event(self, event, **values):
         if self.diagnostic_events:
@@ -61,6 +64,53 @@ class Receiver:
             with contextlib.suppress(Exception):
                 self.lifecycle_event('receiver_admission', reason=reason,
                                      counters=dict(self.admission_counters))
+
+    def direct_event(self, phase, *, outcome=None, elapsed_ms=None, reason=None, exception=None):
+        # Aggregate progress continues even while diagnostics are disabled or
+        # rate-limited. These events identify callback/TLS stages, not peers or
+        # messages; a completed handshake is not pairing or native readiness.
+        with contextlib.suppress(Exception):
+            maximum = (1 << 53) - 1
+            if phase == 'summary':
+                if self.direct_diagnostic_summary_attempted:
+                    return
+                # One shutdown snapshot per Receiver instance, including zero
+                # progress. Failed logging or repeated close never re-emits it.
+                self.direct_diagnostic_summary_attempted = True
+            else:
+                counter = ('accepted' if phase == 'accepted' else
+                           'tlsCompleted' if phase == 'peer_tls' and outcome == 'ok' else
+                           'tlsFailed' if phase == 'peer_tls' and outcome == 'failed' else None)
+                if counter is None:
+                    return
+                self.direct_diagnostic_counters[counter] = min(
+                    maximum, self.direct_diagnostic_counters[counter] + 1)
+            if not self.diagnostic_events:
+                return
+            if phase != 'summary':
+                now = time.monotonic()
+                if now - self.direct_diagnostic_last_logged[phase] < 60:
+                    return
+                # Charge the attempted log before emitting, so even a failing
+                # logger cannot create an unbounded retry/flood path.
+                self.direct_diagnostic_last_logged[phase] = now
+            fields = {'phase': phase, 'counters': dict(self.direct_diagnostic_counters)}
+            if phase == 'peer_tls':
+                fields['outcome'] = outcome
+                if type(elapsed_ms) is int:
+                    fields['elapsedMs'] = min(maximum, max(0, elapsed_ms))
+                if outcome == 'failed':
+                    if exception is not None:
+                        reason = failure('peer_tls', exception).diagnostic()['reason']
+                    fields['reason'] = reason if reason in {
+                        'timeout', 'tls_failed', 'connection_closed', 'connection_failed'
+                    } else 'connection_failed'
+            self.lifecycle_event('direct_transport', **fields)
+
+    def accepted_direct(self, reader, writer):
+        raw = Tcp(reader, writer)
+        self.direct_event('accepted')
+        self.spawn(raw)
 
     def abort(self, raw):
         try:
@@ -192,11 +242,18 @@ class Receiver:
                         elapsedMs=round((time.monotonic()-started)*1000),
                         reason=failure('peer_tls', exc).diagnostic()['reason'],
                         attemptId=getattr(raw, 'attempt_id', None))
+                elif isinstance(raw, Tcp):
+                    self.direct_event('peer_tls', outcome='failed',
+                        elapsed_ms=round((time.monotonic()-started)*1000),
+                        exception=exc)
                 raise
             if isinstance(raw, Ws):
                 self.lifecycle_event('peer_tls', outcome='ok',
                     elapsedMs=round((time.monotonic()-started)*1000),
                     attemptId=getattr(raw, 'attempt_id', None))
+            elif isinstance(raw, Tcp):
+                self.direct_event('peer_tls', outcome='ok',
+                    elapsed_ms=round((time.monotonic()-started)*1000))
             if channel.peer:
                 if len(self.authenticated) >= AUTHENTICATED_LIMIT:
                     self.admission_counters['authenticatedRefused'] += 1
@@ -282,7 +339,7 @@ class Receiver:
         task.add_done_callback(completed)
 
     async def listen(self, host, port):
-        return await asyncio.start_server(lambda r, w: self.spawn(Tcp(r, w)), host, port, limit=65536)
+        return await asyncio.start_server(self.accepted_direct, host, port, limit=65536)
 
     async def relay_listener(self, url, credential):
         delay = .5
@@ -341,6 +398,7 @@ class Receiver:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        self.direct_event('summary')
 
 
 def request(store, peer, op, body=None, ident=None):

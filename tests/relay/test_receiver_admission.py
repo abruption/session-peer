@@ -403,12 +403,18 @@ class ReceiverAdmission(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.receiver.admission_counters['relayPreauthRefused'], 50)
             self.assertEqual(self.receiver.admission_counters['abortFailed'], 100)
             await self.receiver.close()
-        self.assertEqual(len(logs.output), 1)
-        event = json.loads(logs.output[0].split('relay_lifecycle ', 1)[1])
+        events = [json.loads(line.split('relay_lifecycle ', 1)[1]) for line in logs.output]
+        admission = [event for event in events if event['event'] == 'receiver_admission']
+        summary = [event for event in events
+                   if event['event'] == 'direct_transport' and event['phase'] == 'summary']
+        self.assertEqual(len(events), 2)
+        self.assertEqual(len(admission), 1)
+        self.assertEqual(len(summary), 1)
+        event = admission[0]
         self.assertEqual(event['event'], 'receiver_admission')
         self.assertEqual(event['reason'], 'direct_preauth_full')
         self.assertEqual(set(event), {'event', 'eventTimeUtcMs', 'reason', 'counters'})
-        self.assertNotIn('SECRET', logs.output[0])
+        self.assertNotIn('SECRET', '\n'.join(logs.output))
         self.assert_empty()
         self.assertEqual(self.receiver.admission_last_logged, 0.)
         with patch.object(app, 'time', SimpleNamespace(monotonic=lambda: 59.999, time=time.time)), \
