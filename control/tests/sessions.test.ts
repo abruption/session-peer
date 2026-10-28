@@ -99,7 +99,7 @@ it("fails closed on malformed and numeric legacy dates while capping supported S
 
 it("pins the Better Auth baseline: bearer getSession, auth HTTP and relay requests slide a 1h remainder to 24h", async () => {
   const lock = JSON.parse(readFileSync(resolve("package-lock.json"), "utf8"));
-  expect(lock.packages["node_modules/better-auth"].version).toBe("1.7.5");
+  expect(lock.packages["node_modules/better-auth"].version).toBe("1.7.7");
   f = await fixture();
   const session = await ownerSession();
   const baseline = betterAuth({ database: f.db, baseURL: f.config.origin,
