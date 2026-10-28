@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import select
 import signal
 import subprocess
 import sys
@@ -16,6 +17,32 @@ from unittest.mock import patch
 
 from session_peer import HandoffStdinError, read_handoff_stdin
 import session_peer as peer
+
+
+SIGINT_CHILD_SOURCE = '''import json, os, selectors, sys, time
+import session_peer as peer
+ready_fd, gate_fd = map(int, sys.argv[1:3])
+delay_entry = sys.argv[3] == "delay"
+class InputReadySelector(selectors.SelectSelector):
+    announced = False
+    def select(self, timeout=None):
+        if not self.announced:
+            self.announced = True
+            os.write(ready_fd, b"R")
+            os.close(ready_fd)
+        return super().select(timeout)
+peer.selectors.SelectSelector = InputReadySelector
+if delay_entry:
+    os.write(ready_fd, b"P")
+    if os.read(gate_fd, 1) != b"G":
+        raise SystemExit("entry gate closed")
+os.close(gate_fd)
+try:
+    peer.read_handoff_stdin(sys.stdin, time.monotonic()+2, time.monotonic)
+except peer.HandoffStdinError as exc:
+    print(json.dumps({"ok":False, **exc.details}), flush=True)
+    raise SystemExit(exc.exit_code)
+'''
 
 
 @unittest.skipUnless(os.name == "posix", "bounded raw POSIX descriptor fixture")
@@ -178,25 +205,52 @@ class HandoffStdin(unittest.TestCase):
             # fd belongs only to this fixture and is closed by its stream.
             pass
 
+    def assert_sigint_metadata(self, delay_entry=False):
+        ready_read, ready_write = os.pipe()
+        gate_read, gate_write = os.pipe()
+        try:
+            with subprocess.Popen([
+                sys.executable, "-c", SIGINT_CHILD_SOURCE, str(ready_write), str(gate_read),
+                "delay" if delay_entry else "immediate",
+            ], cwd=Path(peer.__file__).parent, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+               stderr=subprocess.PIPE, text=True, pass_fds=(ready_write, gate_read)) as child:
+                os.close(ready_write); ready_write = None
+                os.close(gate_read); gate_read = None
+                try:
+                    if delay_entry:
+                        # Hold entry on a separate control pipe. Module import
+                        # or a pre-call stdout marker cannot authorize SIGINT.
+                        self.assertTrue(select.select([ready_read], [], [], 5)[0])
+                        self.assertEqual(os.read(ready_read, 1), b"P")
+                        self.assertEqual(select.select([ready_read], [], [], 0)[0], [])
+                        os.write(gate_write, b"G")
+                    self.assertTrue(select.select([ready_read], [], [], 5)[0])
+                    self.assertEqual(os.read(ready_read, 1), b"R")
+                    # R is emitted from the real selector within the input
+                    # reader's protected try, not before that function begins.
+                    child.send_signal(signal.SIGINT)
+                    # Keep the producer open: SIGINT, not EOF from communicate,
+                    # must end the pending read and produce its metadata.
+                    child.wait(timeout=2)
+                    stdout, stderr = child.communicate(timeout=2)
+                    self.assertEqual(child.returncode, 130)
+                    self.assertEqual(stderr, "")
+                    self.assertEqual(json.loads(stdout), {
+                        "ok": False, "reason": "handoff_stdin_interrupted", "retryAllowed": False})
+                finally:
+                    if child.poll() is None:
+                        child.kill()
+                        child.communicate(timeout=2)
+        finally:
+            for fd in (ready_read, ready_write, gate_read, gate_write):
+                if fd is not None:
+                    os.close(fd)
+
     def test_sigint_is_metadata_only_130_without_fabricated_context(self):
-        source = '''import json, sys, time
-from session_peer import HandoffStdinError, read_handoff_stdin
-print("READY", flush=True)
-try:
-    read_handoff_stdin(sys.stdin, time.monotonic()+2, time.monotonic)
-except HandoffStdinError as exc:
-    print(json.dumps({"ok":False, **exc.details}), flush=True)
-    raise SystemExit(exc.exit_code)
-'''
-        with subprocess.Popen([sys.executable, "-c", source], cwd=Path(peer.__file__).parent,
-                              stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE, text=True) as child:
-            self.assertEqual(child.stdout.readline().strip(), "READY")
-            child.send_signal(signal.SIGINT)
-            stdout, stderr = child.communicate(timeout=2)
-            self.assertEqual(child.returncode, 130)
-            self.assertEqual(stderr, "")
-            self.assertEqual(json.loads(stdout), {"ok":False, "reason":"handoff_stdin_interrupted", "retryAllowed":False})
+        self.assert_sigint_metadata()
+
+    def test_sigint_waits_for_protected_input_after_delayed_entry(self):
+        self.assert_sigint_metadata(delay_entry=True)
 
 
 if __name__ == "__main__":
