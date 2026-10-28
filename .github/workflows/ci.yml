@@ -162,19 +162,86 @@ jobs:
           test ! -L "$HOME/.local/bin/session-peer"
 
   mcp:
-    name: optional MCP (${{ matrix.os }}, python ${{ matrix.python }})
+    name: optional MCP (${{ matrix.os }}, python ${{ matrix.python }}, ${{ matrix.profile }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
         python: ['3.10', '3.13']
+        profile: [minimum, latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m pip install '.[mcp]' --requirement .github/requirements/build.txt
-      - run: python -m unittest discover -s tests/mcp_integration -t . -v
+      - name: Install separate build and audit tooling
+        run: python -m pip install --requirement .github/requirements/build.txt --requirement .github/requirements/audit.txt
+      - name: Install MCP runtime profile
+        id: mcp_runtime
+        shell: bash
+        env:
+          MCP_PROFILE: ${{ matrix.profile }}
+        run: |
+          mkdir -p mcp-reports
+          python -m venv "$RUNNER_TEMP/session-peer-mcp-runtime"
+          runtime="$RUNNER_TEMP/session-peer-mcp-runtime/bin/python"
+          "$runtime" -m pip install --upgrade pip setuptools
+          if test "$MCP_PROFILE" = minimum; then
+            "$runtime" -m pip install '.[mcp]' --constraint .github/requirements/mcp-minimum.txt --report mcp-reports/install.json
+          else
+            test "$MCP_PROFILE" = latest
+            "$runtime" -m pip install --upgrade '.[mcp]' --report mcp-reports/install.json
+          fi
+          "$runtime" -m pip check
+      - name: Record and verify resolved MCP profile
+        id: mcp_profile
+        shell: bash
+        env:
+          MCP_PROFILE: ${{ matrix.profile }}
+        run: |
+          runtime="$RUNNER_TEMP/session-peer-mcp-runtime/bin/python"
+          "$runtime" -m pip list --format=json > mcp-reports/runtime.json
+          "$runtime" -m pip freeze --all > mcp-reports/runtime.txt
+          "$runtime" - <<'PY' | tee mcp-reports/profile.json
+          import importlib.metadata as metadata
+          import json, os, re, sys
+          from pathlib import Path
+          import mcp
+          pins = [line for line in Path('.github/requirements/mcp-minimum.txt').read_text().splitlines() if line and not line.startswith('#')]
+          if len(pins) != 1 or not re.fullmatch(r'mcp==[0-9]+\.[0-9]+\.[0-9]+', pins[0]):
+              raise SystemExit('Invalid MCP minimum constraint')
+          minimum = pins[0].removeprefix('mcp==')
+          version = metadata.version('mcp')
+          profile = os.environ['MCP_PROFILE']
+          if profile not in ('minimum', 'latest') or not (version == minimum if profile == 'minimum' else version.startswith('1.')):
+              raise SystemExit('MCP profile version mismatch')
+          print(json.dumps({'profile': profile, 'mcp': version, 'python': sys.version, 'platform': sys.platform}))
+          PY
+      - name: MCP stdio, policy, timeout and owned-child cleanup
+        shell: bash
+        run: '"$RUNNER_TEMP/session-peer-mcp-runtime/bin/python" -m unittest discover -s tests/mcp_integration -t . -v'
+      - name: Audit resolved MCP runtime graph
+        if: ${{ !cancelled() && steps.mcp_runtime.outcome == 'success' && steps.mcp_profile.outcome == 'success' }}
+        shell: bash
+        run: |
+          audit_path=$("$RUNNER_TEMP/session-peer-mcp-runtime/bin/python" -I -c 'import site; print(site.getsitepackages()[0])')
+          set +e
+          python -m pip_audit --path "$audit_path" --format=json --output mcp-reports/audit.json 2> mcp-reports/audit.log
+          audit_status=$?
+          set -e
+          echo "$audit_status" > mcp-reports/audit-exit-status.txt
+          cat mcp-reports/audit.log >&2
+          exit "$audit_status"
+      - name: Retain MCP dependency and audit reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mcp-${{ matrix.os }}-${{ matrix.python }}-${{ matrix.profile }}
+          path: mcp-reports/
+          if-no-files-found: error
+          retention-days: 30
       - run: python -m build
       - name: Verify optional module in distributions
         run: |

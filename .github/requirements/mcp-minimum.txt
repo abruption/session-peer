@@ -1,0 +1,2 @@
+# Exact supported SDK floor; transitive packages resolve normally and are audited.
+mcp==1.30.0

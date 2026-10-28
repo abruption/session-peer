@@ -2,6 +2,8 @@
 
 Python 3.10 以降でインストールします: `pipx install 'session-peer[mcp]'`（または隔離された venv にエクストラをインストール）。依存関係のない Python 3.9 CLI および `install.sh` は引き続きサポートされます。シェルインストーラーは MCP の依存関係をインストールしません。Python 3.9 では、MCP エントリポイントが Python 3.10+ が必要である旨を報告します。
 
+任意のエクストラはMCP SDK `mcp>=1.30,<2`を必要とします。上流の1.xセキュリティ修正を含む版まで依存関係の下限を引き上げるもので、stdio専用のこのサーバーで悪用可能な欠陥を確認したという意味ではありません。HTTP転送、OAuthサーバー経路、MCPクライアント経路は有効にしません。既存環境では明示的なパッケージ更新が必要で、宣言の変更だけではインストール済みSDKは更新されません。
+
 `session-peer-mcp --config /absolute/path/policy.json` を起動します。ポリシーがない場合、サーバーは起動環境の Codex ホームを使用して、ローカルの一覧取得のみを許可します。ポリシーを指定するとデフォルトが置き換えられます。例:
 
 ```json
@@ -42,12 +44,14 @@ MCP ツールのアノテーションは、一覧取得を読み取り専用、�
 
 MCP エクストラの有無の両方で `python -m unittest discover -s tests -v` を実行します。オプションのテストでは実際の stdio MCP サーバーを起動し、モデルの認証情報なしで初期化、スキーマ、ポリシー拒否、および CLI の部分的な失敗を検証します。wheel と sdist の両方のインストールをテストしてください。実環境チェックでは Codex バージョン、OS、およびホストの承認設定を記録する必要があります。UDS アクセスは環境依存であり、承認のバイパスを約束するものではありません。メッセージには専用のテストセッションを使用してください。
 
-公式リファレンス: [Codex MCP](https://developers.openai.com/codex/extend/mcp), [Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk)。
+CIではmacOS/LinuxのPython 3.10/3.13で、SDK下限の`mcp==1.30.0`と最新の互換1.xを別々に試験します。両プロファイルでstdio・ポリシー・タイムアウト・キャンセル・所有する子プロセスの終了処理を試験し、解決されたランタイム依存関係を監査して、版とレポートを保存します。推移的依存関係の版は通常の依存関係解決に従って選択されます。すべての推移的パッケージの最小版を試験するものではありません。版を固定したビルド・監査用要件はランタイム環境の外にインストールし、監査対象には初期構成用の`pip`/`setuptools`パッケージも含めます。既存の最新版解決監査とリリース監査も引き続き必須です。
+
+公式リファレンス: [Codex MCP](https://developers.openai.com/codex/extend/mcp), [Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk)。 [SDK 1.30.0](https://pypi.org/pypi/mcp/1.30.0/json), [GHSA-84m7-p3x7-pcfv](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-84m7-p3x7-pcfv), [GHSA-fmmv-w9g8-j3gc](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-fmmv-w9g8-j3gc).
 
 ### 非対話型クライアントの承認
 
 Codex `exec` は、サーバーポリシーが許可している場合でも「requires approval, but approval policy is never」として send ツールを拒否することがあります。`approval_mode="auto"` は無条件の承認ではありません。非対話型統合を明示的に承認するオペレーターは、制限された宛先ポリシーと併せて、その特定の MCP サーバー/ツールに対して `mcp_servers.session_peer.tools.send_message.approval_mode="approve"` を設定できます。プラグインがこの設定を有効にすることはありません。対話型クライアントは、代わりに通常の承認プロンプトを使用できます。テストクライアントがこの承認設定を無関係なサーバーやツールにコピーしてはなりません。
 
-macOS/LinuxではMCP CLI呼び出しごとに新しいプロセスグループを所有します。完了・timeout・取消時はleaderの回収前にTERM→KILLでTERMを無視する子も整理し、取消は再伝播します。別sessionへ離脱した子やSSH先のプロセスは対象外です。Windowsは直接の子の終了のみで、ツリー終了は保証しません。ローカル終了で遠隔送信は取り消せません。timeoutは `outcome_unknown` のままで自動再送は禁止です。
+macOS/LinuxではMCP CLI呼び出しごとに新しいプロセスグループを所有します。完了・timeout・取消時はleaderの回収前に制限時間付きのTERM→KILLでTERMを無視する子も整理し、キャンセルは引き続き伝播します。別sessionへ離脱した子やSSH先のプロセスは対象外です。Windowsは直接の子の終了のみで、ツリー終了は保証しません。ローカル終了で遠隔送信は取り消せません。timeoutは `outcome_unknown` のままで自動再送は禁止です。
 
 呼び出し元セッションが不明であることを示す From ラベルを含め、MCP の本文は宛先 CLI の受信側の枠で引用されます。本文のヘッダーや埋め込まれた Reply-To は権限を与えません。第三者への宛先はセッション所有者に確認してください。共有 MCP プロセスは、認証済み呼び出し元セッションや自動返信経路を引き続き提供できません。最終的な枠もネイティブメッセージの上限に含まれます。

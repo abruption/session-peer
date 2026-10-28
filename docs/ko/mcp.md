@@ -2,6 +2,8 @@
 
 Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(또는 격리된 venv에 extra 설치). 의존성이 없는 Python 3.9 CLI 및 `install.sh`는 계속 지원됩니다. 셸 설치기는 MCP 의존성을 설치하지 않습니다. Python 3.9에서 MCP 엔트리 포인트는 Python 3.10+이 필요하다고 보고합니다.
 
+선택형 extra는 MCP SDK `mcp>=1.30,<2`를 요구합니다. 업스트림 1.x 보안 수정이 포함된 버전으로 의존성 하한을 올리는 것으로, stdio만 사용하는 이 서버에서 악용 가능한 결함이 확인됐다는 뜻은 아닙니다. 이번 변경으로 HTTP 전송, OAuth 서버 경로, MCP 클라이언트 경로가 활성화되지는 않습니다. 기존 환경에는 명시적인 패키지 업그레이드가 필요하며, 선언 변경만으로 설치된 SDK가 업데이트되지는 않습니다.
+
 `session-peer-mcp --config /absolute/path/policy.json`으로 시작합니다. 정책이 없으면 서버는 실행 환경의 Codex 홈을 사용하여 로컬 목록 조회만 허용합니다. 제공된 정책은 기본값을 대체합니다. 예시:
 
 ```json
@@ -42,12 +44,14 @@ MCP 도구 어노테이션은 목록 조회를 읽기 전용으로, 전송을 �
 
 MCP extra가 있는 상태와 없는 상태에서 각각 `python -m unittest discover -s tests -v`를 실행하십시오. 선택형 테스트는 실제 stdio MCP 서버를 시작하고 모델 자격 증명 없이 초기화, 스키마, 정책 거부 및 CLI 부분 실패를 실행합니다. wheel 및 sdist 설치를 모두 테스트하십시오. 실시간 확인 시에는 Codex 버전, OS 및 호스트 승인 설정을 기록해야 합니다. UDS 접근은 환경에 따라 다르며 승인 우회를 약속하는 것이 아닙니다. 메시지에는 전용 테스트 세션을 사용하십시오.
 
-공식 참조: [Codex MCP](https://developers.openai.com/codex/extend/mcp), [Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk).
+CI는 macOS/Linux의 Python 3.10/3.13에서 SDK 하한 `mcp==1.30.0`과 최신 호환 1.x를 별도로 시험합니다. 두 프로필 모두 stdio·정책·시간 초과·취소·소유 자식 프로세스 정리 시험을 실행하고, 해결된 런타임 의존성 그래프를 감사하며 버전과 보고서를 보존합니다. 전이 의존성 버전은 패키지 관리자가 일반적인 방식으로 결정합니다. 모든 전이 패키지의 최솟값을 시험하는 것은 아닙니다. 버전을 고정한 빌드·감사 요구 패키지는 런타임 환경 밖에 설치하며, 감사 대상 환경에는 초기 구성용 `pip`/`setuptools` 패키지도 포함됩니다. 기존 최신 버전 해결 감사와 릴리스 감사도 계속 필수입니다.
+
+공식 참조: [Codex MCP](https://developers.openai.com/codex/extend/mcp), [Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk). [SDK 1.30.0](https://pypi.org/pypi/mcp/1.30.0/json), [GHSA-84m7-p3x7-pcfv](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-84m7-p3x7-pcfv), [GHSA-fmmv-w9g8-j3gc](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-fmmv-w9g8-j3gc).
 
 ### 비대화형 클라이언트 승인
 
 서버 정책이 허용하더라도 Codex `exec`는 전송 도구를 “requires approval, but approval policy is never”로 거부할 수 있습니다. `approval_mode="auto"`는 무조건적인 승인이 아닙니다. 비대화형 연동을 명시적으로 승인하는 운영자는 제한된 목적지 정책과 함께 해당 특정 MCP 서버/도구에 대해 `mcp_servers.session_peer.tools.send_message.approval_mode="approve"`를 구성할 수 있습니다. 플러그인은 이 설정을 활성화하지 않습니다. 대화형 클라이언트는 대신 일반적인 승인 프롬프트를 사용할 수 있습니다. 테스트 클라이언트는 이 승인을 관련 없는 서버나 도구에 복사해서는 안 됩니다.
 
-macOS/Linux에서 MCP CLI 호출은 새 프로세스 그룹을 소유합니다. 완료·시간 초과·취소 시 리더를 회수하기 전에 TERM→KILL로 해당 그룹을 정리하며 TERM을 무시하는 자식도 포함합니다. 취소는 그대로 전파됩니다. 별도 세션으로 이탈한 자식과 원격 SSH 프로세스는 범위 밖입니다. Windows는 직접 자식 종료만 유지하며 프로세스 트리 보장을 주장하지 않습니다. 로컬 정리는 원격 제출을 취소하지 않습니다. timeout은 `outcome_unknown`이며 자동 재전송하면 안 됩니다.
+macOS/Linux에서 MCP CLI 호출은 새 프로세스 그룹을 소유합니다. 완료·시간 초과·취소 시 리더를 회수하기 전에 시간 제한이 있는 TERM→KILL로 해당 그룹을 정리하며 TERM을 무시하는 자식도 포함합니다. 취소는 그대로 전파됩니다. 별도 세션으로 이탈한 자식과 원격 SSH 프로세스는 범위 밖입니다. Windows는 직접 자식 종료만 유지하며 프로세스 트리 보장을 주장하지 않습니다. 로컬 정리는 원격 제출을 취소하지 않습니다. timeout은 `outcome_unknown`이며 자동 재전송하면 안 됩니다.
 
-호출 세션을 알 수 없다는 From 표시를 포함한 MCP 본문은 목적지 CLI의 수신 측 표시 안에 인용됩니다. 본문 헤더나 본문에 들어 있는 Reply-To는 권한을 부여하지 않습니다. 제삼자 목적지는 세션 소유자에게 확인하십시오. 공유 MCP 프로세스는 여전히 인증된 호출 세션이나 자동 회신 경로를 제공하지 못합니다. 최종 표시도 네이티브 메시지 한도에 포함됩니다.
+호출 세션을 알 수 없다는 From 표시를 포함한 MCP 본문은 목적지 CLI의 수신 측 프레임 안에 인용됩니다. 본문 헤더나 본문에 들어 있는 Reply-To는 권한을 부여하지 않습니다. 제삼자 목적지는 세션 소유자에게 확인하십시오. 공유 MCP 프로세스는 여전히 인증된 호출 세션이나 자동 회신 경로를 제공하지 못합니다. 최종 프레임도 네이티브 메시지 한도에 포함됩니다.
