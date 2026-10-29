@@ -1,5 +1,20 @@
 # Releasing session-peer
 
+## Publication record — v1.3.2 (verified 2026-10-29)
+
+On 2026-10-29, a read-only recheck verified the [GitHub v1.3.2 release](https://github.com/abruption/session-peer/releases/tag/v1.3.2) as published, stable and immutable at 2026-10-28T01:52:40Z, from `f5e7c49554ff02771990a151e00b52f2abf3df0a`. The separately checked [PyPI version record](https://pypi.org/pypi/session-peer/1.3.2/json) has the wheel and sdist uploaded at 2026-10-28T01:55:11.612762Z and 2026-10-28T01:55:13.659910Z, both non-yanked. Exact file hashes and evidence are in the [maintenance publication record](docs/releases/v1.3.2.md#v132-publication-record).
+
+The preparation sections below preserve historical checkpoints, not the current publication status or instructions to reuse old tags. Python publication, Node Control deployment, receiver environment updates/restarts and independently managed skill updates are separate.
+
+<a id="post-publication-documentation-check"></a>
+
+## Post-publication documentation check for future releases
+
+1. Verify the exact GitHub tag/commit, release status and publication time; independently verify the PyPI file set, non-yanked status and hashes against the locked, attested candidates. A GitHub release alone does not prove PyPI availability.
+2. Add a separate dated publication record with source commit, UTC timestamps, evidence links and artifact hashes. Preserve the dated preparation snapshot instead of rewriting it as completed acceptance.
+3. Refresh current installation/status guidance in all four README editions and current version-specific guides. Prefer release/PyPI links for version-neutral availability guidance; preserve historical version references.
+4. Run documentation/i18n, link/anchor, generator and release-consistency checks, then use a normal documentation PR. Do not announce publication in advance, rebuild or replace published tags/assets for wording changes, or imply automatic service/skill deployment.
+
 ## v1.3.2 preparation
 
 Gate-fix source base after PR #345: `a68c6cf16c234cd3fe72926e519e4178c093081a`. Integrated preparation base after merged PR #347: `ef7748a78e6b466f67074708f5c14decf37f31d7`, before the version-preparation commit. Final publication evidence identifies the release commit separately.
