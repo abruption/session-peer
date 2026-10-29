@@ -77,6 +77,15 @@ jobs:
         run: python -m unittest discover -s tests/codex -t . -v
       - name: Distribution source tests
         run: python -m unittest discover -s tests/distribution -t . -v
+      - name: Offline Codex experiments (no native model calls)
+        if: matrix.os != 'windows-latest' && matrix.python == '3.13'
+        shell: bash
+        run: |
+          for suite in experiments/codex_side_session experiments/codex_steering; do
+            if test -d "$suite"; then
+              python -X dev -W error::ResourceWarning -m unittest discover -s "$suite" -p 'test_*.py' -v
+            fi
+          done
       - name: Complete default discovery contract
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
         run: python -m unittest discover -s tests -v
