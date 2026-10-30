@@ -23,7 +23,7 @@ class McpDependencyProfiles(unittest.TestCase):
         self.assertIn('mcp>=1.30,<2; python_version >= \'3.10\'', manifest)
         constraint = (ROOT / '.github/requirements/mcp-minimum.txt').read_text()
         self.assertEqual(['mcp==1.30.0'], [x for x in constraint.splitlines() if x and not x.startswith('#')])
-        for text in ("os: [ubuntu-latest, macos-latest]", "python: ['3.10', '3.13']",
+        for text in ("os: [ubuntu-latest, macos-latest]", "python: ['3.10', '3.13', '3.14']",
                      'profile: [minimum, latest]', 'fail-fast: false'):
             self.assertIn(text, MCP)
         install = run_script(MCP, 'Install MCP runtime profile')
