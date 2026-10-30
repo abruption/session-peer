@@ -1,0 +1,24 @@
+name: PR reference warning
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  references:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Run code from the trusted default-branch workflow commit, never the PR head.
+      # A newly introduced checker first runs after it is merged into main.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Warn about ambiguous closing references
+        # The script reads the event JSON as data; no body text enters the shell.
+        run: python3 .github/scripts/check_pr_references.py
