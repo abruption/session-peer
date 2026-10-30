@@ -1,5 +1,6 @@
 """Bounded metadata only; no skill instruction execution or manager changes."""
 import errno
+import hashlib
 import os
 from pathlib import Path
 import tempfile
@@ -26,6 +27,16 @@ UNKNOWN = {"version": None, "runtimeMinVersion": None}
 
 
 class SkillFrontmatter(unittest.TestCase):
+    def test_published_v041_snapshot_is_exact_and_metadata_remains_readable(self):
+        path = Path(__file__).resolve().parents[2] / "skills/session-peer/SKILL.md"
+        content = path.read_bytes()
+        self.assertEqual(27126, len(content))
+        self.assertEqual("fdf5697c04f4a37194986622afb3a7966bb02631c128cf18a323e3fbe5ae90ed",
+                         hashlib.sha256(content).hexdigest())
+        self.assertGreater(len(content), LIMIT)
+        self.assertEqual({"version": "0.4.1", "runtimeMinVersion": "0.9.1"},
+                         peer.installed_skill_metadata(path))
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory(prefix="skill-metadata-")
         self.addCleanup(directory.cleanup)

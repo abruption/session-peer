@@ -33,7 +33,7 @@ session-peer 1.0.2를 사용해 실제 로컬 요청과 회신을 주고받았�
 ### 설치
 
 Python 3.9 이상이 필요합니다. 기본 로컬·SSH CLI는 외부 Python 패키지에 의존하지 않습니다.
-소스 버전: **1.3.2**. 공개 근거, macOS 방화벽 안내와 Direct 리스너·TLS 진단은 [유지보수 릴리스 안내](docs/ko/releases/v1.3.2.md)를 참고하십시오. Control의 Better Auth 보안 갱신은 저장소 소스에 있으며 Python wheel/sdist에는 포함되지 않으므로 별도로 승인된 배포가 필요합니다.
+소스 버전: **1.3.3**. [유지보수 노트](docs/ko/releases/v1.3.3.md)에서 Python 3.14 검증 범위, 기여 안내·문서 유지보수, 호환 스킬 사본을 설명합니다. Python 공개, Node Control 배포, 별도로 관리하는 스킬의 갱신은 서로 구분합니다.
 
 선택형 [MCP extra](docs/ko/mcp.md)는 이제 `mcp>=1.30,<2`를 요구합니다. MCP의 Python 3.10+ 요건과 의존성 없는 Python 3.9 핵심 CLI는 유지됩니다. 기존 MCP 환경에는 명시적인 패키지 업그레이드가 필요합니다.
 

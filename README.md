@@ -33,7 +33,7 @@ in this ~22-second animation, not a screen recording; send success alone is not 
 ### Install
 
 Python 3.9+. The core local/SSH CLI has no third-party Python dependencies.
-Source version: **1.3.2**. For publication evidence, macOS firewall guidance and Direct listener/TLS diagnostics, see the [maintenance release notes](docs/releases/v1.3.2.md). Control's Better Auth security update is in repository source, outside Python wheel/sdist, and requires a separately authorized rollout.
+Source version: **1.3.3**. The [maintenance notes](docs/releases/v1.3.3.md) describe the Python 3.14 validation scope, contributor and documentation maintenance, and the compatibility skill snapshot. Python publication, Node Control deployment and independently managed skill updates are separate.
 
 The optional [MCP extra](docs/mcp.md) now requires `mcp>=1.30,<2`; its Python 3.10+ requirement and the dependency-free Python 3.9 core remain unchanged. Existing MCP environments need an explicit package upgrade.
 

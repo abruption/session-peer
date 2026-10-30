@@ -33,7 +33,7 @@ session-peer 1.0.2による実際のローカル通信です。CodexがClaude Co
 ### インストール
 
 Python 3.9以上が必要です。基本のローカル・SSH CLIに外部Python依存パッケージはありません。
-ソースバージョン：**1.3.2**。公開の根拠、macOSのファイアウォール案内、Directリスナー・TLS診断については、[メンテナンスリリースの案内](docs/ja/releases/v1.3.2.md)を参照してください。ControlのBetter Authセキュリティ更新はリポジトリのソースにあり、Python wheel/sdistには含まれないため、別途承認された配備が必要です。
+ソースバージョン：**1.3.3**。[メンテナンスノート](docs/ja/releases/v1.3.3.md)では、Python 3.14 の検証範囲、投稿手順と文書の保守、互換スキルコピーを説明します。Python の公開、Node Control の配備、独立管理するスキルの更新は別々の作業です。
 
 任意の[MCPエクストラ](docs/ja/mcp.md)は`mcp>=1.30,<2`を必要とします。MCPのPython 3.10+要件と依存関係のないPython 3.9コアは変更しません。既存のMCP環境では明示的なパッケージ更新が必要です。
 

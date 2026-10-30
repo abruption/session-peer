@@ -1,5 +1,13 @@
 # session-peerのリリース
 
+## v1.3.3の準備
+
+公開済みv1.3.2を基準に2026-10-30に準備しました。その準備時点ではv1.3.3は未公開の候補でした。統合ソース基準はバージョン準備前の`ec2f7fc808f1e22519348091d51c28a2fd522caf`であり、最終リリースコミットではありません。[保守リリースの案内](docs/ja/releases/v1.3.3.md)は、#349/#352のPR案内と警告のみの参照検査、#350/#353の通常のCPython 3.14フィクスチャー・パッケージCI、#351/#354の公開後文書整理、公開済みPythonスキルv0.4.1の互換コピーを扱います。将来の`SKILL.md`サポート資産は、`abruption/session-peer-skill`リポジトリの`v0.4.1`タグに対応するコミット`263b0c333d539dc4e885b16ae3369a26f33097d8`、SHA-256 `fdf5697c04f4a37194986622afb3a7966bb02631c128cf18a323e3fbe5ae90ed`、下限0.9.1/full 1.3.2、受信機`codexBin`下限1.0.1を使います。このコピーはwheel/sdistの外にあり、ランタイム1.3.3とは独立しています。
+
+上記の統合ソース基準の[CI](https://github.com/abruption/session-peer/actions/runs/40982760413)と[CodeQL](https://github.com/abruption/session-peer/actions/runs/40982759604)は成功しました。この結果は、準備コミットや最終的な保護されたmainソースの検査を代替しません。 まず[最初のCI](https://github.com/abruption/session-peer/actions/runs/40880779432)で新しい3.14の10セルが成功してから分類子を追加し、その後の[更新済み全体CI](https://github.com/abruption/session-peer/actions/runs/40882642483)も成功しました。 コアのPOSIXセルは3.9/3.13/3.14を検査し、Windowsは3.13を維持します。
+
+準備はマージ・タグ作成・公開を承認しません。通常のレビュー、現行コミットの検査、最終的な保護されたmain CIの成功が必要です。別途承認された公開では、`SHA256SUMS`と`release-provenance.json`を含む固定資産7個、正確なタグ・ソース、認証済みattestation、依存関係監査、新規環境のインストールを検証し、必須のPyPI環境の人による承認を維持します。非公開のPyPIログイン・接続再確認を省略しても、その承認は免除しません。公開を先に宣言せず、古いタグ・資産を再利用しないでください。以下のv1.3.2記録は変更せず、実際のGitHub・PyPIの根拠を得てから[公開後の文書確認](#post-publication-documentation-check)を行います。新たなネイティブ・Windows 3.14・free-threadedの受け入れ、ランタイム認証・プロトコル・ACK動作、サービス配備、グローバルインストール、独立したスキル公開は含みません。
+
 ## 公開記録 — v1.3.2（2026-10-29確認）
 
 2026-10-29の読み取り専用の再確認で、[GitHub v1.3.2リリース](https://github.com/abruption/session-peer/releases/tag/v1.3.2)がソース`f5e7c49554ff02771990a151e00b52f2abf3df0a`から正式な変更不能のリリースとして2026-10-28T01:52:40Zに公開されたことを確認しました。別途確認した[PyPIのバージョン記録](https://pypi.org/pypi/session-peer/1.3.2/json)では、wheelとsdistのアップロード時刻はそれぞれ2026-10-28T01:55:11.612762Zと2026-10-28T01:55:13.659910Zで、どちらも取り下げられていません。正確なファイルハッシュと根拠は[保守リリースの公開記録](docs/ja/releases/v1.3.2.md#v132-publication-record)にあります。

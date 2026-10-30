@@ -1,5 +1,13 @@
 # session-peer 릴리스
 
+## v1.3.3 준비
+
+공개된 v1.3.2를 기준으로 2026-10-30에 준비했습니다. 해당 준비 시점에 v1.3.3은 미공개 후보였습니다. 통합 소스 기준은 버전 준비 이전의 `ec2f7fc808f1e22519348091d51c28a2fd522caf`이며 최종 릴리스 커밋이 아닙니다. [유지보수 안내](docs/ko/releases/v1.3.3.md)는 #349/#352의 PR 안내와 경고 전용 참조 검사, #350/#353의 일반 CPython 3.14의 전용 테스트 구성(fixture) 기반 시험·패키지 CI, #351/#354의 공개 후 문서 정리, 공개된 Python 스킬 v0.4.1의 호환 사본을 다룹니다. 향후 `SKILL.md` 지원 자산은 `abruption/session-peer-skill` 저장소의 `v0.4.1` 태그에 해당하는 커밋 `263b0c333d539dc4e885b16ae3369a26f33097d8`, SHA-256 `fdf5697c04f4a37194986622afb3a7966bb02631c128cf18a323e3fbe5ae90ed`, 하한 0.9.1/full 1.3.2와 수신기 `codexBin` 하한 1.0.1을 사용합니다. 이 사본은 wheel/sdist 밖에 있으며 런타임 1.3.3과 독립적입니다.
+
+위 통합 소스 기준의 [CI](https://github.com/abruption/session-peer/actions/runs/40982760413)와 [CodeQL](https://github.com/abruption/session-peer/actions/runs/40982759604)은 성공했습니다. 이 결과는 준비 커밋이나 최종 보호된 main 소스의 검사를 대신하지 않습니다. 먼저 [첫 CI](https://github.com/abruption/session-peer/actions/runs/40880779432)에서 신규 3.14 셀 10개가 통과한 뒤 분류자를 추가했고, 이후 [갱신된 전체 CI](https://github.com/abruption/session-peer/actions/runs/40882642483)도 통과했습니다. 코어 POSIX 셀은 3.9/3.13/3.14를 검증하며 Windows는 3.13을 유지합니다.
+
+준비는 병합·태그 생성·발행을 승인하지 않습니다. 정상 리뷰와 현재 커밋의 검사, 최종 보호된 main CI의 성공이 필요합니다. 별도로 승인된 발행에서는 `SHA256SUMS`, `release-provenance.json`을 포함한 고정 자산 7개, 정확한 태그·소스, 인증된 attestation, 의존성 감사와 새 환경 설치를 검증하고 필수 PyPI 환경의 사람 승인을 유지해야 합니다. 비공개 PyPI 로그인·연결 재확인 생략은 이 승인을 면제하지 않습니다. 공개를 미리 선언하거나 이전 태그·자산을 재사용하지 마십시오. 아래 v1.3.2 기록은 그대로 보존하고 실제 GitHub·PyPI 근거를 확보한 뒤에만 [공개 후 문서 확인](#post-publication-documentation-check)을 따릅니다. 새로운 네이티브·Windows 3.14·free-threaded 수락, 런타임 인증·프로토콜·ACK 동작, 서비스 배포, 전역 설치나 독립 스킬 발행은 포함하지 않습니다.
+
 ## 공개 기록 — v1.3.2(2026-10-29 확인)
 
 2026-10-29 읽기 전용 재확인에서 [GitHub v1.3.2 릴리스](https://github.com/abruption/session-peer/releases/tag/v1.3.2)가 소스 `f5e7c49554ff02771990a151e00b52f2abf3df0a`의 정식 불변 릴리스로 2026-10-28T01:52:40Z에 공개됐음을 확인했습니다. 별도로 확인한 [PyPI 버전 기록](https://pypi.org/pypi/session-peer/1.3.2/json)의 wheel과 sdist 업로드 시각은 각각 2026-10-28T01:55:11.612762Z와 2026-10-28T01:55:13.659910Z이며 둘 다 철회되지 않았습니다. 정확한 파일 해시와 근거는 [유지보수 공개 기록](docs/ko/releases/v1.3.2.md#v132-publication-record)에 있습니다.
