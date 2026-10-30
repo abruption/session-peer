@@ -11,6 +11,42 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StableCandidate(unittest.TestCase):
+    def test_v133_preparation_preserves_source_and_publication_boundaries(self):
+        localized_gates = {
+            "": ("unpublished candidate", "does not authorize merge, tag creation or publication",
+                 "required human PyPI environment approval", "final protected-main source"),
+            "ko/": ("미공개 후보", "병합·태그 생성·발행을 승인하지 않습니다",
+                    "PyPI 환경의 사람 승인", "최종 보호된 main 소스의 검사"),
+            "ja/": ("未公開の候補", "マージ・タグ作成・公開を承認しません",
+                    "PyPI環境の人による承認", "最終的な保護されたmainソースの検査"),
+            "zh-CN/": ("尚未发布", "候选版本", "不授权合并、创建标签或发布",
+                       "PyPI环境必需的人工批准", "最终受保护main源码的检查"),
+        }
+        expected = ("1.3.3", "2026-10-30", "ec2f7fc808f1e22519348091d51c28a2fd522caf",
+                    "6f9026e46138db544fb9c990387fcd4ccf37400f",
+                    "88f2c906e3f4bae8b377fcfac049a65fd68dea64",
+                    "263b0c333d539dc4e885b16ae3369a26f33097d8",
+                    "ba08d19af33cad0f7d032b7fe18c82d6ddd6793f",
+                    "fdf5697c04f4a37194986622afb3a7966bb02631c128cf18a323e3fbe5ae90ed",
+                    "27126", "0.4.1", "0.9.1", "1.3.2", "1.0.1",
+                    "40982760413", "40982759604", "SHA256SUMS", "release-provenance.json")
+        for locale, suffix in (("", ""), ("ko/", ".ko"), ("ja/", ".ja"), ("zh-CN/", ".zh-CN")):
+            with self.subTest(locale=locale):
+                notes = (ROOT / ("docs/" + locale + "releases/v1.3.3.md")).read_text(encoding="utf-8")
+                for marker in expected:
+                    self.assertIn(marker, notes)
+                for marker in localized_gates[locale]:
+                    self.assertIn(marker, notes)
+                self.assertIn("releases/v1.3.3.md", (ROOT / ("RELEASING" + suffix + ".md")).read_text(encoding="utf-8"))
+                self.assertNotIn("```", notes)
+        notes = (ROOT / "docs/releases/v1.3.3.md").read_text(encoding="utf-8")
+        for boundary in ("unpublished candidate", "not the final release commit",
+                         "does not authorize merge, tag creation or publication",
+                         "not new live native-agent, Windows 3.14 or free-threaded Python acceptance",
+                         "required human PyPI environment approval",
+                         "do not replace checks of the preparation head"):
+            self.assertIn(boundary, notes)
+
     def test_v121_preparation_records_patch_sources_and_publication_gates(self):
         notes = [(ROOT / ("docs/" + locale + "releases/v1.2.1.md")).read_text(encoding="utf-8")
                  for locale in ("", "ko/", "ja/", "zh-CN/")]
@@ -255,8 +291,8 @@ class StableCandidate(unittest.TestCase):
             self.assertIn(marker, english)
 
     def test_package_and_generated_core_version_agree(self):
-        self.assertEqual(session_peer.__version__, "1.3.2")
-        self.assertIn('__version__ = "1.3.2"',
+        self.assertEqual(session_peer.__version__, "1.3.3")
+        self.assertIn('__version__ = "1.3.3"',
                       (ROOT / "session_peer_core/common.py").read_text(encoding="utf-8"))
 
     def test_current_readmes_and_runbooks_match_source_version(self):
@@ -264,7 +300,15 @@ class StableCandidate(unittest.TestCase):
             for stem in ("README", "RELEASING"):
                 with self.subTest(stem=stem, suffix=suffix):
                     text = (ROOT / (stem + suffix + ".md")).read_text(encoding="utf-8")
-                    self.assertIn("1.3.2", text)
+                    if stem == "README":
+                        prefixes = {"": "Source version: ", ".ko": "소스 버전: ",
+                                    ".ja": "ソースバージョン：", ".zh-CN": "源码版本："}
+                        line = next(line for line in text.splitlines() if line.startswith(prefixes[suffix]))
+                        self.assertTrue(line.startswith(prefixes[suffix] + "**" + session_peer.__version__ + "**"))
+                    else:
+                        first_preparation = re.search(r"^## (v\d+\.\d+\.\d+)[^\n]*$", text, re.MULTILINE)
+                        self.assertIsNotNone(first_preparation)
+                        self.assertEqual("v" + session_peer.__version__, first_preparation.group(1))
                     self.assertNotIn("1.0.0rc4", text)
                     if stem == "RELEASING":
                         self.assertIn("--draft=false --prerelease=false --latest", text)
@@ -287,16 +331,16 @@ class StableCandidate(unittest.TestCase):
 
     def test_stable_release_keeps_operational_deployment_separate(self):
         profiles = (
-            ("", "Source version: **1.3.2**.",
+            ("", "Source version: **1.3.3**.",
              "At the 2026-10-28 preparation checkpoint, the last verified published stable release was **1.3.1**.",
              "Development candidate 1.2.1 is unpublished"),
-            (".ko", "소스 버전: **1.3.2**.",
+            (".ko", "소스 버전: **1.3.3**.",
              "2026-10-28 준비 시점의 마지막 확인 공개 안정판은 **1.3.1**이었습니다.",
              "개발 후보 1.2.1은 미공개입니다"),
-            (".ja", "ソースバージョン：**1.3.2**。",
+            (".ja", "ソースバージョン：**1.3.3**。",
              "2026-10-28の準備時点で、最後に確認した公開済み安定版は**1.3.1**でした。",
              "開発候補1.2.1は未公開です"),
-            (".zh-CN", "源码版本：**1.3.2**。",
+            (".zh-CN", "源码版本：**1.3.3**。",
              "在2026-10-28的准备检查时，最后确认的已发布稳定版本为**1.3.1**。",
              "开发候选版本1.2.1尚未发布"),
         )
@@ -304,7 +348,7 @@ class StableCandidate(unittest.TestCase):
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
             self.assertIn(source_version, text)
             self.assertNotIn(obsolete_checkpoint, text)
-            self.assertIn("releases/v1.3.2.md", text)
+            self.assertIn("releases/v1.3.3.md", text)
             for stale_version in ("1.2.0", "1.2.1", "1.3.0"):
                 self.assertNotIn(stale_unpublished.replace("1.2.1", stale_version), text)
             self.assertIn("https://github.com/abruption/session-peer/releases", text)

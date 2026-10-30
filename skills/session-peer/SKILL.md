@@ -3,9 +3,9 @@ name: session-peer
 description: Send user-requested messages to Claude Code, Codex, or a live registered Antigravity TUI on this machine, an SSH host, or a paired device using session-peer. Use for cross-session handoffs and notifications when the available native tools do not cover the requested target.
 allowed-tools: Bash, Read
 metadata:
-  version: "0.4.0"
+  version: "0.4.1"
   runtime-min-version: "0.9.1"
-  runtime-full-version: "1.3.0"
+  runtime-full-version: "1.3.2"
 ---
 
 # Session messaging
@@ -21,7 +21,7 @@ exist only in 1.0.0 and newer; confirm them with `session-peer send --help`
 before use. For security fixes, recommend Python runtime 1.0.3 or newer;
 `runtime-min-version` and `runtime-full-version` describe CLI compatibility,
 not security currency.
-The published CLI coverage reference is session-peer 1.3.0.
+The published CLI coverage reference is session-peer 1.3.2.
 It excludes the separately identified experimental handoff workflow. If the command is missing, explain that installing the
 skill did not install the runtime and recommend one of the supported installation
 paths in the [repository README](https://github.com/abruption/session-peer#installation-options).
@@ -292,7 +292,7 @@ the other sources' sessions. This applies to local and SSH listing.
 
 ## Python 1.3 workflows
 
-The following optional workflows require Python runtime 1.3.0 or newer. The basic CLI compatibility floor remains 0.9.1, and the published CLI coverage reference is 1.3.0. Check the resolved runtime version and affirmative command help, along with each feature's platform and permission requirements. Receiver `codexBin` retains its independent 1.0.1 floor. Experimental handoff is excluded from the command coverage represented by `runtime-min-version` and `runtime-full-version`. See the [published runtime release](https://github.com/abruption/session-peer/releases/tag/v1.3.0).
+The following optional workflows require Python runtime 1.3.0 or newer. The basic CLI compatibility floor remains 0.9.1, and the published CLI coverage reference is 1.3.2. Check the resolved runtime version and affirmative command help, along with each feature's platform and permission requirements. Receiver `codexBin` retains its independent 1.0.1 floor. Experimental handoff is excluded from the command coverage represented by `runtime-min-version` and `runtime-full-version`. See the [published runtime release](https://github.com/abruption/session-peer/releases/tag/v1.3.0).
 
 - [Explanation](https://github.com/abruption/session-peer/blob/v1.3.0/docs/cli-reference.md#delivery-explanation): text-only `send --dry-run --explain` covers local, SSH and paired routes with normal message input. `doctor --explain` describes a diagnostic snapshot, not a selected target's readiness; `handoff status --explain` describes stored read-only evidence. JSON combinations and handoff SEND correlation/ACK/observe/wait combinations are refused. Explanations reuse existing results without extra probes, activation, submission or receipt authority; existing dry-run version checks are separate. Paired context is negotiated by the existing probe, allowlisted and bounded to 8 KiB; older receivers retain known native facts and leave missing context unknown. A preview grants no permission, reserves no target and provides no ACK evidence. Exit zero alone does not prove non-submission; unknown or unexpected submission never permits automatic resend. Wake still requires an explicit user request.
 - [Route presets](https://github.com/abruption/session-peer/blob/v1.3.0/docs/cli-reference.md#route-presets) and the separate [recipient addressbook](https://github.com/abruption/session-peer/blob/v1.3.0/docs/cli-reference.md#recipient-addressbook-v130) support macOS/Linux local/SSH Claude/Codex only. Manage entries only on user request. `preset show` reads stored route/revision data; `list --preset` discovers current sessions. Actual preset send requires `--to` and `--preset-revision`; replace/remove use `--expect-revision`. The `dp1` value hash repeats when identical name/route values are restored, and later changes do not cancel an already expanded invocation. For addresses, review `address resolve` before add/reselect, using its `as1` observation revision; actual send requires current `--address-revision` (`ab1`) and exact canonical `--confirm-target`. Reselect/remove use revision checks, and each add/reselect creates a new binding ID. Claude retains `tg1`; Codex `aw1` is a rechecked writer observation, with generation unsupported and no atomic storage/incarnation guarantee. SSH binds the verified key from the actual selection connection and pins it for send. Discover inspects at most 16 explicitly selected addresses, groups identical route/home/key contexts and preserves partial failures; it adds no network scan, broadcast or automatic reselection. Labels/revisions do not authenticate people, grant permission or prove ACK. Stop for operator review on private-storage/ACL/mount refusals; do not repair permissions or fall back automatically.
@@ -302,3 +302,31 @@ The following optional workflows require Python runtime 1.3.0 or newer. The basi
 - [Runtime notice preferences](https://github.com/abruption/session-peer/blob/v1.3.0/docs/cli-reference.md#updating): macOS/Linux local offline `update --dismiss-runtime-notice VERSION` or `--clear-runtime-notice-dismissal` changes only the automatic notice for an exact version. These commands do not check, install or approve a release; remote/SSH/check combinations are refused. Explicit checks retain real latest/outdated results; skill notices and global opt-out remain unchanged. Windows lacks this preference. Example versions are not release announcements.
 
 Runtime publication does not publish or install this independently managed skill. Adopt only a separately approved immutable skill release after verifying its recorded tag, source commit and SKILL hash. Update the Python runtime's compatibility snapshot in a separate change using that exact published skill source; existing runtime releases remain immutable.
+
+## Python 1.3.2 maintenance
+
+Optional MCP requires Python 3.10+ and the `session-peer[mcp]` extra; runtime
+1.3.2 requires SDK `mcp>=1.30,<2`. The core CLI still supports Python 3.9 without
+mandatory external dependencies. Separate a new extra installation from an
+explicit upgrade using an existing environment's manager, interpreter and extras.
+A standalone update does not update that environment. The dependency-floor change
+does not establish exploitability in the stdio-only server; see the
+[fixed MCP reference](https://github.com/abruption/session-peer/blob/v1.3.2/docs/mcp.md).
+
+For Direct receivers in Python 1.3.2+, startup `ready:true` means the local
+listener is ready; `directReadyConfirmed:false` does not confirm remote access.
+Keep a missing field on an older receiver unknown. TCP acceptance, TLS,
+authenticated access, native submission and consumption/ACK are separate facts.
+Opt-in `--diagnostic-events` provides bounded stage/counter and normal-close
+summaries, not a heartbeat, lossless stream or ACK. Ask the owner to review the
+expected Python application's incoming-connection permission if needed; do not
+disable the firewall, widen binds, reset keys/DBs or retry uncertain operations.
+See the [Direct diagnostic contract](https://github.com/abruption/session-peer/blob/v1.3.2/docs/paired-devices.md#macos-direct-listener-checks-341).
+
+Receiver modules are in wheel/sdist, not the standalone script; an operator must
+separately update their package environment and explicitly restart the receiver.
+Node Control's Better Auth/core 1.7.7 update is outside Python artifacts too.
+Pending OAuth sign-ins may need restarting; that is not authority to revoke
+sessions, rotate keys or recreate databases. Perform these operational changes
+only on an explicit operator request; see the
+[maintenance boundaries](https://github.com/abruption/session-peer/blob/v1.3.2/docs/releases/v1.3.2.md#incident-and-compatibility-boundaries).

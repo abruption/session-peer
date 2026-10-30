@@ -1,5 +1,13 @@
 # 发布session-peer
 
+## v1.3.3准备
+
+于2026-10-30以已发布的v1.3.2为基准准备。在当时的准备检查点，v1.3.3尚未发布，仅作为候选版本。集成源码基准为版本准备前的`ec2f7fc808f1e22519348091d51c28a2fd522caf`，并非最终发布提交。[维护说明](docs/zh-CN/releases/v1.3.3.md)涵盖#349/#352的PR说明与仅警告的引用检查、#350/#353的常规CPython 3.14测试夹具及软件包CI、#351/#354的发布后文档整理，以及已发布Python技能v0.4.1的兼容副本。将来的`SKILL.md`支持资产采用`abruption/session-peer-skill`仓库`v0.4.1`标签对应的提交`263b0c333d539dc4e885b16ae3369a26f33097d8`、SHA-256 `fdf5697c04f4a37194986622afb3a7966bb02631c128cf18a323e3fbe5ae90ed`、下限0.9.1/full 1.3.2及接收端`codexBin`下限1.0.1。该副本位于wheel/sdist之外，独立于运行时1.3.3。
+
+上述集成源码基准的[CI](https://github.com/abruption/session-peer/actions/runs/40982760413)和[CodeQL](https://github.com/abruption/session-peer/actions/runs/40982759604)均成功。这些结果不能替代准备提交或最终受保护main源码的检查。 首先在[初始CI](https://github.com/abruption/session-peer/actions/runs/40880779432)中通过新增的10个3.14单元后，才加入分类器，随后[更新后的完整CI](https://github.com/abruption/session-peer/actions/runs/40882642483)也成功。 核心POSIX单元覆盖3.9/3.13/3.14，Windows仍为3.13。
+
+准备不授权合并、创建标签或发布。必须通过正常审查、当前提交检查及最终受保护main的CI。另行授权的发布须验证包含`SHA256SUMS`与`release-provenance.json`的7个固定资产、准确标签和源码、经过认证的attestation、依赖审计及全新环境安装，并保留PyPI环境必需的人工批准。省略私有PyPI登录或连接复查不代表免除该批准。不得提前宣称发布，也不得重用旧标签或资产。保留下方v1.3.2记录，取得实际GitHub和PyPI依据后才进行[发布后文档检查](#post-publication-documentation-check)。本准备不包含新的原生、Windows 3.14或free-threaded验收，不增加运行时认证、协议、ACK行为，也不部署服务、全局安装或发布独立技能。
+
 ## 发布记录 — v1.3.2（2026-10-29核验）
 
 2026-10-29的只读复核确认，[GitHub v1.3.2版本](https://github.com/abruption/session-peer/releases/tag/v1.3.2)已从源码`f5e7c49554ff02771990a151e00b52f2abf3df0a`于2026-10-28T01:52:40Z正式发布且不可变。单独核验的[PyPI版本记录](https://pypi.org/pypi/session-peer/1.3.2/json)显示，wheel和sdist分别于2026-10-28T01:55:11.612762Z和2026-10-28T01:55:13.659910Z上传，均未被撤回。准确的文件哈希和依据见[维护版本发布记录](docs/zh-CN/releases/v1.3.2.md#v132-publication-record)。

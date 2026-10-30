@@ -33,7 +33,7 @@ session-peer使用各智能体自身的收件箱和队列；接收方智能体�
 ### 安装
 
 需要Python 3.9或更高版本。核心本地与SSH CLI没有第三方Python依赖。
-源码版本：**1.3.2**。发布依据、macOS防火墙说明和Direct监听器/TLS诊断请参阅[维护版本说明](docs/zh-CN/releases/v1.3.2.md)。Control的Better Auth安全更新位于仓库源码中，不包含在Python wheel/sdist内，需另行批准部署。
+源码版本：**1.3.3**。[维护说明](docs/zh-CN/releases/v1.3.3.md)介绍 Python 3.14 的验证范围、贡献流程与文档维护，以及兼容技能副本。Python 发布、Node Control 部署及独立管理的技能更新是不同的工作。
 
 可选的[MCP extra](docs/zh-CN/mcp.md)现在要求`mcp>=1.30,<2`；MCP的Python 3.10+要求和无外部依赖的Python 3.9核心保持不变。现有MCP环境需要显式升级软件包。
 

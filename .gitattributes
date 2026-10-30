@@ -1,3 +1,4 @@
 /session_peer.py text eol=lf
 /session_peer_core/*.py text eol=lf
 /tools/generate_session_peer.py text eol=lf
+/skills/session-peer/SKILL.md text eol=lf
