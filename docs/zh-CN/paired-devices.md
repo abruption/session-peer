@@ -117,7 +117,7 @@ WebSocket 关闭的 `closeSource` 区分代码来自接收还是发送。Relay �
 
 ### macOS Direct监听检查（#341）
 
-本节说明v1.3.1之后尚未发布的变更。`device serve`启动时的`ready:true`只确认本地监听器已建立。此次变更增加`directReadyConfirmed:false`；旧接收端可能没有该字段。TCP连接、启动就绪和对端TLS成功是不同的观测。TLS握手可能只是尚未认证的配对初始连接，因此本身不能证明配对完成、原生目标访问或ACK。现有配对设置的就绪检查使用已认证的probe/list请求。
+本节说明v1.3.2中已发布的Direct监听器诊断。`device serve`启动时的`ready:true`只确认本地监听器已建立。此次变更增加`directReadyConfirmed:false`；旧接收端可能没有该字段。TCP连接、启动就绪和对端TLS成功是不同的观测。TLS握手可能只是尚未认证的配对初始连接，因此本身不能证明配对完成、原生目标访问或ACK。现有配对设置的就绪检查使用已认证的probe/list请求。
 
 启用`--diagnostic-events`后，此次变更会输出`direct_transport`生命周期记录。`phase`在进入TCP回调时为`accepted`，在握手成功或失败时为`peer_tls`。有上限的每个接收端的累计计数器为`accepted`、`tlsCompleted`和`tlsFailed`。按单调时钟，每阶段每60秒最多输出一条，合计每分钟最多两条；TLS成功和失败共享同一阶段的限制。正常关闭时额外尝试输出一次包含零计数的`summary`快照，重复关闭不会再次输出。这是关闭时的快照，不是定期通知或无损事件历史。连接受理拒绝、未完成或已取消的握手及计数器上限可能使各项数量不相等。尽力而为的Direct记录不包含端点地址、对端ID、消息数据或异常原文。仅凭缺少记录不能断定未接受连接。
 

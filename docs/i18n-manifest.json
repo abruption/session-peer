@@ -7,8 +7,8 @@
     "zh-CN"
   ],
   "sources": {
-    "README.md": "bbab4acce7d5bbb1b4a03bd22c48fc71feacc98e231e42d23468309f80be30d1",
-    "RELEASING.md": "521f2c857e034714f63118eff5a9fcf8a0a4763b1e6c55b1797eee2a00aab424",
+    "README.md": "20c893a35b81123c5fd9e37244227407de24f0b309e16101a838ca329ad7dfaa",
+    "RELEASING.md": "e3e202dd769ad47e0d22bfb5a2d48b3708fbf5f9f185b09262ba735417bdf46d",
     "SECURITY.md": "8f018f6f98002312e143609b9734aeb971ca5217e146597c06b57b5645031046",
     "docs/README.md": "b2113e46b366055cab95b77ab5940236bc8c18217144b9a6dbd08264773968c6",
     "docs/agent-adapters.md": "bf185d3121c94829bb412071a25c4d943302e10a6b2e713111e653b8f8c3ea91",
@@ -23,7 +23,7 @@
     "docs/handoff-runtime.md": "a236e48392c91eca0f7c3734a6008a991955ae66d16fd71f97691aac5bf0091f",
     "docs/mcp.md": "48c761666abc09540fdbdb39b6974b0002e5cc89dda774ac6c24376190fa2c7b",
     "docs/multi-home-list.md": "f8d8e3adf727e4842ea7c4d45e8f6523b11d0513bf2509d4d1204645875e6489",
-    "docs/paired-devices.md": "03619867241a2db20d0b2281f17fdef2020ba159b7d565a0f5bc32de3152228d",
+    "docs/paired-devices.md": "1c6cf45187fdbac5a21e43968bc0cc39aee05af19904b4d176f1dd2a70065303",
     "docs/relay-auth.md": "e6da5291ce6a9da31e79e66ceeff7e9fef7e95046359acbf04d708c96ffab62f",
     "docs/relay-development-plan.md": "0abf750b36275ea4e467a0020e560277f08689f2d574aed7674133705383b1ff",
     "docs/relay-edge-policy.md": "c1c7f7a1c4303943c78ca334dab4034f66c0c272e40c007d07c3da2a496155eb",
@@ -54,7 +54,7 @@
     "docs/releases/v1.2.1.md": "70a3026c2d874a6fd7addcaef840ecfa84bf4f33a0165605217379acffa4fddb",
     "docs/releases/v1.3.0.md": "a422901b83c85cfb48ac0ad2f99dbc82dca46c4929a3016acd15010e4a18188b",
     "docs/releases/v1.3.1.md": "1600b3f6e708ded1cd5d0cad7b5f2d78244e0e4b01d122d727f2a692fccaf652",
-    "docs/releases/v1.3.2.md": "fe97d1feec0c3a5ebe04d3b573d2c9872a95b110b9ed57a2ce4989f376e1b96f",
+    "docs/releases/v1.3.2.md": "980437303a02644814116b12279d14bf83e6b50c87eab2e0c88e433808f372e3",
     "docs/validation/69-rc.md": "e490c6a9ad0fec9108b91c74922cedac7ddf214ed405f8f5523da22f48a4b222",
     "docs/validation/85-antigravity.md": "f89b175191cd98ab03d4029b487065133814b3c8dd8de8cd0a5cc367e2579e4f",
     "docs/wake.md": "cde135da2ea7be21c815bb265e694f737dbe467d8e76bb82eb118e3b86e29d22",

@@ -300,10 +300,11 @@ class StableCandidate(unittest.TestCase):
              "在2026-10-28的准备检查时，最后确认的已发布稳定版本为**1.3.1**。",
              "开发候选版本1.2.1尚未发布"),
         )
-        for suffix, source_version, dated_checkpoint, stale_unpublished in profiles:
+        for suffix, source_version, obsolete_checkpoint, stale_unpublished in profiles:
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
             self.assertIn(source_version, text)
-            self.assertIn(dated_checkpoint, text)
+            self.assertNotIn(obsolete_checkpoint, text)
+            self.assertIn("releases/v1.3.2.md", text)
             for stale_version in ("1.2.0", "1.2.1", "1.3.0"):
                 self.assertNotIn(stale_unpublished.replace("1.2.1", stale_version), text)
             self.assertIn("https://github.com/abruption/session-peer/releases", text)
@@ -324,6 +325,54 @@ class StableCandidate(unittest.TestCase):
                       (ROOT / "README.md").read_text(encoding="utf-8"))
         self.assertIn("Package publication does not include operational deployment",
                       (ROOT / "docs/releases/v1.0.4.md").read_text(encoding="utf-8"))
+
+    def test_v132_publication_record_distinguishes_released_files_from_preparation(self):
+        source = "f5e7c49554ff02771990a151e00b52f2abf3df0a"
+        historical_base = "ef7748a78e6b466f67074708f5c14decf37f31d7"
+        facts = (source, "2026-10-29", "2026-10-28T01:52:40Z",
+                 "2026-10-28T01:55:11.612762Z", "2026-10-28T01:55:13.659910Z",
+                 "https://github.com/abruption/session-peer/releases/tag/v1.3.2",
+                 "https://pypi.org/pypi/session-peer/1.3.2/json")
+        hashes = ("196552714b755c2ff755f3de507bd94a17ebd27b1c474ede83fbcc1301c488de",
+                  "e1824b089d2d3e38e03783f5dfc6e2d5ec54fa9758837deb0ebcbbb567837065")
+        direct_status = {
+            "": ("Direct listener diagnostics published in v1.3.2", "unreleased change after v1.3.1"),
+            "ko/": ("v1.3.2에 공개된 Direct 리스너 진단", "v1.3.1 이후의 미발행 변경"),
+            "ja/": ("v1.3.2で公開されたDirectリスナー診断", "v1.3.1以降の未公開の変更"),
+            "zh-CN/": ("v1.3.2中已发布的Direct监听器诊断", "v1.3.1之后尚未发布的变更"),
+        }
+        for locale, suffix in (("", ""), ("ko/", ".ko"), ("ja/", ".ja"), ("zh-CN/", ".zh-CN")):
+            with self.subTest(locale=locale):
+                notes = (ROOT / ("docs/" + locale + "releases/v1.3.2.md")).read_text(encoding="utf-8")
+                publication, preparation = notes.split('<a id="v132-preparation-snapshot"></a>', 1)
+                self.assertIn('<a id="v132-publication-record"></a>', publication)
+                for fact in facts + hashes:
+                    self.assertIn(fact, publication)
+                for filename in ("session_peer-1.3.2-py3-none-any.whl", "session_peer-1.3.2.tar.gz"):
+                    self.assertIn(filename, publication)
+                self.assertNotIn(historical_base, publication)
+                self.assertIn(historical_base, preparation)
+                self.assertIn("2026-10-28", preparation)
+                if not locale:
+                    self.assertIn("against published v1.3.1", preparation)
+                runbook = (ROOT / ("RELEASING" + suffix + ".md")).read_text(encoding="utf-8")
+                self.assertIn('<a id="post-publication-documentation-check"></a>', runbook)
+                record = runbook.split('<a id="post-publication-documentation-check"></a>', 1)[0]
+                for fact in facts:
+                    self.assertIn(fact, record)
+                self.assertIn("#v132-publication-record", record)
+                self.assertIn("prepare-release.yml", runbook)
+                self.assertIn("publish.yml", runbook)
+                paired = (ROOT / ("docs/" + locale + "paired-devices.md")).read_text(encoding="utf-8")
+                published, obsolete = direct_status[locale]
+                self.assertIn(published, paired)
+                self.assertNotIn(obsolete, paired)
+        english = (ROOT / "RELEASING.md").read_text(encoding="utf-8")
+        checklist = english.split('<a id="post-publication-documentation-check"></a>', 1)[1].split("## v1.3.2 preparation", 1)[0]
+        for instruction in ("independently verify the PyPI", "dated publication record",
+                            "all four README editions", "normal documentation PR",
+                            "Do not announce publication in advance", "published tags/assets"):
+            self.assertIn(instruction, checklist)
 
     def test_historical_security_notes_keep_validation_and_limits_visible(self):
         for locale in ("", "ko/", "ja/", "zh-CN/"):
