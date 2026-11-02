@@ -3,9 +3,9 @@ name: session-peer
 description: Send user-requested messages to Claude Code, Codex, or a live registered Antigravity TUI on this machine, an SSH host, or a paired device using session-peer. Use for cross-session handoffs and notifications when the available native tools do not cover the requested target.
 allowed-tools: Bash, Read
 metadata:
-  version: "0.4.1"
+  version: "0.5.0"
   runtime-min-version: "0.9.1"
-  runtime-full-version: "1.3.2"
+  runtime-full-version: "1.4.0"
 ---
 
 # Session messaging
@@ -21,7 +21,7 @@ exist only in 1.0.0 and newer; confirm them with `session-peer send --help`
 before use. For security fixes, recommend Python runtime 1.0.3 or newer;
 `runtime-min-version` and `runtime-full-version` describe CLI compatibility,
 not security currency.
-The published CLI coverage reference is session-peer 1.3.2.
+The published CLI coverage reference is session-peer 1.4.0.
 It excludes the separately identified experimental handoff workflow. If the command is missing, explain that installing the
 skill did not install the runtime and recommend one of the supported installation
 paths in the [repository README](https://github.com/abruption/session-peer#installation-options).
@@ -202,8 +202,9 @@ messages still work, but cannot be combined with `--message`.
 `--json` remains its compatibility alias. Do not combine either JSON selection
 with `--output-format text`.
 
-With JSON output, every result object contains `schemaVersion`, `ok`, `host`, and
-`command`. Local and one-host commands return one object; repeated `--host`
+For ordinary `list`, `send`, `doctor`, and `update` JSON output, each result
+object contains `schemaVersion`, `ok`, `host`, and `command`. This legacy envelope
+does not describe separate structured previews or MCP metadata results. Local and one-host commands return one object; repeated `--host`
 returns an ordered array of those objects. Inspect each `ok` independently
 because one destination may fail while another succeeds.
 
@@ -292,7 +293,7 @@ the other sources' sessions. This applies to local and SSH listing.
 
 ## Python 1.3 workflows
 
-The following optional workflows require Python runtime 1.3.0 or newer. The basic CLI compatibility floor remains 0.9.1, and the published CLI coverage reference is 1.3.2. Check the resolved runtime version and affirmative command help, along with each feature's platform and permission requirements. Receiver `codexBin` retains its independent 1.0.1 floor. Experimental handoff is excluded from the command coverage represented by `runtime-min-version` and `runtime-full-version`. See the [published runtime release](https://github.com/abruption/session-peer/releases/tag/v1.3.0).
+The following optional workflows require Python runtime 1.3.0 or newer. The basic CLI compatibility floor remains 0.9.1, and the published CLI coverage reference is 1.4.0. Check the resolved runtime version and affirmative command help, along with each feature's platform and permission requirements. Receiver `codexBin` retains its independent 1.0.1 floor. Experimental handoff is excluded from the command coverage represented by `runtime-min-version` and `runtime-full-version`. See the [published runtime release](https://github.com/abruption/session-peer/releases/tag/v1.3.0).
 
 - [Explanation](https://github.com/abruption/session-peer/blob/v1.3.0/docs/cli-reference.md#delivery-explanation): text-only `send --dry-run --explain` covers local, SSH and paired routes with normal message input. `doctor --explain` describes a diagnostic snapshot, not a selected target's readiness; `handoff status --explain` describes stored read-only evidence. JSON combinations and handoff SEND correlation/ACK/observe/wait combinations are refused. Explanations reuse existing results without extra probes, activation, submission or receipt authority; existing dry-run version checks are separate. Paired context is negotiated by the existing probe, allowlisted and bounded to 8 KiB; older receivers retain known native facts and leave missing context unknown. A preview grants no permission, reserves no target and provides no ACK evidence. Exit zero alone does not prove non-submission; unknown or unexpected submission never permits automatic resend. Wake still requires an explicit user request.
 - [Route presets](https://github.com/abruption/session-peer/blob/v1.3.0/docs/cli-reference.md#route-presets) and the separate [recipient addressbook](https://github.com/abruption/session-peer/blob/v1.3.0/docs/cli-reference.md#recipient-addressbook-v130) support macOS/Linux local/SSH Claude/Codex only. Manage entries only on user request. `preset show` reads stored route/revision data; `list --preset` discovers current sessions. Actual preset send requires `--to` and `--preset-revision`; replace/remove use `--expect-revision`. The `dp1` value hash repeats when identical name/route values are restored, and later changes do not cancel an already expanded invocation. For addresses, review `address resolve` before add/reselect, using its `as1` observation revision; actual send requires current `--address-revision` (`ab1`) and exact canonical `--confirm-target`. Reselect/remove use revision checks, and each add/reselect creates a new binding ID. Claude retains `tg1`; Codex `aw1` is a rechecked writer observation, with generation unsupported and no atomic storage/incarnation guarantee. SSH binds the verified key from the actual selection connection and pins it for send. Discover inspects at most 16 explicitly selected addresses, groups identical route/home/key contexts and preserves partial failures; it adds no network scan, broadcast or automatic reselection. Labels/revisions do not authenticate people, grant permission or prove ACK. Stop for operator review on private-storage/ACL/mount refusals; do not repair permissions or fall back automatically.
@@ -330,3 +331,35 @@ Pending OAuth sign-ins may need restarting; that is not authority to revoke
 sessions, rotate keys or recreate databases. Perform these operational changes
 only on an explicit operator request; see the
 [maintenance boundaries](https://github.com/abruption/session-peer/blob/v1.3.2/docs/releases/v1.3.2.md#incident-and-compatibility-boundaries).
+
+## Python 1.4 MCP workflows
+
+These optional MCP tools and structured CLI preview require Python runtime
+1.4.0 or newer. Verify the selected CLI's version/help. For MCP calls, also
+verify the running server's package environment, explicit operator-policy
+permissions and separate host-client approvals. The basic CLI minimum remains
+0.9.1. Runtime publication does not publish or install this separately managed skill.
+
+The flow is policy metadata lookup, an optional approved preset,
+explicit preflight, then an already authorized send. Names and revisions are
+untrusted metadata, not people or permission. Policy schema 2 must explicitly grant `preflight`, `diagnostics` and `presets`
+permissions; destination metadata lookup does not expand native-action rights.
+Existing schema 1/default permissions are unchanged.
+Preset permission intersects the existing action and exact pinned route.
+Host-client approval remains separate. A shared MCP server cannot authenticate
+the caller session. Metadata queries do not prove readiness; preflight can run
+existing local/SSH checks and is not authority to send or retry.
+
+Diagnostics default to metadata; active checks require separate permission and
+may execute operator SSH configuration. Their `ok` means collection/format
+completeness, not availability, per-target readiness or ACK. No reverse-route,
+TCP/TLS or paired-peer authentication is established. Unknown or contradictory
+evidence never permits automatic resend; retain known queued/submitted facts.
+
+The opt-in `send --dry-run --explain-json` uses a separate host-free schema;
+legacy `--explain` remains text-only. MCP metadata/preflight projections differ
+from successful legacy list/send native JSON. An MCP preset is a validated route
+expansion, not CLI `--preset` composition. See the
+[fixed MCP contract](https://github.com/abruption/session-peer/blob/v1.4.0/docs/mcp.md)
+and [structured preview](https://github.com/abruption/session-peer/blob/v1.4.0/docs/cli-reference.md#v140-source-structured-send-preview-357)
+before using these optional paths.
