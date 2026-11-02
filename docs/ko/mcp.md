@@ -29,6 +29,12 @@ Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(
 
 `codex mcp add session-peer -- /absolute/path/session-peer-mcp --config /absolute/path/policy.json`을 사용하여 등록하거나, 저장소의 `plugins/session-peer` 번들을 사용하십시오: `codex plugin marketplace add /absolute/path/to/session-peer` 실행 후 `codex plugin add session-peer@session-peer`. 플러그인은 PATH에서 `session-peer-mcp`를 실행하고 환경에 설정된 경우 `SESSION_PEER_MCP_CONFIG`를 읽습니다. 먼저 Python extra를 설치하십시오. Python 패키지를 설치해도 기존 Codex 설정은 수정되지 않습니다.
 
+## 미출시 v1.4.0 후보: 목적지 조회 (#356)
+
+`list_destinations()`는 인자를 받지 않으며 운영자 정책의 메타데이터만 반환합니다. `schemaVersion`은 1이고 각 항목은 `destination`, `transport`, `agents`, `capabilities`를 포함합니다. 자식 프로세스를 시작하거나 네트워크 요청을 보내지 않습니다. SSH 호스트 값과 Codex 홈 경로는 생략됩니다. 목적지 이름은 신뢰할 수 없는 데이터입니다. 구성된 기능은 정책상 권한을 나타내며 네이티브 에이전트와의 호환성을 나타내지는 않습니다.
+
+응답은 한계를 명시합니다: `callerIdentity="unavailable"`, `readiness="not_checked"`, `submission="not_attempted"`, `consumption="not_checked"`, `ack="not_checked"`. 이 도구는 목적지가 64개를 넘거나 ID에 출력할 수 없는 문자가 있거나 UTF-8 기준 128바이트를 넘으면 조회를 거부합니다. 텍스트와 구조화된 내용을 합친 MCP 도구 결과는 64 KiB 이내이며, 바깥 JSON-RPC 봉투는 이 한도에 포함되지 않습니다. 이는 조회 도구의 제한으로, 정책 읽기와 기존 도구의 동작은 바뀌지 않습니다. 출력 가능한 문자 판정에는 실행 중인 Python의 유니코드 데이터베이스를 사용합니다. 기본 로컬 목록 조회 전용 정책은 그대로 유지됩니다.
+
 ## 도구 및 권한
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)`는 CLI의 구조화된 목록을 반환합니다. Agent는 `claude` 또는 `codex`일 수 있으며, 생략 시 허용된 에이전트를 나열합니다.
@@ -44,7 +50,7 @@ MCP 도구 어노테이션은 목록 조회를 읽기 전용으로, 전송을 �
 
 MCP extra가 있는 상태와 없는 상태에서 각각 `python -m unittest discover -s tests -v`를 실행하십시오. 선택형 테스트는 실제 stdio MCP 서버를 시작하고 모델 자격 증명 없이 초기화, 스키마, 정책 거부 및 CLI 부분 실패를 실행합니다. wheel 및 sdist 설치를 모두 테스트하십시오. 실시간 확인 시에는 Codex 버전, OS 및 호스트 승인 설정을 기록해야 합니다. UDS 접근은 환경에 따라 다르며 승인 우회를 약속하는 것이 아닙니다. 메시지에는 전용 테스트 세션을 사용하십시오.
 
-CI는 macOS/Linux의 Python 3.10/3.13에서 SDK 하한 `mcp==1.30.0`과 최신 호환 1.x를 별도로 시험합니다. 두 프로필 모두 stdio·정책·시간 초과·취소·소유 자식 프로세스 정리 시험을 실행하고, 해결된 런타임 의존성 그래프를 감사하며 버전과 보고서를 보존합니다. 전이 의존성 버전은 패키지 관리자가 일반적인 방식으로 결정합니다. 모든 전이 패키지의 최솟값을 시험하는 것은 아닙니다. 버전을 고정한 빌드·감사 요구 패키지는 런타임 환경 밖에 설치하며, 감사 대상 환경에는 초기 구성용 `pip`/`setuptools` 패키지도 포함됩니다. 기존 최신 버전 해결 감사와 릴리스 감사도 계속 필수입니다.
+CI는 macOS/Linux의 Python 3.10/3.13/3.14에서 SDK 하한 `mcp==1.30.0`과 최신 호환 1.x를 별도로 시험합니다. 두 프로필 모두 stdio·정책·시간 초과·취소·소유 자식 프로세스 정리 시험을 실행하고, 해결된 런타임 의존성 그래프를 감사하며 버전과 보고서를 보존합니다. 전이 의존성 버전은 패키지 관리자가 일반적인 방식으로 결정합니다. 모든 전이 패키지의 최솟값을 시험하는 것은 아닙니다. 버전을 고정한 빌드·감사 요구 패키지는 런타임 환경 밖에 설치하며, 감사 대상 환경에는 초기 구성용 `pip`/`setuptools` 패키지도 포함됩니다. 기존 최신 버전 해결 감사와 릴리스 감사도 계속 필수입니다.
 
 공식 참조: [Codex MCP](https://developers.openai.com/codex/extend/mcp), [Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk). [SDK 1.30.0](https://pypi.org/pypi/mcp/1.30.0/json), [GHSA-84m7-p3x7-pcfv](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-84m7-p3x7-pcfv), [GHSA-fmmv-w9g8-j3gc](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-fmmv-w9g8-j3gc).
 

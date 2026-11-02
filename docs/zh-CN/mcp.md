@@ -29,6 +29,12 @@
 
 使用 `codex mcp add session-peer -- /absolute/path/session-peer-mcp --config /absolute/path/policy.json` 进行注册，或使用仓库的 `plugins/session-peer` 捆绑包：`codex plugin marketplace add /absolute/path/to/session-peer`，然后 `codex plugin add session-peer@session-peer`。该插件从 PATH 启动 `session-peer-mcp`，并在其环境中设置了 `SESSION_PEER_MCP_CONFIG` 时读取该配置。请先安装 Python extra。安装 Python 软件包不会修改现有的 Codex 设置。
 
+## 尚未发布的 v1.4.0 候选版本：目的地发现 (#356)
+
+`list_destinations()` 不接受参数，仅返回操作员策略的元数据：`schemaVersion` 为 1，每个条目包含 `destination`、`transport`、`agents` 和 `capabilities`。它不会启动子进程，也不会发起网络请求。SSH 主机配置值和 Codex 主目录路径会被省略。目的地名称是不可信数据。已配置的功能表示策略权限，不表示原生代理的兼容性。
+
+响应明确列出限制：`callerIdentity="unavailable"`、`readiness="not_checked"`、`submission="not_attempted"`、`consumption="not_checked"` 和 `ack="not_checked"`。目的地超过 64 个、ID 含不可打印字符或 UTF-8 编码超过 128 字节时，此工具拒绝查询。文本与结构化内容合计的 MCP 工具结果不超过 64 KiB，不包括外层 JSON-RPC 信封。这些限制仅适用于查询工具，策略加载及现有工具的行为保持不变。可打印字符的判定遵循运行中 Python 的 Unicode 数据库。默认的仅限本地列表查询的策略保持不变。
+
 ## 工具与权限
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)` 返回 CLI 的结构化列表。Agent 可以是 `claude` 或 `codex`；省略则列出允许的代理。
@@ -44,7 +50,7 @@ MCP 工具注解将列出标记为只读，将发送标记为非幂等。根据�
 
 在有和没有 MCP extra 的情况下运行 `python -m unittest discover -s tests -v`。可选测试会启动真实的 stdio MCP 服务器，并在没有模型凭据的情况下执行初始化、模式、策略拒绝和 CLI 部分失败测试。同时测试 wheel 和 sdist 安装。实时检查必须记录 Codex 版本、操作系统和宿主批准设置；UDS 访问取决于环境，不是批准绕过承诺。消息请使用专用测试会话。
 
-CI在macOS/Linux的Python 3.10/3.13上分别测试SDK下限`mcp==1.30.0`及最新兼容1.x。两个配置均运行stdio、策略、超时、取消及所属子进程清理测试，并审计解析得到的运行时依赖图，保留版本和报告。传递依赖按常规方式解析；这不是对所有传递依赖包的最低版本进行测试。固定版本的构建与审计依赖安装在运行时环境之外；被审计的环境也包含用于初始配置的`pip`/`setuptools`包。现有的最新版本解析审计和发布审计仍为必需。
+CI在macOS/Linux的Python 3.10/3.13/3.14上分别测试SDK下限`mcp==1.30.0`及最新兼容1.x。两个配置均运行stdio、策略、超时、取消及所属子进程清理测试，并审计解析得到的运行时依赖图，保留版本和报告。传递依赖按常规方式解析；这不是对所有传递依赖包的最低版本进行测试。固定版本的构建与审计依赖安装在运行时环境之外；被审计的环境也包含用于初始配置的`pip`/`setuptools`包。现有的最新版本解析审计和发布审计仍为必需。
 
 官方参考：[Codex MCP](https://developers.openai.com/codex/extend/mcp)、[Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk)。 [SDK 1.30.0](https://pypi.org/pypi/mcp/1.30.0/json), [GHSA-84m7-p3x7-pcfv](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-84m7-p3x7-pcfv), [GHSA-fmmv-w9g8-j3gc](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-fmmv-w9g8-j3gc).
 

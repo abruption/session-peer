@@ -29,6 +29,12 @@ Use the actual username and SSH destination, configured keys and known_hosts. No
 
 Register using `codex mcp add session-peer -- /absolute/path/session-peer-mcp --config /absolute/path/policy.json`, or use the repository's `plugins/session-peer` bundle: `codex plugin marketplace add /absolute/path/to/session-peer`, then `codex plugin add session-peer@session-peer`. The plugin launches `session-peer-mcp` from PATH and reads `SESSION_PEER_MCP_CONFIG` when set in its environment. Install the Python extra first. Existing Codex settings are not modified by installing the Python package.
 
+## Unreleased v1.4.0 candidate: destination discovery (#356)
+
+`list_destinations()` takes no arguments and returns only operator-policy metadata: `schemaVersion` is 1, and each entry contains `destination`, `transport`, `agents`, and `capabilities`. It starts no child process and makes no network request. SSH host values and Codex home paths are omitted. Destination labels are untrusted data. Configured capabilities describe policy permissions, not native-agent compatibility.
+
+The response includes explicit limits: `callerIdentity="unavailable"`, `readiness="not_checked"`, `submission="not_attempted"`, `consumption="not_checked"`, and `ack="not_checked"`. This tool rejects inventories over 64 destinations or IDs that are not printable or exceed 128 UTF-8 bytes. Its complete MCP tool result (text and structured content together) is bounded to 64 KiB, excluding the surrounding JSON-RPC envelope. These are lookup limits; policy loading and existing tools keep their previous behavior. Printability follows the running Python Unicode database. The default local-list-only policy is unchanged.
+
 ## Tools and permissions
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)` returns the CLI's structured listing. Agent may be `claude` or `codex`; omission lists permitted agents.
@@ -44,7 +50,7 @@ A shared MCP process cannot reliably identify the invoking thread. Messages iden
 
 Run `python -m unittest discover -s tests -v` with and without the MCP extra. Optional tests start a real stdio MCP server and exercise initialization, schemas, policy rejection and CLI partial failures without model credentials. Test both wheel and sdist installs. Live checks must record Codex version, OS and host approval settings; UDS access is environment-dependent and is not an approval-bypass promise. Use dedicated test sessions for messages.
 
-CI tests the exact SDK floor `mcp==1.30.0` and the latest compatible 1.x separately on macOS/Linux with Python 3.10/3.13. Both profiles run the stdio/policy/timeout/cancellation/owned-child tests and audit their resolved runtime dependency graphs, retaining versions and reports. Transitive dependencies resolve normally; this is not a test of every transitive package's minimum version. The pinned build/audit requirements are installed outside the runtime environment; the audited environment also includes its `pip`/`setuptools` bootstrap packages. Existing latest-resolution and release audits remain required.
+CI tests the exact SDK floor `mcp==1.30.0` and the latest compatible 1.x separately on macOS/Linux with Python 3.10/3.13/3.14. Both profiles run the stdio/policy/timeout/cancellation/owned-child tests and audit their resolved runtime dependency graphs, retaining versions and reports. Transitive dependencies resolve normally; this is not a test of every transitive package's minimum version. The pinned build/audit requirements are installed outside the runtime environment; the audited environment also includes its `pip`/`setuptools` bootstrap packages. Existing latest-resolution and release audits remain required.
 
 Official references: [Codex MCP](https://developers.openai.com/codex/extend/mcp), [Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk). [SDK 1.30.0](https://pypi.org/pypi/mcp/1.30.0/json), [GHSA-84m7-p3x7-pcfv](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-84m7-p3x7-pcfv), [GHSA-fmmv-w9g8-j3gc](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-fmmv-w9g8-j3gc).
 
