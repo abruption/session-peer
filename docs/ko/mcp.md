@@ -31,9 +31,9 @@ Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(
 
 ## 미출시 v1.4.0 후보: 목적지 조회 (#356)
 
-`list_destinations()`는 인자를 받지 않으며 운영자 정책의 메타데이터만 반환합니다. `schemaVersion`은 1이고 각 항목은 `destination`, `transport`, `agents`, `capabilities`를 포함합니다. 자식 프로세스를 시작하거나 네트워크 요청을 보내지 않습니다. 실제 SSH 호스트와 Codex 홈 경로는 생략됩니다. 목적지 이름은 신뢰할 수 없는 데이터입니다. 구성된 기능은 정책상 권한을 나타내며 네이티브 에이전트와의 호환성을 나타내지는 않습니다.
+`list_destinations()`는 인자를 받지 않으며 운영자 정책의 메타데이터만 반환합니다. `schemaVersion`은 1이고 각 항목은 `destination`, `transport`, `agents`, `capabilities`를 포함합니다. 자식 프로세스를 시작하거나 네트워크 요청을 보내지 않습니다. SSH 호스트 값와 Codex 홈 경로는 생략됩니다. 목적지 이름은 신뢰할 수 없는 데이터입니다. 구성된 기능은 정책상 권한을 나타내며 네이티브 에이전트와의 호환성을 나타내지는 않습니다.
 
-응답은 한계를 명시합니다: `callerIdentity="unavailable"`, `readiness="not_checked"`, `submission="not_attempted"`, `consumption="not_checked"`, `ack="not_checked"`. 목적지는 최대 64개까지 허용됩니다. ID는 출력 가능한 문자로 구성되고 UTF-8 기준 128바이트 이내여야 하며, 출력은 64 KiB로 제한됩니다. 기본 로컬 목록 조회 전용 정책은 그대로 유지됩니다.
+응답은 한계를 명시합니다: `callerIdentity="unavailable"`, `readiness="not_checked"`, `submission="not_attempted"`, `consumption="not_checked"`, `ack="not_checked"`. 이 도구는 목적지가 64개를 넘거나 ID에 출력할 수 없는 문자가 있거나 UTF-8 기준 128바이트를 넘으면 조회를 거부합니다. 텍스트와 구조화된 내용을 합친 MCP 도구 결과는 64 KiB 이내이며, 바깥 JSON-RPC 봉투는 이 한도에 포함되지 않습니다. 이는 조회 도구의 제한으로, 정책 읽기와 기존 도구의 동작은 바뀌지 않습니다. 출력 가능한 문자 판정에는 실행 중인 Python의 유니코드 데이터베이스를 사용합니다. 기본 로컬 목록 조회 전용 정책은 그대로 유지됩니다.
 
 ## 도구 및 권한
 

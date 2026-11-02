@@ -31,9 +31,9 @@
 
 ## 尚未发布的 v1.4.0 候选版本：目的地发现 (#356)
 
-`list_destinations()` 不接受参数，仅返回操作员策略的元数据：`schemaVersion` 为 1，每个条目包含 `destination`、`transport`、`agents` 和 `capabilities`。它不会启动子进程，也不会发起网络请求。实际 SSH 主机和 Codex 主目录路径会被省略。目的地名称是不可信数据。已配置的功能表示策略权限，不表示原生代理的兼容性。
+`list_destinations()` 不接受参数，仅返回操作员策略的元数据：`schemaVersion` 为 1，每个条目包含 `destination`、`transport`、`agents` 和 `capabilities`。它不会启动子进程，也不会发起网络请求。SSH 主机配置值和 Codex 主目录路径会被省略。目的地名称是不可信数据。已配置的功能表示策略权限，不表示原生代理的兼容性。
 
-响应明确列出限制：`callerIdentity="unavailable"`、`readiness="not_checked"`、`submission="not_attempted"`、`consumption="not_checked"` 和 `ack="not_checked"`。最多允许 64 个目的地；ID 必须由可打印字符组成，且 UTF-8 编码不超过 128 字节，输出限制为 64 KiB。默认的仅限本地列表查询的策略保持不变。
+响应明确列出限制：`callerIdentity="unavailable"`、`readiness="not_checked"`、`submission="not_attempted"`、`consumption="not_checked"` 和 `ack="not_checked"`。目的地超过 64 个、ID 含不可打印字符或 UTF-8 编码超过 128 字节时，此工具拒绝查询。文本与结构化内容合计的 MCP 工具结果不超过 64 KiB，不包括外层 JSON-RPC 信封。这些限制仅适用于查询工具，策略加载及现有工具的行为保持不变。可打印字符的判定遵循运行中 Python 的 Unicode 数据库。默认的仅限本地列表查询的策略保持不变。
 
 ## 工具与权限
 

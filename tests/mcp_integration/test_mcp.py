@@ -123,7 +123,8 @@ class Policy(unittest.IsolatedAsyncioTestCase):
 
     async def test_inventory_bounds_reject_atomically_without_reflection(self):
         entry = {'agents': ['claude'], 'capabilities': ['list']}
-        for name in ('x' * 129, 'hidden\nroute', '\ud800', '界' * 43):
+        for name in ('x' * 129, 'hidden\nroute', '\ud800', '界' * 43,
+                     'x\u202ey', 'x\u200by', 'x\u2028y', 'x\ufeffy'):
             adapter = mcp_peer.Adapter({name: entry})
             with self.assertRaises(mcp_peer.PolicyError) as caught:
                 await adapter.list_destinations()
@@ -133,6 +134,14 @@ class Policy(unittest.IsolatedAsyncioTestCase):
             await adapter.list_destinations()
         adapter = mcp_peer.Adapter({str(i): entry for i in range(64)})
         self.assertEqual(len((await adapter.list_destinations())['destinations']), 64)
+        for name in ('x' * 128, '界' * 42 + 'xx'):
+            self.assertEqual((await mcp_peer.Adapter({name: entry}).list_destinations())[
+                'destinations'][0]['destination'], name)
+        # Oversized inventories still work with the old list operation.
+        oversized = mcp_peer.Adapter({str(i): entry for i in range(65)})
+        oversized.invoke = AsyncMock(return_value={'ok': True, 'sessions': []})
+        await oversized.list_sessions('0')
+        oversized.invoke.assert_awaited_once()
         # Aggregate budget is checked even if future schemas grow.
         with patch.object(mcp_peer, 'DESTINATION_METADATA_BYTES', 1):
             with self.assertRaises(mcp_peer.PolicyError):
@@ -254,8 +263,26 @@ class Protocol(unittest.IsolatedAsyncioTestCase):
                     value = await client.call_tool('list_destinations', {})
                     self.assertTrue(value.isError)
                     self.assertEqual(value.structuredContent['reason'], 'request_rejected')
+                    self.assertEqual(value.structuredContent['schemaVersion'], 1)
                     self.assertNotIn('private', value.content[0].text)
                     self.assertNotIn('destinations', value.structuredContent)
+
+    async def test_stdio_inventory_budget_includes_duplicated_escaped_content(self):
+        from mcp import ClientSession, StdioServerParameters
+        from mcp.client.stdio import stdio_client
+        with tempfile.TemporaryDirectory() as folder:
+            p = Path(folder) / 'policy.json'
+            p.write_text(json.dumps({'schemaVersion': 1, 'destinations': {
+                '\\' * 126 + str(i).zfill(2): {'agents': list(mcp_peer.core.AGENTS.names()),
+                    'capabilities': ['list', 'send', 'wake'], 'codexHome': '/private-fixture'} for i in range(64)}}))
+            params = StdioServerParameters(command=sys.executable,
+                args=[str(Path(mcp_peer.__file__).resolve()), '--config', str(p)])
+            async with stdio_client(params) as (read, write):
+                async with ClientSession(read, write) as client:
+                    await client.initialize()
+                    value = await client.call_tool('list_destinations', {})
+                    self.assertEqual(value.structuredContent['schemaVersion'], 1)
+                    self.assertLessEqual(len(value.model_dump_json().encode('utf-8')), 64 * 1024)
 
     async def test_stdio_tools_and_policy_errors(self):
         from mcp import ClientSession, StdioServerParameters

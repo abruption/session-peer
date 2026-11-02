@@ -29,11 +29,11 @@ Python 3.10 以降でインストールします: `pipx install 'session-peer[mc
 
 `codex mcp add session-peer -- /absolute/path/session-peer-mcp --config /absolute/path/policy.json` を使用して登録するか、リポジトリの `plugins/session-peer` バンドルを使用します: `codex plugin marketplace add /absolute/path/to/session-peer`、続いて `codex plugin add session-peer@session-peer`。このプラグインは PATH から `session-peer-mcp` を起動し、環境変数に設定されている場合は `SESSION_PEER_MCP_CONFIG` を読み取ります。最初に Python エクストラをインストールしてください。Python パッケージをインストールしても、既存の Codex 設定が変更されることはありません。
 
-## 未リリースの v1.4.0 候補: 送信先の確認 (#356)
+## 未リリースの v1.4.0 候補: 宛先メタデータの取得 (#356)
 
-`list_destinations()` は引数を取らず、オペレーターのポリシーのメタデータだけを返します。`schemaVersion` は 1 で、各項目には `destination`、`transport`、`agents`、`capabilities` が含まれます。子プロセスの起動やネットワークリクエストは行いません。実際の SSH ホストと Codex ホームのパスは省略されます。送信先の名前は信頼できないデータとして扱ってください。設定されたケーパビリティはポリシー上の権限を示し、ネイティブエージェントとの互換性は示しません。
+`list_destinations()` は引数を取らず、オペレーターのポリシーのメタデータだけを返します。`schemaVersion` は 1 で、各項目には `destination`、`transport`、`agents`、`capabilities` が含まれます。子プロセスの起動やネットワークリクエストは行いません。SSH ホストの値と Codex ホームのパスは省略されます。送信先の名前は信頼できないデータとして扱ってください。設定されたケーパビリティはポリシー上の権限を示し、ネイティブエージェントとの互換性は示しません。
 
-応答には制約を明示します: `callerIdentity="unavailable"`、`readiness="not_checked"`、`submission="not_attempted"`、`consumption="not_checked"`、`ack="not_checked"`。送信先は最大 64 件まで許可されます。ID は表示可能な文字で構成され、UTF-8 で 128 バイト以内である必要があり、出力は 64 KiB に制限されます。既定のローカル一覧取得専用ポリシーは変わりません。
+応答には制約を明示します: `callerIdentity="unavailable"`、`readiness="not_checked"`、`submission="not_attempted"`、`consumption="not_checked"`、`ack="not_checked"`。このツールは宛先が64件を超える場合や、IDに表示できない文字がある場合、UTF-8で128バイトを超える場合に取得を拒否します。テキストと構造化データを合わせたMCPツール結果は64 KiB以内で、外側のJSON-RPCエンベロープは含みません。これは取得ツールの制限であり、ポリシーの読み込みと既存ツールの動作は変わりません。表示可能な文字の判定は、実行中のPythonのUnicodeデータベースに従います。既定のローカル一覧取得専用ポリシーは変わりません。
 
 ## ツールとパーミッション
 

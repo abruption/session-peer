@@ -31,9 +31,9 @@ Register using `codex mcp add session-peer -- /absolute/path/session-peer-mcp --
 
 ## Unreleased v1.4.0 candidate: destination discovery (#356)
 
-`list_destinations()` takes no arguments and returns only operator-policy metadata: `schemaVersion` is 1, and each entry contains `destination`, `transport`, `agents`, and `capabilities`. It starts no child process and makes no network request. Raw SSH hosts and Codex home paths are omitted. Destination labels are untrusted data. Configured capabilities describe policy permissions, not native-agent compatibility.
+`list_destinations()` takes no arguments and returns only operator-policy metadata: `schemaVersion` is 1, and each entry contains `destination`, `transport`, `agents`, and `capabilities`. It starts no child process and makes no network request. SSH host values and Codex home paths are omitted. Destination labels are untrusted data. Configured capabilities describe policy permissions, not native-agent compatibility.
 
-The response includes explicit limits: `callerIdentity="unavailable"`, `readiness="not_checked"`, `submission="not_attempted"`, `consumption="not_checked"`, and `ack="not_checked"`. At most 64 destinations are accepted; IDs must be printable and fit within 128 UTF-8 bytes, and output is bounded to 64 KiB. The default local-list-only policy is unchanged.
+The response includes explicit limits: `callerIdentity="unavailable"`, `readiness="not_checked"`, `submission="not_attempted"`, `consumption="not_checked"`, and `ack="not_checked"`. This tool rejects inventories over 64 destinations or IDs that are not printable or exceed 128 UTF-8 bytes. Its complete MCP tool result (text and structured content together) is bounded to 64 KiB, excluding the surrounding JSON-RPC envelope. These are lookup limits; policy loading and existing tools keep their previous behavior. Printability follows the running Python Unicode database. The default local-list-only policy is unchanged.
 
 ## Tools and permissions
 
