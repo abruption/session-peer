@@ -49,6 +49,8 @@ class StructuredPreflight(unittest.TestCase):
                  ({'ok': 0, 'dryRun': True}, 'unknown', 'result unknown'),
                  ({'ok': True, 'dryRun': True, 'submitted': 'unknown'}, 'unknown', 'result unknown'),
                  ({'ok': False, 'dryRun': True}, 'not_confirmed', 'not confirmed'),
+                 ({'dryRun': True, 'reason': 'sqlite_home_configuration'}, 'not_confirmed', 'not confirmed'),
+                 ({'status': 'validated', 'reason': 'sqlite_home_configuration'}, 'not_confirmed', 'not confirmed'),
                  ({}, 'not_confirmed', 'not confirmed')]
         for facts, expected, text in cases:
             facts.update(error=NONREFLECTED_VALUE, codexHome=NONREFLECTED_VALUE, target={'id': NONREFLECTED_VALUE}, body=NONREFLECTED_VALUE)
@@ -76,13 +78,18 @@ class StructuredPreflight(unittest.TestCase):
     def test_uri_failure_before_route_resolution_retains_agent_and_not_run(self):
         uri = ('session-peer://v1/reply?agent=codex&session=' + THREAD +
                '&transport=ssh&host=fixture&codexHome=%2Ffixture')
-        with mock.patch.object(peer, 'prepare_trusted_ssh_config', side_effect=peer.CcPeerError('private')):
+        with mock.patch.object(peer, 'prepare_trusted_ssh_config', side_effect=peer.CcPeerError('private')), \
+                mock.patch.object(peer.LocalTransport, 'execute') as local, \
+                mock.patch.object(peer, 'SshTransport') as remote, \
+                mock.patch.object(peer.subprocess, 'Popen') as child:
             code, value, _ = self.invoke(target=uri)
         self.assertEqual(code, 1)
         self.assertEqual(value['checked']['agent'], 'codex')
         self.assertEqual(value['checked']['validation'], 'not_run')
         self.assertEqual(value['limitations']['submission'], 'not_attempted')
         self.assertEqual(value['operatorActions'], ['resolve_validation_failure_before_send'])
+        for action in (local, remote, child):
+            action.assert_not_called()
 
     def test_registered_antigravity_dryrun_never_sends_bridge_request(self):
         registration = {'id': THREAD, 'generation': 'fixture', 'antigravityHome': '/fixture'}

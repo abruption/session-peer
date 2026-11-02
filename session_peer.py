@@ -4833,6 +4833,8 @@ def classify_delivery_readiness(args, result, *, failed=False):
     unexpected = delivery_explanation_has_submission(result)
     reported = result.get("dryRun") is True or result.get("status") in ("dry_run", "validated")
     failed = failed or result.get("ok") is False or result.get("status") in ("refused", "failed", "error")
+    failed = failed or (isinstance(result.get("reason"), str)
+                        and result["reason"] in PREFLIGHT_REFUSAL_REASONS)
     validation = ("unexpected_submission" if unexpected else "unknown" if unknown else
                   "not_run" if not started else "not_confirmed" if failed else
                   "passed" if reported else "not_confirmed")
