@@ -33,7 +33,7 @@ session-peer 1.0.2를 사용해 실제 로컬 요청과 회신을 주고받았�
 ### 설치
 
 Python 3.9 이상이 필요합니다. 기본 로컬·SSH CLI는 외부 Python 패키지에 의존하지 않습니다.
-소스 버전: **1.3.3**. [유지보수 노트](docs/ko/releases/v1.3.3.md)에서 Python 3.14 검증 범위, 기여 안내·문서 유지보수, 호환 스킬 사본을 설명합니다. Python 공개, Node Control 배포, 별도로 관리하는 스킬의 갱신은 서로 구분합니다.
+소스 버전: **1.4.0**(2026-11-02 준비 시점 기준: 미공개 후보, 당시 최신 공개 버전 1.3.3). [릴리스 노트](docs/ko/releases/v1.4.0.md)는 범위를 제한한 MCP 탐색, 전달 사전 점검·진단, 경로 프리셋과 독립 스킬 제안을 설명합니다. Python 공개, Node Control 배포, 별도로 관리하는 스킬의 갱신은 서로 구분합니다.
 
 선택형 [MCP extra](docs/ko/mcp.md)는 이제 `mcp>=1.30,<2`를 요구합니다. MCP의 Python 3.10+ 요건과 의존성 없는 Python 3.9 핵심 CLI는 유지됩니다. 기존 MCP 환경에는 명시적인 패키지 업그레이드가 필요합니다.
 
@@ -105,7 +105,7 @@ Unix·Python 3.11 이상·`session-peer[relay]`, 고정된 기기 신원, 명시
 패키지를 공개해도 호스팅 서비스의 가용성이 보장되지는 않습니다.
 블라인드 Relay는 애플리케이션 메시지 내용을 복호화할 수 없습니다.
 [MCP(Model Context Protocol)·Codex 플러그인](https://github.com/abruption/session-peer/blob/main/docs/ko/mcp.md)은 Python 3.10 이상과
-`session-peer[mcp]`가 필요하며, MCP wake 기능에는 `send`와 `wake` 권한이 모두 필요합니다.
+`session-peer[mcp]`가 필요하며, MCP 전송에서 실제 wake를 요청하려면 `send`와 `wake` 권한이 모두 필요합니다.
 [Wake](https://github.com/abruption/session-peer/blob/main/docs/ko/wake.md)는 명시적으로 요청한 경우에만 실행됩니다.
 턴을 시작하고 사용량을 소비하거나 프로젝트 파일을 변경할 수 있습니다.
 [Antigravity 브리지](https://github.com/abruption/session-peer/blob/main/docs/ko/antigravity.md)는 실험 단계입니다.

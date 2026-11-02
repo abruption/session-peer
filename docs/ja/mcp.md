@@ -1,5 +1,7 @@
 # オプションの Codex MCP 統合
 
+2026-11-02のソース確認時点では、以下のv1.4.0機能は公開済みv1.3.3を基に準備したもので、公開の告知ではありません。利用前に[リリースノート](releases/v1.4.0.md)と実際のGitHub/PyPIの公開状況を確認してください。
+
 Python 3.10 以降でインストールします: `pipx install 'session-peer[mcp]'`（または隔離された venv にエクストラをインストール）。依存関係のない Python 3.9 CLI および `install.sh` は引き続きサポートされます。シェルインストーラーは MCP の依存関係をインストールしません。Python 3.9 では、MCP エントリポイントが Python 3.10+ が必要である旨を報告します。
 
 任意のエクストラはMCP SDK `mcp>=1.30,<2`を必要とします。上流の1.xセキュリティ修正を含む版まで依存関係の下限を引き上げるもので、stdio専用のこのサーバーで悪用可能な欠陥を確認したという意味ではありません。HTTP転送、OAuthサーバー経路、MCPクライアント経路は有効にしません。既存環境では明示的なパッケージ更新が必要で、宣言の変更だけではインストール済みSDKは更新されません。
@@ -29,21 +31,27 @@ Python 3.10 以降でインストールします: `pipx install 'session-peer[mc
 
 `codex mcp add session-peer -- /absolute/path/session-peer-mcp --config /absolute/path/policy.json` を使用して登録するか、リポジトリの `plugins/session-peer` バンドルを使用します: `codex plugin marketplace add /absolute/path/to/session-peer`、続いて `codex plugin add session-peer@session-peer`。このプラグインは PATH から `session-peer-mcp` を起動し、環境変数に設定されている場合は `SESSION_PEER_MCP_CONFIG` を読み取ります。最初に Python エクストラをインストールしてください。Python パッケージをインストールしても、既存の Codex 設定が変更されることはありません。
 
-## 未リリースの v1.4.0 候補: 宛先メタデータの取得 (#356)
+<a id="未リリースの-v140-候補-宛先メタデータの取得-356"></a>
+
+## v1.4.0 ソース: 宛先メタデータの取得 (#356)
 
 `list_destinations()` は引数を取らず、オペレーターのポリシーのメタデータだけを返します。`schemaVersion` は 1 で、各項目には `destination`、`transport`、`agents`、`capabilities` が含まれます。子プロセスの起動やネットワークリクエストは行いません。SSH ホストの値と Codex ホームのパスは省略されます。送信先の名前は信頼できないデータとして扱ってください。設定されたケーパビリティはポリシー上の権限を示し、ネイティブエージェントとの互換性は示しません。
 
 応答には制約を明示します: `callerIdentity="unavailable"`、`readiness="not_checked"`、`submission="not_attempted"`、`consumption="not_checked"`、`ack="not_checked"`。このツールは宛先が64件を超える場合や、IDに表示できない文字がある場合、UTF-8で128バイトを超える場合に取得を拒否します。テキストと構造化データを合わせたMCPツール結果は64 KiB以内で、外側のJSON-RPCエンベロープは含みません。これは取得ツールの制限であり、ポリシーの読み込みと既存ツールの動作は変わりません。表示可能な文字の判定は、実行中のPythonのUnicodeデータベースに従います。既定のローカル一覧取得専用ポリシーは変わりません。
 
-## 未リリースの v1.4.0 候補: 送信の事前検証 (#357)
+<a id="未リリースの-v140-候補-送信の事前検証-357"></a>
 
-`preflight_send(destination, target, message, wake=false, wake_timeout=30)` は、既存の CLI dry-run 検査で通常のメッセージを検証します。オペレーターのポリシーは `schemaVersion` 2 を使用し、送信先とエージェントに対して `preflight` を明示的に許可する必要があります。バージョン 1 の既存のケーパビリティには新たな権限を追加せず、既定はローカル一覧取得専用のままです。事前検証に `send` は不要で、送信を許可するものではありません。wake の適格性を調べる場合は別途 `wake` が必要ですが、モデルの起動や wake 予算の予約は行いません。
+## v1.4.0 ソース: 送信の事前検証 (#357)
+
+`preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)` は、既存の CLI dry-run 検査で通常のメッセージを検証します。オペレーターのポリシーは `schemaVersion` 2 を使用し、送信先とエージェントに対して `preflight` を明示的に許可する必要があります。バージョン 1 の既存のケーパビリティには新たな権限を追加せず、既定はローカル一覧取得専用のままです。事前検証に `send` は不要で、送信を許可するものではありません。wake の適格性を調べる場合は別途 `wake` が必要ですが、モデルの起動や wake 予算の予約は行いません。
 
 バージョン付きの説明は、SSH アダプターによる整形前のネイティブ応答から許可された事実だけを抽出し、定められた拒否・不明の理由とオペレーターの対処を示します。メッセージ本文、生のエラー、認証情報、ホスト・ホームのパス、ネイティブの記録は含めません。結果が不明な場合や予期しない投入の証拠がある場合は、`retryAllowed=false` として検証に失敗します。自動再送しないでください。事前検証はメッセージの投入や handoff 権限の作成を行いません。デバイスと handoff のモードには対応しません。
 
 既存の dry-run 検査はローカル・バージョン確認のプロセスや SSH 接続を開始する場合があり、SSH 設定自体がコマンドを実行する場合もあります。このため、このツールは `readOnlyHint=false` と `openWorldHint=true` を使用します。ホストの承認はポリシーの権限とは別です。合格は検査時点の結果であり、経路の予約、有効なストレージの証明、承認、後の送信の保証、消費、ACK を意味しません。
 
-## 未リリースの v1.4.0 候補: 制限付き診断 (#358)
+<a id="未リリースの-v140-候補-制限付き診断-358"></a>
+
+## v1.4.0 ソース: 制限付き診断 (#358)
 
 `diagnose_destination(destination="local", agent=null, active_probe=false)` には、`schemaVersion` 2 ポリシーで明示的な `diagnostics` 権限が必要です。既定モードはポリシーのメタデータと宣言されたエージェント機能のみを返し、CLI や検出プロセスの起動、ネットワーク要求は行いません。送信先 ID には送信先検出と同じ、表示可能文字と UTF-8 128 バイトの制限が適用されます。バージョン 1 と既定ポリシーは診断権限を付与しません。 既定モードの `declaredCapabilities` はアダプターの宣言に基づくブール値であり、実際の配信や準備状態を証明しません。
 
@@ -53,7 +61,7 @@ Python 3.10 以降でインストールします: `pipx install 'session-peer[mc
 
 状態・チェックのフィールドが欠落または不正な場合、一部のチェックが不完全な場合、チェック一覧が切り詰められた場合は、正常とはせず不明・不完全（`diagnostic_incomplete`）として報告します。通信段階 `tcpAccept`、`tls`、`peerAuthentication` はすべて `not_checked` のままで、診断では個別に検証しません。
 
-候補版 MCP ラッパーが対応する検査と実行上の影響は、次の範囲に限られます。
+MCP ラッパーが対応する検査と実行上の影響は、次の範囲に限られます。
 
 | モード / エージェント | 確認する事実 | プロセス / 接続への影響 |
 | --- | --- | --- |
@@ -69,9 +77,11 @@ Python 3.10 以降でインストールします: `pipx install 'session-peer[mc
 
 `tcpAccept`、`tls`、`peerAuthentication` の段階は `not_checked` のままです。ここでの `peerAuthentication` はペアリングされたデバイスの認証を指し、順方向 SSH 認証とは別です。`sshFailure` は `authentication_failed` や `host_key_failed` など、サニタイズされた順方向 SSH 失敗の分類だけを報告します。TCP、TLS、ペアリングされたデバイス、返信先ホストへのプローブは追加しません。
 
-## 未リリースの v1.4.0 候補: MCP プリセット (#359)
+<a id="未リリースの-v140-候補-mcp-プリセット-359"></a>
 
-候補版の入力シグネチャ: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
+## v1.4.0 ソース: MCP プリセット (#359)
+
+入力シグネチャ: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`; `preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
 
 `list_presets(destination)` は承認済みの経路メタデータだけを読みます。`schemaVersion` 2 のポリシーで `presets` を明示的に許可し、宛先ごとの `presets` リストに `[a-z][a-z0-9_-]{0,63}` に一致する承認済みの名前を 1 件以上、128 件以下で指定する必要があります。バージョン 1 は新しいケーパビリティとフィールドを拒否します。ストアを読む前に権限を確認します。結果には宛先と一致する承認済みの `name`、`agent`、`transport`、`revision` と既存の `dp1:` トークンだけが含まれ、実際のホスト、ホーム、ストアのパスは省略されます。保存済み経路の参照では、セッションの探索、対象の選択、SSH・ネイティブ・バージョン確認のプローブ、データの更新を行いません。バージョン付きのテキストと構造化されたツール結果は、合計 64 KiB に制限されます。
 
@@ -86,6 +96,8 @@ Python 3.10 以降でインストールします: `pipx install 'session-peer[mc
 承認済みの項目が一つでも欠落しているか、経路がポリシーと一致しない場合、メタデータ参照全体を原子的に拒否します。固定の選択拒否コードには `preset_platform_unsupported`、`preset_route_unsupported`、`preset_revision_mismatch`、`preset_storage_unavailable` があり、管理操作やファイルシステムの修復は行いません。メタデータ参照のエラーは呼び出し前に発生します。呼び出し後の入出力エラーや実際の送信応答のデコード失敗は、送信後に起きる場合もあるため、`outcome_unknown` と `retryAllowed=false` を報告し、自動再試行しないでください。確認済みのネイティブのキュー登録・送信証拠は保持します。
 
 ## ツールとパーミッション
+
+以下の二つのシグネチャは既存の基本インターフェースを説明します。v1.4.0ソースのツールと省略可能なプリセット引数は、上の各節と初期化済みMCPの`tools/list`スキーマを確認してください。ツールが表示されても、ポリシー上の権限が付与されるわけではありません。
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)` は CLI の構造化された一覧を返します。Agent は `claude` または `codex` です。省略した場合は許可されたエージェントを一覧表示します。
 - `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30)` は、`send` が明示的に許可されている場所にのみ 1 回送信します。Target は Claude 名/PID、`codex:<UUID>`、または設定されたホストとホームに正確に一致する Reply-To URI です。

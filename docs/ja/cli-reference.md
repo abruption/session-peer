@@ -1,5 +1,7 @@
 # session-peer CLI リファレンス
 
+2026-11-02のソース確認時点では、以下のv1.4.0ソース機能は公開済みv1.3.3を基に準備したもので、利用可能になったことの告知ではありません。利用前に[リリースノート](releases/v1.4.0.md)と実際のGitHub/PyPIの公開状況を確認してください。
+
 [概要に戻る](../../README.ja.md)
 
 ## 受信セッションの世代を固定する条件（開発中）
@@ -118,7 +120,9 @@ Handoff status は読み取り専用スナップショットを再利用し、in
 
 Send の通常のメッセージ入力要件と上限は変わりません。従来どおり `--message`、`--message-file` または stdin を使い、仮の本文は自動生成しません。説明フィールドに本文や receipt の秘密値は含めません。通常の説明は stdout に、失敗した結果や予期しない投入の証拠に関する説明は stderr に出力し、既存の要約・エラーの出力先は変えません。不明な証拠は不明のまま表示し、実際の送信結果が不確実な場合は自動再送しません。
 
-### 未リリースの v1.4.0 候補: 構造化された送信プレビュー (#357)
+<a id="未リリースの-v140-候補-構造化された送信プレビュー-357"></a>
+
+### v1.4.0 ソース: 構造化された送信プレビュー (#357)
 
 `send --dry-run --explain-json` は、ローカルまたは SSH の検証について、バージョン付きで許可されたフィールドだけの JSON 説明を出力する選択肢です。テキストプレビューと同じ分類を使用し、SSH アダプターによる整形前のネイティブ応答を基にします。通常のメッセージ入力と上限が適用され、仮の本文は生成しません。出力にメッセージ本文、生のエラー、パスは含めません。結果が不明な場合や予期しない投入の証拠がある場合は検証に失敗し、自動再試行を許可しません。
 
@@ -209,9 +213,11 @@ UUID は現在の一覧で確認した値に、ハッシュは選択したプリ
 
 macOS で所有権を無視するマウントは `preset_ownership_unenforced`、マウント照会が利用できない、または検証できない場合は `preset_mount_unverifiable` で拒否します。モードビットだけを所有権が強制される証拠とは扱いません。Linux では上位経路の ACL も、ACL 状態を検証できないファイルシステムも拒否します。管理コマンドを中断した後は、変更が既に見えている可能性があるため現在の設定を確認してください。ディレクトリの同期失敗を黙って成功とは扱いません。
 
-### 未リリースの v1.4.0 候補: MCP プリセット (#359)
+<a id="未リリースの-v140-候補-mcp-プリセット-359"></a>
 
-候補版の入力シグネチャ: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
+### v1.4.0 ソース: MCP プリセット (#359)
+
+入力シグネチャ: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`; `preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
 
 MCP プリセットの参照と選択では、オペレーターの明示的な許可リストと既存の安全なスナップショット読み取り関数を使います。CLI のプリセット管理コマンドや自動選択は追加しません。[MCP プリセットのポリシーと制限](mcp.md)を参照してください。MCP の選択では、CLI の `--preset` と明示的な経路フラグを組み合わせず、承認済みの経路を展開します。既存の CLI 出力、リビジョン、ファイルシステムの安全性に関する契約は変わりません。
 
@@ -424,7 +430,7 @@ session-peer send --to 'session-peer://v1/reply?agent=claude&session=api-worker&
 
 ### JSON レスポンス規約
 
-すべての JSON 結果オブジェクトは、同じスキーマバージョン付きのエンベロープで始まります:
+`list`、`send`、`doctor`、`update` の通常の `--json` 結果には、次のスキーマバージョン付きエンベロープを使います。選択式の `--explain-json` 出力（`send.preflight`）と MCP のメタデータ・事前検査応答は、別途文書化されたスキーマを使い、`host` を意図的に省きます。ホストを補ったり、フィールドの欠如から経路を推測したりしないでください:
 
 ```json
 {
@@ -864,9 +870,9 @@ Codex メッセージは、測定された Codex サーバーの制限ではな�
 不明な障害を個別のコードとして報告します。受信トレイへの接続、キューへの書き込み、
 任意のディレクトリのスキャン、エージェント/SSH 設定の変更は行いません。
 
-未リリースの v1.4.0 候補 (#358): `doctor --agent NAME` は SSH 経由も含め、チェックと宣言されたエージェント機能を選択した登録済みエージェントに限定し、共通のインストール済みスキル一覧の検査も省略します。`doctor --agent codex --selected-home-only --codex-home /absolute/home` は選択した Codex ホームのみを検査し、他のホームの一覧確認を省略します。これらのオプションは逆方向経路のチェックを有効にしません。省略すると、既存の全エージェントおよび制限付き複数ホーム診断の動作を維持します。
+v1.4.0 ソース (#358): `doctor --agent NAME` は SSH 経由も含め、チェックと宣言されたエージェント機能を選択した登録済みエージェントに限定し、共通のインストール済みスキル一覧の検査も省略します。`doctor --agent codex --selected-home-only --codex-home /absolute/home` は選択した Codex ホームのみを検査し、他のホームの一覧確認を省略します。これらのオプションは逆方向経路のチェックを有効にしません。省略すると、既存の全エージェントおよび制限付き複数ホーム診断の動作を維持します。
 
-候補版 MCP ラッパーが対応する検査と実行上の影響は、次の範囲に限られます。
+MCP ラッパーが対応する検査と実行上の影響は、次の範囲に限られます。
 
 | モード / エージェント | 確認する事実 | プロセス / 接続への影響 |
 | --- | --- | --- |

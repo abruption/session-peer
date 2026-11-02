@@ -1,5 +1,7 @@
 # session-peer CLI 레퍼런스
 
+2026-11-02 소스 확인 시점: 아래 v1.4.0 소스 기능은 공개된 v1.3.3을 기준으로 준비한 내용이며 사용 가능 여부를 알리는 발행 공지가 아닙니다. 사용 전 [릴리스 노트](releases/v1.4.0.md)와 실제 GitHub/PyPI 공개 상태를 확인하십시오.
+
 [개요로 돌아가기](../../README.ko.md)
 
 ## 수신 세션 세대 고정 조건 (개발 중)
@@ -119,7 +121,9 @@ Handoff status는 읽기 전용 스냅샷을 재사용하며 intent·receipt cap
 
 Send의 메시지 입력 요구사항과 한도는 동일합니다. 평소처럼 `--message`, `--message-file` 또는 stdin을 사용하며 임시 본문을 자동 생성하지 않습니다. 설명 필드에는 본문이나 receipt 비밀값을 넣지 않습니다. 일반 설명은 stdout에, 실패 결과나 예상 밖 제출 증거의 설명은 stderr에 표시하며 기존 요약·오류 출력의 위치는 바꾸지 않습니다. 확인할 수 없는 증거는 그대로 알 수 없음으로 표시하고, 실제 전송 결과가 불확실하면 자동 재전송하지 않습니다.
 
-### 미출시 v1.4.0 후보: 구조화된 전송 미리 보기 (#357)
+<a id="미출시-v140-후보-구조화된-전송-미리-보기-357"></a>
+
+### v1.4.0 소스: 구조화된 전송 미리 보기 (#357)
 
 `send --dry-run --explain-json`은 로컬 또는 SSH 검증에 대해 버전이 지정되고 허용된 필드로만 구성된 JSON 설명을 선택합니다. 텍스트 미리 보기와 동일한 분류를 사용하며 SSH 어댑터가 결과를 가공하기 전의 네이티브 응답을 기준으로 합니다. 일반 메시지 입력과 제한이 적용되며 임시 본문을 생성하지 않습니다. 출력에 메시지 내용, 원시 오류와 경로는 포함되지 않습니다. 결과가 불확실하거나 예상치 못한 제출 증거가 있으면 검증에 실패하며 자동 재시도 권한을 부여하지 않습니다.
 
@@ -209,9 +213,11 @@ UUID는 현재 목록에서 확인한 값으로, 해시는 선택한 프리셋�
 
 Mac에서 소유권을 무시하는 마운트는 `preset_ownership_unenforced`로, 마운트 조회를 수행하거나 검증할 수 없으면 `preset_mount_unverifiable`로 거부합니다. 파일 모드만으로 소유권 강제를 증명했다고 취급하지 않습니다. Linux에서는 상위 경로의 ACL도 거부하며 ACL 상태를 검증할 수 없는 파일시스템도 거부합니다. 관리 명령을 중단했을 때는 변경이 이미 보일 수 있으므로 현재 설정을 확인하세요. 디렉터리 동기화 실패를 조용히 성공으로 처리하지 않습니다.
 
-### 미출시 v1.4.0 후보: MCP 프리셋 (#359)
+<a id="미출시-v140-후보-mcp-프리셋-359"></a>
 
-후보 버전 입력 시그니처: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
+### v1.4.0 소스: MCP 프리셋 (#359)
+
+입력 시그니처: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`; `preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
 
 MCP 프리셋 조회와 선택은 운영자의 명시적 허용 목록과 기존 보안 스냅샷 읽기 함수를 사용하며, CLI 프리셋 관리 명령이나 자동 선택을 추가하지 않습니다. [MCP 프리셋 정책과 제한](mcp.md)을 참고하십시오. MCP 선택은 CLI `--preset`과 명시적 경로 플래그를 함께 사용하는 대신 승인된 경로를 확장합니다. 기존 CLI 출력, 리비전 및 파일 시스템 보안 규약은 유지됩니다.
 
@@ -423,7 +429,7 @@ OS 사용자를 가리키는 URI는 로컬 전달로 정규화되어 불필요�
 
 ### JSON 응답 규약
 
-모든 JSON 결과 객체는 동일한 스키마 버전 관리형 봉투로 시작합니다:
+`list`, `send`, `doctor`, `update`의 일반 `--json` 결과는 다음과 같은 스키마 버전 관리형 봉투를 사용합니다. 선택형 `--explain-json` 출력(`send.preflight`)과 MCP 메타데이터·사전검사 응답은 별도의 문서화된 스키마를 사용하며 `host`를 의도적으로 생략합니다. 호스트를 임의로 추가하거나 필드가 없다는 이유로 경로를 추정하지 마십시오:
 
 ```json
 {
@@ -861,9 +867,9 @@ SSH 실패나 시간 초과가 발생해도 성공·거부 및 네이티브 제�
 연결하거나, 큐에 쓰거나, 임의의 디렉터리를 검색하거나, 에이전트/SSH 설정을 변경하지
 않습니다.
 
-미출시 v1.4.0 후보 (#358): `doctor --agent NAME`은 SSH 경유 실행에서도 검사와 선언된 에이전트 기능을 선택한 등록 에이전트로 제한하며, 공통 설치 스킬 목록 검사도 건너뜁니다. `doctor --agent codex --selected-home-only --codex-home /absolute/home`은 선택한 Codex 홈만 검사하고 다른 홈 목록은 확인하지 않습니다. 이 옵션은 역방향 경로 검사를 활성화하지 않습니다. 옵션을 생략하면 기존의 전체 에이전트 및 제한된 다중 홈 진단 동작이 유지됩니다.
+v1.4.0 소스 (#358): `doctor --agent NAME`은 SSH 경유 실행에서도 검사와 선언된 에이전트 기능을 선택한 등록 에이전트로 제한하며, 공통 설치 스킬 목록 검사도 건너뜁니다. `doctor --agent codex --selected-home-only --codex-home /absolute/home`은 선택한 Codex 홈만 검사하고 다른 홈 목록은 확인하지 않습니다. 이 옵션은 역방향 경로 검사를 활성화하지 않습니다. 옵션을 생략하면 기존의 전체 에이전트 및 제한된 다중 홈 진단 동작이 유지됩니다.
 
-후보 MCP 래퍼가 지원하는 검사와 실행 효과는 다음으로 제한됩니다.
+MCP 래퍼가 지원하는 검사와 실행 효과는 다음으로 제한됩니다.
 
 | 모드 / 에이전트 | 확인하는 사실 | 프로세스 / 연결 효과 |
 | --- | --- | --- |

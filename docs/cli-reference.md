@@ -1,5 +1,7 @@
 # session-peer CLI reference
 
+Source checkpoint 2026-11-02: the v1.4.0 source features below are prepared against published v1.3.3, not an availability announcement. Check the [release notes](releases/v1.4.0.md) and actual GitHub/PyPI publication before using them.
+
 [Back to the overview](../README.md)
 
 Detailed command behavior, installation options, transport limits, and historical validation follow below.
@@ -85,7 +87,9 @@ This scope is text-only: combining `--explain` with `--json` or `--output-format
 
 For send, the normal message requirement and limits still apply: supply `--message`, `--message-file` or stdin as usual; no placeholder body is generated. Explanation fields do not include the body or receipt secrets. Normal explanations use stdout; failed results or unexpected submission evidence use stderr, without moving existing summary/error output. Unknown evidence stays unknown, and an uncertain actual send must never trigger automatic resend.
 
-### Unreleased v1.4.0 candidate: structured send preview (#357)
+<a id="unreleased-v140-candidate-structured-send-preview-357"></a>
+
+### v1.4.0 source: structured send preview (#357)
 
 `send --dry-run --explain-json` opts into a versioned, allowlisted JSON explanation for local or SSH validation. It uses the same classification as the text preview and the native response before SSH adapter shaping. Normal message inputs and limits apply; no placeholder body is generated. The output excludes message contents, raw errors and paths. Unknown or unexpected submission evidence fails validation and does not authorize automatic retry.
 
@@ -219,9 +223,11 @@ Checked ancestors must be owned by root or the current user and not writable by 
 
 On macOS, mounts that ignore ownership are refused with `preset_ownership_unenforced`; an unavailable or unverifiable mount query is refused with `preset_mount_unverifiable`. Mode bits alone are not treated as proof that ownership is enforced. On Linux, ACLs on ancestors are also refused, as are filesystems whose ACL state cannot be verified. After an interrupted management command, inspect the current configuration because the change may already be visible; directory-sync failures are not silently accepted.
 
-### Unreleased v1.4.0 candidate: MCP presets (#359)
+<a id="unreleased-v140-candidate-mcp-presets-359"></a>
 
-Candidate input signatures: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
+### v1.4.0 source: MCP presets (#359)
+
+Input signatures: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`; `preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
 
 MCP preset lookup and selection use an explicit operator allowlist and the existing secure snapshot reader; they add no CLI preset-management commands or automatic selection. See [MCP preset policy and limits](mcp.md). MCP selection expands an approved route instead of combining CLI `--preset` with explicit routing flags. Existing CLI output, revision and filesystem-security contracts remain unchanged.
 
@@ -433,7 +439,7 @@ Repeat `--host` to operate on several SSH destinations. `--json` is available on
 
 ### JSON response contract
 
-Every JSON result object starts with the same schema-versioned envelope:
+Ordinary `--json` results from `list`, `send`, `doctor`, and `update` use the following schema-versioned envelope. The opt-in `--explain-json` output (`send.preflight`) and MCP metadata/preflight projections have separate documented schemas and intentionally omit `host`; do not add a host or infer a route from its absence:
 
 ```json
 {
@@ -919,9 +925,9 @@ executable and bounded home/state DB candidates, unsupported DB schemas, and
 permission or unknown failures as distinct codes. It does not connect to an
 inbox, write a queue, scan arbitrary directories, or alter agent/SSH settings.
 
-Unreleased v1.4.0 candidate (#358): `doctor --agent NAME` restricts checks and declared agent capabilities to the selected registered agent, including execution over SSH. It also skips the shared installed-skill inventory. `doctor --agent codex --selected-home-only --codex-home /absolute/home` checks only the selected Codex home and skips the inventory of other homes. These options do not enable reverse-route checks. Without them, existing all-agent and bounded multi-home diagnostics keep their behavior.
+v1.4.0 source (#358): `doctor --agent NAME` restricts checks and declared agent capabilities to the selected registered agent, including execution over SSH. It also skips the shared installed-skill inventory. `doctor --agent codex --selected-home-only --codex-home /absolute/home` checks only the selected Codex home and skips the inventory of other homes. These options do not enable reverse-route checks. Without them, existing all-agent and bounded multi-home diagnostics keep their behavior.
 
-The candidate MCP wrapper supports only the following checks and effects:
+The MCP wrapper supports only the following checks and effects:
 
 | Mode / agent | Checked facts | Process / connection effects |
 | --- | --- | --- |

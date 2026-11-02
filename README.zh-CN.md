@@ -33,7 +33,7 @@ session-peer使用各智能体自身的收件箱和队列；接收方智能体�
 ### 安装
 
 需要Python 3.9或更高版本。核心本地与SSH CLI没有第三方Python依赖。
-源码版本：**1.3.3**。[维护说明](docs/zh-CN/releases/v1.3.3.md)介绍 Python 3.14 的验证范围、贡献流程与文档维护，以及兼容技能副本。Python 发布、Node Control 部署及独立管理的技能更新是不同的工作。
+源码版本：**1.4.0**（截至2026-11-02准备检查点：尚未发布的候选版本，当时最新已发布版本为1.3.3）。[发布说明](docs/zh-CN/releases/v1.4.0.md)介绍有限范围的MCP发现、传递预检与诊断、路由预设及独立技能提案。Python发布、Node Control部署及独立管理的技能更新是不同的工作。
 
 可选的[MCP extra](docs/zh-CN/mcp.md)现在要求`mcp>=1.30,<2`；MCP的Python 3.10+要求和无外部依赖的Python 3.9核心保持不变。现有MCP环境需要显式升级软件包。
 
@@ -105,7 +105,7 @@ Unix、Python 3.11以上和 `session-peer[relay]`，并要求固定设备身份�
 软件包发布不保证托管服务可用性。
 盲转发Relay无法解密应用消息的内容。
 [MCP与Codex插件](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/mcp.md)需要Python 3.10以上及
-`session-peer[mcp]`；MCP wake需要同时具备 `send` 和 `wake` 两项能力。
+`session-peer[mcp]`；MCP 发送中实际请求 wake 时，需要同时具备 `send` 和 `wake` 两项能力。
 [Wake](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/wake.md)仅在显式请求时运行，
 可能启动一轮任务、消耗使用额度或修改项目文件。
 [Antigravity桥接](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/antigravity.md)仍处于实验阶段。

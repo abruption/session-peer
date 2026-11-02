@@ -24,6 +24,8 @@ installation paths.
 
 ## Development and history
 
+- [v1.4.0 preparation](releases/v1.4.0.md) records the merged MCP policy, preflight, diagnostics and preset changes at the 2026-11-02 source checkpoint; publication and independent skill adoption remain separate.
+
 - [v1.3.3 maintenance preparation](releases/v1.3.3.md) covers Python 3.14 CI/metadata, contributor and publication guidance, and the verified compatibility skill v0.4.1 snapshot. Publication and operational deployment remain separate.
 
 - [v1.3.2 maintenance notes](releases/v1.3.2.md) explain macOS firewall approval, Direct listener/TLS diagnostics, the MCP SDK floor and the Control security update outside Python archives, which requires a separate rollout.

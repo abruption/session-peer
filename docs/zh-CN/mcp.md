@@ -1,5 +1,7 @@
 # 可选 Codex MCP 集成
 
+2026-11-02 源码检查时点：下述 v1.4.0 功能是在已发布 v1.3.3 的基础上准备的内容，并非发布公告。采用前请查看[发布说明](releases/v1.4.0.md)及实际 GitHub/PyPI 发布状态。
+
 在 Python 3.10 或更高版本下安装：`pipx install 'session-peer[mcp]'`（或在隔离的 venv 中安装 extra）。仍支持无依赖的 Python 3.9 CLI 和 `install.sh`。shell 安装程序不安装 MCP 依赖项。在 Python 3.9 上，MCP 入口点会报告需要 Python 3.10+。
 
 可选extra要求MCP SDK `mcp>=1.30,<2`。这是将依赖版本下限提高到包含上游1.x安全修复的版本，并不表示已在这个仅使用stdio的服务器中确认可利用漏洞。本次变更不启用HTTP传输、OAuth服务器路径或MCP客户端路径。现有环境需要显式升级软件包；仅修改声明不会更新已安装的SDK。
@@ -29,21 +31,27 @@
 
 使用 `codex mcp add session-peer -- /absolute/path/session-peer-mcp --config /absolute/path/policy.json` 进行注册，或使用仓库的 `plugins/session-peer` 捆绑包：`codex plugin marketplace add /absolute/path/to/session-peer`，然后 `codex plugin add session-peer@session-peer`。该插件从 PATH 启动 `session-peer-mcp`，并在其环境中设置了 `SESSION_PEER_MCP_CONFIG` 时读取该配置。请先安装 Python extra。安装 Python 软件包不会修改现有的 Codex 设置。
 
-## 尚未发布的 v1.4.0 候选版本：目的地发现 (#356)
+<a id="尚未发布的-v140-候选版本目的地发现-356"></a>
+
+## v1.4.0 源码：目的地发现 (#356)
 
 `list_destinations()` 不接受参数，仅返回操作员策略的元数据：`schemaVersion` 为 1，每个条目包含 `destination`、`transport`、`agents` 和 `capabilities`。它不会启动子进程，也不会发起网络请求。SSH 主机配置值和 Codex 主目录路径会被省略。目的地名称是不可信数据。已配置的功能表示策略权限，不表示原生代理的兼容性。
 
 响应明确列出限制：`callerIdentity="unavailable"`、`readiness="not_checked"`、`submission="not_attempted"`、`consumption="not_checked"` 和 `ack="not_checked"`。目的地超过 64 个、ID 含不可打印字符或 UTF-8 编码超过 128 字节时，此工具拒绝查询。文本与结构化内容合计的 MCP 工具结果不超过 64 KiB，不包括外层 JSON-RPC 信封。这些限制仅适用于查询工具，策略加载及现有工具的行为保持不变。可打印字符的判定遵循运行中 Python 的 Unicode 数据库。默认的仅限本地列表查询的策略保持不变。
 
-## 尚未发布的 v1.4.0 候选版本：发送预检 (#357)
+<a id="尚未发布的-v140-候选版本发送预检-357"></a>
 
-`preflight_send(destination, target, message, wake=false, wake_timeout=30)` 通过现有 CLI dry-run 检查验证普通消息。操作员策略必须使用 `schemaVersion` 2，并为目的地和代理显式授予 `preflight`。版本 1 保留原有的功能集合，不会自动获得新权限；默认策略仍仅允许本地列表查询。预检不需要 `send`，也不能授予发送权限。如需检查唤醒资格，还必须单独具有 `wake`，但不会激活模型或预留唤醒额度。
+## v1.4.0 源码：发送预检 (#357)
+
+`preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)` 通过现有 CLI dry-run 检查验证普通消息。操作员策略必须使用 `schemaVersion` 2，并为目的地和代理显式授予 `preflight`。版本 1 保留原有的功能集合，不会自动获得新权限；默认策略仍仅允许本地列表查询。预检不需要 `send`，也不能授予发送权限。如需检查唤醒资格，还必须单独具有 `wake`，但不会激活模型或预留唤醒额度。
 
 带有版本的说明会在 SSH 适配器加工结果前，从原生响应中提取允许的事实，并提供固定的拒绝或未知原因及操作员处置建议。它不包含消息内容、原始错误、凭据、主机或主目录路径、原生记录。结果未知或存在意外提交证据时，验证失败并返回 `retryAllowed=false`；切勿自动重发。预检不会提交消息或创建 handoff 授权。不支持设备和 handoff 模式。
 
 现有 dry-run 检查可能启动本地或版本查询进程、建立 SSH 连接；SSH 配置本身也可能执行命令。因此该工具使用 `readOnlyHint=false` 和 `openWorldHint=true`。宿主批准独立于策略权限。通过仅表示检查时点的结果，不代表预留路由、证明有效存储、批准、保证后续发送、消费或 ACK。
 
-## 尚未发布的 v1.4.0 候选版本：有界诊断 (#358)
+<a id="尚未发布的-v140-候选版本有界诊断-358"></a>
+
+## v1.4.0 源码：有界诊断 (#358)
 
 `diagnose_destination(destination="local", agent=null, active_probe=false)` 要求在 `schemaVersion` 2 策略中显式授予 `diagnostics` 权限。默认模式仅返回策略元数据和声明的代理功能，不启动 CLI 或发现进程，也不发起网络请求。目的地 ID 采用与目的地发现相同的可打印字符及 UTF-8 128 字节限制。版本 1 和默认策略均不授予诊断权限。 默认模式的 `declaredCapabilities` 包含来自适配器声明的布尔值，不证明实际送达或就绪状态。
 
@@ -53,7 +61,7 @@
 
 状态或检查字段缺失、格式错误、检查不完整或检查列表被截断时，结果报告为未知或不完整（`diagnostic_incomplete`），不会报告为健康。传输阶段 `tcpAccept`、`tls` 和 `peerAuthentication` 均保持 `not_checked`；诊断不会单独验证这些阶段。
 
-候选版 MCP 包装层仅支持以下检查及执行效果：
+MCP 包装层仅支持以下检查及执行效果：
 
 | 模式 / 代理 | 检查的事实 | 进程 / 连接效果 |
 | --- | --- | --- |
@@ -69,9 +77,11 @@
 
 `tcpAccept`、`tls` 和 `peerAuthentication` 阶段保持 `not_checked`。这里的 `peerAuthentication` 指配对设备身份验证，与正向 SSH 身份验证不同。`sshFailure` 仅报告经过脱敏的正向 SSH 失败类别，例如 `authentication_failed` 或 `host_key_failed`。不会新增 TCP、TLS、配对设备或回复主机探测。
 
-## 尚未发布的 v1.4.0 候选版本：MCP 预设 (#359)
+<a id="尚未发布的-v140-候选版本mcp-预设-359"></a>
 
-候选版本输入签名: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
+## v1.4.0 源码：MCP 预设 (#359)
+
+输入签名: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`; `preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
 
 `list_presets(destination)` 仅读取已批准的路径元数据。`schemaVersion` 2 策略必须显式授予 `presets`，并在每个目的地的 `presets` 列表中提供 1 至 128 个符合 `[a-z][a-z0-9_-]{0,63}` 的已批准名称。版本 1 拒绝新增功能和字段。任何存储读取之前都先检查授权。结果仅公开与目的地匹配的已批准 `name`、`agent`、`transport` 和 `revision` 值及现有 `dp1:` 令牌，省略实际主机、主目录和存储路径。查询已保存的路径不会发现会话、选择目标、执行 SSH/原生/版本探测或刷新数据。带版本的文本与结构化工具结果合计限制为 64 KiB。
 
@@ -86,6 +96,8 @@
 任一已批准项缺失或其路由与策略不匹配时，整个元数据查询都会被原子拒绝。固定的选择拒绝代码包括 `preset_platform_unsupported`、`preset_route_unsupported`、`preset_revision_mismatch` 和 `preset_storage_unavailable`；不会尝试管理操作或文件系统修复。元数据查询错误发生在调用之前。调用后的 I/O 错误或实际发送响应的解码失败可能发生在提交之后，因此必须报告 `outcome_unknown` 和 `retryAllowed=false`，切勿自动重试。已确认的原生排队或提交证据必须保留。
 
 ## 工具与权限
+
+以下两个签名说明原有的基本接口。v1.4.0源码工具及可选预设参数请参阅上文各节和初始化后的MCP `tools/list`模式。工具可见并不授予策略权限。
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)` 返回 CLI 的结构化列表。Agent 可以是 `claude` 或 `codex`；省略则列出允许的代理。
 - `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30)` 仅在显式允许 `send` 的情况下提交一次。Target 是 Claude 名称/PID、`codex:<UUID>` 或与配置的主机和主目录完全匹配的 Reply-To URI。

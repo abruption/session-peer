@@ -1,5 +1,7 @@
 # Optional Codex MCP integration
 
+Source checkpoint 2026-11-02: the v1.4.0 features below are prepared against published v1.3.3, not a publication announcement. Check the [release notes](releases/v1.4.0.md) and actual GitHub/PyPI availability before adopting them.
+
 Install with Python 3.10 or later: `pipx install 'session-peer[mcp]'` (or install the extra in an isolated venv). The dependency-free Python 3.9 CLI and `install.sh` remain supported. The shell installer does not install MCP dependencies. On Python 3.9 the MCP entry point reports that Python 3.10+ is required.
 
 The optional extra requires MCP SDK `mcp>=1.30,<2`. This raises the dependency floor past upstream 1.x security fixes; it does not establish an exploitable issue in this stdio-only server. HTTP transports, OAuth server paths and MCP client paths are not enabled by this change. Existing environments need an explicit package upgrade; changing the manifest does not update an installed SDK.
@@ -29,21 +31,27 @@ Use the actual username and SSH destination, configured keys and known_hosts. No
 
 Register using `codex mcp add session-peer -- /absolute/path/session-peer-mcp --config /absolute/path/policy.json`, or use the repository's `plugins/session-peer` bundle: `codex plugin marketplace add /absolute/path/to/session-peer`, then `codex plugin add session-peer@session-peer`. The plugin launches `session-peer-mcp` from PATH and reads `SESSION_PEER_MCP_CONFIG` when set in its environment. Install the Python extra first. Existing Codex settings are not modified by installing the Python package.
 
-## Unreleased v1.4.0 candidate: destination discovery (#356)
+<a id="unreleased-v140-candidate-destination-discovery-356"></a>
+
+## v1.4.0 source: destination discovery (#356)
 
 `list_destinations()` takes no arguments and returns only operator-policy metadata: `schemaVersion` is 1, and each entry contains `destination`, `transport`, `agents`, and `capabilities`. It starts no child process and makes no network request. SSH host values and Codex home paths are omitted. Destination labels are untrusted data. Configured capabilities describe policy permissions, not native-agent compatibility.
 
 The response includes explicit limits: `callerIdentity="unavailable"`, `readiness="not_checked"`, `submission="not_attempted"`, `consumption="not_checked"`, and `ack="not_checked"`. This tool rejects inventories over 64 destinations or IDs that are not printable or exceed 128 UTF-8 bytes. Its complete MCP tool result (text and structured content together) is bounded to 64 KiB, excluding the surrounding JSON-RPC envelope. These are lookup limits; policy loading and existing tools keep their previous behavior. Printability follows the running Python Unicode database. The default local-list-only policy is unchanged.
 
-## Unreleased v1.4.0 candidate: send preflight (#357)
+<a id="unreleased-v140-candidate-send-preflight-357"></a>
 
-`preflight_send(destination, target, message, wake=false, wake_timeout=30)` validates a normal message through the existing CLI dry-run checks. Operator policy must use `schemaVersion` 2 and explicitly grant `preflight` for the destination and agent. Version 1 keeps its existing capability set and acquires no new permission; the default remains local-list-only. Preflight does not require `send` and cannot authorize sending. Requested wake eligibility additionally requires `wake`, without activating a model or reserving a wake budget.
+## v1.4.0 source: send preflight (#357)
+
+`preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)` validates a normal message through the existing CLI dry-run checks. Operator policy must use `schemaVersion` 2 and explicitly grant `preflight` for the destination and agent. Version 1 keeps its existing capability set and acquires no new permission; the default remains local-list-only. Preflight does not require `send` and cannot authorize sending. Requested wake eligibility additionally requires `wake`, without activating a model or reserving a wake budget.
 
 The versioned explanation projects allowlisted facts from the native response before SSH adapter shaping, with fixed refusal/unknown reasons and operator actions. It excludes message contents, raw errors, credentials, host/home paths and native transcripts. Unknown or unexpected submission evidence fails validation with `retryAllowed=false`; never automatically resend. Preflight neither submits a message nor creates handoff authority. Device and handoff modes are unsupported.
 
 Existing dry-run checks may start local/version processes and SSH connections; SSH configuration may itself execute commands. The tool therefore uses `readOnlyHint=false` and `openWorldHint=true`. Host approvals remain separate from policy permission. Passing records point-in-time checks, not a route reservation, effective-storage attestation, approval, later-send guarantee, consumption or ACK.
 
-## Unreleased v1.4.0 candidate: bounded diagnostics (#358)
+<a id="unreleased-v140-candidate-bounded-diagnostics-358"></a>
+
+## v1.4.0 source: bounded diagnostics (#358)
 
 `diagnose_destination(destination="local", agent=null, active_probe=false)` requires an explicit `diagnostics` permission in a `schemaVersion` 2 policy. The default mode returns policy metadata and declared agent capabilities only; it starts no CLI or discovery process and makes no network request. The destination ID follows the same printable, 128 UTF-8 byte limit as destination discovery. Version 1 and the default policy grant no diagnostic permission. Default-mode `declaredCapabilities` contains typed booleans from adapter declarations; these declarations do not demonstrate delivery or readiness.
 
@@ -53,7 +61,7 @@ Responses expose allowlisted statuses and diagnostic codes, omitting raw errors,
 
 Missing or malformed status/check fields, partial checks, or truncated check lists are reported as unknown/incomplete (`diagnostic_incomplete`), never as healthy. The transport stages `tcpAccept`, `tls`, and `peerAuthentication` remain `not_checked`; diagnostics do not separately verify them.
 
-The candidate MCP wrapper supports only the following checks and effects:
+The MCP wrapper supports only the following checks and effects:
 
 | Mode / agent | Checked facts | Process / connection effects |
 | --- | --- | --- |
@@ -69,9 +77,11 @@ Representative allowlisted codes include `sessions_dir_missing`, `inbox_present`
 
 The stages `tcpAccept`, `tls` and `peerAuthentication` remain `not_checked`. Here `peerAuthentication` refers to paired-device authentication, separate from forward SSH authentication. `sshFailure` reports only a sanitized forward SSH failure category, such as `authentication_failed` or `host_key_failed`. No TCP, TLS, paired-device or return-host probe is added.
 
-## Unreleased v1.4.0 candidate: MCP presets (#359)
+<a id="unreleased-v140-candidate-mcp-presets-359"></a>
 
-Candidate input signatures: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
+## v1.4.0 source: MCP presets (#359)
+
+Input signatures: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`; `preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
 
 `list_presets(destination)` reads only approved route metadata. A `schemaVersion` 2 policy must explicitly grant `presets` and provide a nonempty per-destination `presets` list of at most 128 approved names matching `[a-z][a-z0-9_-]{0,63}`. Version 1 rejects the new capability and field. Authorization precedes any store read. The result exposes only matching approved `name`, `agent`, `transport` and `revision` values, with the existing `dp1:` token; raw hosts, homes and store paths are omitted. Saved-route lookup does not discover sessions, choose a target, run SSH/native/version probes or refresh data. The versioned text and structured tool result together are bounded to 64 KiB.
 
@@ -86,6 +96,8 @@ The new 64 KiB tool-result budget applies only to the `list_presets` metadata qu
 If any approved item is missing or its route mismatches policy, the whole metadata lookup is refused atomically. Fixed selector refusal codes include `preset_platform_unsupported`, `preset_route_unsupported`, `preset_revision_mismatch` and `preset_storage_unavailable`; no management or filesystem repair is attempted. Metadata-query failures precede invocation. After invocation, I/O or actual-send decode failure may follow submission: report `outcome_unknown` with `retryAllowed=false` and never retry automatically. Preserve any known native queued/submitted evidence.
 
 ## Tools and permissions
+
+The two signatures below describe the original baseline interface. For v1.4.0 source tools and optional preset selectors, use the sections above and the initialized MCP `tools/list` schema. Tool availability does not grant policy permission.
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)` returns the CLI's structured listing. Agent may be `claude` or `codex`; omission lists permitted agents.
 - `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30)` submits once, only where `send` is explicitly allowed. Target is a Claude name/PID, `codex:<UUID>`, or a Reply-To URI matching the configured host and home exactly.
