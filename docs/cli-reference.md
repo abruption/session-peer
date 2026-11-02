@@ -221,11 +221,15 @@ On macOS, mounts that ignore ownership are refused with `preset_ownership_unenfo
 
 ### Unreleased v1.4.0 candidate: MCP presets (#359)
 
+Candidate input signatures: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
+
 MCP preset lookup and selection use an explicit operator allowlist and the existing secure snapshot reader; they add no CLI preset-management commands or automatic selection. See [MCP preset policy and limits](mcp.md). MCP selection expands an approved route instead of combining CLI `--preset` with explicit routing flags. Existing CLI output, revision and filesystem-security contracts remain unchanged.
 
 For MCP `list_sessions`, `preflight_send` and `send_message`, optional `preset` and `preset_revision` inputs require both the existing action permission and `presets`. Actual sends require the current `dp1:` revision and an explicit target. Wake and Reply-To URI combinations are rejected. A revision is checked during lookup, not as a target generation or authority, and later changes cannot cancel a route already expanded for invocation.
 
-The new 64 KiB tool-result budget applies only to the `list_presets` metadata query. Enriched existing list/send responses retain their native payload, submission evidence and transport limits; selecting a preset adds no aggregate 64 KiB limit to a real send. Metadata-query errors occur before invocation. After an action invokes the CLI, an I/O failure may occur after submission: preserve an unknown outcome and never retry automatically.
+The new 64 KiB tool-result budget applies only to the `list_presets` metadata query. A preset is only a route selector for existing actions, with the same action authorization and exact policy-route matching. Successful `list_sessions` and `send_message` responses keep the existing CLI schema and native payload, without preset metadata, a new command or an added data projection. Existing native evidence and transport limits remain intact; real sends gain no aggregate 64 KiB limit. Inspect revisions separately with `list_presets`. Selected `preflight_send` may include only safe preset metadata: `name`, `agent`, `transport` and `revision`.
+
+If any approved item is missing or its route mismatches policy, the whole metadata lookup is refused atomically. Fixed selector refusal codes include `preset_platform_unsupported`, `preset_route_unsupported`, `preset_revision_mismatch` and `preset_storage_unavailable`; no management or filesystem repair is attempted. Metadata-query failures precede invocation. After invocation, I/O or actual-send decode failure may follow submission: report `outcome_unknown` with `retryAllowed=false` and never retry automatically. Preserve any known native queued/submitted evidence.
 
 <a id="recipient-addressbook-development"></a>
 

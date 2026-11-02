@@ -109,9 +109,7 @@ class PresetSelection(unittest.IsolatedAsyncioTestCase):
         self.mock_lookup.assert_called_once_with('work')
         self.mock_read.assert_not_called()
         self.assertEqual(self.adapter.invoke.call_args.args[0], ['list', '--agent', 'claude', '--all'])
-        self.assertEqual(value['preset']['revision'], core.preset_revision('work', LOCAL))
-        self.assertEqual(value['preset']['transport'], 'local')
-        self.assertEqual(value['command'], 'mcp.preset.sessions')
+        self.assertEqual(value, self.adapter.invoke.return_value)
 
     async def test_remote_preflight_expands_exact_route_and_keeps_revision_metadata(self):
         self.mock_lookup.side_effect = lambda name: (dict(REMOTE), core.preset_revision(name, REMOTE))
@@ -141,13 +139,12 @@ class PresetSelection(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(argv[argv.index('--to') + 1], 'worker')
         self.assertNotIn('--preset', argv)
         self.assertNotIn('--dry-run', argv)
-        self.assertEqual(value['preset']['revision'], revision)
-        self.assertEqual(value['command'], 'mcp.preset.send')
+        self.assertEqual(value, self.adapter.invoke.return_value)
 
     async def test_dryrun_can_omit_revision_and_absent_selector_keeps_old_result(self):
         value = await self.adapter.send_message('local', 'worker', 'fixture', dry_run=True, preset='work')
         self.assertIn('--dry-run', self.adapter.invoke.call_args.args[0])
-        self.assertIn('preset', value)
+        self.assertEqual(value, self.adapter.invoke.return_value)
         self.mock_lookup.reset_mock()
         self.mock_read.reset_mock()
         ordinary = await self.adapter.list_sessions('local')
@@ -165,6 +162,25 @@ class PresetSelection(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(value['retryAllowed'])
         self.assertNotIn(PRIVATE_MARKER, json.dumps(value))
         self.adapter.invoke.assert_awaited_once()
+
+    async def test_decode_failure_is_unknown_but_complete_submission_proof_is_preserved(self):
+        revision = core.preset_revision('work', LOCAL)
+        for payload in (peer.Adapter.decode(b'[]', 0), peer.Adapter.decode(b'invalid', 1),
+                        {'ok': False, 'reason': 'cli_failed'}):
+            self.adapter.invoke.return_value = payload
+            value = await self.adapter.send_message('local', 'worker', 'fixture',
+                preset='work', preset_revision=revision)
+            self.assertEqual(value['status'], 'unknown')
+            self.assertIsNone(value['submitted'])
+            self.assertFalse(value['retryAllowed'])
+        native = {'ok': False, 'reason': 'cli_failed', 'submitted': True,
+                  'status': 'queued', 'queueId': 'fixture-queue'}
+        self.adapter.invoke.return_value = native
+        value = await self.adapter.send_message('local', 'worker', 'fixture',
+            preset='work', preset_revision=revision)
+        for key in ('submitted', 'status', 'queueId'):
+            self.assertEqual(value[key], native[key])
+        self.assertFalse(value['retryAllowed'])
 
     async def test_exact_alias_home_transport_and_agent_intersection_no_dns_or_fallback(self):
         cases = [dict(REMOTE, host='approved-host'), dict(REMOTE, codexHome='/approved/home/'),
@@ -207,7 +223,7 @@ class PresetSelection(unittest.IsolatedAsyncioTestCase):
                 preset='work', preset_revision=revision)
         argv = self.adapter.invoke.call_args.args[0]
         self.assertEqual(argv[argv.index('--host') + 1], REMOTE['host'])
-        self.assertEqual(value['preset']['revision'], revision)
+        self.assertEqual(value, self.adapter.invoke.return_value)
         self.mock_lookup.assert_called_once()
 
     async def test_wake_uri_revision_without_name_and_other_agent_rejected_before_lookup(self):
@@ -226,8 +242,9 @@ class PresetSelection(unittest.IsolatedAsyncioTestCase):
     async def test_platform_is_not_broadened_even_with_mocked_store(self):
         with patch.object(core, 'IS_WINDOWS', True):
             for operation in (self.adapter.list_presets('local'), self.adapter.list_sessions('local', preset='work')):
-                with self.assertRaises(core.CcPeerError):
+                with self.assertRaises(peer.PolicyError) as caught:
                     await operation
+                self.assertEqual(caught.exception.reason, 'preset_platform_unsupported')
         self.mock_lookup.assert_not_called()
         self.mock_read.assert_not_called()
 
@@ -249,6 +266,8 @@ class PresetSelection(unittest.IsolatedAsyncioTestCase):
         self.adapter.invoke.assert_awaited_once()
 
 
+@unittest.skipUnless(os.name == 'posix' and sys.platform in ('darwin', 'linux'),
+                     'Preset storage is macOS/Linux only')
 class SharedSecureReader(unittest.IsolatedAsyncioTestCase):
     async def test_missing_core_store_does_not_initialize_or_lock(self):
         adapter = peer.Adapter({'local': policy()})
@@ -265,7 +284,7 @@ class SharedSecureReader(unittest.IsolatedAsyncioTestCase):
         adapter.invoke = AsyncMock(return_value={'ok': True})
         with patch.object(core, 'preset_read', return_value={'work': dict(LOCAL)}) as read:
             value = await adapter.list_sessions('local', preset='work')
-        self.assertEqual(value['preset']['revision'], core.preset_revision('work', LOCAL))
+        self.assertEqual(value, adapter.invoke.return_value)
         read.assert_called_once_with()
 
 
@@ -335,7 +354,10 @@ class PresetProtocol(unittest.IsolatedAsyncioTestCase):
                                    ('preflight_send', {'preset': 'work', 'target': 'worker', 'message': 'fixture'})):
                     denied = await client.call_tool(tool, {'destination': 'local', **args})
                     self.assertTrue(denied.isError)
-                    self.assertEqual(denied.structuredContent['schemaVersion'], 1)
+                    if tool == 'preflight_send':
+                        self.assertEqual(denied.structuredContent['schemaVersion'], 1)
+                    else:
+                        self.assertNotIn('schemaVersion', denied.structuredContent)
                 self.assertEqual(denied.structuredContent['reason'], 'policy_denied')
 
     async def test_real_stdio_denial_happens_before_store_or_cli(self):
@@ -349,7 +371,10 @@ class PresetProtocol(unittest.IsolatedAsyncioTestCase):
                                    ('preflight_send', {'preset': 'work', 'target': 'worker', 'message': PRIVATE_MARKER})):
                     value = await client.call_tool(name, {'destination': 'local', **args})
                     self.assertTrue(value.isError)
-                    self.assertEqual(value.structuredContent['schemaVersion'], 1)
+                    if name in ('list_presets', 'preflight_send'):
+                        self.assertEqual(value.structuredContent['schemaVersion'], 1)
+                    else:
+                        self.assertNotIn('schemaVersion', value.structuredContent)
                     self.assertNotIn(PRIVATE_MARKER, value.content[0].text)
 
     async def test_real_stdio_route_mismatch_stale_revision_and_result_budget(self):
@@ -366,6 +391,7 @@ class PresetProtocol(unittest.IsolatedAsyncioTestCase):
                 value = await client.call_tool('send_message', {'destination': 'local', 'preset': 'work',
                     'preset_revision': 'dp1:' + '0' * 64, 'target': 'worker', 'message': 'fixture'})
                 self.assertTrue(value.isError)
+                self.assertEqual(value.structuredContent['reason'], 'preset_revision_mismatch')
             session = await self.run_case(folder, policy(), snapshot={'work': dict(LOCAL)}, tiny_budget=True)
             async with session as client:
                 value = await client.call_tool('list_presets', {'destination': 'local'})
