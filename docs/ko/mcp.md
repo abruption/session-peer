@@ -43,6 +43,32 @@ Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(
 
 기존 dry-run 검사는 로컬·버전 확인 프로세스와 SSH 연결을 시작할 수 있으며, SSH 설정 자체도 명령을 실행할 수 있습니다. 따라서 이 도구는 `readOnlyHint=false`와 `openWorldHint=true`를 사용합니다. 호스트 승인은 정책 권한과 별개입니다. 통과는 검사 시점의 결과이며, 경로 예약, 유효 저장소의 증명, 승인, 이후 전송의 보장, 소비 또는 ACK를 뜻하지 않습니다.
 
+## 미출시 v1.4.0 후보: 제한된 진단 (#358)
+
+`diagnose_destination(destination="local", agent=null, active_probe=false)`는 `schemaVersion` 2 정책의 명시적인 `diagnostics` 권한이 필요합니다. 기본 모드는 정책 메타데이터와 선언된 에이전트 기능만 반환하며, CLI나 검색 프로세스를 시작하거나 네트워크를 요청하지 않습니다. 목적지 ID에는 목적지 조회와 같은 출력 가능 문자 및 UTF-8 128바이트 제한이 적용됩니다. 버전 1과 기본 정책은 진단 권한을 부여하지 않습니다. 기본 모드의 `declaredCapabilities`는 어댑터 선언에서 가져온 불리언 값이며, 실제 전달이나 준비 상태를 입증하지 않습니다.
+
+`active_probe=true`를 지정하면 `diagnostics_probe`도 필요합니다. 메타데이터 모드는 모든 플랫폼에서 지원합니다. 능동 모드는 현재 macOS와 Linux만 지원하며, Windows에서는 CLI 프로세스나 네트워크 요청 없이 고정 사유 `diagnostics_platform_unsupported`를 반환합니다. 검사는 설정된 목적지, 고정된 Codex 홈과 허용된 에이전트만 사용합니다. 에이전트별 doctor 호출은 최대 세 에이전트를 검사하며, 20초의 실행 예산을 공유한 뒤 프로세스를 정리합니다. 이는 엄격한 실제 경과 시간 제한이나 원격 프로세스 정리의 보장이 아닙니다. 자식 프로세스의 stdout과 stderr는 각각 64 KiB로 제한됩니다. Codex 검사는 선택한 홈만 확인합니다. 역방향 경로 검사, 메시지 제출, 네이티브 모델 활성화 또는 자동 재시도는 수행하지 않습니다. 능동 검사는 CLI 프로세스와 SSH 연결을 시작할 수 있으며 운영자의 SSH 설정이 명령을 실행할 수도 있습니다. 호스트 승인은 정책 권한과 별개입니다. 선택적 능동 검사가 운영자 SSH 설정을 실행할 수 있으므로 통합 도구는 `readOnlyHint=false`와 `idempotentHint=false`를 사용합니다.
+
+응답은 허용 목록의 상태와 진단 코드만 노출하고 원시 오류, 호스트 이름, 홈 경로, 인증정보, 세션 내용과 알 수 없는 응답 필드를 제외합니다. 메타데이터 모드는 준비 상태를 검증하지 않으며, 능동 결과도 검사 시점의 상태일 뿐 소비나 ACK의 증거 또는 전송 권한이 아닙니다. 텍스트와 구조화된 도구 결과를 합친 크기는 64 KiB로 제한됩니다.
+
+상태·검사 필드가 없거나 잘못되었거나, 일부 검사가 누락되거나 검사 목록이 잘린 경우에는 정상으로 표시하지 않고 알 수 없음·불완전(`diagnostic_incomplete`)으로 보고합니다. 전송 단계 `tcpAccept`, `tls`, `peerAuthentication`은 모두 `not_checked`로 남으며 진단에서 별도로 검증하지 않습니다.
+
+후보 MCP 래퍼가 지원하는 검사와 실행 효과는 다음으로 제한됩니다.
+
+| 모드 / 에이전트 | 확인하는 사실 | 프로세스 / 연결 효과 |
+| --- | --- | --- |
+| 메타데이터 | 정책과 어댑터 선언 | 없음 |
+| 능동 Claude | 등록 기록, 프로세스 식별 메타데이터와 파일시스템의 수신함 존재 여부 | 수신함에 연결하지 않음 |
+| 능동 Codex | 실행 파일 존재 여부, 선택한 홈의 읽기 전용 SQLite 조회와 제한된 writer 검색 | 네이티브 Codex 실행이나 버전 조회 없음 |
+| 능동 Antigravity | 등록된 브리지 메타데이터 | 브리지 또는 네이티브 RPC 없음 |
+| 능동 SSH | 명시적인 검사 권한을 받은 뒤 설정된 정방향 경로만 확인 | SSH 설정이 명령을 실행할 수 있음. 역방향 검사나 회신 호스트로의 자동 연결 없음 |
+
+허용된 코드의 예로는 `sessions_dir_missing`, `inbox_present`, `codex_executable_missing`, `state_db_readable`, `unsaved_writer_check_unavailable`, `adapter_failed`가 있습니다. 결과는 허용된 에이전트와 에이전트별 최대 32개 검사로 제한되며, 이 코드는 위의 제한된 범위만 설명합니다.
+
+`ok`는 가용성이 아니라 수집과 형식의 완전성을 나타냅니다. 완전한 `missing_home` 결과도 `ok=true`일 수 있으므로 에이전트별 상태를 따로 확인하십시오. `diagnosticEvidence`는 능동 결과에서 `point_in_time_only`, 메타데이터 모드에서 `not_collected`입니다. 특정 대상의 준비 상태를 검사하지 않으므로 `readiness`는 `not_checked`로 유지됩니다. `state_db_readable` 검사의 통과는 읽기 전용 DB 조회가 성공했다는 뜻일 뿐, 유효 저장소의 증명이나 회신 경로의 보장이 아닙니다.
+
+`tcpAccept`, `tls`, `peerAuthentication` 단계는 `not_checked`로 유지됩니다. 여기서 `peerAuthentication`은 페어링된 기기의 인증을 뜻하며 정방향 SSH 인증과 별개입니다. `sshFailure`는 `authentication_failed` 또는 `host_key_failed`처럼 정제된 정방향 SSH 실패 범주만 보고합니다. TCP, TLS, 페어링된 기기 또는 회신 호스트 검사는 추가하지 않습니다.
+
 ## 도구 및 권한
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)`는 CLI의 구조화된 목록을 반환합니다. Agent는 `claude` 또는 `codex`일 수 있으며, 생략 시 허용된 에이전트를 나열합니다.

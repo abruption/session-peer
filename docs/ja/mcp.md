@@ -43,6 +43,32 @@ Python 3.10 以降でインストールします: `pipx install 'session-peer[mc
 
 既存の dry-run 検査はローカル・バージョン確認のプロセスや SSH 接続を開始する場合があり、SSH 設定自体がコマンドを実行する場合もあります。このため、このツールは `readOnlyHint=false` と `openWorldHint=true` を使用します。ホストの承認はポリシーの権限とは別です。合格は検査時点の結果であり、経路の予約、有効なストレージの証明、承認、後の送信の保証、消費、ACK を意味しません。
 
+## 未リリースの v1.4.0 候補: 制限付き診断 (#358)
+
+`diagnose_destination(destination="local", agent=null, active_probe=false)` には、`schemaVersion` 2 ポリシーで明示的な `diagnostics` 権限が必要です。既定モードはポリシーのメタデータと宣言されたエージェント機能のみを返し、CLI や検出プロセスの起動、ネットワーク要求は行いません。送信先 ID には送信先検出と同じ、表示可能文字と UTF-8 128 バイトの制限が適用されます。バージョン 1 と既定ポリシーは診断権限を付与しません。 既定モードの `declaredCapabilities` はアダプターの宣言に基づくブール値であり、実際の配信や準備状態を証明しません。
+
+`active_probe=true` には、さらに `diagnostics_probe` が必要です。メタデータモードは全プラットフォームで利用できます。能動モードは現在 macOS と Linux のみをサポートし、Windows では CLI プロセスの起動やネットワーク要求を行わず、固定理由 `diagnostics_platform_unsupported` を返します。チェックは設定された送信先、固定された Codex ホームと許可されたエージェントのみを使用します。エージェントごとの doctor 呼び出しは最大 3 エージェントを検査し、20 秒の実行予算を共有した後にプロセスを終了処理します。厳密な経過時間の上限やリモートプロセス終了の保証ではありません。子プロセスの stdout と stderr はそれぞれ 64 KiB に制限されます。Codex のチェックは選択したホームのみを調べます。逆方向経路のプローブ、メッセージ送信、ネイティブモデルの起動、自動再試行は行いません。能動チェックは CLI プロセスや SSH 接続を開始でき、運用者の SSH 設定自体がコマンドを実行する場合もあります。ホストの承認はポリシー権限とは別です。選択的な能動チェックが運用者の SSH 設定を実行できるため、統合ツールは `readOnlyHint=false` と `idempotentHint=false` を使用します。
+
+応答は許可された状態値と診断コードを公開し、生のエラー、ホスト名、ホームパス、認証情報、セッション内容、不明な応答フィールドを除外します。メタデータモードは準備状態を検証しません。能動結果も検査時点の状態であり、消費や ACK の証拠、または送信権限ではありません。テキストと構造化ツール結果の合計は 64 KiB に制限されます。
+
+状態・チェックのフィールドが欠落または不正な場合、一部のチェックが不完全な場合、チェック一覧が切り詰められた場合は、正常とはせず不明・不完全（`diagnostic_incomplete`）として報告します。通信段階 `tcpAccept`、`tls`、`peerAuthentication` はすべて `not_checked` のままで、診断では個別に検証しません。
+
+候補版 MCP ラッパーが対応する検査と実行上の影響は、次の範囲に限られます。
+
+| モード / エージェント | 確認する事実 | プロセス / 接続への影響 |
+| --- | --- | --- |
+| メタデータ | ポリシーとアダプターの宣言 | なし |
+| 能動 Claude | 登録記録、プロセス識別メタデータ、ファイルシステム上の受信箱の存在 | 受信箱には接続しない |
+| 能動 Codex | 実行ファイルの存在、選択したホームの読み取り専用 SQLite クエリ、制限付き writer 走査 | ネイティブ Codex の実行やバージョン照会はしない |
+| 能動 Antigravity | 登録されたブリッジのメタデータ | ブリッジやネイティブへの RPC はしない |
+| 能動 SSH | 明示的なプローブ権限を得た後、設定済みの順方向経路のみ | SSH 設定がコマンドを実行する場合がある。逆方向プローブや返信先ホストへの自動接続はしない |
+
+許可されたコードの例は `sessions_dir_missing`、`inbox_present`、`codex_executable_missing`、`state_db_readable`、`unsaved_writer_check_unavailable`、`adapter_failed` です。結果は許可されたエージェントと、エージェントごとに最大 32 件のチェックに限られ、これらのコードが示すのは上記の限定範囲のみです。
+
+`ok` は可用性ではなく、収集と形式の完全性を示します。完全な `missing_home` 結果でも `ok=true` になり得るため、各エージェントの状態は別途確認してください。`diagnosticEvidence` は能動結果では `point_in_time_only`、メタデータモードでは `not_collected` です。個別の対象の準備状態は検査しないため、`readiness` は `not_checked` のままです。`state_db_readable` の合格は読み取り専用 DB クエリの成功だけを意味し、有効なストレージの証明や返信経路の保証ではありません。
+
+`tcpAccept`、`tls`、`peerAuthentication` の段階は `not_checked` のままです。ここでの `peerAuthentication` はペアリングされたデバイスの認証を指し、順方向 SSH 認証とは別です。`sshFailure` は `authentication_failed` や `host_key_failed` など、サニタイズされた順方向 SSH 失敗の分類だけを報告します。TCP、TLS、ペアリングされたデバイス、返信先ホストへのプローブは追加しません。
+
 ## ツールとパーミッション
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)` は CLI の構造化された一覧を返します。Agent は `claude` または `codex` です。省略した場合は許可されたエージェントを一覧表示します。

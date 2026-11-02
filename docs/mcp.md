@@ -43,6 +43,32 @@ The versioned explanation projects allowlisted facts from the native response be
 
 Existing dry-run checks may start local/version processes and SSH connections; SSH configuration may itself execute commands. The tool therefore uses `readOnlyHint=false` and `openWorldHint=true`. Host approvals remain separate from policy permission. Passing records point-in-time checks, not a route reservation, effective-storage attestation, approval, later-send guarantee, consumption or ACK.
 
+## Unreleased v1.4.0 candidate: bounded diagnostics (#358)
+
+`diagnose_destination(destination="local", agent=null, active_probe=false)` requires an explicit `diagnostics` permission in a `schemaVersion` 2 policy. The default mode returns policy metadata and declared agent capabilities only; it starts no CLI or discovery process and makes no network request. The destination ID follows the same printable, 128 UTF-8 byte limit as destination discovery. Version 1 and the default policy grant no diagnostic permission. Default-mode `declaredCapabilities` contains typed booleans from adapter declarations; these declarations do not demonstrate delivery or readiness.
+
+Setting `active_probe=true` additionally requires `diagnostics_probe`. Metadata mode is cross-platform. Active mode currently supports macOS and Linux only; Windows returns the fixed reason `diagnostics_platform_unsupported` without starting CLI processes or network requests. Checks use only the configured destination, pinned Codex home and permitted agents. Agent-scoped doctor calls inspect at most three agents, with a shared 20-second execution budget followed by process cleanup; this is not a strict wall-clock deadline or a remote-process cleanup guarantee. Each child stdout and stderr stream is bounded to 64 KiB. Codex checks inspect only the selected home. No reverse-route probe, message submission, native model activation or automatic retry occurs. Active checks can start CLI processes and SSH connections; operator SSH configuration may execute commands. Host approvals remain separate from policy permission. The combined tool uses `readOnlyHint=false` and `idempotentHint=false` because optional active checks can execute operator SSH configuration.
+
+Responses expose allowlisted statuses and diagnostic codes, omitting raw errors, host names, home paths, credentials, session contents and unknown response fields. Metadata mode leaves readiness unverified; active results are point-in-time checks, not evidence of consumption or ACK, or authority to send. The combined text and structured tool result is bounded to 64 KiB.
+
+Missing or malformed status/check fields, partial checks, or truncated check lists are reported as unknown/incomplete (`diagnostic_incomplete`), never as healthy. The transport stages `tcpAccept`, `tls`, and `peerAuthentication` remain `not_checked`; diagnostics do not separately verify them.
+
+The candidate MCP wrapper supports only the following checks and effects:
+
+| Mode / agent | Checked facts | Process / connection effects |
+| --- | --- | --- |
+| Metadata | Policy and adapter declarations | None |
+| Active Claude | Registry records, process identity metadata and filesystem inbox presence | No inbox connection |
+| Active Codex | Executable presence, selected-home read-only SQLite queries and bounded writer scan | No native Codex execution or version query |
+| Active Antigravity | Registered bridge metadata | No bridge or native RPC |
+| Active SSH | Configured forward route, only after explicit probe permission | SSH configuration may execute commands; no reverse probe or automatic connection back to a return host |
+
+Representative allowlisted codes include `sessions_dir_missing`, `inbox_present`, `codex_executable_missing`, `state_db_readable`, `unsaved_writer_check_unavailable` and `adapter_failed`. Results are limited to permitted agents and at most 32 checks per agent; these codes describe only the bounded scope above.
+
+`ok` describes collection and format completeness, not availability. A complete `missing_home` result can have `ok=true`; read each agent's status separately. `diagnosticEvidence` is `point_in_time_only` for active results and `not_collected` in metadata mode. `readiness` remains `not_checked` because no per-target readiness is tested. A passing `state_db_readable` check means only that the read-only database query succeeded; it is not an effective-storage attestation or a return-route guarantee.
+
+The stages `tcpAccept`, `tls` and `peerAuthentication` remain `not_checked`. Here `peerAuthentication` refers to paired-device authentication, separate from forward SSH authentication. `sshFailure` reports only a sanitized forward SSH failure category, such as `authentication_failed` or `host_key_failed`. No TCP, TLS, paired-device or return-host probe is added.
+
 ## Tools and permissions
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)` returns the CLI's structured listing. Agent may be `claude` or `codex`; omission lists permitted agents.

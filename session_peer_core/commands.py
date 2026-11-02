@@ -126,7 +126,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             if getattr(args, "explain", False):
                 args._delivery_explanation_started = True
                 args._delivery_explanation_host = display_host(requested_host, host)
-            remote_argv = ["doctor", "--no-update-notice"] + agent_remote_options(args)
+            selected = getattr(args, "agent", None)
+            remote_argv = ["doctor", "--no-update-notice"] + agent_remote_options(args, selected)
+            if selected:
+                remote_argv.extend(["--agent", selected])
+            if getattr(args, "selected_home_only", False):
+                remote_argv.append("--selected-home-only")
             if return_host:
                 remote_argv.extend(["--_return-host", return_host])
             result = transport.execute(remote_argv)

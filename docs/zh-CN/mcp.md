@@ -43,6 +43,32 @@
 
 现有 dry-run 检查可能启动本地或版本查询进程、建立 SSH 连接；SSH 配置本身也可能执行命令。因此该工具使用 `readOnlyHint=false` 和 `openWorldHint=true`。宿主批准独立于策略权限。通过仅表示检查时点的结果，不代表预留路由、证明有效存储、批准、保证后续发送、消费或 ACK。
 
+## 尚未发布的 v1.4.0 候选版本：有界诊断 (#358)
+
+`diagnose_destination(destination="local", agent=null, active_probe=false)` 要求在 `schemaVersion` 2 策略中显式授予 `diagnostics` 权限。默认模式仅返回策略元数据和声明的代理功能，不启动 CLI 或发现进程，也不发起网络请求。目的地 ID 采用与目的地发现相同的可打印字符及 UTF-8 128 字节限制。版本 1 和默认策略均不授予诊断权限。 默认模式的 `declaredCapabilities` 包含来自适配器声明的布尔值，不证明实际送达或就绪状态。
+
+设置 `active_probe=true` 还需要 `diagnostics_probe`。元数据模式支持所有平台。主动模式目前仅支持 macOS 和 Linux；在 Windows 上返回固定原因 `diagnostics_platform_unsupported`，不启动 CLI 进程或网络请求。检查仅使用配置的目的地、固定的 Codex 主目录和获准的代理。按代理限定范围的 doctor 调用最多检查三个代理，共享 20 秒的执行预算，然后清理进程；这并非严格的实际耗时上限，也不保证清理远程进程。子进程的 stdout 和 stderr 各限 64 KiB。Codex 检查仅访问所选主目录。不进行反向路由探测、消息提交、原生模型激活或自动重试。主动检查可能启动 CLI 进程和 SSH 连接，操作员的 SSH 配置本身也可能执行命令。宿主批准独立于策略权限。由于可选的主动检查能够执行操作员 SSH 配置，组合工具使用 `readOnlyHint=false` 和 `idempotentHint=false`。
+
+响应仅公开允许列表中的状态和诊断代码，省略原始错误、主机名、主目录路径、凭据、会话内容和未知响应字段。元数据模式不验证就绪状态；主动检查结果也仅代表检查时点，不是消费或 ACK 的证据，也不授予发送权限。文本与结构化工具结果的合计大小限于 64 KiB。
+
+状态或检查字段缺失、格式错误、检查不完整或检查列表被截断时，结果报告为未知或不完整（`diagnostic_incomplete`），不会报告为健康。传输阶段 `tcpAccept`、`tls` 和 `peerAuthentication` 均保持 `not_checked`；诊断不会单独验证这些阶段。
+
+候选版 MCP 包装层仅支持以下检查及执行效果：
+
+| 模式 / 代理 | 检查的事实 | 进程 / 连接效果 |
+| --- | --- | --- |
+| 元数据 | 策略与适配器声明 | 无 |
+| 主动 Claude | 注册记录、进程身份元数据和文件系统中的收件箱存在情况 | 不连接收件箱 |
+| 主动 Codex | 可执行文件是否存在、所选主目录的只读 SQLite 查询和有界 writer 扫描 | 不执行原生 Codex，也不查询版本 |
+| 主动 Antigravity | 已注册桥接的元数据 | 不调用桥接或原生 RPC |
+| 主动 SSH | 获得显式探测权限后，仅检查配置的正向路由 | SSH 配置可能执行命令；不反向探测，也不自动连接回回复主机 |
+
+允许的代码示例包括 `sessions_dir_missing`、`inbox_present`、`codex_executable_missing`、`state_db_readable`、`unsaved_writer_check_unavailable` 和 `adapter_failed`。结果仅涉及获准的代理，每个代理最多 32 项检查；这些代码仅描述上表的有界范围。
+
+`ok` 表示收集和格式的完整性，而非可用性。完整的 `missing_home` 结果也可能返回 `ok=true`，应另行查看每个代理的状态。主动结果中的 `diagnosticEvidence` 为 `point_in_time_only`，元数据模式中则为 `not_collected`。由于不检查特定目标的就绪情况，`readiness` 保持 `not_checked`。`state_db_readable` 检查通过仅表示只读数据库查询成功，不证明有效存储，也不保证回复路由可用。
+
+`tcpAccept`、`tls` 和 `peerAuthentication` 阶段保持 `not_checked`。这里的 `peerAuthentication` 指配对设备身份验证，与正向 SSH 身份验证不同。`sshFailure` 仅报告经过脱敏的正向 SSH 失败类别，例如 `authentication_failed` 或 `host_key_failed`。不会新增 TCP、TLS、配对设备或回复主机探测。
+
 ## 工具与权限
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)` 返回 CLI 的结构化列表。Agent 可以是 `claude` 或 `codex`；省略则列出允许的代理。

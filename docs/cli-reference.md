@@ -907,6 +907,24 @@ executable and bounded home/state DB candidates, unsupported DB schemas, and
 permission or unknown failures as distinct codes. It does not connect to an
 inbox, write a queue, scan arbitrary directories, or alter agent/SSH settings.
 
+Unreleased v1.4.0 candidate (#358): `doctor --agent NAME` restricts checks and declared agent capabilities to the selected registered agent, including execution over SSH. It also skips the shared installed-skill inventory. `doctor --agent codex --selected-home-only --codex-home /absolute/home` checks only the selected Codex home and skips the inventory of other homes. These options do not enable reverse-route checks. Without them, existing all-agent and bounded multi-home diagnostics keep their behavior.
+
+The candidate MCP wrapper supports only the following checks and effects:
+
+| Mode / agent | Checked facts | Process / connection effects |
+| --- | --- | --- |
+| Metadata | Policy and adapter declarations | None |
+| Active Claude | Registry records, process identity metadata and filesystem inbox presence | No inbox connection |
+| Active Codex | Executable presence, selected-home read-only SQLite queries and bounded writer scan | No native Codex execution or version query |
+| Active Antigravity | Registered bridge metadata | No bridge or native RPC |
+| Active SSH | Configured forward route, only after explicit probe permission | SSH configuration may execute commands; no reverse probe or automatic connection back to a return host |
+
+Representative allowlisted codes include `sessions_dir_missing`, `inbox_present`, `codex_executable_missing`, `state_db_readable`, `unsaved_writer_check_unavailable` and `adapter_failed`. Results are limited to permitted agents and at most 32 checks per agent; these codes describe only the bounded scope above.
+
+`ok` describes collection and format completeness, not availability. A complete `missing_home` result can have `ok=true`; read each agent's status separately. `diagnosticEvidence` is `point_in_time_only` for active results and `not_collected` in metadata mode. `readiness` remains `not_checked` because no per-target readiness is tested. A passing `state_db_readable` check means only that the read-only database query succeeded; it is not an effective-storage attestation or a return-route guarantee.
+
+The stages `tcpAccept`, `tls` and `peerAuthentication` remain `not_checked`. Here `peerAuthentication` refers to paired-device authentication, separate from forward SSH authentication. `sshFailure` reports only a sanitized forward SSH failure category, such as `authentication_failed` or `host_key_failed`. No TCP, TLS, paired-device or return-host probe is added.
+
 Reverse SSH is checked only with `--check-return-route`. The destination runs a
 fixed `ssh ... true` probe with prompts, password authentication, host-key
 enrollment, and config mutation disabled. Forward SSH success is never reused as

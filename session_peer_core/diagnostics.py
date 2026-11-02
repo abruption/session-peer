@@ -136,7 +136,7 @@ def diagnose_codex(args: argparse.Namespace) -> dict:
         ))
     inventory_error = None
     try:
-        homes = known_codex_homes(selected)
+        homes = [selected] if getattr(args, "selected_home_only", False) else known_codex_homes(selected)
     except CcPeerError as exc:
         homes = [selected]
         inventory_error = str(exc)
@@ -251,7 +251,9 @@ def _probe_return_route(destination: str) -> dict:
 
 def doctor_payload(args: argparse.Namespace) -> dict:
     diagnostics = {}
-    for name in AGENTS.names():
+    selected = getattr(args, "agent", None)
+    names = [selected] if selected else AGENTS.names()
+    for name in names:
         try:
             diagnostics[name] = LocalTransport().execute("doctor", AGENTS.get(name), args)
         except (CcPeerError, OSError) as exc:
@@ -260,10 +262,11 @@ def doctor_payload(args: argparse.Namespace) -> dict:
     active = [item for item in diagnostics.values() if item["status"] != "disabled"]
     available = sum(item["status"] == "available" for item in active)
     payload = {
-        "status": "healthy" if available == len(active) else ("partial" if available else "issues_found"),
+        "status": ("issues_found" if selected and not active else "healthy" if available == len(active)
+                   else "partial" if available else "issues_found"),
         **diagnostics,
         "capabilities": {
-            "agents": {name: dict(AGENTS.get(name).capabilities._asdict()) for name in AGENTS.names()},
+            "agents": {name: dict(AGENTS.get(name).capabilities._asdict()) for name in names},
             "replyObservation": {
                 "status": "unsupported",
                 "reason": "no_cross_agent_acknowledgement_api",
@@ -273,7 +276,7 @@ def doctor_payload(args: argparse.Namespace) -> dict:
         },
     }
     skill_checks = []
-    skills = installed_skills()
+    skills = [] if selected else installed_skills()
     for skill in skills:
         version, minimum = skill["version"], skill["runtimeMinVersion"]
         if version is None or minimum is None:
@@ -289,7 +292,7 @@ def doctor_payload(args: argparse.Namespace) -> dict:
                 location=skill["location"], skillVersion=version,
                 runtimeMinVersion=minimum,
             ))
-    payload["skill"] = {"status": "incompatible" if any(
+    payload["skill"] = {"status": "not_checked" if selected else "incompatible" if any(
         check["code"] == "skill_runtime_incompatible" for check in skill_checks) else
         "unknown" if skill_checks else "compatible" if skills else "not_installed",
         "checks": skill_checks}
