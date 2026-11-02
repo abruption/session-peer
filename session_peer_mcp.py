@@ -295,6 +295,8 @@ class Adapter:
             # An I/O failure may follow process creation/probes. Do not turn it
             # into a pre-effect policy refusal or reveal the native diagnostic.
             value = {"reason": "outcome_unknown"}
+        if not isinstance(value, dict):
+            value = {"reason": "outcome_unknown"}
         checked = value.get("checked")
         valid = (type(value.get("schemaVersion")) is int and value["schemaVersion"] == 1
                  and value.get("command") == "send.preflight" and isinstance(checked, dict)
@@ -351,7 +353,16 @@ def create_server(adapter: Adapter):
 
     def preflight_rejection(reason, evidence=None):
         args = argparse.Namespace(to="", wake=False, _delivery_explanation_started=False)
-        value = core.structured_delivery_preflight(args, evidence or {}, failed=True)
+        refusal = evidence.get("reason") if isinstance(evidence, dict) else None
+        evidence = ({"reason": refusal} if isinstance(refusal, str)
+                    and refusal in core.PREFLIGHT_REFUSAL_REASONS else {})
+        value = core.structured_delivery_preflight(args, evidence, failed=True)
+        value["reason"] = reason
+        return value
+
+    def preflight_unknown(reason="outcome_unknown"):
+        args = argparse.Namespace(to="", wake=False, _delivery_explanation_started=True)
+        value = core.structured_delivery_preflight(args, {"reason": "outcome_unknown"}, failed=True)
         value["reason"] = reason
         return value
 
@@ -372,7 +383,7 @@ def create_server(adapter: Adapter):
         except (ValueError, OSError):
             if not command:
                 raise
-            value = (preflight_rejection("invalid_request") if command == "send.preflight" else
+            value = (preflight_unknown() if command == "send.preflight" else
                      {"ok": False, "schemaVersion": 1, "command": command,
                       "reason": "request_rejected", "retryAllowed": False,
                       "operatorActions": ["review_policy_and_request"]})
@@ -381,6 +392,10 @@ def create_server(adapter: Adapter):
         # Bound both representations, including JSON escaping. JSON-RPC is separate.
         # Apply only to the new versioned tools; preserve old response contracts.
         if command and len(envelope.model_dump_json().encode('utf-8')) > DESTINATION_METADATA_BYTES:
+            if command == "send.preflight":
+                value = preflight_unknown("preflight_result_too_large")
+                return CallToolResult(content=[TextContent(type="text", text=json.dumps(value))],
+                                      structuredContent=value, isError=True)
             value = {"ok": False, "schemaVersion": 1, "command": command,
                      "reason": "request_rejected", "retryAllowed": False,
                      "error": "Destination metadata limit exceeded" if command == "mcp.destinations"

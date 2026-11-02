@@ -113,6 +113,15 @@ class PreflightPolicy(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(output['ok'])
         self.assertEqual(output['reason'], 'wake_preflight_not_confirmed')
 
+    async def test_nonobject_cli_response_is_unknown_without_retry(self):
+        for native in (None, [], 'not an object'):
+            self.adapter.invoke.return_value = native
+            result = await self.adapter.preflight_send('local', 'fixture', 'message')
+            self.assertFalse(result['ok'])
+            self.assertEqual(result['reason'], 'outcome_unknown')
+            self.assertEqual(result['limitations']['submission'], 'unknown')
+            self.assertFalse(result['retryAllowed'])
+
     async def test_body_limits_refuse_before_cli_invocation(self):
         for body in ('', 'x' * (peer.core.MAX_MESSAGE_CHARS + 1)):
             with self.assertRaises(peer.core.CcPeerError):
@@ -205,6 +214,15 @@ class PreflightProtocol(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(refused.structuredContent['reason'], 'policy_denied')
                     self.assertEqual(refused.structuredContent['checked']['validation'], 'not_run')
                     self.assertEqual(refused.structuredContent['limitations']['submission'], 'not_attempted')
+                    invalid = await client.call_tool('preflight_send', {
+                        'destination': 'local', 'target': 'fixture',
+                        'message': NONREFLECTED_VALUE, 'wake_timeout': 0})
+                    self.assertEqual(invalid.structuredContent['reason'], 'invalid_request')
+                    self.assertEqual(invalid.structuredContent['checked']['validation'], 'not_run')
+                    blank = await client.call_tool('preflight_send', {
+                        'destination': 'local', 'target': 'fixture', 'message': ''})
+                    self.assertTrue(blank.isError)
+                    self.assertEqual(blank.structuredContent['limitations']['submission'], 'not_attempted')
                     self.assertNotIn(NONREFLECTED_VALUE, refused.content[0].text)
                     sent = await client.call_tool('send_message', {'destination': 'local', 'target': 'fixture', 'message': NONREFLECTED_VALUE})
                     self.assertTrue(sent.isError)

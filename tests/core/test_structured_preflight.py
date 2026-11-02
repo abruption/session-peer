@@ -110,7 +110,7 @@ class StructuredPreflight(unittest.TestCase):
             raw = {'ok': True, 'error': NONREFLECTED_VALUE, 'target': {'name': NONREFLECTED_VALUE}, **facts}
             with self.subTest(facts=facts), mock.patch.object(peer, 'tailscale_status', return_value={}), \
                     mock.patch.object(peer, 'SshTransport') as transport, \
-                    mock.patch.object(peer.ClaudeAdapter, 'remote_submission', side_effect=AssertionError('shaping')):
+                    mock.patch.object(peer.ClaudeAdapter, 'remote_submission', side_effect=AssertionError('shaping')) as shaping:
                 transport.return_value.host = NONREFLECTED_VALUE
                 transport.return_value.ssh_opts = []
                 transport.return_value.execute.return_value = raw
@@ -123,6 +123,7 @@ class StructuredPreflight(unittest.TestCase):
             self.assertNotIn('--explain-json', argv)
             self.assertEqual(transport.return_value.execute.call_count, 1)
             self.assertEqual(err, '')
+            shaping.assert_not_called()
 
     def test_refusal_and_unexpected_exceptions_have_only_safe_facts(self):
         for exc, expected in ((peer.CcPeerError(NONREFLECTED_VALUE, {'reason': 'sqlite_home_configuration', 'path': NONREFLECTED_VALUE}), 'not_confirmed'),

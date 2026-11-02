@@ -201,7 +201,7 @@ def classify_delivery_readiness(args, result, *, failed=False):
             "validated" if validation == "passed" and isinstance(result.get("wake"), dict)
             and result["wake"].get("status") == "validated" else "not_confirmed")
     return {"validation": validation, "wake": wake, "unknown": unknown,
-            "unexpected": unexpected, "started": bool(started)}
+            "unexpected": unexpected, "started": bool(started), "failed": bool(failed)}
 
 
 PREFLIGHT_REFUSAL_REASONS = frozenset({

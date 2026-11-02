@@ -93,16 +93,15 @@ def render_delivery_explanation(args: argparse.Namespace, result: dict, *,
                      + (explanation_text(home) if isinstance(home, str) else "unknown (not reported)"))
     state = classify_delivery_readiness(args, result, failed=failed)
     started, unknown, unexpected = state["started"], state["unknown"], state["unexpected"]
+    failed = state["failed"]
     dry_run_reported = state["validation"] == "passed"
     if not started:
         lines.append("Destination checks: not run (command failed before destination checks)")
-        lines.append("Validation: not confirmed")
-    else:
-        lines.append("Validation: " + ("unexpected submission evidence; dry-run not confirmed" if unexpected else
-                                       "result unknown" if unknown else
-                                       "not confirmed" if failed else
-                                       "passed for this dry run" if dry_run_reported else
-                                       "not confirmed (dry-run evidence not reported)"))
+    lines.append("Validation: " + ("unexpected submission evidence; dry-run not confirmed" if unexpected else
+                                   "result unknown" if unknown else
+                                   "not confirmed" if failed or not started else
+                                   "passed for this dry run" if dry_run_reported else
+                                   "not confirmed (dry-run evidence not reported)"))
     if unexpected:
         for key, label in (("dryRun", "dry-run"), ("submitted", "submitted")):
             if type(result.get(key)) is bool:
