@@ -282,6 +282,9 @@ class Protocol(unittest.IsolatedAsyncioTestCase):
                     await client.initialize()
                     value = await client.call_tool('list_destinations', {})
                     self.assertEqual(value.structuredContent['schemaVersion'], 1)
+                    self.assertTrue(value.isError)
+                    self.assertEqual(value.structuredContent['error'], 'Destination metadata limit exceeded')
+                    self.assertNotIn('destinations', value.structuredContent)
                     self.assertLessEqual(len(value.model_dump_json().encode('utf-8')), 64 * 1024)
 
     async def test_stdio_tools_and_policy_errors(self):
