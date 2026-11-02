@@ -69,6 +69,18 @@
 
 `tcpAccept`、`tls` 和 `peerAuthentication` 阶段保持 `not_checked`。这里的 `peerAuthentication` 指配对设备身份验证，与正向 SSH 身份验证不同。`sshFailure` 仅报告经过脱敏的正向 SSH 失败类别，例如 `authentication_failed` 或 `host_key_failed`。不会新增 TCP、TLS、配对设备或回复主机探测。
 
+## 尚未发布的 v1.4.0 候选版本：MCP 预设 (#359)
+
+`list_presets(destination)` 仅读取已批准的路径元数据。`schemaVersion` 2 策略必须显式授予 `presets`，并在每个目的地的 `presets` 列表中提供 1 至 128 个符合 `[a-z][a-z0-9_-]{0,63}` 的已批准名称。版本 1 拒绝新增功能和字段。任何存储读取之前都先检查授权。结果仅公开与目的地匹配的已批准 `name`、`agent`、`transport` 和 `revision` 值及现有 `dp1:` 令牌，省略实际主机、主目录和存储路径。查询已保存的路径不会发现会话、选择目标、执行 SSH/原生/版本探测或刷新数据。带版本的文本与结构化工具结果合计限制为 64 KiB。
+
+`list_sessions`、`preflight_send` 和 `send_message` 接受可选的 `preset`、`preset_revision` 输入。选择预设既需要现有操作权限，也需要 `presets`；保存的路径或修订令牌不会授予权限。发送必须指定明确目标，实际发送还必须提供当前修订令牌。预设不能与 wake 或 Reply-To URI 目标组合使用。仅支持 macOS/Linux 上现有的 Claude Code/Codex 本地或 SSH 路径；不新增 Windows、设备、地址簿、handoff 或预设管理支持。
+
+适配器使用现有 `XDG_CONFIG_HOME` 选择规则和安全读取函数，从操作员启动环境中的存储读取一次经过验证的快照。64 KiB/128 条目的限制以及所有者、ACL、符号链接和挂载检查保持不变；不会初始化、修复或替换缺失或不安全的存储。模型不能指定存储路径。所选路径必须与目的地的主机、允许的代理和固定的 Codex 主目录完全匹配。不接受 DNS 等价性，也不会回退到其他路径。适配器将已批准的路径展开为单个执行计划，不将 CLI `--preset` 与显式路径参数组合，并在调用前重新检查策略。
+
+修订令牌涵盖名称和路径的精确值；恢复相同值时可再次使用相同令牌。令牌在查询时检查，不是目标代次、调用者身份、存储证明或 ACK。之后的修改不会追溯取消已经展开的调用。未选择预设时，现有工具响应保持不变。
+
+新增的 64 KiB 工具结果限制仅适用于 `list_presets` 元数据查询。附加预设信息的现有列表和发送响应保留原生载荷、提交证据及传输限制；选择预设不会为实际发送新增合计 64 KiB 的限制。元数据查询错误发生在调用之前。操作调用 CLI 后，提交完成后仍可能发生 I/O 错误，因此必须保留结果未知的状态，切勿自动重试。
+
 ## 工具与权限
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)` 返回 CLI 的结构化列表。Agent 可以是 `claude` 或 `codex`；省略则列出允许的代理。
