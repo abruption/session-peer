@@ -1,5 +1,7 @@
 # 선택형 Codex MCP 연동
 
+2026-11-02 소스 확인 시점: 아래 v1.4.0 기능은 공개된 v1.3.3을 기준으로 준비한 내용이며 발행 공지가 아닙니다. 사용 전 [릴리스 노트](releases/v1.4.0.md)와 실제 GitHub/PyPI 공개 상태를 확인하십시오.
+
 Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(또는 격리된 venv에 extra 설치). 의존성이 없는 Python 3.9 CLI 및 `install.sh`는 계속 지원됩니다. 셸 설치기는 MCP 의존성을 설치하지 않습니다. Python 3.9에서 MCP 엔트리 포인트는 Python 3.10+이 필요하다고 보고합니다.
 
 선택형 extra는 MCP SDK `mcp>=1.30,<2`를 요구합니다. 업스트림 1.x 보안 수정이 포함된 버전으로 의존성 하한을 올리는 것으로, stdio만 사용하는 이 서버에서 악용 가능한 결함이 확인됐다는 뜻은 아닙니다. 이번 변경으로 HTTP 전송, OAuth 서버 경로, MCP 클라이언트 경로가 활성화되지는 않습니다. 기존 환경에는 명시적인 패키지 업그레이드가 필요하며, 선언 변경만으로 설치된 SDK가 업데이트되지는 않습니다.
@@ -29,21 +31,27 @@ Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(
 
 `codex mcp add session-peer -- /absolute/path/session-peer-mcp --config /absolute/path/policy.json`을 사용하여 등록하거나, 저장소의 `plugins/session-peer` 번들을 사용하십시오: `codex plugin marketplace add /absolute/path/to/session-peer` 실행 후 `codex plugin add session-peer@session-peer`. 플러그인은 PATH에서 `session-peer-mcp`를 실행하고 환경에 설정된 경우 `SESSION_PEER_MCP_CONFIG`를 읽습니다. 먼저 Python extra를 설치하십시오. Python 패키지를 설치해도 기존 Codex 설정은 수정되지 않습니다.
 
-## 미출시 v1.4.0 후보: 목적지 조회 (#356)
+<a id="미출시-v140-후보-목적지-조회-356"></a>
+
+## v1.4.0 소스: 목적지 조회 (#356)
 
 `list_destinations()`는 인자를 받지 않으며 운영자 정책의 메타데이터만 반환합니다. `schemaVersion`은 1이고 각 항목은 `destination`, `transport`, `agents`, `capabilities`를 포함합니다. 자식 프로세스를 시작하거나 네트워크 요청을 보내지 않습니다. SSH 호스트 값과 Codex 홈 경로는 생략됩니다. 목적지 이름은 신뢰할 수 없는 데이터입니다. 구성된 기능은 정책상 권한을 나타내며 네이티브 에이전트와의 호환성을 나타내지는 않습니다.
 
 응답은 한계를 명시합니다: `callerIdentity="unavailable"`, `readiness="not_checked"`, `submission="not_attempted"`, `consumption="not_checked"`, `ack="not_checked"`. 이 도구는 목적지가 64개를 넘거나 ID에 출력할 수 없는 문자가 있거나 UTF-8 기준 128바이트를 넘으면 조회를 거부합니다. 텍스트와 구조화된 내용을 합친 MCP 도구 결과는 64 KiB 이내이며, 바깥 JSON-RPC 봉투는 이 한도에 포함되지 않습니다. 이는 조회 도구의 제한으로, 정책 읽기와 기존 도구의 동작은 바뀌지 않습니다. 출력 가능한 문자 판정에는 실행 중인 Python의 유니코드 데이터베이스를 사용합니다. 기본 로컬 목록 조회 전용 정책은 그대로 유지됩니다.
 
-## 미출시 v1.4.0 후보: 전송 사전 검증 (#357)
+<a id="미출시-v140-후보-전송-사전-검증-357"></a>
 
-`preflight_send(destination, target, message, wake=false, wake_timeout=30)`는 기존 CLI dry-run 검사로 일반 메시지를 검증합니다. 운영자 정책은 `schemaVersion` 2를 사용하고 해당 목적지와 에이전트에 `preflight`를 명시적으로 허용해야 합니다. 버전 1의 기존 기능 집합에는 새 권한이 추가되지 않으며, 기본값은 로컬 목록 조회 전용으로 유지됩니다. 사전 검증에는 `send`가 필요하지 않으며 전송 권한을 부여하지 않습니다. wake 적격성을 검사하려면 별도로 `wake`가 필요하지만, 모델을 활성화하거나 wake 예산을 예약하지는 않습니다.
+## v1.4.0 소스: 전송 사전 검증 (#357)
+
+`preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)`는 기존 CLI dry-run 검사로 일반 메시지를 검증합니다. 운영자 정책은 `schemaVersion` 2를 사용하고 해당 목적지와 에이전트에 `preflight`를 명시적으로 허용해야 합니다. 버전 1의 기존 기능 집합에는 새 권한이 추가되지 않으며, 기본값은 로컬 목록 조회 전용으로 유지됩니다. 사전 검증에는 `send`가 필요하지 않으며 전송 권한을 부여하지 않습니다. wake 적격성을 검사하려면 별도로 `wake`가 필요하지만, 모델을 활성화하거나 wake 예산을 예약하지는 않습니다.
 
 버전이 지정된 설명은 SSH 어댑터가 결과를 가공하기 전의 네이티브 응답에서 허용된 사실만 추출하고, 정해진 거부·불확실 사유와 운영자 조치를 제공합니다. 메시지 내용, 원시 오류, 자격 증명, 호스트·홈 경로와 네이티브 기록은 제외됩니다. 결과가 불확실하거나 예상치 못한 제출 증거가 있으면 `retryAllowed=false`로 검증에 실패합니다. 자동으로 재전송하지 마십시오. 사전 검증은 메시지를 제출하거나 handoff 권한을 만들지 않습니다. 기기 및 handoff 모드는 지원하지 않습니다.
 
 기존 dry-run 검사는 로컬·버전 확인 프로세스와 SSH 연결을 시작할 수 있으며, SSH 설정 자체도 명령을 실행할 수 있습니다. 따라서 이 도구는 `readOnlyHint=false`와 `openWorldHint=true`를 사용합니다. 호스트 승인은 정책 권한과 별개입니다. 통과는 검사 시점의 결과이며, 경로 예약, 유효 저장소의 증명, 승인, 이후 전송의 보장, 소비 또는 ACK를 뜻하지 않습니다.
 
-## 미출시 v1.4.0 후보: 제한된 진단 (#358)
+<a id="미출시-v140-후보-제한된-진단-358"></a>
+
+## v1.4.0 소스: 제한된 진단 (#358)
 
 `diagnose_destination(destination="local", agent=null, active_probe=false)`는 `schemaVersion` 2 정책의 명시적인 `diagnostics` 권한이 필요합니다. 기본 모드는 정책 메타데이터와 선언된 에이전트 기능만 반환하며, CLI나 검색 프로세스를 시작하거나 네트워크를 요청하지 않습니다. 목적지 ID에는 목적지 조회와 같은 출력 가능 문자 및 UTF-8 128바이트 제한이 적용됩니다. 버전 1과 기본 정책은 진단 권한을 부여하지 않습니다. 기본 모드의 `declaredCapabilities`는 어댑터 선언에서 가져온 불리언 값이며, 실제 전달이나 준비 상태를 입증하지 않습니다.
 
@@ -53,7 +61,7 @@ Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(
 
 상태·검사 필드가 없거나 잘못되었거나, 일부 검사가 누락되거나 검사 목록이 잘린 경우에는 정상으로 표시하지 않고 알 수 없음·불완전(`diagnostic_incomplete`)으로 보고합니다. 전송 단계 `tcpAccept`, `tls`, `peerAuthentication`은 모두 `not_checked`로 남으며 진단에서 별도로 검증하지 않습니다.
 
-후보 MCP 래퍼가 지원하는 검사와 실행 효과는 다음으로 제한됩니다.
+MCP 래퍼가 지원하는 검사와 실행 효과는 다음으로 제한됩니다.
 
 | 모드 / 에이전트 | 확인하는 사실 | 프로세스 / 연결 효과 |
 | --- | --- | --- |
@@ -69,9 +77,11 @@ Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(
 
 `tcpAccept`, `tls`, `peerAuthentication` 단계는 `not_checked`로 유지됩니다. 여기서 `peerAuthentication`은 페어링된 기기의 인증을 뜻하며 정방향 SSH 인증과 별개입니다. `sshFailure`는 `authentication_failed` 또는 `host_key_failed`처럼 정제된 정방향 SSH 실패 범주만 보고합니다. TCP, TLS, 페어링된 기기 또는 회신 호스트 검사는 추가하지 않습니다.
 
-## 미출시 v1.4.0 후보: MCP 프리셋 (#359)
+<a id="미출시-v140-후보-mcp-프리셋-359"></a>
 
-후보 버전 입력 시그니처: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
+## v1.4.0 소스: MCP 프리셋 (#359)
+
+후보 버전 입력 시그니처: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`; `preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
 
 `list_presets(destination)`는 승인된 경로 메타데이터만 읽습니다. `schemaVersion` 2 정책은 `presets`를 명시적으로 허용하고, 목적지별 `presets` 목록에 `[a-z][a-z0-9_-]{0,63}` 형식의 승인된 이름을 1개 이상 128개 이하로 지정해야 합니다. 버전 1은 새 기능과 필드를 거부합니다. 저장소를 읽기 전에 권한을 확인합니다. 결과는 목적지와 일치하는 승인된 `name`, `agent`, `transport`, `revision` 값과 기존 `dp1:` 토큰만 노출하며 실제 호스트, 홈 및 저장소 경로는 생략합니다. 저장된 경로 조회는 세션을 검색하거나 대상을 고르거나 SSH·네이티브·버전 확인 검사를 실행하거나 데이터를 새로 고치지 않습니다. 버전이 지정된 텍스트와 구조화된 도구 결과를 합친 크기는 64 KiB로 제한됩니다.
 

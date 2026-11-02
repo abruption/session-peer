@@ -1,5 +1,7 @@
 # session-peer CLI 参考
 
+2026-11-02 源码检查时点：下述 v1.4.0 源码功能是在已发布 v1.3.3 的基础上准备的内容，并非可用性公告。使用前请查看[发布说明](releases/v1.4.0.md)及实际 GitHub/PyPI 发布状态。
+
 [返回概览](../../README.zh-CN.md)
 
 ## 固定接收会话代次的前置条件（开发中）
@@ -97,7 +99,9 @@ Handoff status 复用只读快照，不创建 intent、receipt capability、wait
 
 Send 的消息输入要求和限制保持不变。按原有方式使用 `--message`、`--message-file` 或 stdin，不自动生成占位正文。说明字段不包含正文或 receipt 秘密值。常规说明输出到 stdout，失败结果或意外提交证据的说明输出到 stderr，不改变现有摘要和错误的输出位置。未知证据仍显示为未知，实际发送结果不确定时禁止自动重发。
 
-### 尚未发布的 v1.4.0 候选版本：结构化发送预览 (#357)
+<a id="尚未发布的-v140-候选版本结构化发送预览-357"></a>
+
+### v1.4.0 源码：结构化发送预览 (#357)
 
 `send --dry-run --explain-json` 可为本地或 SSH 验证选择带有版本且仅含允许字段的 JSON 说明。它与文本预览使用相同的分类，并基于 SSH 适配器加工前的原生响应。普通消息输入要求和限制仍适用，不会生成占位正文。输出不包含消息内容、原始错误和路径。结果未知或存在意外提交证据时，验证失败，且不会授权自动重试。
 
@@ -164,9 +168,11 @@ session-peer preset remove work-mac --expect-revision 'dp1:<CURRENT-HASH>'
 
 在 macOS 上，忽略所有权的挂载会以 `preset_ownership_unenforced` 被拒绝，无法查询或验证挂载状态时则以 `preset_mount_unverifiable` 被拒绝。不会仅凭模式位断定所有权已强制执行。Linux 也会拒绝上级路径中的 ACL，以及无法验证 ACL 状态的文件系统。中断管理命令后请检查当前配置，因为更改可能已经可见；目录同步失败不会被静默当作成功。
 
-### 尚未发布的 v1.4.0 候选版本：MCP 预设 (#359)
+<a id="尚未发布的-v140-候选版本mcp-预设-359"></a>
 
-候选版本输入签名: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
+### v1.4.0 源码：MCP 预设 (#359)
+
+输入签名: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`; `preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
 
 MCP 预设查询和选择使用操作员的显式允许列表及现有安全快照读取函数，不新增 CLI 预设管理命令或自动选择。参见 [MCP 预设策略与限制](mcp.md)。MCP 选择会展开已批准的路径，而不会将 CLI `--preset` 与显式路由选项组合。现有 CLI 输出、修订令牌和文件系统安全约定保持不变。
 
@@ -345,7 +351,7 @@ session-peer send --to 'session-peer://v1/reply?agent=claude&session=api-worker&
 
 ### JSON 响应契约
 
-每个 JSON 结果对象都以相同的、带模式版本的信封开头：
+`list`、`send`、`doctor`、`update` 的普通 `--json` 结果使用以下带模式版本的信封。可选的 `--explain-json` 输出（`send.preflight`）及 MCP 元数据和预检响应使用各自文档规定的模式，并有意省略 `host`；不要补入主机，也不要因字段缺失而推断路径：
 
 ```json
 {
@@ -620,9 +626,9 @@ Codex 消息限制为 32 KiB 的 UTF-8 文本（包括发送者/回复头），�
 
 `doctor` 在拥有会话的机器上执行只读检查。它报告 Claude 配置的会话目录和收件箱可用性，Codex 的可执行文件和有界目录/状态数据库候选，不支持的数据库模式，并将权限或未知失败报告为不同的代码。它不会连接到收件箱、写入队列、扫描任意目录或更改代理/SSH 设置。
 
-尚未发布的 v1.4.0 候选版本 (#358)：`doctor --agent NAME` 将检查和声明的代理功能限制为所选的已注册代理，包括通过 SSH 运行时，并跳过共享的已安装技能清单检查。`doctor --agent codex --selected-home-only --codex-home /absolute/home` 仅检查所选 Codex 主目录，跳过其他主目录的清单。这些选项不启用反向路由检查。省略时，现有的全代理和有界多主目录诊断行为保持不变。
+v1.4.0 源码 (#358)：`doctor --agent NAME` 将检查和声明的代理功能限制为所选的已注册代理，包括通过 SSH 运行时，并跳过共享的已安装技能清单检查。`doctor --agent codex --selected-home-only --codex-home /absolute/home` 仅检查所选 Codex 主目录，跳过其他主目录的清单。这些选项不启用反向路由检查。省略时，现有的全代理和有界多主目录诊断行为保持不变。
 
-候选版 MCP 包装层仅支持以下检查及执行效果：
+MCP 包装层仅支持以下检查及执行效果：
 
 | 模式 / 代理 | 检查的事实 | 进程 / 连接效果 |
 | --- | --- | --- |

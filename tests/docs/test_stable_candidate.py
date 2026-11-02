@@ -11,6 +11,31 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StableCandidate(unittest.TestCase):
+    def test_v140_preparation_separates_source_publication_and_skill_contracts(self):
+        for locale in ('', 'ko/', 'ja/', 'zh-CN/'):
+            notes = (ROOT / ('docs/' + locale + 'releases/v1.4.0.md')).read_text(encoding='utf-8')
+            for marker in ('2026-11-02', '1.4.0', '1.3.3',
+                           'f290973962c63548f24153eeee12a8e3666fd043',
+                           '#356', '#357', '#358', '#359', '#361', '#362', '#363', '#364',
+                           '41381070618', '41381070309', 'SHA256SUMS', 'release-provenance.json',
+                           '0.4.1', '0.5.0', '0.9.1', '1.3.2', '1.0.1',
+                           'fdf5697c04f4a37194986622afb3a7966bb02631c128cf18a323e3fbe5ae90ed'):
+                self.assertIn(marker, notes)
+        english = (ROOT / 'docs/releases/v1.4.0.md').read_text(encoding='utf-8')
+        for marker in ('unpublished', 'not the final release commit',
+                       'human PyPI environment approval', '7 frozen assets'):
+            self.assertIn(marker, english)
+
+    def test_json_guide_distinguishes_ordinary_and_specialized_schemas(self):
+        for locale in ('', 'ko/', 'ja/', 'zh-CN/'):
+            text = (ROOT / ('docs/' + locale + 'cli-reference.md')).read_text(encoding='utf-8')
+            block = text.split('"version": "0.8.0"')[0].rsplit('### ', 1)[-1]
+            self.assertIn('`--json`', block)
+            self.assertIn('`--explain-json`', block)
+            self.assertIn('`send.preflight`', block)
+            self.assertIn('MCP', block)
+            self.assertIn('"host": "mac-mini.example.ts.net"', block)
+
     def test_v133_preparation_preserves_source_and_publication_boundaries(self):
         localized_gates = {
             "": ("unpublished candidate", "does not authorize merge, tag creation or publication",
@@ -291,8 +316,8 @@ class StableCandidate(unittest.TestCase):
             self.assertIn(marker, english)
 
     def test_package_and_generated_core_version_agree(self):
-        self.assertEqual(session_peer.__version__, "1.3.3")
-        self.assertIn('__version__ = "1.3.3"',
+        self.assertEqual(session_peer.__version__, "1.4.0")
+        self.assertIn('__version__ = "1.4.0"',
                       (ROOT / "session_peer_core/common.py").read_text(encoding="utf-8"))
 
     def test_current_readmes_and_runbooks_match_source_version(self):
@@ -331,16 +356,16 @@ class StableCandidate(unittest.TestCase):
 
     def test_stable_release_keeps_operational_deployment_separate(self):
         profiles = (
-            ("", "Source version: **1.3.3**.",
+            ("", "Source version: **1.4.0**",
              "At the 2026-10-28 preparation checkpoint, the last verified published stable release was **1.3.1**.",
              "Development candidate 1.2.1 is unpublished"),
-            (".ko", "소스 버전: **1.3.3**.",
+            (".ko", "소스 버전: **1.4.0**",
              "2026-10-28 준비 시점의 마지막 확인 공개 안정판은 **1.3.1**이었습니다.",
              "개발 후보 1.2.1은 미공개입니다"),
-            (".ja", "ソースバージョン：**1.3.3**。",
+            (".ja", "ソースバージョン：**1.4.0**",
              "2026-10-28の準備時点で、最後に確認した公開済み安定版は**1.3.1**でした。",
              "開発候補1.2.1は未公開です"),
-            (".zh-CN", "源码版本：**1.3.3**。",
+            (".zh-CN", "源码版本：**1.4.0**",
              "在2026-10-28的准备检查时，最后确认的已发布稳定版本为**1.3.1**。",
              "开发候选版本1.2.1尚未发布"),
         )
@@ -348,7 +373,7 @@ class StableCandidate(unittest.TestCase):
             text = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
             self.assertIn(source_version, text)
             self.assertNotIn(obsolete_checkpoint, text)
-            self.assertIn("releases/v1.3.3.md", text)
+            self.assertIn("releases/v1.4.0.md", text)
             for stale_version in ("1.2.0", "1.2.1", "1.3.0"):
                 self.assertNotIn(stale_unpublished.replace("1.2.1", stale_version), text)
             self.assertIn("https://github.com/abruption/session-peer/releases", text)

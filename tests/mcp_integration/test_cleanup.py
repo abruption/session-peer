@@ -17,6 +17,24 @@ from tests.codex.support import THREAD
 
 @unittest.skipUnless(sys.platform in ('darwin', 'linux'), 'POSIX process groups')
 class Cleanup(unittest.IsolatedAsyncioTestCase):
+    async def test_explicit_timeout_overrides_default_without_leaving_leader(self):
+        original = subprocess.Popen
+        children = []
+        def spawn(*args, **kwargs):
+            child = original(*args, **kwargs)
+            # Darwin cleanup may run its own bounded ps inspection. Track the
+            # requested Python leader, not that separate cleanup subprocess.
+            if args[0][0] == sys.executable:
+                children.append(child)
+            return child
+        with patch.object(mcp.subprocess, 'Popen', side_effect=spawn), \
+                patch.object(mcp, 'CLI_TIMEOUT', 30):
+            with self.assertRaises(asyncio.TimeoutError):
+                await asyncio.wait_for(mcp.invoke_posix(
+                    [sys.executable, '-c', 'import time; time.sleep(30)'], None, timeout=.02), 3)
+        self.assertEqual(len(children), 1)
+        self.assertIsNotNone(children[0].returncode)
+
     async def test_timeout_and_cancellation_kill_term_resistant_descendants(self):
         for mode in ('timeout', 'cancel'):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:

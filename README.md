@@ -33,7 +33,7 @@ in this ~22-second animation, not a screen recording; send success alone is not 
 ### Install
 
 Python 3.9+. The core local/SSH CLI has no third-party Python dependencies.
-Source version: **1.3.3**. The [maintenance notes](docs/releases/v1.3.3.md) describe the Python 3.14 validation scope, contributor and documentation maintenance, and the compatibility skill snapshot. Python publication, Node Control deployment and independently managed skill updates are separate.
+Source version: **1.4.0** (at the 2026-11-02 preparation checkpoint: unpublished candidate; latest published version 1.3.3). The [release notes](docs/releases/v1.4.0.md) describe bounded MCP discovery, delivery preflight and diagnostics, route presets, and the independent skill proposal. Python publication, Node Control deployment and independently managed skill updates are separate.
 
 The optional [MCP extra](docs/mcp.md) now requires `mcp>=1.30,<2`; its Python 3.10+ requirement and the dependency-free Python 3.9 core remain unchanged. Existing MCP environments need an explicit package upgrade.
 
@@ -105,7 +105,7 @@ require Unix, Python 3.11+, and `session-peer[relay]`, with pinned identities an
 explicit receiver policy. Package publication does not guarantee hosted-service availability.
 The blind Relay cannot decrypt application message content.
 [MCP / Codex plugin](https://github.com/abruption/session-peer/blob/main/docs/mcp.md) requires Python 3.10+
-and `session-peer[mcp]`; MCP wake requires both `send` and `wake` capabilities.
+and `session-peer[mcp]`; MCP sends that actually request wake require both `send` and `wake` capabilities.
 [Wake](https://github.com/abruption/session-peer/blob/main/docs/wake.md) runs only when explicitly requested
 and can start a turn, consume usage, and change project files.
 The [Antigravity bridge](https://github.com/abruption/session-peer/blob/main/docs/antigravity.md) remains experimental.

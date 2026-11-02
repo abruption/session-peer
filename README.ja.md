@@ -33,7 +33,7 @@ session-peer 1.0.2による実際のローカル通信です。CodexがClaude Co
 ### インストール
 
 Python 3.9以上が必要です。基本のローカル・SSH CLIに外部Python依存パッケージはありません。
-ソースバージョン：**1.3.3**。[メンテナンスノート](docs/ja/releases/v1.3.3.md)では、Python 3.14 の検証範囲、投稿手順と文書の保守、互換スキルコピーを説明します。Python の公開、Node Control の配備、独立管理するスキルの更新は別々の作業です。
+ソースバージョン：**1.4.0**（2026-11-02の準備時点：未公開の候補、当時の最新公開済みバージョンは1.3.3）。[リリースノート](docs/ja/releases/v1.4.0.md)では、範囲を制限したMCP探索、配信の事前確認と診断、経路プリセット、独立スキルの提案を説明します。Pythonの公開、Node Controlの配備、独立管理するスキルの更新は別々の作業です。
 
 任意の[MCPエクストラ](docs/ja/mcp.md)は`mcp>=1.30,<2`を必要とします。MCPのPython 3.10+要件と依存関係のないPython 3.9コアは変更しません。既存のMCP環境では明示的なパッケージ更新が必要です。
 
@@ -105,7 +105,7 @@ Unix、Python 3.11以上、`session-peer[relay]`、固定した識別情報と�
 パッケージの公開はホスト型サービスの可用性を保証しません。
 ブラインドRelayはアプリケーションのメッセージ内容を復号できません。
 [MCP・Codexプラグイン](https://github.com/abruption/session-peer/blob/main/docs/ja/mcp.md)にはPython 3.10以上と
-`session-peer[mcp]` が必要で、MCP wakeには `send` と `wake` の両方の機能（capability）が必要です。
+`session-peer[mcp]` が必要で、MCP の送信で実際に wake を要求するには `send` と `wake` の両方の機能（capability）が必要です。
 [Wake](https://github.com/abruption/session-peer/blob/main/docs/ja/wake.md)は明示的に依頼した場合だけ実行し、
 ターンの開始、利用枠の消費、プロジェクトファイルの変更を伴う場合があります。
 [Antigravityブリッジ](https://github.com/abruption/session-peer/blob/main/docs/ja/antigravity.md)は実験段階です。

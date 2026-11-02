@@ -114,7 +114,8 @@ async def invoke_bounded_diagnostic(argv, *, timeout, output_limit):
     return stdout, process.returncode
 
 
-async def invoke_posix(argv, message, *, timeout=CLI_TIMEOUT, output_limit=None):
+async def invoke_posix(argv, message, *, timeout=None, output_limit=None):
+    timeout = CLI_TIMEOUT if timeout is None else timeout
     if output_limit is not None:
         if message is not None:
             raise ValueError("Diagnostics do not accept stdin")
@@ -142,7 +143,7 @@ async def invoke_posix(argv, message, *, timeout=CLI_TIMEOUT, output_limit=None)
     interrupted = False
     completed = False
     try:
-        stdout, _, _ = await asyncio.wait_for(asyncio.shield(io), CLI_TIMEOUT)
+        stdout, _, _ = await asyncio.wait_for(asyncio.shield(io), timeout)
         completed = True
     finally:
         grace = (WAKE_CLI_CLEANUP_GRACE if '--wake' in argv and not completed
@@ -701,7 +702,9 @@ class Adapter:
         if not isinstance(value, dict):
             value = {"reason": "outcome_unknown"}
         checked = value.get("checked")
-        valid = (type(value.get("schemaVersion")) is int and value["schemaVersion"] == 1
+        valid = (not any(key in value for key in (
+                     "submitted", "consumptionConfirmed", "status", "dryRun", "queueId"))
+                 and type(value.get("schemaVersion")) is int and value["schemaVersion"] == 1
                  and value.get("command") == "send.preflight" and isinstance(checked, dict)
                  and checked.get("agent") == agent and isinstance(checked.get("validation"), str)
                  and checked.get("validation") in {
