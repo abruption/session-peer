@@ -153,6 +153,17 @@ class PresetSelection(unittest.IsolatedAsyncioTestCase):
         self.mock_lookup.assert_not_called()
         self.mock_read.assert_not_called()
 
+    async def test_selected_send_post_invocation_failure_is_unknown_without_retry(self):
+        revision = core.preset_revision('work', LOCAL)
+        self.adapter.invoke.side_effect = OSError(PRIVATE_MARKER)
+        value = await self.adapter.send_message('local', 'worker', 'fixture',
+            preset='work', preset_revision=revision)
+        self.assertEqual(value['status'], 'unknown')
+        self.assertIsNone(value['submitted'])
+        self.assertFalse(value['retryAllowed'])
+        self.assertNotIn(PRIVATE_MARKER, json.dumps(value))
+        self.adapter.invoke.assert_awaited_once()
+
     async def test_exact_alias_home_transport_and_agent_intersection_no_dns_or_fallback(self):
         cases = [dict(REMOTE, host='approved-host'), dict(REMOTE, codexHome='/approved/home/'),
                  {'agent': 'codex', 'transport': 'local', 'codexHome': REMOTE['codexHome']}, dict(LOCAL)]
@@ -258,7 +269,8 @@ class SharedSecureReader(unittest.IsolatedAsyncioTestCase):
 
 @unittest.skipUnless(importlib.util.find_spec('mcp'), 'optional MCP SDK')
 class PresetProtocol(unittest.IsolatedAsyncioTestCase):
-    async def run_case(self, folder, entry, *, snapshot=None, deny_read=False, tiny_budget=False):
+    async def run_case(self, folder, entry, *, snapshot=None, deny_read=False, tiny_budget=False,
+                       native_result=None):
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
         import contextlib
@@ -277,7 +289,9 @@ class PresetProtocol(unittest.IsolatedAsyncioTestCase):
                    {'schemaVersion': 1, 'presets': snapshot or {}}).encode()) + ')\n')
             + 'peer.core.preset_read = snapshot\n'
             + 'async def forbidden(*a, **k):\n    os._exit(94)\n'
-            + 'peer.Adapter.invoke = forbidden\n'
+            + ('peer.Adapter.invoke = forbidden\n' if native_result is None else
+               'async def native_result(self, *a, **k):\n    return ' + repr(native_result) + '\n'
+               + 'peer.Adapter.invoke = native_result\n')
             + ('peer.DESTINATION_METADATA_BYTES = 1\n' if tiny_budget else '')
             + 'raise SystemExit(peer.main())\n')
         params = StdioServerParameters(command=sys.executable, args=[str(wrapper), '--config', str(path)])
@@ -318,7 +332,7 @@ class PresetProtocol(unittest.IsolatedAsyncioTestCase):
                     denied = await client.call_tool(tool, {'destination': 'local', **args})
                     self.assertTrue(denied.isError)
                     self.assertEqual(denied.structuredContent['schemaVersion'], 1)
-                    self.assertEqual(denied.structuredContent['reason'], 'request_rejected')
+                self.assertEqual(denied.structuredContent['reason'], 'policy_denied')
 
     async def test_real_stdio_denial_happens_before_store_or_cli(self):
         with tempfile.TemporaryDirectory(prefix='codex-preset-deny-', dir=os.environ.get('SESSION_PEER_TEST_TMP')) as folder:
@@ -366,3 +380,16 @@ class PresetProtocol(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(value.isError)
                 self.assertEqual(len(value.structuredContent['presets']), 128)
                 self.assertLessEqual(len(value.model_dump_json().encode()), 64 * 1024)
+
+    async def test_large_native_submission_keeps_evidence_instead_of_size_refusal(self):
+        with tempfile.TemporaryDirectory(prefix='codex-preset-proof-', dir=os.environ.get('SESSION_PEER_TEST_TMP')) as folder:
+            native = {'ok': True, 'status': 'queued', 'submitted': True,
+                      'queueId': 'fixture-queue', 'target': {'pid': 42}, 'detail': 'x' * 40000}
+            session = await self.run_case(folder, policy(), snapshot={'work': dict(LOCAL)}, native_result=native)
+            async with session as client:
+                value = await client.call_tool('send_message', {'destination': 'local',
+                    'preset': 'work', 'preset_revision': core.preset_revision('work', LOCAL),
+                    'target': 'worker', 'message': 'fixture'})
+                self.assertFalse(value.isError)
+                for key in ('submitted', 'status', 'queueId', 'target'):
+                    self.assertEqual(value.structuredContent[key], native[key])

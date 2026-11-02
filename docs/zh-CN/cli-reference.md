@@ -164,11 +164,13 @@ session-peer preset remove work-mac --expect-revision 'dp1:<CURRENT-HASH>'
 
 在 macOS 上，忽略所有权的挂载会以 `preset_ownership_unenforced` 被拒绝，无法查询或验证挂载状态时则以 `preset_mount_unverifiable` 被拒绝。不会仅凭模式位断定所有权已强制执行。Linux 也会拒绝上级路径中的 ACL，以及无法验证 ACL 状态的文件系统。中断管理命令后请检查当前配置，因为更改可能已经可见；目录同步失败不会被静默当作成功。
 
-### 单独延期的 MCP 预设选择 (#359)
+### 尚未发布的 v1.4.0 候选版本：MCP 预设 (#359)
 
 MCP 预设查询和选择使用操作员的显式允许列表及现有安全快照读取函数，不新增 CLI 预设管理命令或自动选择。参见 [MCP 预设策略与限制](mcp.md)。MCP 选择会展开已批准的路径，而不会将 CLI `--preset` 与显式路径参数组合。现有 CLI 输出、修订令牌和文件系统安全约定保持不变。
 
-对于 MCP `list_sessions`、`preflight_send` 和 `send_message`，可选的 `preset`、`preset_revision` 输入既需要现有操作权限，也需要 `presets`。实际发送必须提供当前 `dp1:` 修订令牌和明确目标。与 wake 或 Reply-To URI 的组合会被拒绝。修订令牌在查询时检查，不代表目标代次或权限；之后的修改也不能取消已为调用展开的路径。此延期的后续工作不承诺在 v1.4.0 发布。
+对于 MCP `list_sessions`、`preflight_send` 和 `send_message`，可选的 `preset`、`preset_revision` 输入既需要现有操作权限，也需要 `presets`。实际发送必须提供当前 `dp1:` 修订令牌和明确目标。与 wake 或 Reply-To URI 的组合会被拒绝。修订令牌在查询时检查，不代表目标代次或权限；之后的修改也不能取消已为调用展开的路径。
+
+新增的 64 KiB 工具结果限制仅适用于 `list_presets` 元数据查询。附加预设信息的现有列表和发送响应保留原生载荷、提交证据及传输限制；选择预设不会为实际发送新增合计 64 KiB 的限制。元数据查询错误发生在调用之前。操作调用 CLI 后，提交完成后仍可能发生 I/O 错误，因此必须保留结果未知的状态，切勿自动重试。
 
 <a id="接收者地址簿开发中"></a>
 

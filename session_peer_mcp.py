@@ -652,7 +652,16 @@ class Adapter:
             except core.CcPeerError as exc:
                 return {"ok": False, "error": str(exc), **exc.details}
         self.recheck_preset(destination, plan, capability="send", agent=agent)
-        value = await self.invoke(argv, "From: session-peer MCP (caller session unavailable)\n\n" + message)
+        try:
+            value = await self.invoke(argv, "From: session-peer MCP (caller session unavailable)\n\n" + message)
+        except (OSError, ValueError):
+            if plan is None:
+                raise
+            value = {"ok": False, "status": "unknown", "submitted": None,
+                     "reason": "outcome_unknown", "retryAllowed": False}
+        if plan and not isinstance(value, dict):
+            value = {"ok": False, "status": "unknown", "submitted": None,
+                     "reason": "outcome_unknown", "retryAllowed": False}
         return {**value, "schemaVersion": 1, "command": "mcp.preset.send",
                 "preset": self.preset_metadata(plan)} if plan else value
 
@@ -770,7 +779,10 @@ def create_server(adapter: Adapter):
                                   structuredContent=value, isError=value.get("ok") is False)
         # Bound both representations, including JSON escaping. JSON-RPC is separate.
         # Apply only to the new versioned tools; preserve old response contracts.
-        if command and len(envelope.model_dump_json().encode('utf-8')) > DESTINATION_METADATA_BYTES:
+        # Native list/send results retain their existing evidence contract.
+        # Do not replace a complete submission with a pre-effect size refusal.
+        if (command and command not in ("mcp.preset.send", "mcp.preset.sessions")
+                and len(envelope.model_dump_json().encode('utf-8')) > DESTINATION_METADATA_BYTES):
             if command == "send.preflight":
                 value = preflight_unknown("preflight_result_too_large")
                 return CallToolResult(content=[TextContent(type="text", text=json.dumps(value))],
