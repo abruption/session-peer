@@ -272,9 +272,14 @@ class Protocol(unittest.IsolatedAsyncioTestCase):
         from mcp.client.stdio import stdio_client
         with tempfile.TemporaryDirectory() as folder:
             p = Path(folder) / 'policy.json'
-            p.write_text(json.dumps({'schemaVersion': 1, 'destinations': {
+            destinations = {
                 '\\' * 126 + str(i).zfill(2): {'agents': list(mcp_peer.core.AGENTS.names()),
-                    'capabilities': ['list', 'send', 'wake'], 'codexHome': '/private-fixture'} for i in range(64)}}))
+                    'capabilities': ['list', 'send', 'wake'], 'codexHome': '/private-fixture'} for i in range(64)}
+            # The payload alone fits; only duplicate text/escaping exceeds the
+            # outer tool-result budget. Thus the final-result guard must run.
+            logical = await mcp_peer.Adapter(destinations).list_destinations()
+            self.assertEqual(len(logical['destinations']), 64)
+            p.write_text(json.dumps({'schemaVersion': 1, 'destinations': destinations}))
             params = StdioServerParameters(command=sys.executable,
                 args=[str(Path(mcp_peer.__file__).resolve()), '--config', str(p)])
             async with stdio_client(params) as (read, write):
