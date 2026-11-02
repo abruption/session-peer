@@ -97,6 +97,8 @@ MCP ラッパーが対応する検査と実行上の影響は、次の範囲に�
 
 ## ツールとパーミッション
 
+以下の二つのシグネチャは既存の基本インターフェースを説明します。v1.4.0ソースのツールと省略可能なプリセット引数は、上の各節と初期化済みMCPの`tools/list`スキーマを確認してください。ツールが表示されても、ポリシー上の権限が付与されるわけではありません。
+
 - `list_sessions(destination="local", agent=null, include_inactive=false)` は CLI の構造化された一覧を返します。Agent は `claude` または `codex` です。省略した場合は許可されたエージェントを一覧表示します。
 - `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30)` は、`send` が明示的に許可されている場所にのみ 1 回送信します。Target は Claude 名/PID、`codex:<UUID>`、または設定されたホストとホームに正確に一致する Reply-To URI です。
 

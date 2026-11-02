@@ -29,9 +29,17 @@ class Cleanup(unittest.IsolatedAsyncioTestCase):
             return child
         with patch.object(mcp.subprocess, 'Popen', side_effect=spawn), \
                 patch.object(mcp, 'CLI_TIMEOUT', 30):
-            with self.assertRaises(asyncio.TimeoutError):
-                await asyncio.wait_for(mcp.invoke_posix(
-                    [sys.executable, '-c', 'import time; time.sleep(30)'], None, timeout=.02), 3)
+            task = asyncio.create_task(mcp.invoke_posix(
+                [sys.executable, '-c', 'import time; time.sleep(30)'], None, timeout=.02))
+            try:
+                done, _ = await asyncio.wait({task}, timeout=3)
+                self.assertIn(task, done, 'Explicit helper timeout did not fire before watchdog')
+                with self.assertRaises(asyncio.TimeoutError):
+                    await task
+            finally:
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
         self.assertEqual(len(children), 1)
         self.assertIsNotNone(children[0].returncode)
 

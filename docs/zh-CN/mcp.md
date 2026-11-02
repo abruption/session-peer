@@ -97,6 +97,8 @@ MCP 包装层仅支持以下检查及执行效果：
 
 ## 工具与权限
 
+以下两个签名说明原有的基本接口。v1.4.0源码工具及可选预设参数请参阅上文各节和初始化后的MCP `tools/list`模式。工具可见并不授予策略权限。
+
 - `list_sessions(destination="local", agent=null, include_inactive=false)` 返回 CLI 的结构化列表。Agent 可以是 `claude` 或 `codex`；省略则列出允许的代理。
 - `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30)` 仅在显式允许 `send` 的情况下提交一次。Target 是 Claude 名称/PID、`codex:<UUID>` 或与配置的主机和主目录完全匹配的 Reply-To URI。
 

@@ -110,7 +110,7 @@ class PreflightPolicy(unittest.IsolatedAsyncioTestCase):
     async def test_native_root_evidence_cannot_be_ignored_by_structured_projection(self):
         for key, field in (('submitted', True), ('submitted', False),
                            ('consumptionConfirmed', True), ('status', 'queued'),
-                           ('dryRun', False), ('queueId', 'fixture-native-queue')):
+                           ('dryRun', False), ('queueId', 'fixture-native-queue'), ('submitted', None)):
             value = preview()
             value[key] = field
             self.adapter.invoke.return_value = value
@@ -120,7 +120,7 @@ class PreflightPolicy(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(output['limitations']['submission'], 'unknown')
             self.assertFalse(output['retryAllowed'])
             self.assertEqual(output['reason'], 'preflight_response_unavailable')
-        self.assertEqual(self.adapter.invoke.await_count, 6)
+        self.assertEqual(self.adapter.invoke.await_count, 7)
 
     async def test_missing_wake_evidence_cannot_pass(self):
         self.adapter.invoke.return_value = preview('codex', wake=True)

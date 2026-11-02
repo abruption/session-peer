@@ -217,7 +217,7 @@ Mac에서 소유권을 무시하는 마운트는 `preset_ownership_unenforced`�
 
 ### v1.4.0 소스: MCP 프리셋 (#359)
 
-후보 버전 입력 시그니처: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`; `preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
+입력 시그니처: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`; `preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
 
 MCP 프리셋 조회와 선택은 운영자의 명시적 허용 목록과 기존 보안 스냅샷 읽기 함수를 사용하며, CLI 프리셋 관리 명령이나 자동 선택을 추가하지 않습니다. [MCP 프리셋 정책과 제한](mcp.md)을 참고하십시오. MCP 선택은 CLI `--preset`과 명시적 경로 플래그를 함께 사용하는 대신 승인된 경로를 확장합니다. 기존 CLI 출력, 리비전 및 파일 시스템 보안 규약은 유지됩니다.
 

@@ -81,7 +81,7 @@ MCP 래퍼가 지원하는 검사와 실행 효과는 다음으로 제한됩니�
 
 ## v1.4.0 소스: MCP 프리셋 (#359)
 
-후보 버전 입력 시그니처: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`; `preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
+입력 시그니처: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`; `preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
 
 `list_presets(destination)`는 승인된 경로 메타데이터만 읽습니다. `schemaVersion` 2 정책은 `presets`를 명시적으로 허용하고, 목적지별 `presets` 목록에 `[a-z][a-z0-9_-]{0,63}` 형식의 승인된 이름을 1개 이상 128개 이하로 지정해야 합니다. 버전 1은 새 기능과 필드를 거부합니다. 저장소를 읽기 전에 권한을 확인합니다. 결과는 목적지와 일치하는 승인된 `name`, `agent`, `transport`, `revision` 값과 기존 `dp1:` 토큰만 노출하며 실제 호스트, 홈 및 저장소 경로는 생략합니다. 저장된 경로 조회는 세션을 검색하거나 대상을 고르거나 SSH·네이티브·버전 확인 검사를 실행하거나 데이터를 새로 고치지 않습니다. 버전이 지정된 텍스트와 구조화된 도구 결과를 합친 크기는 64 KiB로 제한됩니다.
 
@@ -96,6 +96,8 @@ MCP 래퍼가 지원하는 검사와 실행 효과는 다음으로 제한됩니�
 승인된 항목 하나라도 없거나 경로가 정책과 일치하지 않으면 메타데이터 조회 전체를 원자적으로 거부합니다. 고정된 선택 거부 코드의 예는 `preset_platform_unsupported`, `preset_route_unsupported`, `preset_revision_mismatch`, `preset_storage_unavailable`이며, 관리 작업이나 파일 시스템 복구는 시도하지 않습니다. 메타데이터 조회 오류는 호출 전에 발생합니다. 호출 후의 입출력 오류나 실제 전송 응답의 디코딩 실패는 이미 제출된 뒤에도 발생할 수 있으므로 `outcome_unknown`과 `retryAllowed=false`를 보고하고 자동으로 재시도하지 마십시오. 확인된 네이티브 대기열 등록·제출 증거는 유지합니다.
 
 ## 도구 및 권한
+
+아래 두 시그니처는 기존 기본 인터페이스를 설명합니다. v1.4.0 소스 도구와 선택형 프리셋 인자는 위 절과 초기화된 MCP의 `tools/list` 스키마를 확인하십시오. 도구가 표시된다는 사실은 정책 권한을 부여하지 않습니다.
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)`는 CLI의 구조화된 목록을 반환합니다. Agent는 `claude` 또는 `codex`일 수 있으며, 생략 시 허용된 에이전트를 나열합니다.
 - `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30)`는 `send`가 명시적으로 허용된 곳에만 1회 제출합니다. Target은 Claude 이름/PID, `codex:<UUID>`, 또는 구성된 호스트 및 홈과 정확히 일치하는 Reply-To URI입니다.

@@ -97,6 +97,8 @@ If any approved item is missing or its route mismatches policy, the whole metada
 
 ## Tools and permissions
 
+The two signatures below describe the original baseline interface. For v1.4.0 source tools and optional preset selectors, use the sections above and the initialized MCP `tools/list` schema. Tool availability does not grant policy permission.
+
 - `list_sessions(destination="local", agent=null, include_inactive=false)` returns the CLI's structured listing. Agent may be `claude` or `codex`; omission lists permitted agents.
 - `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30)` submits once, only where `send` is explicitly allowed. Target is a Claude name/PID, `codex:<UUID>`, or a Reply-To URI matching the configured host and home exactly.
 
