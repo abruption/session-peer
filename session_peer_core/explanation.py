@@ -169,3 +169,83 @@ def render_delivery_fact_lines(facts):
             "Injection observation: unsupported" if not facts["paired"] else "Injection observation: unknown (not reported)",
             "Last delivery observation: unknown (not reported)",
             "Task completion: unknown"]
+
+
+def classify_delivery_readiness(args, result, *, failed=False):
+    """Pure evidence classification shared by text and structured previews.
+
+    This reads original native facts, before any compatibility output shaping.
+    A requested dry run is never itself evidence of a completed dry run.
+    """
+    started = getattr(args, "_delivery_explanation_started", True)
+    malformed = any(key in result and type(result[key]) is not bool
+                    for key in ("ok", "dryRun"))
+    malformed = malformed or any(key in result and result[key] is not None and type(result[key]) is not bool
+                                 for key in ("submitted", "consumptionConfirmed"))
+    malformed = malformed or any(key in result and not isinstance(result[key], str)
+                                 for key in ("status", "reason"))
+    malformed = malformed or ("status" in result and result["status"] not in (
+        "dry_run", "validated", "queued", "posted", "submitted", "unknown", "refused", "failed", "error"))
+    unknown = malformed or result.get("status") == "unknown" or result.get("reason") in (
+        "outcome_unknown", "ssh_identity_evidence_unavailable") or (
+        "submitted" in result and result["submitted"] is None)
+    unexpected = delivery_explanation_has_submission(result)
+    reported = result.get("dryRun") is True or result.get("status") in ("dry_run", "validated")
+    failed = failed or result.get("ok") is False or result.get("status") in ("refused", "failed", "error")
+    failed = failed or (isinstance(result.get("reason"), str)
+                        and result["reason"] in PREFLIGHT_REFUSAL_REASONS)
+    validation = ("unexpected_submission" if unexpected else "unknown" if unknown else
+                  "not_run" if not started else "not_confirmed" if failed else
+                  "passed" if reported else "not_confirmed")
+    wake = ("not_requested" if not getattr(args, "wake", False) else
+            "validated" if validation == "passed" and isinstance(result.get("wake"), dict)
+            and result["wake"].get("status") == "validated" else "not_confirmed")
+    return {"validation": validation, "wake": wake, "unknown": unknown,
+            "unexpected": unexpected, "started": bool(started), "failed": bool(failed)}
+
+
+PREFLIGHT_REFUSAL_REASONS = frozenset({
+    "sqlite_home_configuration", "sqlite_home_system_configuration",
+    "sqlite_home_managed_configuration", "sqlite_home_project_configuration",
+    "consumer_directory_unverifiable", "storage_config_unverifiable",
+    "unsupported_target_generation", "state_db_missing", "thread_not_yet_persisted",
+})
+
+
+def structured_delivery_preflight(args, result, *, failed=False):
+    """Versioned, bounded allowlist; never include native errors or route data."""
+    state = classify_delivery_readiness(args, result, failed=failed)
+    facts = build_delivery_explanation(args, result, failed=failed)
+    # URI failure before routing is still a known agent kind, not an
+    # authenticated sender/recipient identity or proof of completed checks.
+    if facts["agent"] is None:
+        try:
+            address = parse_reply_address(str(getattr(args, "to", "") or ""))
+        except (CcPeerError, ValueError):
+            address = None
+        if address:
+            facts["agent"] = address["agent"]
+            facts["capabilities"] = {key: getattr(AGENTS.get(address["agent"]).capabilities, key)
+                                     for key in ("send", "wake", "wait", "ack")}
+    validation = state["validation"]
+    reason = {"passed": None, "not_run": "checks_not_run",
+              "not_confirmed": "validation_not_confirmed", "unknown": "outcome_unknown",
+              "unexpected_submission": "unexpected_submission"}[validation]
+    passed = validation == "passed" and state["wake"] in ("not_requested", "validated")
+    if validation == "passed" and not passed:
+        reason = "wake_preflight_not_confirmed"
+    refusal = result.get("reason")
+    refusal = refusal if isinstance(refusal, str) and refusal in PREFLIGHT_REFUSAL_REASONS else None
+    return {"schemaVersion": 1, "command": "send.preflight", "ok": passed,
+            "checked": {"validation": validation, "agent": facts["agent"], "wake": state["wake"]},
+            "declaredCapabilities": facts["capabilities"],
+            "limitations": {"callerIdentity": "unavailable", "readiness": "point_in_time_only",
+                            "submission": "reported_submission" if state["unexpected"] else
+                                "unknown" if state["unknown"] else "not_attempted",
+                            "consumption": "not_checked", "ack": "not_checked",
+                            "hostApproval": "not_granted", "routeReservation": "none"},
+            "reason": reason, "refusalReason": refusal if validation in ("not_run", "not_confirmed") else None,
+            "retryAllowed": False,
+            "operatorActions": ["repeat_validation_before_send", "review_host_approvals"]
+                if passed else ["inspect_existing_evidence_before_send"] if state["unknown"] or state["unexpected"]
+                else ["resolve_validation_failure_before_send"]}

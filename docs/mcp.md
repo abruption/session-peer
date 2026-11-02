@@ -35,6 +35,14 @@ Register using `codex mcp add session-peer -- /absolute/path/session-peer-mcp --
 
 The response includes explicit limits: `callerIdentity="unavailable"`, `readiness="not_checked"`, `submission="not_attempted"`, `consumption="not_checked"`, and `ack="not_checked"`. This tool rejects inventories over 64 destinations or IDs that are not printable or exceed 128 UTF-8 bytes. Its complete MCP tool result (text and structured content together) is bounded to 64 KiB, excluding the surrounding JSON-RPC envelope. These are lookup limits; policy loading and existing tools keep their previous behavior. Printability follows the running Python Unicode database. The default local-list-only policy is unchanged.
 
+## Unreleased v1.4.0 candidate: send preflight (#357)
+
+`preflight_send(destination, target, message, wake=false, wake_timeout=30)` validates a normal message through the existing CLI dry-run checks. Operator policy must use `schemaVersion` 2 and explicitly grant `preflight` for the destination and agent. Version 1 keeps its existing capability set and acquires no new permission; the default remains local-list-only. Preflight does not require `send` and cannot authorize sending. Requested wake eligibility additionally requires `wake`, without activating a model or reserving a wake budget.
+
+The versioned explanation projects allowlisted facts from the native response before SSH adapter shaping, with fixed refusal/unknown reasons and operator actions. It excludes message contents, raw errors, credentials, host/home paths and native transcripts. Unknown or unexpected submission evidence fails validation with `retryAllowed=false`; never automatically resend. Preflight neither submits a message nor creates handoff authority. Device and handoff modes are unsupported.
+
+Existing dry-run checks may start local/version processes and SSH connections; SSH configuration may itself execute commands. The tool therefore uses `readOnlyHint=false` and `openWorldHint=true`. Host approvals remain separate from policy permission. Passing records point-in-time checks, not a route reservation, effective-storage attestation, approval, later-send guarantee, consumption or ACK.
+
 ## Tools and permissions
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)` returns the CLI's structured listing. Agent may be `claude` or `codex`; omission lists permitted agents.

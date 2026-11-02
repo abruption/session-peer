@@ -78,9 +78,13 @@ def cmd_send(args: argparse.Namespace) -> int:
     validate_agent_send(adapter, args, text)
 
     if not args.host:
-        if getattr(args, "explain", False):
+        if getattr(args, "explain", False) or getattr(args, "explain_json", False):
             args._delivery_explanation_started = True
         result = LocalTransport().execute("send", adapter, args, text)
+        if getattr(args, "explain_json", False):
+            value = structured_delivery_preflight(args, result, failed=result.get("ok") is False)
+            print(json.dumps(value, ensure_ascii=False))
+            return 0 if value["ok"] else EXIT_ERROR
         result.update(routing_metadata)
         emit(args.json, result, adapter.submission_text(result, "this machine"), command="send")
         if getattr(args, "explain", False):
@@ -97,13 +101,13 @@ def cmd_send(args: argparse.Namespace) -> int:
     for requested_host in args.host:
         host = requested_host
         try:
-            if getattr(args, "explain", False):
+            if getattr(args, "explain", False) or getattr(args, "explain_json", False):
                 args._delivery_explanation_started = True
                 args._delivery_explanation_host = requested_host
             transport = SshTransport(requested_host, args, tailnet_status)
             host, ssh_opts = transport.host, transport.ssh_opts
             shown_host = display_host(requested_host, host)
-            if getattr(args, "explain", False):
+            if getattr(args, "explain", False) or getattr(args, "explain_json", False):
                 args._delivery_explanation_host = shown_host
             encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
             remote_argv = ["send", "--no-update-notice", "--to", args.to, "--b64", encoded]
@@ -126,6 +130,12 @@ def cmd_send(args: argparse.Namespace) -> int:
                 raise CcPeerError("SSH response did not preserve the requested generation; do not retry automatically",
                                   {**native_facts, **ssh_metadata_from(result),
                                    "status": "unknown", "reason": "outcome_unknown", "retryAllowed": False})
+            if getattr(args, "explain_json", False):
+                value = structured_delivery_preflight(args, result, failed=result.get("ok") is False)
+                all_results.append(value)
+                if not value["ok"]:
+                    exit_code = EXIT_ERROR
+                continue
             payload = adapter.remote_submission(result, args, text)
             payload.update(host_metadata(requested_host, host))
             payload.update(routing_metadata)
@@ -141,6 +151,9 @@ def cmd_send(args: argparse.Namespace) -> int:
                                               failed=payload.get("ok") is False or result.get("ok") is False)
         except CcPeerError as exc:
             exit_code = EXIT_ERROR
+            if getattr(args, "explain_json", False):
+                all_results.append(structured_delivery_preflight(args, exc.details, failed=True))
+                continue
             all_results.append(json_result(
                 "send",
                 {**host_metadata(requested_host, host), "error": str(exc), **exc.details},
@@ -153,7 +166,9 @@ def cmd_send(args: argparse.Namespace) -> int:
                                               host=display_host(requested_host, host),
                                               failed=True, stream=sys.stderr)
 
-    if args.json:
+    if getattr(args, "explain_json", False):
+        print(json.dumps(one_or_many(all_results), ensure_ascii=False))
+    elif args.json:
         emit_json_results(all_results)
     elif (
         advertised_route and advertised_route["status"] == "unverified"

@@ -85,6 +85,12 @@ This scope is text-only: combining `--explain` with `--json` or `--output-format
 
 For send, the normal message requirement and limits still apply: supply `--message`, `--message-file` or stdin as usual; no placeholder body is generated. Explanation fields do not include the body or receipt secrets. Normal explanations use stdout; failed results or unexpected submission evidence use stderr, without moving existing summary/error output. Unknown evidence stays unknown, and an uncertain actual send must never trigger automatic resend.
 
+### Unreleased v1.4.0 candidate: structured send preview (#357)
+
+`send --dry-run --explain-json` opts into a versioned, allowlisted JSON explanation for local or SSH validation. It uses the same classification as the text preview and the native response before SSH adapter shaping. Normal message inputs and limits apply; no placeholder body is generated. The output excludes message contents, raw errors and paths. Unknown or unexpected submission evidence fails validation and does not authorize automatic retry.
+
+`--explain-json` may be combined with `--json`, but requires `--dry-run` and rejects `--explain`, paired-device and experimental handoff modes before message input or destination work. Existing `--explain` stays text-only, and ordinary CLI JSON remains unchanged. Existing dry-run probes may start local/version processes or SSH connections, but this mode does not enqueue, post, start a model, reserve wake budget or create handoff authority. A passing preview is a point-in-time check, not approval, a reservation, later-send safety, consumption or ACK.
+
 ### Optional paired devices and Antigravity (v0.9)
 
 These features are available starting with PyPI v0.9.0. Antigravity remains

@@ -45,7 +45,8 @@ def render_sessions(sessions: list[dict], where: str) -> str:
 
 def delivery_explanation_has_submission(result: dict) -> bool:
     """Recognize reported submission evidence without changing native results."""
-    return (result.get("submitted") is True or result.get("dryRun") is False
+    return (result.get("submitted") is True or result.get("consumptionConfirmed") is True
+            or result.get("dryRun") is False
             or result.get("status") in ("queued", "posted", "submitted"))
 
 
@@ -90,21 +91,17 @@ def render_delivery_explanation(args: argparse.Namespace, result: dict, *,
         home = facts["home"]
         lines.append(("Codex home: " if agent == "codex" else "Antigravity home: ")
                      + (explanation_text(home) if isinstance(home, str) else "unknown (not reported)"))
-    started = getattr(args, "_delivery_explanation_started", True)
-    unknown = result.get("status") == "unknown" or result.get("reason") in (
-        "outcome_unknown", "ssh_identity_evidence_unavailable") or (
-        "submitted" in result and result["submitted"] is None)
-    unexpected = delivery_explanation_has_submission(result)
-    dry_run_reported = result.get("dryRun") is True or result.get("status") in ("dry_run", "validated")
+    state = classify_delivery_readiness(args, result, failed=failed)
+    started, unknown, unexpected = state["started"], state["unknown"], state["unexpected"]
+    failed = state["failed"]
+    dry_run_reported = state["validation"] == "passed"
     if not started:
         lines.append("Destination checks: not run (command failed before destination checks)")
-        lines.append("Validation: not confirmed")
-    else:
-        lines.append("Validation: " + ("unexpected submission evidence; dry-run not confirmed" if unexpected else
-                                       "result unknown" if unknown else
-                                       "not confirmed" if failed else
-                                       "passed for this dry run" if dry_run_reported else
-                                       "not confirmed (dry-run evidence not reported)"))
+    lines.append("Validation: " + ("unexpected submission evidence; dry-run not confirmed" if unexpected else
+                                   "result unknown" if unknown else
+                                   "not confirmed" if failed or not started else
+                                   "passed for this dry run" if dry_run_reported else
+                                   "not confirmed (dry-run evidence not reported)"))
     if unexpected:
         for key, label in (("dryRun", "dry-run"), ("submitted", "submitted")):
             if type(result.get(key)) is bool:
@@ -119,7 +116,7 @@ def render_delivery_explanation(args: argparse.Namespace, result: dict, *,
     else:
         fact = result.get("wake")
         wake = ("preflight passed for this dry run; no turn started"
-                if not unknown and not unexpected and isinstance(fact, dict) and fact.get("status") == "validated" else
+                if state["wake"] == "validated" else
                 "requested; preflight not confirmed")
     lines.extend(["Wake: " + wake,
                   ("Receipt ACK: unknown (receiver support not reported)" if facts["paired"]
