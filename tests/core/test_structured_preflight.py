@@ -3,6 +3,7 @@ import argparse
 import contextlib
 import io
 import json
+import sys
 import unittest
 from unittest import mock
 
@@ -179,7 +180,8 @@ class CodexStructuredDryrun(unittest.TestCase):
     def test_real_queue_dryrun_and_wake_preflight_skip_effect_boundaries(self):
         import subprocess
         before = (self.root / 'state_5.sqlite').read_bytes()
-        for wake in (False, True):
+        supported_wake = peer.fcntl is not None and sys.platform in ('darwin', 'linux')
+        for wake in ((False, True) if supported_wake else (False,)):
             with self.subTest(wake=wake), \
                     mock.patch.object(peer.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'codex-cli 0.154.0\n', '')) as probe, \
                     mock.patch.object(peer.subprocess, 'Popen', side_effect=AssertionError('native queue/model')), \
@@ -208,6 +210,8 @@ class CodexStructuredDryrun(unittest.TestCase):
         for action in (run, child, reserve):
             action.assert_not_called()
 
+    @unittest.skipUnless(peer.fcntl is not None and sys.platform in ('darwin', 'linux'),
+                         'Codex wake is macOS/Linux only')
     def test_interrupted_wake_probe_cannot_queue_or_reserve_budget(self):
         with mock.patch.object(peer.subprocess, 'run', side_effect=KeyboardInterrupt), \
                 mock.patch.object(peer.subprocess, 'Popen', side_effect=AssertionError('queue/model')) as child, \
@@ -223,6 +227,8 @@ class CodexStructuredDryrun(unittest.TestCase):
         reserve.assert_not_called()
         self.assertFalse((self.root / 'session-peer' / 'wake-locks').exists())
 
+    @unittest.skipUnless(peer.fcntl is not None and sys.platform in ('darwin', 'linux'),
+                         'Codex wake is macOS/Linux only')
     def test_timed_out_wake_probe_cannot_queue_or_reserve_budget(self):
         import subprocess
         with mock.patch.object(peer.subprocess, 'run', side_effect=subprocess.TimeoutExpired('fixture', 5)), \
@@ -234,6 +240,19 @@ class CodexStructuredDryrun(unittest.TestCase):
         child.assert_not_called()
         reserve.assert_not_called()
         self.assertFalse((self.root / 'session-peer' / 'wake-locks').exists())
+
+    @unittest.skipIf(peer.fcntl is not None and sys.platform in ('darwin', 'linux'),
+                     'Native platform supports wake preflight')
+    def test_unsupported_wake_platform_refuses_without_probe_or_effect(self):
+        with mock.patch.object(peer.subprocess, 'run') as run, \
+                mock.patch.object(peer.subprocess, 'Popen') as child, \
+                mock.patch.object(peer, 'wake_target_rate_reserve') as reserve:
+            code, value = self.invoke(wake=True)
+        self.assertEqual(code, 1)
+        self.assertFalse(value['ok'])
+        self.assertEqual(value['checked']['wake'], 'not_confirmed')
+        for action in (run, child, reserve):
+            action.assert_not_called()
 
     def test_framed_native_message_byte_budget_still_refuses_before_effects(self):
         with mock.patch.object(peer.subprocess, 'Popen', side_effect=AssertionError('queue/model')) as child, \
