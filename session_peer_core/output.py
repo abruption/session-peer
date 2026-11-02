@@ -45,7 +45,8 @@ def render_sessions(sessions: list[dict], where: str) -> str:
 
 def delivery_explanation_has_submission(result: dict) -> bool:
     """Recognize reported submission evidence without changing native results."""
-    return (result.get("submitted") is True or result.get("dryRun") is False
+    return (result.get("submitted") is True or result.get("consumptionConfirmed") is True
+            or result.get("dryRun") is False
             or result.get("status") in ("queued", "posted", "submitted"))
 
 

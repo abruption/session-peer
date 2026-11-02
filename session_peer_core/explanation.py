@@ -178,11 +178,20 @@ def classify_delivery_readiness(args, result, *, failed=False):
     A requested dry run is never itself evidence of a completed dry run.
     """
     started = getattr(args, "_delivery_explanation_started", True)
-    unknown = result.get("status") == "unknown" or result.get("reason") in (
+    malformed = any(key in result and type(result[key]) is not bool
+                    for key in ("ok", "dryRun"))
+    malformed = malformed or any(key in result and result[key] is not None and type(result[key]) is not bool
+                                 for key in ("submitted", "consumptionConfirmed"))
+    malformed = malformed or any(key in result and not isinstance(result[key], str)
+                                 for key in ("status", "reason"))
+    malformed = malformed or ("status" in result and result["status"] not in (
+        "dry_run", "validated", "queued", "posted", "submitted", "unknown", "refused", "failed", "error"))
+    unknown = malformed or result.get("status") == "unknown" or result.get("reason") in (
         "outcome_unknown", "ssh_identity_evidence_unavailable") or (
         "submitted" in result and result["submitted"] is None)
     unexpected = delivery_explanation_has_submission(result)
     reported = result.get("dryRun") is True or result.get("status") in ("dry_run", "validated")
+    failed = failed or result.get("ok") is False or result.get("status") in ("refused", "failed", "error")
     validation = ("unexpected_submission" if unexpected else "unknown" if unknown else
                   "not_run" if not started else "not_confirmed" if failed else
                   "passed" if reported else "not_confirmed")

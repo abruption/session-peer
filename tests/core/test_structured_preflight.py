@@ -45,6 +45,10 @@ class StructuredPreflight(unittest.TestCase):
                  ({'dryRun': True, 'submitted': True}, 'unexpected_submission', 'unexpected submission evidence'),
                  ({'dryRun': False}, 'unexpected_submission', 'unexpected submission evidence'),
                  ({'status': 'queued'}, 'unexpected_submission', 'unexpected submission evidence'),
+                 ({'dryRun': True, 'consumptionConfirmed': True}, 'unexpected_submission', 'unexpected submission evidence'),
+                 ({'ok': 0, 'dryRun': True}, 'unknown', 'result unknown'),
+                 ({'ok': True, 'dryRun': True, 'submitted': 'unknown'}, 'unknown', 'result unknown'),
+                 ({'ok': False, 'dryRun': True}, 'not_confirmed', 'not confirmed'),
                  ({}, 'not_confirmed', 'not confirmed')]
         for facts, expected, text in cases:
             facts.update(error=NONREFLECTED_VALUE, codexHome=NONREFLECTED_VALUE, target={'id': NONREFLECTED_VALUE}, body=NONREFLECTED_VALUE)
@@ -186,8 +190,8 @@ class CodexStructuredDryrun(unittest.TestCase):
 
     def test_interrupted_wake_probe_cannot_queue_or_reserve_budget(self):
         with mock.patch.object(peer.subprocess, 'run', side_effect=KeyboardInterrupt), \
-                mock.patch.object(peer.subprocess, 'Popen', side_effect=AssertionError('queue/model')), \
-                mock.patch.object(peer, 'wake_target_rate_reserve', side_effect=AssertionError('budget')):
+                mock.patch.object(peer.subprocess, 'Popen', side_effect=AssertionError('queue/model')) as child, \
+                mock.patch.object(peer, 'wake_target_rate_reserve', side_effect=AssertionError('budget')) as reserve:
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 code = peer.main(['send', '--to', 'codex:' + THREAD, '--codex-home', str(self.root),
@@ -195,16 +199,20 @@ class CodexStructuredDryrun(unittest.TestCase):
                     '--no-reply-to', '--message', NONREFLECTED_VALUE])
         self.assertEqual(code, 130)
         self.assertEqual(out.getvalue(), '')
+        child.assert_not_called()
+        reserve.assert_not_called()
         self.assertFalse((self.root / 'session-peer' / 'wake-locks').exists())
 
     def test_timed_out_wake_probe_cannot_queue_or_reserve_budget(self):
         import subprocess
         with mock.patch.object(peer.subprocess, 'run', side_effect=subprocess.TimeoutExpired('fixture', 5)), \
-                mock.patch.object(peer.subprocess, 'Popen', side_effect=AssertionError('queue/model')), \
-                mock.patch.object(peer, 'wake_target_rate_reserve', side_effect=AssertionError('budget')):
+                mock.patch.object(peer.subprocess, 'Popen', side_effect=AssertionError('queue/model')) as child, \
+                mock.patch.object(peer, 'wake_target_rate_reserve', side_effect=AssertionError('budget')) as reserve:
             code, result = self.invoke(wake=True)
         self.assertEqual(code, 1)
         self.assertFalse(result['ok'])
+        child.assert_not_called()
+        reserve.assert_not_called()
         self.assertFalse((self.root / 'session-peer' / 'wake-locks').exists())
 
     def test_framed_native_message_byte_budget_still_refuses_before_effects(self):

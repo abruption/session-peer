@@ -321,7 +321,7 @@ class Adapter:
                 evidence["reason"] = refusal
         else:
             evidence = {"reason": "outcome_unknown"}
-        # Agent is already authenticated against policy; avoid URI inference here.
+        # Agent kind is authorized by policy, not authenticated session identity.
         args.to = agent + ":target" if agent != "claude" else "target"
         output = core.structured_delivery_preflight(args, evidence,
             failed=not valid or checked.get("validation") in ("not_run", "not_confirmed"))
