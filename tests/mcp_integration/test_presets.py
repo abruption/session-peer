@@ -141,6 +141,17 @@ class PresetSelection(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('--dry-run', argv)
         self.assertEqual(value, self.adapter.invoke.return_value)
 
+    async def test_off_policy_route_cannot_be_probed_through_revision_errors(self):
+        off_policy = dict(REMOTE, host='nonreflected-off-policy-host')
+        current = core.preset_revision('work', off_policy)
+        self.mock_lookup.side_effect = lambda name: (off_policy, current)
+        for candidate in (current, 'dp1:' + '0' * 64):
+            with self.assertRaises(peer.PolicyError) as caught:
+                await self.adapter.list_sessions('remote', preset='work', preset_revision=candidate)
+            self.assertEqual(caught.exception.reason, 'preset_policy_mismatch')
+            self.assertNotIn(off_policy['host'], str(caught.exception))
+        self.adapter.invoke.assert_not_called()
+
     async def test_dryrun_can_omit_revision_and_absent_selector_keeps_old_result(self):
         value = await self.adapter.send_message('local', 'worker', 'fixture', dry_run=True, preset='work')
         self.assertIn('--dry-run', self.adapter.invoke.call_args.args[0])
@@ -171,6 +182,7 @@ class PresetSelection(unittest.IsolatedAsyncioTestCase):
             value = await self.adapter.send_message('local', 'worker', 'fixture',
                 preset='work', preset_revision=revision)
             self.assertEqual(value['status'], 'unknown')
+            self.assertEqual(value['reason'], 'outcome_unknown')
             self.assertIsNone(value['submitted'])
             self.assertFalse(value['retryAllowed'])
         native = {'ok': False, 'reason': 'cli_failed', 'submitted': True,
@@ -265,6 +277,14 @@ class PresetSelection(unittest.IsolatedAsyncioTestCase):
         self.mock_lookup.assert_called_once()
         self.adapter.invoke.assert_awaited_once()
 
+    async def test_actual_selected_send_cancellation_propagates_without_retry(self):
+        self.adapter.invoke.side_effect = asyncio.CancelledError
+        with self.assertRaises(asyncio.CancelledError):
+            await self.adapter.send_message('local', 'worker', 'fixture',
+                preset='work', preset_revision=core.preset_revision('work', LOCAL))
+        self.mock_lookup.assert_called_once()
+        self.adapter.invoke.assert_awaited_once()
+
 
 @unittest.skipUnless(os.name == 'posix' and sys.platform in ('darwin', 'linux'),
                      'Preset storage is macOS/Linux only')
@@ -333,6 +353,7 @@ class PresetProtocol(unittest.IsolatedAsyncioTestCase):
                     'host': PRIVATE_MARKER, 'codexHome': '/' + PRIVATE_MARKER}})
             async with session as client:
                 tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+                self.assertIn('Submission does not confirm consumption.', tools['send_message'].description)
                 self.assertTrue(tools['list_presets'].annotations.readOnlyHint)
                 self.assertFalse(tools['list_presets'].annotations.openWorldHint)
                 self.assertEqual(tools['list_presets'].inputSchema['required'], ['destination'])

@@ -309,9 +309,11 @@ class Adapter:
         route = core.preset_validate_entry(route)
         if current != core.preset_revision(name, route):
             raise PolicyError("Invalid preset snapshot", "preset_storage_unavailable")
+        # Authorize the route before revealing whether a supplied digest
+        # matches it; off-policy route values must not become a hash oracle.
+        self.check_preset_route(destination, name, route, capability=capability, agent=agent)
         if revision is not None and revision != current:
             raise PolicyError("Preset revision changed", "preset_revision_mismatch")
-        self.check_preset_route(destination, name, route, capability=capability, agent=agent)
         return {"name": name, "revision": current, "route": route}
 
     def recheck_preset(self, destination, plan, *, capability, agent):
@@ -676,7 +678,8 @@ class Adapter:
             known_submission = (value.get("submitted") is True or value.get("consumptionConfirmed") is True
                                 or value.get("status") in ("posted", "queued", "submitted"))
             if not known_submission:
-                value = {**value, "status": "unknown", "submitted": None, "retryAllowed": False}
+                value = {**value, "status": "unknown", "submitted": None,
+                         "reason": "outcome_unknown", "retryAllowed": False}
         return value
 
     async def preflight_send(self, destination: str, target: str, message: str,
@@ -868,7 +871,10 @@ def create_server(adapter: Adapter):
     async def send_message(destination: str, target: str, message: str,
                            dry_run: bool = False, wake: bool = False, wake_timeout: int = 30,
                            preset: str | None = None, preset_revision: str | None = None):
-        """Send once. An actual preset send requires its current route revision and an explicit target."""
+        """Send once. Submission does not confirm consumption.
+
+        An actual preset send requires its current route revision and an explicit target.
+        """
         return await result(adapter.send_message(destination, target, message, dry_run, wake, wake_timeout, preset, preset_revision),
                             command=None)
 
