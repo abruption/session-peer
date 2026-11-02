@@ -610,6 +610,22 @@ Codex 消息限制为 32 KiB 的 UTF-8 文本（包括发送者/回复头），�
 
 尚未发布的 v1.4.0 候选版本 (#358)：`doctor --agent NAME` 将检查和声明的代理功能限制为所选的已注册代理，包括通过 SSH 运行时，并跳过共享的已安装技能清单检查。`doctor --agent codex --selected-home-only --codex-home /absolute/home` 仅检查所选 Codex 主目录，跳过其他主目录的清单。这些选项不启用反向路由检查。省略时，现有的全代理和有界多主目录诊断行为保持不变。
 
+候选版 MCP 包装层仅支持以下检查及执行效果：
+
+| 模式 / 代理 | 检查的事实 | 进程 / 连接效果 |
+| --- | --- | --- |
+| 元数据 | 策略与适配器声明 | 无 |
+| 主动 Claude | 注册记录、进程身份元数据和文件系统中的收件箱存在情况 | 不连接收件箱 |
+| 主动 Codex | 可执行文件是否存在、所选主目录的只读 SQLite 查询和有界 writer 扫描 | 不执行原生 Codex，也不查询版本 |
+| 主动 Antigravity | 已注册桥接的元数据 | 不调用桥接或原生 RPC |
+| 主动 SSH | 获得显式探测权限后，仅检查配置的正向路由 | SSH 配置可能执行命令；不反向探测，也不自动连接回回复主机 |
+
+允许的代码示例包括 `sessions_dir_missing`、`inbox_present`、`codex_executable_missing`、`state_db_readable`、`unsaved_writer_check_unavailable` 和 `adapter_failed`。结果仅涉及获准的代理，每个代理最多 32 项检查；这些代码仅描述上表的有界范围。
+
+`ok` 表示收集和格式的完整性，而非可用性。完整的 `missing_home` 结果也可能返回 `ok=true`，应另行查看每个代理的状态。主动结果中的 `diagnosticEvidence` 为 `point_in_time_only`，元数据模式中则为 `not_collected`。由于不检查特定目标的就绪情况，`readiness` 保持 `not_checked`。`state_db_readable` 检查通过仅表示只读数据库查询成功，不证明有效存储，也不保证回复路由可用。
+
+`tcpAccept`、`tls` 和 `peerAuthentication` 阶段保持 `not_checked`。这里的 `peerAuthentication` 指配对设备身份验证，与正向 SSH 身份验证不同。`sshFailure` 仅报告经过脱敏的正向 SSH 失败类别，例如 `authentication_failed` 或 `host_key_failed`。不会新增 TCP、TLS、配对设备或回复主机探测。
+
 反向 SSH 仅在指定 `--check-return-route` 时进行检查。目标端会运行一个固定的 `ssh ... true` 探测，且禁用了提示、密码身份验证、主机密钥注册和配置更改。正向 SSH 成功绝不能作为反向路径可用的证据。当自动 Tailscale 检测无法识别来源时，请使用 `--reply-to USER@HOST`。JSON 详情和状态值记录在 [docs/diagnostics.md](diagnostics.md) 中。
 
 这里特意没有提供通用的 `--wait`。Claude Code 具有原生的同机器 `notify_when_idle` 机制，但这并不涵盖远程会话、子代理或 Codex，且套接字/队列提交成功并非确认。因此 session-peer 报告 `capabilities.replyObservation.status: unsupported`，而不是去跟踪可变的脚本记录并冒误匹配的风险。当关注完成情况时，请要求目标向提供的 `Reply-To` 地址发送显式回复。可选唤醒功能仍在 [#46](https://github.com/abruption/session-peer/issues/46) 中跟进。

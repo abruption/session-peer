@@ -51,7 +51,23 @@ Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(
 
 응답은 허용 목록의 상태와 진단 코드만 노출하고 원시 오류, 호스트 이름, 홈 경로, 인증정보, 세션 내용과 알 수 없는 응답 필드를 제외합니다. 메타데이터 모드는 준비 상태를 검증하지 않으며, 능동 결과도 검사 시점의 상태일 뿐 소비나 ACK의 증거 또는 전송 권한이 아닙니다. 텍스트와 구조화된 도구 결과를 합친 크기는 64 KiB로 제한됩니다.
 
-상태·검사 필드가 없거나 잘못되었거나, 일부 검사가 누락되거나 검사 목록이 잘린 경우에는 정상으로 표시하지 않고 알 수 없음·불완전(`diagnostic_incomplete`)으로 보고합니다. 전송 단계 `tcpAccept`, `tls`, `peerAuthentication`는 모두 `not_checked`로 남으며 진단에서 별도로 검증하지 않습니다.
+상태·검사 필드가 없거나 잘못되었거나, 일부 검사가 누락되거나 검사 목록이 잘린 경우에는 정상으로 표시하지 않고 알 수 없음·불완전(`diagnostic_incomplete`)으로 보고합니다. 전송 단계 `tcpAccept`, `tls`, `peerAuthentication`은 모두 `not_checked`로 남으며 진단에서 별도로 검증하지 않습니다.
+
+후보 MCP 래퍼가 지원하는 검사와 실행 효과는 다음으로 제한됩니다.
+
+| 모드 / 에이전트 | 확인하는 사실 | 프로세스 / 연결 효과 |
+| --- | --- | --- |
+| 메타데이터 | 정책과 어댑터 선언 | 없음 |
+| 능동 Claude | 등록 기록, 프로세스 식별 메타데이터와 파일시스템의 수신함 존재 여부 | 수신함에 연결하지 않음 |
+| 능동 Codex | 실행 파일 존재 여부, 선택한 홈의 읽기 전용 SQLite 조회와 제한된 writer 검색 | 네이티브 Codex 실행이나 버전 조회 없음 |
+| 능동 Antigravity | 등록된 브리지 메타데이터 | 브리지 또는 네이티브 RPC 없음 |
+| 능동 SSH | 명시적인 검사 권한을 받은 뒤 설정된 정방향 경로만 확인 | SSH 설정이 명령을 실행할 수 있음. 역방향 검사나 회신 호스트로의 자동 연결 없음 |
+
+허용된 코드의 예로는 `sessions_dir_missing`, `inbox_present`, `codex_executable_missing`, `state_db_readable`, `unsaved_writer_check_unavailable`, `adapter_failed`가 있습니다. 결과는 허용된 에이전트와 에이전트별 최대 32개 검사로 제한되며, 이 코드는 위의 제한된 범위만 설명합니다.
+
+`ok`는 가용성이 아니라 수집과 형식의 완전성을 나타냅니다. 완전한 `missing_home` 결과도 `ok=true`일 수 있으므로 에이전트별 상태를 따로 확인하십시오. `diagnosticEvidence`는 능동 결과에서 `point_in_time_only`, 메타데이터 모드에서 `not_collected`입니다. 특정 대상의 준비 상태를 검사하지 않으므로 `readiness`는 `not_checked`로 유지됩니다. `state_db_readable` 검사의 통과는 읽기 전용 DB 조회가 성공했다는 뜻일 뿐, 유효 저장소의 증명이나 회신 경로의 보장이 아닙니다.
+
+`tcpAccept`, `tls`, `peerAuthentication` 단계는 `not_checked`로 유지됩니다. 여기서 `peerAuthentication`은 페어링된 기기의 인증을 뜻하며 정방향 SSH 인증과 별개입니다. `sshFailure`는 `authentication_failed` 또는 `host_key_failed`처럼 정제된 정방향 SSH 실패 범주만 보고합니다. TCP, TLS, 페어링된 기기 또는 회신 호스트 검사는 추가하지 않습니다.
 
 ## 도구 및 권한
 

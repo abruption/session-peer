@@ -851,6 +851,22 @@ SSH 실패나 시간 초과가 발생해도 성공·거부 및 네이티브 제�
 
 미출시 v1.4.0 후보 (#358): `doctor --agent NAME`은 SSH 경유 실행에서도 검사와 선언된 에이전트 기능을 선택한 등록 에이전트로 제한하며, 공통 설치 스킬 목록 검사도 건너뜁니다. `doctor --agent codex --selected-home-only --codex-home /absolute/home`은 선택한 Codex 홈만 검사하고 다른 홈 목록은 확인하지 않습니다. 이 옵션은 역방향 경로 검사를 활성화하지 않습니다. 옵션을 생략하면 기존의 전체 에이전트 및 제한된 다중 홈 진단 동작이 유지됩니다.
 
+후보 MCP 래퍼가 지원하는 검사와 실행 효과는 다음으로 제한됩니다.
+
+| 모드 / 에이전트 | 확인하는 사실 | 프로세스 / 연결 효과 |
+| --- | --- | --- |
+| 메타데이터 | 정책과 어댑터 선언 | 없음 |
+| 능동 Claude | 등록 기록, 프로세스 식별 메타데이터와 파일시스템의 수신함 존재 여부 | 수신함에 연결하지 않음 |
+| 능동 Codex | 실행 파일 존재 여부, 선택한 홈의 읽기 전용 SQLite 조회와 제한된 writer 검색 | 네이티브 Codex 실행이나 버전 조회 없음 |
+| 능동 Antigravity | 등록된 브리지 메타데이터 | 브리지 또는 네이티브 RPC 없음 |
+| 능동 SSH | 명시적인 검사 권한을 받은 뒤 설정된 정방향 경로만 확인 | SSH 설정이 명령을 실행할 수 있음. 역방향 검사나 회신 호스트로의 자동 연결 없음 |
+
+허용된 코드의 예로는 `sessions_dir_missing`, `inbox_present`, `codex_executable_missing`, `state_db_readable`, `unsaved_writer_check_unavailable`, `adapter_failed`가 있습니다. 결과는 허용된 에이전트와 에이전트별 최대 32개 검사로 제한되며, 이 코드는 위의 제한된 범위만 설명합니다.
+
+`ok`는 가용성이 아니라 수집과 형식의 완전성을 나타냅니다. 완전한 `missing_home` 결과도 `ok=true`일 수 있으므로 에이전트별 상태를 따로 확인하십시오. `diagnosticEvidence`는 능동 결과에서 `point_in_time_only`, 메타데이터 모드에서 `not_collected`입니다. 특정 대상의 준비 상태를 검사하지 않으므로 `readiness`는 `not_checked`로 유지됩니다. `state_db_readable` 검사의 통과는 읽기 전용 DB 조회가 성공했다는 뜻일 뿐, 유효 저장소의 증명이나 회신 경로의 보장이 아닙니다.
+
+`tcpAccept`, `tls`, `peerAuthentication` 단계는 `not_checked`로 유지됩니다. 여기서 `peerAuthentication`은 페어링된 기기의 인증을 뜻하며 정방향 SSH 인증과 별개입니다. `sshFailure`는 `authentication_failed` 또는 `host_key_failed`처럼 정제된 정방향 SSH 실패 범주만 보고합니다. TCP, TLS, 페어링된 기기 또는 회신 호스트 검사는 추가하지 않습니다.
+
 역방향 SSH는 `--check-return-route`를 지정한 경우에만 검사됩니다. 대상 시스템은
 프롬프트, 비밀번호 인증, 호스트 키 등록 및 구성 변조가 비활성화된 고정 `ssh ... true`
 프로브를 실행합니다. 정방향 SSH의 성공이 역방향 경로가 작동한다는 증거로 절대

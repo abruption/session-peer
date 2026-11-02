@@ -53,6 +53,22 @@
 
 状态或检查字段缺失、格式错误、检查不完整或检查列表被截断时，结果报告为未知或不完整（`diagnostic_incomplete`），不会报告为健康。传输阶段 `tcpAccept`、`tls` 和 `peerAuthentication` 均保持 `not_checked`；诊断不会单独验证这些阶段。
 
+候选版 MCP 包装层仅支持以下检查及执行效果：
+
+| 模式 / 代理 | 检查的事实 | 进程 / 连接效果 |
+| --- | --- | --- |
+| 元数据 | 策略与适配器声明 | 无 |
+| 主动 Claude | 注册记录、进程身份元数据和文件系统中的收件箱存在情况 | 不连接收件箱 |
+| 主动 Codex | 可执行文件是否存在、所选主目录的只读 SQLite 查询和有界 writer 扫描 | 不执行原生 Codex，也不查询版本 |
+| 主动 Antigravity | 已注册桥接的元数据 | 不调用桥接或原生 RPC |
+| 主动 SSH | 获得显式探测权限后，仅检查配置的正向路由 | SSH 配置可能执行命令；不反向探测，也不自动连接回回复主机 |
+
+允许的代码示例包括 `sessions_dir_missing`、`inbox_present`、`codex_executable_missing`、`state_db_readable`、`unsaved_writer_check_unavailable` 和 `adapter_failed`。结果仅涉及获准的代理，每个代理最多 32 项检查；这些代码仅描述上表的有界范围。
+
+`ok` 表示收集和格式的完整性，而非可用性。完整的 `missing_home` 结果也可能返回 `ok=true`，应另行查看每个代理的状态。主动结果中的 `diagnosticEvidence` 为 `point_in_time_only`，元数据模式中则为 `not_collected`。由于不检查特定目标的就绪情况，`readiness` 保持 `not_checked`。`state_db_readable` 检查通过仅表示只读数据库查询成功，不证明有效存储，也不保证回复路由可用。
+
+`tcpAccept`、`tls` 和 `peerAuthentication` 阶段保持 `not_checked`。这里的 `peerAuthentication` 指配对设备身份验证，与正向 SSH 身份验证不同。`sshFailure` 仅报告经过脱敏的正向 SSH 失败类别，例如 `authentication_failed` 或 `host_key_failed`。不会新增 TCP、TLS、配对设备或回复主机探测。
+
 ## 工具与权限
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)` 返回 CLI 的结构化列表。Agent 可以是 `claude` 或 `codex`；省略则列出允许的代理。

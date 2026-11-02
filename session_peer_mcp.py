@@ -78,6 +78,9 @@ async def invoke_bounded_diagnostic(argv, *, timeout, output_limit):
     interrupted = False
     try:
         stdout, _ = await asyncio.wait_for(asyncio.shield(io), timeout)
+    except asyncio.CancelledError:
+        interrupted = True
+        raise
     finally:
         # EOF is outside our authority when a descendant creates a new session.
         # Cancel loop readers before cleanup; no thread can remain blocked on IO.
@@ -99,11 +102,15 @@ async def invoke_bounded_diagnostic(argv, *, timeout, output_limit):
                 io.exception()
             cleanup.result()
         finally:
-            for stream in (process.stdout, process.stderr):
-                stream.close()
-            executor.shutdown(wait=False)
-        if interrupted:
-            raise asyncio.CancelledError
+            try:
+                for stream in (process.stdout, process.stderr):
+                    stream.close()
+            finally:
+                executor.shutdown(wait=False)
+                # A failed cleanup must not turn cancellation into a fixed
+                # diagnostic failure that the caller could continue probing.
+                if interrupted:
+                    raise asyncio.CancelledError
     return stdout, process.returncode
 
 
@@ -342,9 +349,11 @@ class Adapter:
         if len(names) > DIAGNOSTIC_AGENT_LIMIT or any(name not in core.AGENTS.names() for name in names):
             raise PolicyError("Diagnostic agent limit exceeded")
         value = {"ok": True, "schemaVersion": 1, "command": "mcp.diagnostics",
+                 "retryAllowed": False,
                  "destination": destination, "mode": "active" if active_probe else "metadata",
                  "transport": "ssh" if entry.get("host") else "local", "agents": {},
                  "limitations": {"callerIdentity": "unavailable", "readiness": "not_checked",
+                                 "diagnosticEvidence": "point_in_time_only" if active_probe else "not_collected",
                                  "returnRoute": "not_checked",
                                  "tcpAccept": "not_checked", "tls": "not_checked", "peerAuthentication": "not_checked",
                                  "submission": "not_attempted", "consumption": "not_checked",
@@ -412,6 +421,7 @@ class Adapter:
                     else:
                         complete = False
             check_codes = {item["code"] for item in projected}
+            complete = complete and len(check_codes) == len(projected)
             if name == "codex":
                 executables = check_codes & {"codex_executable_found", "codex_executable_missing"}
                 databases = check_codes & {"state_db_missing", "state_db_permission_denied",
@@ -422,7 +432,8 @@ class Adapter:
                             and "unsaved_writer_check_unavailable" not in check_codes)
                 truncated = truncated or scan_truncated is True
                 if status == "available":
-                    complete = complete and {"codex_executable_found", "state_db_readable"} <= check_codes
+                    proofs = {(item["code"], item["status"]) for item in projected}
+                    complete = complete and {("codex_executable_found", "ok"), ("state_db_readable", "ok")} <= proofs
             elif name == "claude":
                 # Every current Claude diagnostic branch reports a check; an
                 # available inbox is filesystem metadata, never a TCP accept.

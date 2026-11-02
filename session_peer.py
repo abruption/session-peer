@@ -5417,7 +5417,8 @@ def doctor_payload(args: argparse.Namespace) -> dict:
     active = [item for item in diagnostics.values() if item["status"] != "disabled"]
     available = sum(item["status"] == "available" for item in active)
     payload = {
-        "status": "healthy" if available == len(active) else ("partial" if available else "issues_found"),
+        "status": ("issues_found" if selected and not active else "healthy" if available == len(active)
+                   else "partial" if available else "issues_found"),
         **diagnostics,
         "capabilities": {
             "agents": {name: dict(AGENTS.get(name).capabilities._asdict()) for name in names},

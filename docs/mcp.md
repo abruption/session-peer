@@ -53,6 +53,22 @@ Responses expose allowlisted statuses and diagnostic codes, omitting raw errors,
 
 Missing or malformed status/check fields, partial checks, or truncated check lists are reported as unknown/incomplete (`diagnostic_incomplete`), never as healthy. The transport stages `tcpAccept`, `tls`, and `peerAuthentication` remain `not_checked`; diagnostics do not separately verify them.
 
+The candidate MCP wrapper supports only the following checks and effects:
+
+| Mode / agent | Checked facts | Process / connection effects |
+| --- | --- | --- |
+| Metadata | Policy and adapter declarations | None |
+| Active Claude | Registry records, process identity metadata and filesystem inbox presence | No inbox connection |
+| Active Codex | Executable presence, selected-home read-only SQLite queries and bounded writer scan | No native Codex execution or version query |
+| Active Antigravity | Registered bridge metadata | No bridge or native RPC |
+| Active SSH | Configured forward route, only after explicit probe permission | SSH configuration may execute commands; no reverse probe or automatic connection back to a return host |
+
+Representative allowlisted codes include `sessions_dir_missing`, `inbox_present`, `codex_executable_missing`, `state_db_readable`, `unsaved_writer_check_unavailable` and `adapter_failed`. Results are limited to permitted agents and at most 32 checks per agent; these codes describe only the bounded scope above.
+
+`ok` describes collection and format completeness, not availability. A complete `missing_home` result can have `ok=true`; read each agent's status separately. `diagnosticEvidence` is `point_in_time_only` for active results and `not_collected` in metadata mode. `readiness` remains `not_checked` because no per-target readiness is tested. A passing `state_db_readable` check means only that the read-only database query succeeded; it is not an effective-storage attestation or a return-route guarantee.
+
+The stages `tcpAccept`, `tls` and `peerAuthentication` remain `not_checked`. Here `peerAuthentication` refers to paired-device authentication, separate from forward SSH authentication. `sshFailure` reports only a sanitized forward SSH failure category, such as `authentication_failed` or `host_key_failed`. No TCP, TLS, paired-device or return-host probe is added.
+
 ## Tools and permissions
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)` returns the CLI's structured listing. Agent may be `claude` or `codex`; omission lists permitted agents.

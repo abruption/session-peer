@@ -247,6 +247,15 @@ class OwnedChildren(unittest.IsolatedAsyncioTestCase):
 
 
 class DoctorScope(unittest.TestCase):
+    def test_selected_disabled_agent_is_not_healthy(self):
+        args = argparse.Namespace(agent='antigravity', _return_host=None)
+        with patch.object(core, 'agy_registrations', return_value=[]), \
+                patch.object(core, 'installed_skills') as skills:
+            value = core.doctor_payload(args)
+        self.assertEqual(value['antigravity']['status'], 'disabled')
+        self.assertEqual(value['status'], 'issues_found')
+        skills.assert_not_called()
+
     def test_agent_selection_and_legacy_all_agents(self):
         for selected in ('claude', 'codex', 'antigravity', None):
             calls = []
@@ -303,14 +312,29 @@ class Protocol(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory(prefix='codex-diag-active-', dir=os.environ.get('SESSION_PEER_TEST_TMP')) as folder:
             root = Path(folder)
             binary = root / 'codex'
-            binary.write_text('#!/bin/sh\nexit 97\n')
+            import shlex
+            invoked = root / 'native-called'
+            binary.write_text('#!/bin/sh\nprintf called > ' + shlex.quote(str(invoked)) + '\nexit 97\n')
             binary.chmod(0o700)
+            sessions = root / 'sessions'
+            sessions.mkdir()
+            connections = []
+            async def inbox(reader, writer):
+                connections.append(True)
+                writer.close()
+                await writer.wait_closed()
+            sock = root / 'inbox.sock'
+            server = await asyncio.start_unix_server(inbox, str(sock))
+            self.addAsyncCleanup(server.wait_closed)
+            self.addCleanup(server.close)
+            (sessions / (str(os.getpid()) + '.json')).write_text(json.dumps({
+                'pid': os.getpid(), 'name': 'diagnostic-fixture', 'messagingSocketPath': str(sock)}))
             with contextlib.closing(sqlite3.connect(root / 'state_5.sqlite')) as db:
                 db.execute('CREATE TABLE threads (id TEXT, title TEXT, cwd TEXT, updated_at INTEGER, archived INTEGER, rollout_path TEXT)')
                 db.commit()
             policy = root / 'policy.json'
             policy.write_text(json.dumps({'schemaVersion': 2, 'destinations': {
-                'fixture': {'agents': ['codex'], 'codexHome': folder,
+                'fixture': {'agents': ['claude', 'codex'], 'codexHome': folder,
                             'capabilities': ['diagnostics', 'diagnostics_probe']}}}))
             params = StdioServerParameters(command=sys.executable,
                 args=[str(Path(peer.__file__).resolve()), '--config', str(policy)],
@@ -325,6 +349,9 @@ class Protocol(unittest.IsolatedAsyncioTestCase):
                     row = value.structuredContent['agents']['codex']
                     self.assertEqual(row['status'], 'available')
                     self.assertIn({'code': 'state_db_readable', 'status': 'ok'}, row['checks'])
+                    self.assertEqual(value.structuredContent['agents']['claude']['status'], 'available')
+                    self.assertFalse(invoked.exists())
+                    self.assertEqual(connections, [])
                     self.assertNotIn(folder, value.content[0].text)
                     self.assertEqual(value.structuredContent['limitations']['submission'], 'not_attempted')
 
