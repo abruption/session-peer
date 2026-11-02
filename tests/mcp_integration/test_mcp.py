@@ -305,7 +305,7 @@ class Protocol(unittest.IsolatedAsyncioTestCase):
                 async with ClientSession(read, write) as client:
                     await client.initialize()
                     tools = (await client.list_tools()).tools
-                    self.assertEqual({t.name for t in tools}, {'list_destinations','list_sessions','send_message','preflight_send'})
+                    self.assertEqual({t.name for t in tools}, {'list_destinations','list_sessions','send_message','preflight_send','diagnose_destination'})
                     inventory = next(t for t in tools if t.name == 'list_destinations')
                     self.assertTrue(inventory.annotations.readOnlyHint)
                     self.assertTrue(inventory.annotations.idempotentHint)

@@ -136,7 +136,7 @@ def diagnose_codex(args: argparse.Namespace) -> dict:
         ))
     inventory_error = None
     try:
-        homes = known_codex_homes(selected)
+        homes = [selected] if getattr(args, "selected_home_only", False) else known_codex_homes(selected)
     except CcPeerError as exc:
         homes = [selected]
         inventory_error = str(exc)
@@ -251,7 +251,9 @@ def _probe_return_route(destination: str) -> dict:
 
 def doctor_payload(args: argparse.Namespace) -> dict:
     diagnostics = {}
-    for name in AGENTS.names():
+    selected = getattr(args, "agent", None)
+    names = [selected] if selected else AGENTS.names()
+    for name in names:
         try:
             diagnostics[name] = LocalTransport().execute("doctor", AGENTS.get(name), args)
         except (CcPeerError, OSError) as exc:
@@ -263,7 +265,7 @@ def doctor_payload(args: argparse.Namespace) -> dict:
         "status": "healthy" if available == len(active) else ("partial" if available else "issues_found"),
         **diagnostics,
         "capabilities": {
-            "agents": {name: dict(AGENTS.get(name).capabilities._asdict()) for name in AGENTS.names()},
+            "agents": {name: dict(AGENTS.get(name).capabilities._asdict()) for name in names},
             "replyObservation": {
                 "status": "unsupported",
                 "reason": "no_cross_agent_acknowledgement_api",

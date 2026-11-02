@@ -120,6 +120,10 @@ def build_parser() -> argparse.ArgumentParser:
         "doctor", help="diagnose agent homes, inboxes, tools, and optional return routes",
     )
     add_common(doctor)
+    doctor.add_argument("--agent", choices=AGENTS.names(), default=None,
+                        help="diagnose only this agent")
+    doctor.add_argument("--selected-home-only", action="store_true",
+                        help="inspect only the selected Codex home, without home inventory")
     doctor.add_argument("--codex-home", help=home_help)
     doctor.add_argument("--codex-bin", help="Codex executable on the destination machine")
     doctor.add_argument(

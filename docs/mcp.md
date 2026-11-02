@@ -43,6 +43,14 @@ The versioned explanation projects allowlisted facts from the native response be
 
 Existing dry-run checks may start local/version processes and SSH connections; SSH configuration may itself execute commands. The tool therefore uses `readOnlyHint=false` and `openWorldHint=true`. Host approvals remain separate from policy permission. Passing records point-in-time checks, not a route reservation, effective-storage attestation, approval, later-send guarantee, consumption or ACK.
 
+## Unreleased v1.4.0 candidate: bounded diagnostics (#358)
+
+`diagnose_destination(destination="local", agent=null, active_probe=false)` requires an explicit `diagnostics` permission in a `schemaVersion` 2 policy. The default mode returns policy metadata and declared agent capabilities only; it starts no CLI or discovery process and makes no network request. The destination ID follows the same printable, 128 UTF-8 byte limit as destination discovery. Version 1 and the default policy grant no diagnostic permission.
+
+Setting `active_probe=true` additionally requires `diagnostics_probe`. Metadata mode is cross-platform. Active mode currently supports macOS and Linux (POSIX) only; Windows returns the fixed reason `diagnostics_platform_unsupported` without starting CLI processes or network requests. Checks use only the configured destination, pinned Codex home and permitted agents. Agent-scoped doctor calls inspect at most three agents, with a shared 20-second execution budget followed by process cleanup; this is not a strict wall-clock deadline or a remote-process cleanup guarantee. Each child stdout and stderr stream is bounded to 64 KiB. Codex checks inspect only the selected home. No reverse-route probe, message submission, native model activation or automatic retry occurs. Active checks can start CLI processes and SSH connections; operator SSH configuration may execute commands. Host approvals remain separate from policy permission.
+
+Responses expose allowlisted statuses and diagnostic codes, omitting raw errors, host names, home paths, credentials, session contents and unknown response fields. Metadata mode leaves readiness unverified; active results are point-in-time checks, not evidence of consumption or ACK, or authority to send. The combined text and structured tool result is bounded to 64 KiB.
+
 ## Tools and permissions
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)` returns the CLI's structured listing. Agent may be `claude` or `codex`; omission lists permitted agents.

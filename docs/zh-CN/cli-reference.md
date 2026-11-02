@@ -608,6 +608,8 @@ Codex 消息限制为 32 KiB 的 UTF-8 文本（包括发送者/回复头），�
 
 `doctor` 在拥有会话的机器上执行只读检查。它报告 Claude 配置的会话目录和收件箱可用性，Codex 的可执行文件和有界目录/状态数据库候选，不支持的数据库模式，并将权限或未知失败报告为不同的代码。它不会连接到收件箱、写入队列、扫描任意目录或更改代理/SSH 设置。
 
+尚未发布的 v1.4.0 候选版本 (#358)：`doctor --agent NAME` 将检查和声明的代理功能限制为所选的已注册代理，包括通过 SSH 运行时。`doctor --agent codex --selected-home-only --codex-home /absolute/home` 仅检查所选 Codex 主目录，跳过其他主目录的清单。这些选项不启用反向路由检查。省略时，现有的全代理和有界多主目录诊断行为保持不变。
+
 反向 SSH 仅在指定 `--check-return-route` 时进行检查。目标端会运行一个固定的 `ssh ... true` 探测，且禁用了提示、密码身份验证、主机密钥注册和配置更改。正向 SSH 成功绝不能作为反向路径可用的证据。当自动 Tailscale 检测无法识别来源时，请使用 `--reply-to USER@HOST`。JSON 详情和状态值记录在 [docs/diagnostics.md](diagnostics.md) 中。
 
 这里特意没有提供通用的 `--wait`。Claude Code 具有原生的同机器 `notify_when_idle` 机制，但这并不涵盖远程会话、子代理或 Codex，且套接字/队列提交成功并非确认。因此 session-peer 报告 `capabilities.replyObservation.status: unsupported`，而不是去跟踪可变的脚本记录并冒误匹配的风险。当关注完成情况时，请要求目标向提供的 `Reply-To` 地址发送显式回复。可选唤醒功能仍在 [#46](https://github.com/abruption/session-peer/issues/46) 中跟进。

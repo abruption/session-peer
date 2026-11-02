@@ -43,6 +43,14 @@ Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(
 
 기존 dry-run 검사는 로컬·버전 확인 프로세스와 SSH 연결을 시작할 수 있으며, SSH 설정 자체도 명령을 실행할 수 있습니다. 따라서 이 도구는 `readOnlyHint=false`와 `openWorldHint=true`를 사용합니다. 호스트 승인은 정책 권한과 별개입니다. 통과는 검사 시점의 결과이며, 경로 예약, 유효 저장소의 증명, 승인, 이후 전송의 보장, 소비 또는 ACK를 뜻하지 않습니다.
 
+## 미출시 v1.4.0 후보: 제한된 진단 (#358)
+
+`diagnose_destination(destination="local", agent=null, active_probe=false)`는 `schemaVersion` 2 정책의 명시적인 `diagnostics` 권한이 필요합니다. 기본 모드는 정책 메타데이터와 선언된 에이전트 기능만 반환하며, CLI나 검색 프로세스를 시작하거나 네트워크를 요청하지 않습니다. 목적지 ID에는 목적지 조회와 같은 출력 가능 문자 및 UTF-8 128바이트 제한이 적용됩니다. 버전 1과 기본 정책은 진단 권한을 부여하지 않습니다.
+
+`active_probe=true`를 지정하면 `diagnostics_probe`도 필요합니다. 메타데이터 모드는 모든 플랫폼에서 지원합니다. 능동 모드는 현재 macOS와 Linux(POSIX)만 지원하며, Windows에서는 CLI 프로세스나 네트워크 요청 없이 고정 사유 `diagnostics_platform_unsupported`를 반환합니다. 검사는 설정된 목적지, 고정된 Codex 홈과 허용된 에이전트만 사용합니다. 에이전트별 doctor 호출은 최대 세 에이전트를 검사하며, 20초의 실행 예산을 공유한 뒤 프로세스를 정리합니다. 이는 엄격한 실제 경과 시간 제한이나 원격 프로세스 정리의 보장이 아닙니다. 자식 프로세스의 stdout과 stderr는 각각 64 KiB로 제한됩니다. Codex 검사는 선택한 홈만 확인합니다. 역방향 경로 검사, 메시지 제출, 네이티브 모델 활성화 또는 자동 재시도는 수행하지 않습니다. 능동 검사는 CLI 프로세스와 SSH 연결을 시작할 수 있으며 운영자의 SSH 설정이 명령을 실행할 수도 있습니다. 호스트 승인은 정책 권한과 별개입니다.
+
+응답은 허용 목록의 상태와 진단 코드만 노출하고 원시 오류, 호스트 이름, 홈 경로, 인증정보, 세션 내용과 알 수 없는 응답 필드를 제외합니다. 메타데이터 모드는 준비 상태를 검증하지 않으며, 능동 결과도 검사 시점의 상태일 뿐 소비나 ACK의 증거 또는 전송 권한이 아닙니다. 텍스트와 구조화된 도구 결과를 합친 크기는 64 KiB로 제한됩니다.
+
 ## 도구 및 권한
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)`는 CLI의 구조화된 목록을 반환합니다. Agent는 `claude` 또는 `codex`일 수 있으며, 생략 시 허용된 에이전트를 나열합니다.

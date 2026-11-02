@@ -16,12 +16,21 @@ CLI_TIMEOUT = 130
 DESTINATION_METADATA_LIMIT = 64
 DESTINATION_ALIAS_BYTES = 128
 DESTINATION_METADATA_BYTES = 64 * 1024
+DIAGNOSTIC_TIMEOUT = 20
+DIAGNOSTIC_AGENT_LIMIT = 3
+DIAGNOSTIC_OUTPUT_BYTES = 64 * 1024
+
+
+class DiagnosticOutputLimit(ValueError):
+    pass
+
+
 # Give an interrupted wake CLI its entire native cleanup budget before killing
 # its group. The detached app-server is owned and reaped by that CLI, not MCP.
 WAKE_CLI_CLEANUP_GRACE = core.CODEX_WAKE_CLEANUP_BUDGET + 1
 
 
-async def invoke_posix(argv, message):
+async def invoke_posix(argv, message, *, timeout=CLI_TIMEOUT, output_limit=None):
     # Unlike asyncio's child watcher, Popen leaves the leader unreaped until
     # explicit wait(). That reserves its PID through process-group cleanup.
     process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -39,18 +48,59 @@ async def invoke_posix(argv, message):
             pass
         finally:
             process.stdin.close()
-    io = asyncio.gather(loop.run_in_executor(executor, process.stdout.read),
-                        loop.run_in_executor(executor, process.stderr.read),
+    overflow = []
+    limit_hit = asyncio.Event()
+    limit_wait = None
+    def read(stream):
+        if output_limit is None:
+            return stream.read()
+        kept = bytearray()
+        while True:
+            chunk = stream.read(min(8192, output_limit - len(kept) + 1))
+            if not chunk:
+                return bytes(kept)
+            remaining = output_limit - len(kept)
+            kept.extend(chunk[:max(0, remaining)])
+            if len(chunk) > remaining:
+                overflow.append(True)
+                loop.call_soon_threadsafe(limit_hit.set)
+                return bytes(kept)
+    io = asyncio.gather(loop.run_in_executor(executor, read, process.stdout),
+                        loop.run_in_executor(executor, read, process.stderr),
                         loop.run_in_executor(executor, feed))
     interrupted = False
     completed = False
     try:
-        stdout, _, _ = await asyncio.wait_for(asyncio.shield(io), CLI_TIMEOUT)
+        if output_limit is None:
+            stdout, _, _ = await asyncio.wait_for(asyncio.shield(io), timeout)
+        else:
+            limit_wait = asyncio.create_task(limit_hit.wait())
+            done, _ = await asyncio.wait((io, limit_wait), timeout=timeout,
+                                         return_when=asyncio.FIRST_COMPLETED)
+            if not done:
+                raise asyncio.TimeoutError()
+            if overflow:
+                raise DiagnosticOutputLimit()
+            stdout, _, _ = io.result()
         completed = True
     finally:
+        if limit_wait is not None:
+            limit_wait.cancel()
         grace = (WAKE_CLI_CLEANUP_GRACE if '--wake' in argv and not completed
                  else core.CODEX_WAKE_CLEANUP_GRACE)
-        cleanup = loop.run_in_executor(executor, core.stop_codex_wake, process, grace)
+        def stop():
+            if os.name == "posix":
+                core.stop_codex_wake(process, grace)
+            else:
+                # Diagnostic-only Windows path: no native child is submitted.
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=core.CODEX_WAKE_CLEANUP_WAIT)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=core.CODEX_WAKE_CLEANUP_WAIT)
+        cleanup = loop.run_in_executor(executor, stop)
         # Repeated cancellation cannot abandon cleanup or the owned pipe tasks.
         while not cleanup.done():
             try:
@@ -71,6 +121,8 @@ async def invoke_posix(argv, message):
             executor.shutdown(wait=False)
         if interrupted:
             raise asyncio.CancelledError
+    if overflow:
+        raise DiagnosticOutputLimit()
     return stdout, process.returncode
 
 
@@ -96,7 +148,7 @@ def load_policy(path: str | None) -> dict:
             raise PolicyError("Invalid destination")
         if set(entry) - {"host", "codexHome", "agents", "capabilities"}:
             raise PolicyError(f"Unknown settings for {name}")
-        capabilities = {"list", "send", "wake"} | ({"preflight"} if raw["schemaVersion"] == 2 else set())
+        capabilities = {"list", "send", "wake"} | ({"preflight", "diagnostics", "diagnostics_probe"} if raw["schemaVersion"] == 2 else set())
         for key, allowed in (("agents", set(core.AGENTS.names())), ("capabilities", capabilities)):
             values = entry.get(key)
             if not isinstance(values, list) or not values or any(not isinstance(v, str) or v not in allowed for v in values):
@@ -203,6 +255,101 @@ class Adapter:
         if returncode and result.get("ok") is not False:
             return {**result, "ok": False, "reason": "cli_failed"}
         return result
+
+    async def invoke_diagnostic(self, argv: list[str], timeout: float) -> dict:
+        # Separate from send's compatibility contract: no submission, no retry,
+        # bounded retained stdout AND stderr on both process implementations.
+        try:
+            stdout, code = await invoke_posix(
+                [sys.executable, str(Path(core.__file__).resolve()), *argv,
+                 "--json", "--no-update-notice"], None,
+                timeout=timeout, output_limit=DIAGNOSTIC_OUTPUT_BYTES)
+            if code:
+                return {"ok": False, "reason": "diagnostic_failed"}
+            value = json.loads(stdout)
+            if (not isinstance(value, dict) or value.get("command") != "doctor"
+                    or type(value.get("schemaVersion")) is not int or value["schemaVersion"] != 1
+                    or value.get("ok") is not True):
+                return {"ok": False, "reason": "diagnostic_response_unavailable"}
+            return value
+        except asyncio.TimeoutError:
+            return {"ok": False, "reason": "diagnostic_timeout"}
+        except DiagnosticOutputLimit:
+            return {"ok": False, "reason": "diagnostic_output_limit"}
+        except (ValueError, UnicodeError, OSError, RecursionError, subprocess.SubprocessError):
+            return {"ok": False, "reason": "diagnostic_response_unavailable"}
+
+    async def diagnose_destination(self, destination: str = "local", agent: str | None = None,
+                                   active_probe: bool = False) -> dict:
+        entry = self.authorize(destination, "diagnostics", agent)
+        if type(active_probe) is not bool:
+            raise PolicyError("Invalid diagnostic mode")
+        if (not isinstance(destination, str) or not destination or not destination.isprintable()
+                or len(destination.encode("utf-8", errors="replace")) > DESTINATION_ALIAS_BYTES
+                or any(0xD800 <= ord(ch) <= 0xDFFF for ch in destination)):
+            raise PolicyError("Invalid destination metadata identifier")
+        if active_probe:
+            self.authorize(destination, "diagnostics_probe", agent)
+        names = [agent] if agent else sorted(set(entry["agents"]))
+        if len(names) > DIAGNOSTIC_AGENT_LIMIT or any(name not in core.AGENTS.names() for name in names):
+            raise PolicyError("Diagnostic agent limit exceeded")
+        value = {"ok": True, "schemaVersion": 1, "command": "mcp.diagnostics",
+                 "destination": destination, "mode": "active" if active_probe else "metadata",
+                 "transport": "ssh" if entry.get("host") else "local", "agents": {},
+                 "limitations": {"callerIdentity": "unavailable", "returnRoute": "not_checked",
+                                 "submission": "not_attempted", "consumption": "not_checked",
+                                 "ack": "not_checked"}}
+        if active_probe and os.name != "posix":
+            value.update(ok=False, reason="diagnostics_platform_unsupported")
+            value["agents"] = {name: {"status": "not_checked", "checks": []} for name in names}
+            return value
+        statuses = {"available", "disabled", "missing_home", "permission_denied", "wrong_home",
+                    "unknown", "inbox_unavailable", "unavailable", "unsupported", "missing_tool"}
+        codes = {"sessions_dir_missing", "sessions_dir_permission_denied", "sessions_dir_unreadable",
+                 "sessions_path_not_directory", "session_record_permission_denied",
+                 "claude_discovery_incomplete", "stale_session_records", "inbox_present",
+                 "inbox_unavailable", "no_live_sessions", "codex_executable_found",
+                 "codex_executable_missing", "state_db_missing", "state_db_permission_denied",
+                 "state_db_unreadable", "state_db_not_regular", "unsupported_threads_schema",
+                 "state_db_readable", "unsaved_writer_check_unavailable", "unsaved_live_writer",
+                 "adapter_failed"}
+        deadline = asyncio.get_running_loop().time() + DIAGNOSTIC_TIMEOUT
+        for name in names:
+            if not active_probe:
+                value["agents"][name] = {"status": "not_checked", "checks": []}
+                continue
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                result = {"ok": False, "reason": "diagnostic_timeout"}
+            else:
+                route = {"host": entry.get("host")}
+                if name == "codex":
+                    route["codexHome"] = entry["codexHome"]
+                argv = ["doctor", *self.route(route), "--agent", name, "--selected-home-only"]
+                result = await self.invoke_diagnostic(argv, remaining)
+            raw = result.get(name)
+            if result.get("ok") is not True or not isinstance(raw, dict):
+                reason = result.get("reason")
+                value["ok"] = False
+                value["agents"][name] = {"status": "unknown", "checks": [], "reason":
+                    reason if isinstance(reason, str) and reason in {
+                        "diagnostic_timeout", "diagnostic_output_limit", "diagnostic_failed"}
+                    else "diagnostic_response_unavailable"}
+                continue
+            status = raw.get("status")
+            checks = raw.get("checks")
+            projected = []
+            if isinstance(checks, list):
+                for check in checks[:32]:
+                    if not isinstance(check, dict):
+                        continue
+                    code, state = check.get("code"), check.get("status")
+                    if (isinstance(code, str) and code in codes and isinstance(state, str)
+                            and state in {"ok", "warning", "error", "unknown"}):
+                        projected.append({"code": code, "status": state})
+            value["agents"][name] = {"status": status if isinstance(status, str) and status in statuses
+                                    else "unknown", "checks": projected}
+        return value
 
     async def list_sessions(self, destination: str = "local", agent: str | None = None,
                             include_inactive: bool = False) -> dict:
@@ -413,6 +560,20 @@ def create_server(adapter: Adapter):
         not prove native compatibility, readiness, host approval or an ACK.
         """
         return await result(adapter.list_destinations(), command="mcp.destinations")
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False,
+                                           idempotentHint=True, openWorldHint=True))
+    async def diagnose_destination(destination: str = "local", agent: str | None = None,
+                                   active_probe: bool = False):
+        """Read bounded configured metadata; active probes require additional policy permission.
+
+        Active mode checks only allowed agents and the configured route/home.
+        No return route, native submission, consumption or ACK is checked.
+        Active probes require POSIX (macOS/Linux); metadata works on Windows.
+        Its execution budget excludes process cleanup; never implies host approval.
+        """
+        return await result(adapter.diagnose_destination(destination, agent, active_probe),
+                            command="mcp.diagnostics")
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
     async def list_sessions(destination: str = "local", agent: str | None = None,

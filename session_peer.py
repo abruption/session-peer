@@ -5289,7 +5289,7 @@ def diagnose_codex(args: argparse.Namespace) -> dict:
         ))
     inventory_error = None
     try:
-        homes = known_codex_homes(selected)
+        homes = [selected] if getattr(args, "selected_home_only", False) else known_codex_homes(selected)
     except CcPeerError as exc:
         homes = [selected]
         inventory_error = str(exc)
@@ -5404,7 +5404,9 @@ def _probe_return_route(destination: str) -> dict:
 
 def doctor_payload(args: argparse.Namespace) -> dict:
     diagnostics = {}
-    for name in AGENTS.names():
+    selected = getattr(args, "agent", None)
+    names = [selected] if selected else AGENTS.names()
+    for name in names:
         try:
             diagnostics[name] = LocalTransport().execute("doctor", AGENTS.get(name), args)
         except (CcPeerError, OSError) as exc:
@@ -5416,7 +5418,7 @@ def doctor_payload(args: argparse.Namespace) -> dict:
         "status": "healthy" if available == len(active) else ("partial" if available else "issues_found"),
         **diagnostics,
         "capabilities": {
-            "agents": {name: dict(AGENTS.get(name).capabilities._asdict()) for name in AGENTS.names()},
+            "agents": {name: dict(AGENTS.get(name).capabilities._asdict()) for name in names},
             "replyObservation": {
                 "status": "unsupported",
                 "reason": "no_cross_agent_acknowledgement_api",
@@ -6440,7 +6442,12 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             if getattr(args, "explain", False):
                 args._delivery_explanation_started = True
                 args._delivery_explanation_host = display_host(requested_host, host)
-            remote_argv = ["doctor", "--no-update-notice"] + agent_remote_options(args)
+            selected = getattr(args, "agent", None)
+            remote_argv = ["doctor", "--no-update-notice"] + agent_remote_options(args, selected)
+            if selected:
+                remote_argv.extend(["--agent", selected])
+            if getattr(args, "selected_home_only", False):
+                remote_argv.append("--selected-home-only")
             if return_host:
                 remote_argv.extend(["--_return-host", return_host])
             result = transport.execute(remote_argv)
@@ -12497,6 +12504,10 @@ def build_parser() -> argparse.ArgumentParser:
         "doctor", help="diagnose agent homes, inboxes, tools, and optional return routes",
     )
     add_common(doctor)
+    doctor.add_argument("--agent", choices=AGENTS.names(), default=None,
+                        help="diagnose only this agent")
+    doctor.add_argument("--selected-home-only", action="store_true",
+                        help="inspect only the selected Codex home, without home inventory")
     doctor.add_argument("--codex-home", help=home_help)
     doctor.add_argument("--codex-bin", help="Codex executable on the destination machine")
     doctor.add_argument(

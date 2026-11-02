@@ -907,6 +907,8 @@ executable and bounded home/state DB candidates, unsupported DB schemas, and
 permission or unknown failures as distinct codes. It does not connect to an
 inbox, write a queue, scan arbitrary directories, or alter agent/SSH settings.
 
+Unreleased v1.4.0 candidate (#358): `doctor --agent NAME` restricts checks and declared agent capabilities to the selected registered agent, including over SSH. `doctor --agent codex --selected-home-only --codex-home /absolute/home` checks only the selected Codex home and skips the inventory of other homes. These options do not enable reverse-route checks. Without them, existing all-agent and bounded multi-home diagnostics keep their behavior.
+
 Reverse SSH is checked only with `--check-return-route`. The destination runs a
 fixed `ssh ... true` probe with prompts, password authentication, host-key
 enrollment, and config mutation disabled. Forward SSH success is never reused as

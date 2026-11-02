@@ -43,6 +43,14 @@
 
 现有 dry-run 检查可能启动本地或版本查询进程、建立 SSH 连接；SSH 配置本身也可能执行命令。因此该工具使用 `readOnlyHint=false` 和 `openWorldHint=true`。宿主批准独立于策略权限。通过仅表示检查时点的结果，不代表预留路由、证明有效存储、批准、保证后续发送、消费或 ACK。
 
+## 尚未发布的 v1.4.0 候选版本：有界诊断 (#358)
+
+`diagnose_destination(destination="local", agent=null, active_probe=false)` 要求在 `schemaVersion` 2 策略中显式授予 `diagnostics` 权限。默认模式仅返回策略元数据和声明的代理功能，不启动 CLI 或发现进程，也不发起网络请求。目的地 ID 采用与目的地发现相同的可打印字符及 UTF-8 128 字节限制。版本 1 和默认策略均不授予诊断权限。
+
+设置 `active_probe=true` 还需要 `diagnostics_probe`。元数据模式支持所有平台。主动模式目前仅支持 macOS 和 Linux（POSIX）；在 Windows 上返回固定原因 `diagnostics_platform_unsupported`，不启动 CLI 进程或网络请求。检查仅使用配置的目的地、固定的 Codex 主目录和获准的代理。按代理限定范围的 doctor 调用最多检查三个代理，共享 20 秒的执行预算，然后清理进程；这并非严格的实际耗时上限，也不保证清理远程进程。子进程的 stdout 和 stderr 各限 64 KiB。Codex 检查仅访问所选主目录。不进行反向路由探测、消息提交、原生模型激活或自动重试。主动检查可能启动 CLI 进程和 SSH 连接，操作员的 SSH 配置本身也可能执行命令。宿主批准独立于策略权限。
+
+响应仅公开允许列表中的状态和诊断代码，省略原始错误、主机名、主目录路径、凭据、会话内容和未知响应字段。元数据模式不验证就绪状态；主动检查结果也仅代表检查时点，不是消费或 ACK 的证据，也不授予发送权限。文本与结构化工具结果的合计大小限于 64 KiB。
+
 ## 工具与权限
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)` 返回 CLI 的结构化列表。Agent 可以是 `claude` 或 `codex`；省略则列出允许的代理。
