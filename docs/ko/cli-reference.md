@@ -209,6 +209,18 @@ UUID는 현재 목록에서 확인한 값으로, 해시는 선택한 프리셋�
 
 Mac에서 소유권을 무시하는 마운트는 `preset_ownership_unenforced`로, 마운트 조회를 수행하거나 검증할 수 없으면 `preset_mount_unverifiable`로 거부합니다. 파일 모드만으로 소유권 강제를 증명했다고 취급하지 않습니다. Linux에서는 상위 경로의 ACL도 거부하며 ACL 상태를 검증할 수 없는 파일시스템도 거부합니다. 관리 명령을 중단했을 때는 변경이 이미 보일 수 있으므로 현재 설정을 확인하세요. 디렉터리 동기화 실패를 조용히 성공으로 처리하지 않습니다.
 
+### 미출시 v1.4.0 후보: MCP 프리셋 (#359)
+
+후보 버전 입력 시그니처: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
+
+MCP 프리셋 조회와 선택은 운영자의 명시적 허용 목록과 기존 보안 스냅샷 읽기 함수를 사용하며, CLI 프리셋 관리 명령이나 자동 선택을 추가하지 않습니다. [MCP 프리셋 정책과 제한](mcp.md)을 참고하십시오. MCP 선택은 CLI `--preset`과 명시적 경로 플래그를 함께 사용하는 대신 승인된 경로를 확장합니다. 기존 CLI 출력, 리비전 및 파일 시스템 보안 규약은 유지됩니다.
+
+MCP `list_sessions`, `preflight_send`, `send_message`의 선택적 `preset`, `preset_revision` 입력에는 기존 작업 권한과 `presets`가 모두 필요합니다. 실제 전송에는 현재 `dp1:` 리비전과 명시적인 대상이 필요합니다. wake 및 Reply-To URI와의 조합은 거부합니다. 리비전은 조회 시 확인하며 대상 세대나 권한을 뜻하지 않고, 이후의 변경도 호출을 위해 이미 확장된 경로를 취소할 수 없습니다.
+
+새 64 KiB 도구 결과 제한은 `list_presets` 메타데이터 조회에만 적용됩니다. 프리셋은 기존 작업의 경로 선택자일 뿐이며, 동일한 작업 권한과 정책 경로의 정확한 일치를 요구합니다. 성공한 `list_sessions`와 `send_message` 응답은 프리셋 메타데이터, 새 명령 이름 또는 추가 데이터 투영 없이 기존 CLI 스키마와 네이티브 페이로드를 그대로 유지합니다. 기존 네이티브 증거와 전송 제한을 보존하며 실제 전송에 합계 64 KiB 제한을 새로 적용하지 않습니다. 리비전은 `list_presets`로 별도 확인하십시오. 프리셋을 선택한 `preflight_send`에는 안전한 프리셋 메타데이터 `name`, `agent`, `transport`, `revision`만 추가될 수 있습니다.
+
+승인된 항목 하나라도 없거나 경로가 정책과 일치하지 않으면 메타데이터 조회 전체를 원자적으로 거부합니다. 고정된 선택 거부 코드의 예는 `preset_platform_unsupported`, `preset_route_unsupported`, `preset_revision_mismatch`, `preset_storage_unavailable`이며, 관리 작업이나 파일 시스템 복구는 시도하지 않습니다. 메타데이터 조회 오류는 호출 전에 발생합니다. 호출 후의 입출력 오류나 실제 전송 응답의 디코딩 실패는 이미 제출된 뒤에도 발생할 수 있으므로 `outcome_unknown`과 `retryAllowed=false`를 보고하고 자동으로 재시도하지 마십시오. 확인된 네이티브 대기열 등록·제출 증거는 유지합니다.
+
 <a id="수신-대상-주소록-개발-중"></a>
 
 ### 수신 대상 주소록 (v1.3.0)

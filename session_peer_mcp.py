@@ -191,13 +191,29 @@ def load_policy(path: str | None) -> dict:
     for name, entry in destinations.items():
         if not isinstance(name, str) or not name or not isinstance(entry, dict):
             raise PolicyError("Invalid destination")
-        if set(entry) - {"host", "codexHome", "agents", "capabilities"}:
+        settings = {"host", "codexHome", "agents", "capabilities"}
+        if raw["schemaVersion"] == 2:
+            settings.add("presets")
+        if set(entry) - settings:
             raise PolicyError(f"Unknown settings for {name}")
-        capabilities = {"list", "send", "wake"} | ({"preflight", "diagnostics", "diagnostics_probe"} if raw["schemaVersion"] == 2 else set())
+        capabilities = {"list", "send", "wake"} | ({"preflight", "diagnostics", "diagnostics_probe", "presets"} if raw["schemaVersion"] == 2 else set())
         for key, allowed in (("agents", set(core.AGENTS.names())), ("capabilities", capabilities)):
             values = entry.get(key)
             if not isinstance(values, list) or not values or any(not isinstance(v, str) or v not in allowed for v in values):
                 raise PolicyError(f"Invalid {key} for {name}")
+        approved = entry.get("presets")
+        if "presets" in entry["capabilities"]:
+            if (not isinstance(approved, list) or not approved or len(approved) > core.PRESET_MAX_ENTRIES
+                    or any(not isinstance(name, str) for name in approved)
+                    or len(set(approved)) != len(approved)):
+                raise PolicyError("Invalid approved presets")
+            for preset_name in approved:
+                try:
+                    core._preset_name(preset_name)
+                except core.CcPeerError:
+                    raise PolicyError("Invalid approved presets") from None
+        elif "presets" in entry:
+            raise PolicyError("Approved presets require the presets capability")
         host = entry.get("host")
         if host is not None:
             if not isinstance(host, str) or not host or any(c.isspace() for c in host):
@@ -245,6 +261,102 @@ class Adapter:
         if agent is not None and agent not in entry["agents"]:
             raise PolicyError("Agent is not allowed at this destination")
         return entry
+
+    def authorize_preset(self, destination, name=None, *, capability=None, agent=None):
+        # These checks deliberately precede even platform/store/path inspection.
+        if capability:
+            self.authorize(destination, capability, agent)
+        entry = self.authorize(destination, "presets", agent)
+        approved = entry.get("presets")
+        if not isinstance(approved, list) or not approved or len(approved) > core.PRESET_MAX_ENTRIES:
+            raise PolicyError("Invalid approved presets")
+        if name is not None:
+            try:
+                core._preset_name(name)
+            except core.CcPeerError:
+                raise PolicyError("Invalid preset name", "preset_invalid_name") from None
+            if name not in approved:
+                raise PolicyError("Preset is not approved", "preset_not_approved")
+        return entry
+
+    def check_preset_route(self, destination, name, route, *, capability=None, agent=None):
+        entry = self.authorize_preset(destination, name, capability=capability, agent=agent)
+        # Exact strings only. A stored alias and a revision grant no authority.
+        if (route["agent"] not in entry["agents"] or (agent is not None and route["agent"] != agent)
+                or route["transport"] != ("ssh" if entry.get("host") else "local")
+                or route.get("host") != entry.get("host")
+                or (route["agent"] == "codex" and route["codexHome"] != entry.get("codexHome"))):
+            raise PolicyError("Preset route does not match destination policy", "preset_policy_mismatch")
+
+    @staticmethod
+    def preset_platform():
+        try:
+            core._preset_platform()
+        except core.CcPeerError:
+            raise PolicyError("Preset platform unsupported", "preset_platform_unsupported") from None
+
+    def resolve_preset(self, destination, name, revision, *, capability, agent=None):
+        self.authorize_preset(destination, name, capability=capability, agent=agent)
+        if revision is not None and (not isinstance(revision, str)
+                or core.re.fullmatch(r"dp1:[0-9a-f]{64}", revision) is None):
+            raise PolicyError("Invalid preset revision", "preset_invalid_revision")
+        # Exactly one secure read. No model-selected file, fallback or repair.
+        self.preset_platform()
+        try:
+            route, current = core.preset_lookup(name)
+        except Exception:
+            raise PolicyError("Preset storage unavailable", "preset_storage_unavailable") from None
+        route = core.preset_validate_entry(route)
+        if current != core.preset_revision(name, route):
+            raise PolicyError("Invalid preset snapshot", "preset_storage_unavailable")
+        # Authorize the route before revealing whether a supplied digest
+        # matches it; off-policy route values must not become a hash oracle.
+        self.check_preset_route(destination, name, route, capability=capability, agent=agent)
+        if revision is not None and revision != current:
+            raise PolicyError("Preset revision changed", "preset_revision_mismatch")
+        return {"name": name, "revision": current, "route": route}
+
+    def recheck_preset(self, destination, plan, *, capability, agent):
+        # Recheck current policy at the CLI boundary. The store is intentionally
+        # not read again: later mutation cannot cancel an already expanded plan.
+        if plan is not None:
+            self.check_preset_route(destination, plan["name"], plan["route"],
+                                    capability=capability, agent=agent)
+
+    @staticmethod
+    def preset_metadata(plan):
+        return {"name": plan["name"], "revision": plan["revision"],
+                "agent": plan["route"]["agent"], "transport": plan["route"]["transport"]}
+
+    async def list_presets(self, destination: str) -> dict:
+        entry = self.authorize_preset(destination)
+        if (not isinstance(destination, str) or not destination or not destination.isprintable()
+                or len(destination.encode("utf-8", errors="replace")) > DESTINATION_ALIAS_BYTES
+                or any(0xD800 <= ord(ch) <= 0xDFFF for ch in destination)):
+            raise PolicyError("Invalid destination metadata identifier")
+        names = tuple(entry["presets"])
+        self.preset_platform()
+        try:
+            entries = core.preset_read()
+        except Exception:
+            raise PolicyError("Preset storage unavailable", "preset_storage_unavailable") from None
+        rows = []
+        for name in sorted(names):
+            if name not in entries:
+                raise PolicyError("Approved preset is unavailable", "preset_storage_unavailable")
+            route = core.preset_validate_entry(entries[name])
+            self.check_preset_route(destination, name, route)
+            rows.append(self.preset_metadata({"name": name, "route": route,
+                                             "revision": core.preset_revision(name, route)}))
+        # Revision projection is pure today; retain an explicit policy check at
+        # the completed metadata boundary as well as before each projection.
+        for name in names:
+            self.check_preset_route(destination, name, entries[name])
+        return {"ok": True, "schemaVersion": 1, "command": "mcp.presets",
+                "destination": destination, "presets": rows,
+                "limitations": {"readiness": "not_checked", "callerIdentity": "unavailable",
+                                "submission": "not_attempted", "consumption": "not_checked",
+                                "ack": "not_checked", "revision": "route_values_only"}}
 
     def route(self, entry: dict) -> list[str]:
         argv = []
@@ -454,9 +566,17 @@ class Adapter:
         return value
 
     async def list_sessions(self, destination: str = "local", agent: str | None = None,
-                            include_inactive: bool = False) -> dict:
+                            include_inactive: bool = False, preset: str | None = None,
+                            preset_revision: str | None = None) -> dict:
         entry = self.authorize(destination, "list", agent)
-        if (agent is None and len(entry["agents"]) > 1
+        if preset is None and preset_revision is not None:
+            raise PolicyError("Preset revision requires a preset")
+        plan = None
+        if preset is not None:
+            plan = self.resolve_preset(destination, preset, preset_revision, capability="list", agent=agent)
+            entry = plan["route"]
+            agent = entry["agent"]
+        if (plan is None and agent is None and len(entry["agents"]) > 1
                 and set(entry["agents"]) != set(core.AGENTS.names())):
             # Do not discover newly registered adapters outside this allowlist.
             parts = [await self.list_sessions(destination, name, include_inactive)
@@ -470,19 +590,32 @@ class Adapter:
                 combined["error"] = "; ".join(errors)
             return combined
         argv = ["list", *self.route(entry)]
-        if agent is None and len(entry["agents"]) == 1:
+        if plan is None and agent is None and len(entry["agents"]) == 1:
             agent = entry["agents"][0]
         if agent:
             argv += ["--agent", agent]
         if include_inactive:
             argv.append("--all")
-        return await self.invoke(argv)
+        self.recheck_preset(destination, plan, capability="list", agent=agent)
+        value = await self.invoke(argv)
+        return value
 
     def prepare_send(self, destination: str, target: str, message: str, *,
-                     capability: str, dry_run: bool, wake: bool, wake_timeout: int):
+                     capability: str, dry_run: bool, wake: bool, wake_timeout: int,
+                     preset: str | None = None, preset_revision: str | None = None):
         address = core.parse_reply_address(target)
         agent = address["agent"] if address else core.AGENTS.for_target(target).name
         entry = self.authorize(destination, capability, agent)
+        if preset is None and preset_revision is not None:
+            raise PolicyError("Preset revision requires a preset")
+        plan = None
+        if preset is not None:
+            if wake or address is not None or agent not in ("claude", "codex"):
+                raise PolicyError("Unsupported preset send route", "preset_route_unsupported")
+            if capability == "send" and not dry_run and preset_revision is None:
+                raise PolicyError("Actual preset sends require a revision", "preset_revision_required")
+            plan = self.resolve_preset(destination, preset, preset_revision, capability=capability, agent=agent)
+            entry = plan["route"]
         if wake:
             self.authorize(destination, "wake", agent)
             if not core.AGENTS.get(agent).capabilities.wake:
@@ -516,27 +649,48 @@ class Adapter:
             argv.append("--dry-run")
         if wake:
             argv += ["--wake", "--wake-timeout", str(wake_timeout)]
-        return argv, agent
+        return argv, agent, plan
 
     async def send_message(self, destination: str, target: str, message: str,
-                           dry_run: bool = False, wake: bool = False, wake_timeout: int = 30) -> dict:
-        argv, _ = self.prepare_send(destination, target, message, capability="send",
-                                    dry_run=dry_run, wake=wake, wake_timeout=wake_timeout)
+                           dry_run: bool = False, wake: bool = False, wake_timeout: int = 30,
+                           preset: str | None = None, preset_revision: str | None = None) -> dict:
+        argv, agent, plan = self.prepare_send(destination, target, message, capability="send",
+            dry_run=dry_run, wake=wake, wake_timeout=wake_timeout, preset=preset, preset_revision=preset_revision)
         if wake:
             # Startup context is an operator-owned cost hint, not caller identity.
             try:
                 argv += core.wake_chain_options(core.wake_chain_context(argparse.Namespace()))
             except core.CcPeerError as exc:
                 return {"ok": False, "error": str(exc), **exc.details}
-        return await self.invoke(argv, "From: session-peer MCP (caller session unavailable)\n\n" + message)
+        self.recheck_preset(destination, plan, capability="send", agent=agent)
+        try:
+            value = await self.invoke(argv, "From: session-peer MCP (caller session unavailable)\n\n" + message)
+        except Exception:
+            if plan is None:
+                raise
+            value = {"ok": False, "status": "unknown", "submitted": None,
+                     "reason": "outcome_unknown", "retryAllowed": False}
+        if plan and not isinstance(value, dict):
+            value = {"ok": False, "status": "unknown", "submitted": None,
+                     "reason": "outcome_unknown", "retryAllowed": False}
+        if plan and value.get("reason") in ("invalid_cli_response", "cli_failed", "outcome_unknown"):
+            value = {**value, "retryAllowed": False}
+            known_submission = (value.get("submitted") is True or value.get("consumptionConfirmed") is True
+                                or value.get("status") in ("posted", "queued", "submitted"))
+            if not known_submission:
+                value = {**value, "status": "unknown", "submitted": None,
+                         "reason": "outcome_unknown", "retryAllowed": False}
+        return value
 
     async def preflight_send(self, destination: str, target: str, message: str,
-                             wake: bool = False, wake_timeout: int = 30) -> dict:
-        argv, agent = self.prepare_send(destination, target, message, capability="preflight",
-                                       dry_run=True, wake=wake, wake_timeout=wake_timeout)
+                             wake: bool = False, wake_timeout: int = 30,
+                             preset: str | None = None, preset_revision: str | None = None) -> dict:
+        argv, agent, plan = self.prepare_send(destination, target, message, capability="preflight",
+            dry_run=True, wake=wake, wake_timeout=wake_timeout, preset=preset, preset_revision=preset_revision)
         if wake:
             argv += core.wake_chain_options(core.wake_chain_context(argparse.Namespace()))
         # Do not reuse compatibility JSON: SSH shaping may erase native uncertainty.
+        self.recheck_preset(destination, plan, capability="preflight", agent=agent)
         try:
             value = await self.invoke([*argv, "--explain-json"],
                 "From: session-peer MCP (caller session unavailable)\n\n" + message)
@@ -588,6 +742,8 @@ class Adapter:
         if not valid:
             output["reason"] = ("outcome_unknown" if value.get("reason") == "outcome_unknown"
                                 else "preflight_response_unavailable")
+        if plan:
+            output["preset"] = self.preset_metadata(plan)
         return output
 
 
@@ -620,6 +776,8 @@ def create_server(adapter: Adapter):
             value = await call
         except (PolicyError, core.CcPeerError) as exc:
             value = {"ok": False, "reason": "request_rejected", "error": str(exc)}
+            if isinstance(exc, PolicyError) and exc.reason.startswith("preset_"):
+                value.update(reason=exc.reason, retryAllowed=False)
             if command == "send.preflight":
                 reason = exc.reason if isinstance(exc, PolicyError) else "request_rejected"
                 value = preflight_rejection(reason, getattr(exc, "details", None))
@@ -627,7 +785,7 @@ def create_server(adapter: Adapter):
                 value.update(schemaVersion=1, command=command)
             elif command:
                 value = {"ok": False, "schemaVersion": 1, "command": command,
-                         "reason": "request_rejected", "retryAllowed": False,
+                         "reason": value["reason"], "retryAllowed": False,
                          "operatorActions": ["review_policy_and_request"]}
         except (ValueError, OSError):
             if not command:
@@ -655,6 +813,16 @@ def create_server(adapter: Adapter):
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False,
                                            idempotentHint=True, openWorldHint=False))
+    async def list_presets(destination: str):
+        """Read only approved route preset metadata; never discover or probe.
+
+        Revisions describe saved route values, never identity or authorization.
+        This tool never initializes or repairs preset storage.
+        """
+        return await result(adapter.list_presets(destination), command="mcp.presets")
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False,
+                                           idempotentHint=True, openWorldHint=False))
     async def list_destinations():
         """Read configured destination IDs and policy capabilities without probing.
 
@@ -679,28 +847,36 @@ def create_server(adapter: Adapter):
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
     async def list_sessions(destination: str = "local", agent: str | None = None,
-                            include_inactive: bool = False):
-        """List sessions on an operator-configured destination; agent must be permitted by the destination policy."""
-        return await result(adapter.list_sessions(destination, agent, include_inactive))
+                            include_inactive: bool = False, preset: str | None = None,
+                            preset_revision: str | None = None):
+        """List sessions on an authorized route; preset selection requires additional policy permission."""
+        return await result(adapter.list_sessions(destination, agent, include_inactive, preset, preset_revision),
+                            command=None)
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
                                            idempotentHint=False, openWorldHint=True))
     async def preflight_send(destination: str, target: str, message: str,
-                             wake: bool = False, wake_timeout: int = 30):
+                             wake: bool = False, wake_timeout: int = 30,
+                             preset: str | None = None, preset_revision: str | None = None):
         """Validate once without submitting. Requires explicit preflight policy permission.
 
         Existing dry-run checks may run local probes and operator-configured SSH.
         Passing grants no host approval and reserves no route or later send.
         """
-        return await result(adapter.preflight_send(destination, target, message, wake, wake_timeout),
+        return await result(adapter.preflight_send(destination, target, message, wake, wake_timeout, preset, preset_revision),
                             command="send.preflight")
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
                                            idempotentHint=False, openWorldHint=True))
     async def send_message(destination: str, target: str, message: str,
-                           dry_run: bool = False, wake: bool = False, wake_timeout: int = 30):
-        """Send once to a configured destination. Submission does not confirm consumption."""
-        return await result(adapter.send_message(destination, target, message, dry_run, wake, wake_timeout))
+                           dry_run: bool = False, wake: bool = False, wake_timeout: int = 30,
+                           preset: str | None = None, preset_revision: str | None = None):
+        """Send once. Submission does not confirm consumption.
+
+        An actual preset send requires its current route revision and an explicit target.
+        """
+        return await result(adapter.send_message(destination, target, message, dry_run, wake, wake_timeout, preset, preset_revision),
+                            command=None)
 
     return server
 

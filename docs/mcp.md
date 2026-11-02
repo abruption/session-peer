@@ -69,6 +69,22 @@ Representative allowlisted codes include `sessions_dir_missing`, `inbox_present`
 
 The stages `tcpAccept`, `tls` and `peerAuthentication` remain `not_checked`. Here `peerAuthentication` refers to paired-device authentication, separate from forward SSH authentication. `sshFailure` reports only a sanitized forward SSH failure category, such as `authentication_failed` or `host_key_failed`. No TCP, TLS, paired-device or return-host probe is added.
 
+## Unreleased v1.4.0 candidate: MCP presets (#359)
+
+Candidate input signatures: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
+
+`list_presets(destination)` reads only approved route metadata. A `schemaVersion` 2 policy must explicitly grant `presets` and provide a nonempty per-destination `presets` list of at most 128 approved names matching `[a-z][a-z0-9_-]{0,63}`. Version 1 rejects the new capability and field. Authorization precedes any store read. The result exposes only matching approved `name`, `agent`, `transport` and `revision` values, with the existing `dp1:` token; raw hosts, homes and store paths are omitted. Saved-route lookup does not discover sessions, choose a target, run SSH/native/version probes or refresh data. The versioned text and structured tool result together are bounded to 64 KiB.
+
+`list_sessions`, `preflight_send` and `send_message` accept optional `preset` and `preset_revision` inputs. Selection requires both the existing action permission and `presets`; a stored route or revision grants no authority. Sends require an explicit target, and an actual send requires the current revision. Wake and Reply-To URI targets cannot be combined with a preset. Only the existing Claude Code/Codex local or SSH routes on macOS/Linux are supported; this adds no Windows, device, addressbook, handoff or preset-management support.
+
+The adapter reads one validated snapshot from the operator's launch-environment store, using the existing `XDG_CONFIG_HOME` selection and secure reader. Its 64 KiB/128-entry bounds and owner, ACL, symlink and mount checks remain intact; missing or unsafe storage is not initialized, repaired or replaced. The model cannot supply a store path. Each selected route must exactly match the destination's host, permitted agent and pinned Codex home. DNS equivalence and fallback are not accepted. The approved route is expanded into one execution plan without combining CLI `--preset` with explicit routing flags, and policy is rechecked before invocation.
+
+A revision covers the exact name and route values; restoring identical values can reuse it. It is checked at lookup, not as a target generation, caller identity, storage attestation or ACK. Later mutation does not retroactively cancel an already expanded invocation. Without a selected preset, existing tool responses are unchanged.
+
+The new 64 KiB tool-result budget applies only to the `list_presets` metadata query. A preset is only a route selector for existing actions, with the same action authorization and exact policy-route matching. Successful `list_sessions` and `send_message` responses keep the existing CLI schema and native payload, without preset metadata, a new command or an added data projection. Existing native evidence and transport limits remain intact; real sends gain no aggregate 64 KiB limit. Inspect revisions separately with `list_presets`. Selected `preflight_send` may include only safe preset metadata: `name`, `agent`, `transport` and `revision`.
+
+If any approved item is missing or its route mismatches policy, the whole metadata lookup is refused atomically. Fixed selector refusal codes include `preset_platform_unsupported`, `preset_route_unsupported`, `preset_revision_mismatch` and `preset_storage_unavailable`; no management or filesystem repair is attempted. Metadata-query failures precede invocation. After invocation, I/O or actual-send decode failure may follow submission: report `outcome_unknown` with `retryAllowed=false` and never retry automatically. Preserve any known native queued/submitted evidence.
+
 ## Tools and permissions
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)` returns the CLI's structured listing. Agent may be `claude` or `codex`; omission lists permitted agents.

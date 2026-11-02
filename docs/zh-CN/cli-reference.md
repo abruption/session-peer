@@ -164,6 +164,18 @@ session-peer preset remove work-mac --expect-revision 'dp1:<CURRENT-HASH>'
 
 在 macOS 上，忽略所有权的挂载会以 `preset_ownership_unenforced` 被拒绝，无法查询或验证挂载状态时则以 `preset_mount_unverifiable` 被拒绝。不会仅凭模式位断定所有权已强制执行。Linux 也会拒绝上级路径中的 ACL，以及无法验证 ACL 状态的文件系统。中断管理命令后请检查当前配置，因为更改可能已经可见；目录同步失败不会被静默当作成功。
 
+### 尚未发布的 v1.4.0 候选版本：MCP 预设 (#359)
+
+候选版本输入签名: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
+
+MCP 预设查询和选择使用操作员的显式允许列表及现有安全快照读取函数，不新增 CLI 预设管理命令或自动选择。参见 [MCP 预设策略与限制](mcp.md)。MCP 选择会展开已批准的路径，而不会将 CLI `--preset` 与显式路由选项组合。现有 CLI 输出、修订令牌和文件系统安全约定保持不变。
+
+对于 MCP `list_sessions`、`preflight_send` 和 `send_message`，可选的 `preset`、`preset_revision` 输入既需要现有操作权限，也需要 `presets`。实际发送必须提供当前 `dp1:` 修订令牌和明确目标。与 wake 或 Reply-To URI 的组合会被拒绝。修订令牌在查询时检查，不代表目标代次或权限；之后的修改也不能取消已为调用展开的路径。
+
+新增的 64 KiB 工具结果限制仅适用于 `list_presets` 元数据查询。预设仅作为现有操作的路由选择器，仍要求相同的操作授权及与策略路由完全匹配。成功的 `list_sessions` 和 `send_message` 响应保留现有 CLI 模式与原生载荷，不增加预设元数据、新命令名或额外的数据投影。现有原生证据和传输限制保持不变，实际发送不会新增合计 64 KiB 的限制。请通过 `list_presets` 单独检查修订令牌。选择预设的 `preflight_send` 只能额外包含安全的预设元数据：`name`、`agent`、`transport` 和 `revision`。
+
+任一已批准项缺失或其路由与策略不匹配时，整个元数据查询都会被原子拒绝。固定的选择拒绝代码包括 `preset_platform_unsupported`、`preset_route_unsupported`、`preset_revision_mismatch` 和 `preset_storage_unavailable`；不会尝试管理操作或文件系统修复。元数据查询错误发生在调用之前。调用后的 I/O 错误或实际发送响应的解码失败可能发生在提交之后，因此必须报告 `outcome_unknown` 和 `retryAllowed=false`，切勿自动重试。已确认的原生排队或提交证据必须保留。
+
 <a id="接收者地址簿开发中"></a>
 
 ### 接收者地址簿（v1.3.0）

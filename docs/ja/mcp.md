@@ -69,6 +69,22 @@ Python 3.10 以降でインストールします: `pipx install 'session-peer[mc
 
 `tcpAccept`、`tls`、`peerAuthentication` の段階は `not_checked` のままです。ここでの `peerAuthentication` はペアリングされたデバイスの認証を指し、順方向 SSH 認証とは別です。`sshFailure` は `authentication_failed` や `host_key_failed` など、サニタイズされた順方向 SSH 失敗の分類だけを報告します。TCP、TLS、ペアリングされたデバイス、返信先ホストへのプローブは追加しません。
 
+## 未リリースの v1.4.0 候補: MCP プリセット (#359)
+
+候補版の入力シグネチャ: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
+
+`list_presets(destination)` は承認済みの経路メタデータだけを読みます。`schemaVersion` 2 のポリシーで `presets` を明示的に許可し、宛先ごとの `presets` リストに `[a-z][a-z0-9_-]{0,63}` に一致する承認済みの名前を 1 件以上、128 件以下で指定する必要があります。バージョン 1 は新しいケーパビリティとフィールドを拒否します。ストアを読む前に権限を確認します。結果には宛先と一致する承認済みの `name`、`agent`、`transport`、`revision` と既存の `dp1:` トークンだけが含まれ、実際のホスト、ホーム、ストアのパスは省略されます。保存済み経路の参照では、セッションの探索、対象の選択、SSH・ネイティブ・バージョン確認のプローブ、データの更新を行いません。バージョン付きのテキストと構造化されたツール結果は、合計 64 KiB に制限されます。
+
+`list_sessions`、`preflight_send`、`send_message` は任意の `preset`、`preset_revision` 入力を受け付けます。選択には既存の操作権限と `presets` の両方が必要です。保存済み経路やリビジョンが権限を与えることはありません。送信には明示的な対象が必要で、実際の送信には現在のリビジョンが必要です。プリセットを wake や Reply-To URI の対象と組み合わせることはできません。macOS/Linux の既存の Claude Code・Codex のローカルまたは SSH 経路だけをサポートし、Windows、デバイス、アドレス帳、handoff、プリセット管理のサポートは追加しません。
+
+アダプターは既存の `XDG_CONFIG_HOME` の選択と安全な読み取り関数を使い、オペレーターの起動環境のストアから検証済みのスナップショットを一度だけ読みます。64 KiB・128 件の制限と、所有者、ACL、シンボリックリンク、マウントの検査を維持し、存在しないストアや安全でないストアを初期化、修復、置換しません。モデルはストアのパスを指定できません。選択した経路は、宛先のホスト、許可されたエージェント、固定された Codex ホームと完全に一致する必要があります。DNS 上の同一性や代替経路への切り替えは認めません。CLI の `--preset` と明示的な経路フラグを組み合わせず、承認済み経路を一つの実行計画に展開し、呼び出し前にポリシーを再確認します。
+
+リビジョンは名前と経路の正確な値を表し、同じ値に戻すと同じトークンを再利用できます。参照時に検査するもので、対象の世代、呼び出し元の身元、ストレージの証明、ACK ではありません。その後の変更によって、すでに展開された呼び出しが遡って取り消されることはありません。プリセットを選択しない場合、既存のツール応答は変わりません。
+
+新しい 64 KiB のツール結果制限は `list_presets` のメタデータ参照だけに適用されます。プリセットは既存の操作の経路選択だけを担い、同じ操作権限とポリシー経路との完全一致を要求します。成功した `list_sessions` と `send_message` の応答では、プリセットのメタデータ、新しいコマンド名、追加のデータ射影を加えず、既存の CLI スキーマとネイティブのペイロードを維持します。既存のネイティブ証拠と通信上の制限を保ち、実際の送信に合計 64 KiB の制限を新設しません。リビジョンは `list_presets` で別途確認してください。選択済みの `preflight_send` に追加できるプリセットのメタデータは、安全な `name`、`agent`、`transport`、`revision` のみです。
+
+承認済みの項目が一つでも欠落しているか、経路がポリシーと一致しない場合、メタデータ参照全体を原子的に拒否します。固定の選択拒否コードには `preset_platform_unsupported`、`preset_route_unsupported`、`preset_revision_mismatch`、`preset_storage_unavailable` があり、管理操作やファイルシステムの修復は行いません。メタデータ参照のエラーは呼び出し前に発生します。呼び出し後の入出力エラーや実際の送信応答のデコード失敗は、送信後に起きる場合もあるため、`outcome_unknown` と `retryAllowed=false` を報告し、自動再試行しないでください。確認済みのネイティブのキュー登録・送信証拠は保持します。
+
 ## ツールとパーミッション
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)` は CLI の構造化された一覧を返します。Agent は `claude` または `codex` です。省略した場合は許可されたエージェントを一覧表示します。

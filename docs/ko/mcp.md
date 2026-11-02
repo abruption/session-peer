@@ -69,6 +69,22 @@ Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(
 
 `tcpAccept`, `tls`, `peerAuthentication` 단계는 `not_checked`로 유지됩니다. 여기서 `peerAuthentication`은 페어링된 기기의 인증을 뜻하며 정방향 SSH 인증과 별개입니다. `sshFailure`는 `authentication_failed` 또는 `host_key_failed`처럼 정제된 정방향 SSH 실패 범주만 보고합니다. TCP, TLS, 페어링된 기기 또는 회신 호스트 검사는 추가하지 않습니다.
 
+## 미출시 v1.4.0 후보: MCP 프리셋 (#359)
+
+후보 버전 입력 시그니처: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
+
+`list_presets(destination)`는 승인된 경로 메타데이터만 읽습니다. `schemaVersion` 2 정책은 `presets`를 명시적으로 허용하고, 목적지별 `presets` 목록에 `[a-z][a-z0-9_-]{0,63}` 형식의 승인된 이름을 1개 이상 128개 이하로 지정해야 합니다. 버전 1은 새 기능과 필드를 거부합니다. 저장소를 읽기 전에 권한을 확인합니다. 결과는 목적지와 일치하는 승인된 `name`, `agent`, `transport`, `revision` 값과 기존 `dp1:` 토큰만 노출하며 실제 호스트, 홈 및 저장소 경로는 생략합니다. 저장된 경로 조회는 세션을 검색하거나 대상을 고르거나 SSH·네이티브·버전 확인 검사를 실행하거나 데이터를 새로 고치지 않습니다. 버전이 지정된 텍스트와 구조화된 도구 결과를 합친 크기는 64 KiB로 제한됩니다.
+
+`list_sessions`, `preflight_send`, `send_message`는 선택적 `preset`, `preset_revision` 입력을 받습니다. 선택하려면 기존 작업 권한과 `presets`가 모두 필요하며, 저장된 경로나 리비전이 권한을 부여하지는 않습니다. 전송에는 명시적인 대상이 필요하며 실제 전송에는 현재 리비전이 필요합니다. 프리셋은 wake 및 Reply-To URI 대상과 함께 사용할 수 없습니다. macOS/Linux의 기존 Claude Code·Codex 로컬 또는 SSH 경로만 지원하며, Windows, 기기, 주소록, handoff 및 프리셋 관리 지원은 추가하지 않습니다.
+
+어댑터는 기존 `XDG_CONFIG_HOME` 선택과 보안 읽기 함수를 사용하여 운영자의 실행 환경 저장소에서 검증된 스냅샷을 한 번 읽습니다. 64 KiB·128개 항목 제한과 소유자, ACL, 심볼릭 링크 및 마운트 검사를 유지하며, 없거나 안전하지 않은 저장소를 초기화·복구·대체하지 않습니다. 모델은 저장소 경로를 지정할 수 없습니다. 선택한 경로는 목적지의 호스트, 허용된 에이전트 및 고정된 Codex 홈과 정확히 일치해야 합니다. DNS상 같은 호스트라는 이유로 허용하거나 대체 경로로 전환하지 않습니다. 승인된 경로를 하나의 실행 계획으로 확장하며 CLI `--preset`과 명시적 경로 플래그를 함께 사용하지 않습니다. 호출 전에 정책을 다시 확인합니다.
+
+리비전은 이름과 경로의 정확한 값을 나타내며, 같은 값을 복원하면 같은 토큰을 다시 사용할 수 있습니다. 리비전은 조회 시 확인되며 대상 세대, 호출자 신원, 저장소 증명 또는 ACK가 아닙니다. 이후의 변경은 이미 확장된 호출을 소급하여 취소하지 않습니다. 프리셋을 선택하지 않으면 기존 도구 응답은 그대로 유지됩니다.
+
+새 64 KiB 도구 결과 제한은 `list_presets` 메타데이터 조회에만 적용됩니다. 프리셋은 기존 작업의 경로 선택자일 뿐이며, 동일한 작업 권한과 정책 경로의 정확한 일치를 요구합니다. 성공한 `list_sessions`와 `send_message` 응답은 프리셋 메타데이터, 새 명령 이름 또는 추가 데이터 투영 없이 기존 CLI 스키마와 네이티브 페이로드를 그대로 유지합니다. 기존 네이티브 증거와 전송 제한을 보존하며 실제 전송에 합계 64 KiB 제한을 새로 적용하지 않습니다. 리비전은 `list_presets`로 별도 확인하십시오. 프리셋을 선택한 `preflight_send`에는 안전한 프리셋 메타데이터 `name`, `agent`, `transport`, `revision`만 추가될 수 있습니다.
+
+승인된 항목 하나라도 없거나 경로가 정책과 일치하지 않으면 메타데이터 조회 전체를 원자적으로 거부합니다. 고정된 선택 거부 코드의 예는 `preset_platform_unsupported`, `preset_route_unsupported`, `preset_revision_mismatch`, `preset_storage_unavailable`이며, 관리 작업이나 파일 시스템 복구는 시도하지 않습니다. 메타데이터 조회 오류는 호출 전에 발생합니다. 호출 후의 입출력 오류나 실제 전송 응답의 디코딩 실패는 이미 제출된 뒤에도 발생할 수 있으므로 `outcome_unknown`과 `retryAllowed=false`를 보고하고 자동으로 재시도하지 마십시오. 확인된 네이티브 대기열 등록·제출 증거는 유지합니다.
+
 ## 도구 및 권한
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)`는 CLI의 구조화된 목록을 반환합니다. Agent는 `claude` 또는 `codex`일 수 있으며, 생략 시 허용된 에이전트를 나열합니다.

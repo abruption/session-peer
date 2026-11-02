@@ -209,6 +209,18 @@ UUID は現在の一覧で確認した値に、ハッシュは選択したプリ
 
 macOS で所有権を無視するマウントは `preset_ownership_unenforced`、マウント照会が利用できない、または検証できない場合は `preset_mount_unverifiable` で拒否します。モードビットだけを所有権が強制される証拠とは扱いません。Linux では上位経路の ACL も、ACL 状態を検証できないファイルシステムも拒否します。管理コマンドを中断した後は、変更が既に見えている可能性があるため現在の設定を確認してください。ディレクトリの同期失敗を黙って成功とは扱いません。
 
+### 未リリースの v1.4.0 候補: MCP プリセット (#359)
+
+候補版の入力シグネチャ: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
+
+MCP プリセットの参照と選択では、オペレーターの明示的な許可リストと既存の安全なスナップショット読み取り関数を使います。CLI のプリセット管理コマンドや自動選択は追加しません。[MCP プリセットのポリシーと制限](mcp.md)を参照してください。MCP の選択では、CLI の `--preset` と明示的な経路フラグを組み合わせず、承認済みの経路を展開します。既存の CLI 出力、リビジョン、ファイルシステムの安全性に関する契約は変わりません。
+
+MCP の `list_sessions`、`preflight_send`、`send_message` で任意の `preset`、`preset_revision` を指定するには、既存の操作権限と `presets` の両方が必要です。実際の送信には、現在の `dp1:` リビジョンと明示的な対象が必要です。wake や Reply-To URI との組み合わせは拒否します。リビジョンは参照時に確認するもので、対象の世代や権限ではありません。その後の変更で、呼び出し用にすでに展開された経路を取り消すことはできません。
+
+新しい 64 KiB のツール結果制限は `list_presets` のメタデータ参照だけに適用されます。プリセットは既存の操作の経路選択だけを担い、同じ操作権限とポリシー経路との完全一致を要求します。成功した `list_sessions` と `send_message` の応答では、プリセットのメタデータ、新しいコマンド名、追加のデータ射影を加えず、既存の CLI スキーマとネイティブのペイロードを維持します。既存のネイティブ証拠と通信上の制限を保ち、実際の送信に合計 64 KiB の制限を新設しません。リビジョンは `list_presets` で別途確認してください。選択済みの `preflight_send` に追加できるプリセットのメタデータは、安全な `name`、`agent`、`transport`、`revision` のみです。
+
+承認済みの項目が一つでも欠落しているか、経路がポリシーと一致しない場合、メタデータ参照全体を原子的に拒否します。固定の選択拒否コードには `preset_platform_unsupported`、`preset_route_unsupported`、`preset_revision_mismatch`、`preset_storage_unavailable` があり、管理操作やファイルシステムの修復は行いません。メタデータ参照のエラーは呼び出し前に発生します。呼び出し後の入出力エラーや実際の送信応答のデコード失敗は、送信後に起きる場合もあるため、`outcome_unknown` と `retryAllowed=false` を報告し、自動再試行しないでください。確認済みのネイティブのキュー登録・送信証拠は保持します。
+
 <a id="受信先アドレス帳開発中"></a>
 
 ### 受信先アドレス帳（v1.3.0）
