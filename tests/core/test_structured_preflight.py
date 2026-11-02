@@ -25,6 +25,7 @@ class StructuredPreflight(unittest.TestCase):
         for flags in ([], ['--dry-run', '--explain'], ['--dry-run', '--device', 'fixture'],
                       ['--dry-run', '--request-ack'], ['--dry-run', '--preset', 'fixture'],
                       ['--dry-run', '--address', 'fixture'], ['--dry-run', '--output-format', 'text'],
+                      ['--dry-run', '--host', 'one', '--host', 'two'],
                       ['--dry-run', '--_handoff-native-context', 'fixture']):
             with self.subTest(flags=flags), mock.patch.object(peer, 'read_message') as read, \
                     mock.patch.object(peer, 'prepare_client_update') as updates, \
@@ -67,6 +68,17 @@ class StructuredPreflight(unittest.TestCase):
         self.assertNotIn(NONREFLECTED_VALUE, json.dumps(result))
         self.assertEqual(err, '')
         discover.assert_called_once_with(include_unreachable=True)
+
+    def test_uri_failure_before_route_resolution_retains_agent_and_not_run(self):
+        uri = ('session-peer://v1/reply?agent=codex&session=' + THREAD +
+               '&transport=ssh&host=fixture&codexHome=%2Ffixture')
+        with mock.patch.object(peer, 'prepare_trusted_ssh_config', side_effect=peer.CcPeerError('private')):
+            code, value, _ = self.invoke(target=uri)
+        self.assertEqual(code, 1)
+        self.assertEqual(value['checked']['agent'], 'codex')
+        self.assertEqual(value['checked']['validation'], 'not_run')
+        self.assertEqual(value['limitations']['submission'], 'not_attempted')
+        self.assertEqual(value['operatorActions'], ['resolve_validation_failure_before_send'])
 
     def test_ssh_projects_original_claude_facts_before_compatibility_shaping(self):
         for facts, expected in (({'dryRun': False}, 'unexpected_submission'),
@@ -168,6 +180,7 @@ class CodexStructuredDryrun(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertFalse(result['ok'])
         self.assertNotIn('private-relocation', json.dumps(result))
+        self.assertEqual(result['refusalReason'], 'sqlite_home_configuration')
         for action in (run, child, reserve):
             action.assert_not_called()
 

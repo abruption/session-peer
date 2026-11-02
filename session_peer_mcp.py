@@ -286,8 +286,13 @@ class Adapter:
         if wake:
             argv += core.wake_chain_options(core.wake_chain_context(argparse.Namespace()))
         # Do not reuse compatibility JSON: SSH shaping may erase native uncertainty.
-        value = await self.invoke([*argv, "--explain-json"],
-            "From: session-peer MCP (caller session unavailable)\n\n" + message)
+        try:
+            value = await self.invoke([*argv, "--explain-json"],
+                "From: session-peer MCP (caller session unavailable)\n\n" + message)
+        except (OSError, ValueError):
+            # An I/O failure may follow process creation/probes. Do not turn it
+            # into a pre-effect policy refusal or reveal the native diagnostic.
+            value = {"reason": "outcome_unknown"}
         checked = value.get("checked")
         valid = (type(value.get("schemaVersion")) is int and value["schemaVersion"] == 1
                  and value.get("command") == "send.preflight" and isinstance(checked, dict)
@@ -310,6 +315,10 @@ class Adapter:
                         {"reason": "outcome_unknown"} if state == "unknown" else {})
             if checked["wake"] == "validated":
                 evidence["wake"] = {"status": "validated"}
+            refusal = value.get("refusalReason")
+            if (isinstance(refusal, str) and refusal in core.PREFLIGHT_REFUSAL_REASONS
+                    and state in ("not_run", "not_confirmed")):
+                evidence["reason"] = refusal
         else:
             evidence = {"reason": "outcome_unknown"}
         # Agent is already authenticated against policy; avoid URI inference here.
@@ -318,13 +327,14 @@ class Adapter:
             failed=not valid or checked.get("validation") in ("not_run", "not_confirmed"))
         if valid and (type(value.get("retryAllowed")) is not bool
                 or any(value.get(key) != output[key] for key in (
-                    "limitations", "declaredCapabilities", "reason", "retryAllowed", "operatorActions"))):
+                    "limitations", "declaredCapabilities", "reason", "refusalReason", "retryAllowed", "operatorActions"))):
             # In particular, do not erase an unknown/reported submission in
             # another field merely because checked.validation says passed.
             valid = False
             output = core.structured_delivery_preflight(args, {"reason": "outcome_unknown"}, failed=True)
         if not valid:
-            output["reason"] = "preflight_response_unavailable"
+            output["reason"] = ("outcome_unknown" if value.get("reason") == "outcome_unknown"
+                                else "preflight_response_unavailable")
         return output
 
 

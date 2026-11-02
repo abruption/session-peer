@@ -424,6 +424,8 @@ def _main(argv: list[str] | None = None) -> int:
     if getattr(args, "explain_json", False):
         if not args.dry_run:
             parser.error("--explain-json requires --dry-run")
+        if len(args.host or []) > 1:
+            parser.error("--explain-json requires a single destination")
         if getattr(args, "explain", False) or output_format == "text":
             parser.error("--explain-json requires structured output without --explain")
         if (getattr(args, "device", None) or getattr(args, "preset", None)

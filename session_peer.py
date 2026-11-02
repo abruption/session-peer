@@ -4834,10 +4834,29 @@ def classify_delivery_readiness(args, result, *, failed=False):
             "unexpected": unexpected, "started": bool(started)}
 
 
+PREFLIGHT_REFUSAL_REASONS = frozenset({
+    "sqlite_home_configuration", "sqlite_home_system_configuration",
+    "sqlite_home_managed_configuration", "sqlite_home_project_configuration",
+    "consumer_directory_unverifiable", "storage_config_unverifiable",
+    "unsupported_target_generation", "state_db_missing", "thread_not_yet_persisted",
+})
+
+
 def structured_delivery_preflight(args, result, *, failed=False):
     """Versioned, bounded allowlist; never include native errors or route data."""
     state = classify_delivery_readiness(args, result, failed=failed)
     facts = build_delivery_explanation(args, result, failed=failed)
+    # URI failure before routing is still a known agent kind, not an
+    # authenticated sender/recipient identity or proof of completed checks.
+    if facts["agent"] is None:
+        try:
+            address = parse_reply_address(str(getattr(args, "to", "") or ""))
+        except (CcPeerError, ValueError):
+            address = None
+        if address:
+            facts["agent"] = address["agent"]
+            facts["capabilities"] = {key: getattr(AGENTS.get(address["agent"]).capabilities, key)
+                                     for key in ("send", "wake", "wait", "ack")}
     validation = state["validation"]
     reason = {"passed": None, "not_run": "checks_not_run",
               "not_confirmed": "validation_not_confirmed", "unknown": "outcome_unknown",
@@ -4845,6 +4864,8 @@ def structured_delivery_preflight(args, result, *, failed=False):
     passed = validation == "passed" and state["wake"] in ("not_requested", "validated")
     if validation == "passed" and not passed:
         reason = "wake_preflight_not_confirmed"
+    refusal = result.get("reason")
+    refusal = refusal if isinstance(refusal, str) and refusal in PREFLIGHT_REFUSAL_REASONS else None
     return {"schemaVersion": 1, "command": "send.preflight", "ok": passed,
             "checked": {"validation": validation, "agent": facts["agent"], "wake": state["wake"]},
             "declaredCapabilities": facts["capabilities"],
@@ -4853,9 +4874,10 @@ def structured_delivery_preflight(args, result, *, failed=False):
                                 "unknown" if state["unknown"] else "not_attempted",
                             "consumption": "not_checked", "ack": "not_checked",
                             "hostApproval": "not_granted", "routeReservation": "none"},
-            "reason": reason, "retryAllowed": False,
+            "reason": reason, "refusalReason": refusal if not passed else None, "retryAllowed": False,
             "operatorActions": ["repeat_validation_before_send", "review_host_approvals"]
-                if passed else ["inspect_existing_evidence_before_send"]}
+                if passed else ["inspect_existing_evidence_before_send"] if state["unknown"] or state["unexpected"]
+                else ["resolve_validation_failure_before_send"]}
 
 
 # --------------------------------------------------------------------------
@@ -12767,6 +12789,8 @@ def _main(argv: list[str] | None = None) -> int:
     if getattr(args, "explain_json", False):
         if not args.dry_run:
             parser.error("--explain-json requires --dry-run")
+        if len(args.host or []) > 1:
+            parser.error("--explain-json requires a single destination")
         if getattr(args, "explain", False) or output_format == "text":
             parser.error("--explain-json requires structured output without --explain")
         if (getattr(args, "device", None) or getattr(args, "preset", None)
