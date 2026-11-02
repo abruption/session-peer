@@ -117,7 +117,7 @@ def render_delivery_explanation(args: argparse.Namespace, result: dict, *,
     else:
         fact = result.get("wake")
         wake = ("preflight passed for this dry run; no turn started"
-                if not unknown and not unexpected and isinstance(fact, dict) and fact.get("status") == "validated" else
+                if state["wake"] == "validated" else
                 "requested; preflight not confirmed")
     lines.extend(["Wake: " + wake,
                   ("Receipt ACK: unknown (receiver support not reported)" if facts["paired"]

@@ -75,7 +75,9 @@ async def invoke_posix(argv, message):
 
 
 class PolicyError(ValueError):
-    pass
+    def __init__(self, message, reason="policy_denied"):
+        super().__init__(message)
+        self.reason = reason
 
 
 def load_policy(path: str | None) -> dict:
@@ -237,7 +239,7 @@ class Adapter:
             if not core.AGENTS.get(agent).capabilities.wake:
                 raise PolicyError("wake requires a Codex target")
         if type(wake_timeout) is not int or not 1 <= wake_timeout <= 60:
-            raise PolicyError("wake_timeout must be between 1 and 60")
+            raise PolicyError("wake_timeout must be between 1 and 60", "invalid_request")
         if address:
             # Exact configured routes are intentional: never follow a URI to a
             # different host/home, even if DNS says it is another local alias.
@@ -249,7 +251,7 @@ class Adapter:
             if core.AGENTS.for_target(target).name != agent:
                 raise PolicyError("Reply URI agent conflicts with target")
         if not target or target.startswith("-") or target.startswith("session-peer:"):
-            raise PolicyError("Invalid target")
+            raise PolicyError("Invalid target", "invalid_request")
         core.AGENTS.get(agent).identity(target, core.ExecutionContext(
             entry.get("host", "local"), argparse.Namespace(codex_home=entry.get("codexHome"))))
         core.check_message(message, remote=bool(entry.get("host")))
@@ -347,21 +349,33 @@ def create_server(adapter: Adapter):
         "Never retry an ambiguous send automatically. Caller identity and reply route are unavailable. "
         "Only destination capabilities explicitly configured by the operator are allowed."))
 
+    def preflight_rejection(reason, evidence=None):
+        args = argparse.Namespace(to="", wake=False, _delivery_explanation_started=False)
+        value = core.structured_delivery_preflight(args, evidence or {}, failed=True)
+        value["reason"] = reason
+        return value
+
     async def result(call, *, command=None):
         try:
             value = await call
         except (PolicyError, core.CcPeerError) as exc:
             value = {"ok": False, "reason": "request_rejected", "error": str(exc)}
-            if command:
+            if command == "send.preflight":
+                reason = exc.reason if isinstance(exc, PolicyError) else "request_rejected"
+                value = preflight_rejection(reason, getattr(exc, "details", None))
+            elif command == "mcp.destinations":
+                value.update(schemaVersion=1, command=command)
+            elif command:
                 value = {"ok": False, "schemaVersion": 1, "command": command,
                          "reason": "request_rejected", "retryAllowed": False,
                          "operatorActions": ["review_policy_and_request"]}
         except (ValueError, OSError):
             if not command:
                 raise
-            value = {"ok": False, "schemaVersion": 1, "command": command,
-                     "reason": "request_rejected", "retryAllowed": False,
-                     "operatorActions": ["review_policy_and_request"]}
+            value = (preflight_rejection("invalid_request") if command == "send.preflight" else
+                     {"ok": False, "schemaVersion": 1, "command": command,
+                      "reason": "request_rejected", "retryAllowed": False,
+                      "operatorActions": ["review_policy_and_request"]})
         envelope = CallToolResult(content=[TextContent(type="text", text=json.dumps(value, ensure_ascii=False))],
                                   structuredContent=value, isError=value.get("ok") is False)
         # Bound both representations, including JSON escaping. JSON-RPC is separate.

@@ -84,6 +84,18 @@ class StructuredPreflight(unittest.TestCase):
         self.assertEqual(value['limitations']['submission'], 'not_attempted')
         self.assertEqual(value['operatorActions'], ['resolve_validation_failure_before_send'])
 
+    def test_registered_antigravity_dryrun_never_sends_bridge_request(self):
+        registration = {'id': THREAD, 'generation': 'fixture', 'antigravityHome': '/fixture'}
+        with mock.patch.object(peer, 'agy_registrations', return_value=[registration]), \
+                mock.patch.object(peer, 'agy_rpc') as bridge, \
+                mock.patch.object(peer.subprocess, 'Popen') as child:
+            code, value, _ = self.invoke(target='antigravity:' + THREAD)
+        self.assertEqual(code, 0)
+        self.assertTrue(value['ok'])
+        self.assertEqual(value['checked']['agent'], 'antigravity')
+        bridge.assert_not_called()
+        child.assert_not_called()
+
     def test_ssh_projects_original_claude_facts_before_compatibility_shaping(self):
         for facts, expected in (({'dryRun': False}, 'unexpected_submission'),
                                 ({'submitted': None, 'dryRun': True}, 'unknown'),

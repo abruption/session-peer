@@ -4883,7 +4883,8 @@ def structured_delivery_preflight(args, result, *, failed=False):
                                 "unknown" if state["unknown"] else "not_attempted",
                             "consumption": "not_checked", "ack": "not_checked",
                             "hostApproval": "not_granted", "routeReservation": "none"},
-            "reason": reason, "refusalReason": refusal if not passed else None, "retryAllowed": False,
+            "reason": reason, "refusalReason": refusal if validation in ("not_run", "not_confirmed") else None,
+            "retryAllowed": False,
             "operatorActions": ["repeat_validation_before_send", "review_host_approvals"]
                 if passed else ["inspect_existing_evidence_before_send"] if state["unknown"] or state["unexpected"]
                 else ["resolve_validation_failure_before_send"]}
@@ -5008,7 +5009,7 @@ def render_delivery_explanation(args: argparse.Namespace, result: dict, *,
     else:
         fact = result.get("wake")
         wake = ("preflight passed for this dry run; no turn started"
-                if not unknown and not unexpected and isinstance(fact, dict) and fact.get("status") == "validated" else
+                if state["wake"] == "validated" else
                 "requested; preflight not confirmed")
     lines.extend(["Wake: " + wake,
                   ("Receipt ACK: unknown (receiver support not reported)" if facts["paired"]
