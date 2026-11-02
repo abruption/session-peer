@@ -275,7 +275,7 @@ def doctor_payload(args: argparse.Namespace) -> dict:
         },
     }
     skill_checks = []
-    skills = installed_skills()
+    skills = [] if selected else installed_skills()
     for skill in skills:
         version, minimum = skill["version"], skill["runtimeMinVersion"]
         if version is None or minimum is None:
@@ -291,7 +291,7 @@ def doctor_payload(args: argparse.Namespace) -> dict:
                 location=skill["location"], skillVersion=version,
                 runtimeMinVersion=minimum,
             ))
-    payload["skill"] = {"status": "incompatible" if any(
+    payload["skill"] = {"status": "not_checked" if selected else "incompatible" if any(
         check["code"] == "skill_runtime_incompatible" for check in skill_checks) else
         "unknown" if skill_checks else "compatible" if skills else "not_installed",
         "checks": skill_checks}

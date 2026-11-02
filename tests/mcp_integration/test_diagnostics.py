@@ -2,6 +2,7 @@
 import argparse
 import asyncio
 import contextlib
+import importlib.util
 import io
 import json
 import os
@@ -47,7 +48,14 @@ class Diagnostics(unittest.IsolatedAsyncioTestCase):
         with patch.object(core, 'doctor_payload', side_effect=AssertionError('doctor called')):
             value = await adapter.diagnose_destination('test')
         self.assertEqual(value['mode'], 'metadata')
-        self.assertEqual(value['agents'], {'codex': {'status': 'not_checked', 'checks': []}})
+        row = value['agents']['codex']
+        self.assertEqual(row['status'], 'not_checked')
+        self.assertEqual(row['checks'], [])
+        self.assertEqual(row['capabilityBasis'], 'adapter_declaration')
+        self.assertEqual(set(row['declaredCapabilities']), {'send', 'wake', 'wait', 'ack'})
+        self.assertTrue(all(type(item) is bool for item in row['declaredCapabilities'].values()))
+        for stage in ('tcpAccept', 'tls', 'peerAuthentication'):
+            self.assertEqual(value['limitations'][stage], 'not_checked')
         self.assertNotIn(FIXTURE_MARKER, json.dumps(value))
         self.assertNotIn('fixture-user', json.dumps(value))
         adapter.invoke.assert_not_called()
@@ -142,7 +150,34 @@ class Diagnostics(unittest.IsolatedAsyncioTestCase):
         value = await adapter.diagnose_destination('test', active_probe=True)
         self.assertEqual(value['agents']['codex']['status'], 'unknown')
         self.assertEqual(len(value['agents']['codex']['checks']), 32)
+        self.assertFalse(value['ok'])
+        self.assertEqual(value['agents']['codex']['reason'], 'diagnostic_incomplete')
+        self.assertTrue(value['agents']['codex']['truncated'])
         self.assertLess(len(json.dumps(value)), peer.DESTINATION_METADATA_BYTES)
+
+    async def test_nonzero_ssh_failure_keeps_only_recognized_failure_category(self):
+        adapter = peer.Adapter({})
+        for category in ('authentication_failed', 'host_key_failed', 'timeout', 'transport_failed', FIXTURE_MARKER):
+            raw = {'schemaVersion': 1, 'command': 'doctor', 'ok': False,
+                   'sshFailure': category, 'error': FIXTURE_MARKER, 'host': FIXTURE_MARKER}
+            with patch.object(peer, 'invoke_posix', AsyncMock(return_value=(json.dumps(raw).encode(), 1))):
+                value = await adapter.invoke_diagnostic(['doctor'], .1)
+            self.assertFalse(value['ok'])
+            self.assertNotIn(FIXTURE_MARKER, json.dumps(value))
+            if category != FIXTURE_MARKER:
+                self.assertEqual(value['sshFailure'], category)
+            else:
+                self.assertNotIn('sshFailure', value)
+
+    async def test_missing_or_malformed_checks_cannot_report_available(self):
+        adapter = peer.Adapter({'test': entry()})
+        for row in ({}, {'status': 'available'}, {'status': 'available', 'checks': 'invalid'},
+                    {'status': 'available', 'checks': [None]}):
+            adapter.invoke_diagnostic = AsyncMock(return_value={'ok': True, 'codex': row})
+            value = await adapter.diagnose_destination('test', active_probe=True)
+            self.assertFalse(value['ok'])
+            self.assertEqual(value['agents']['codex']['status'], 'unknown')
+            self.assertEqual(value['agents']['codex']['reason'], 'diagnostic_incomplete')
 
 
 class OwnedChildren(unittest.IsolatedAsyncioTestCase):
@@ -187,21 +222,6 @@ class OwnedChildren(unittest.IsolatedAsyncioTestCase):
                 await task
         self.assertTrue(all(child.returncode is not None for child in children))
 
-    async def test_internal_windows_cleanup_escalation(self):
-        # Synthetic streams only: Windows must never call POSIX group cleanup.
-        child = Mock()
-        child.stdout = io.BytesIO(b'{}')
-        child.stderr = io.BytesIO(b'')
-        child.stdin = io.BytesIO()
-        child.poll.return_value = None
-        child.wait.side_effect = [subprocess.TimeoutExpired('fixture', 3), 0]
-        child.returncode = 0
-        with patch.object(peer.os, 'name', 'nt'), patch.object(peer.subprocess, 'Popen', return_value=child), \
-             patch.object(core, 'stop_codex_wake', side_effect=AssertionError('POSIX cleanup')):
-            await peer.invoke_posix(['fixture'], None, timeout=1, output_limit=1024)
-        child.terminate.assert_called_once()
-        child.kill.assert_called_once()
-
 
 class DoctorScope(unittest.TestCase):
     def test_agent_selection_and_legacy_all_agents(self):
@@ -212,11 +232,18 @@ class DoctorScope(unittest.TestCase):
                 return {'status': 'available', 'checks': []}
             args = argparse.Namespace(agent=selected, _return_host=None)
             with patch.object(core.LocalTransport, 'execute', side_effect=diagnose), \
-                 patch.object(core, 'installed_skills', return_value=[]):
+                 patch.object(core, 'installed_skills', return_value=[]) as skills:
                 value = core.doctor_payload(args)
             expected = [selected] if selected else list(core.AGENTS.names())
             self.assertEqual(calls, expected)
             self.assertEqual(set(value['capabilities']['agents']), set(expected))
+            facts = core.build_delivery_explanation(args, value, mode='doctor')
+            self.assertEqual([row['agent'] for row in facts['agents']], expected)
+            if selected:
+                skills.assert_not_called()
+                self.assertEqual(value['skill'], {'status': 'not_checked', 'checks': []})
+            else:
+                skills.assert_called_once()
 
     def test_selected_home_only_never_inventories_other_homes(self):
         args = argparse.Namespace(codex_home=FIXTURE_MARKER, codex_bin=None, selected_home_only=True)
@@ -242,7 +269,42 @@ class DoctorScope(unittest.TestCase):
         self.assertNotIn('--_return-host', argv)
 
 
+@unittest.skipUnless(importlib.util.find_spec('mcp'), 'optional MCP SDK')
 class Protocol(unittest.IsolatedAsyncioTestCase):
+    @unittest.skipUnless(os.name == 'posix' and sys.platform in ('darwin', 'linux'),
+                         'Active diagnostics are macOS/Linux only')
+    async def test_stdio_active_executes_real_scoped_cli_against_empty_fixture_home(self):
+        import sqlite3
+        from mcp import ClientSession, StdioServerParameters
+        from mcp.client.stdio import stdio_client
+        with tempfile.TemporaryDirectory(prefix='codex-diag-active-', dir=os.environ.get('SESSION_PEER_TEST_TMP')) as folder:
+            root = Path(folder)
+            binary = root / 'codex'
+            binary.write_text('#!/bin/sh\nexit 97\n')
+            binary.chmod(0o700)
+            with contextlib.closing(sqlite3.connect(root / 'state_5.sqlite')) as db:
+                db.execute('CREATE TABLE threads (id TEXT, title TEXT, cwd TEXT, updated_at INTEGER, archived INTEGER, rollout_path TEXT)')
+                db.commit()
+            policy = root / 'policy.json'
+            policy.write_text(json.dumps({'schemaVersion': 2, 'destinations': {
+                'fixture': {'agents': ['codex'], 'codexHome': folder,
+                            'capabilities': ['diagnostics', 'diagnostics_probe']}}}))
+            params = StdioServerParameters(command=sys.executable,
+                args=[str(Path(peer.__file__).resolve()), '--config', str(policy)],
+                env={**os.environ, 'PATH': folder + os.pathsep + os.defpath, 'CODEX_HOME': folder,
+                     'CLAUDE_CONFIG_DIR': folder, 'XDG_CONFIG_HOME': folder})
+            async with stdio_client(params) as (read, write):
+                async with ClientSession(read, write) as client:
+                    await client.initialize()
+                    value = await client.call_tool('diagnose_destination', {
+                        'destination': 'fixture', 'active_probe': True})
+                    self.assertFalse(value.isError, value.structuredContent)
+                    row = value.structuredContent['agents']['codex']
+                    self.assertEqual(row['status'], 'available')
+                    self.assertIn({'code': 'state_db_readable', 'status': 'ok'}, row['checks'])
+                    self.assertNotIn(folder, value.content[0].text)
+                    self.assertEqual(value.structuredContent['limitations']['submission'], 'not_attempted')
+
     async def test_stdio_schema_metadata_and_probe_denials(self):
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
@@ -261,7 +323,8 @@ class Protocol(unittest.IsolatedAsyncioTestCase):
                     tool = next(t for t in tools if t.name == 'diagnose_destination')
                     self.assertEqual(set(tool.inputSchema['properties']),
                                      {'destination', 'agent', 'active_probe'})
-                    self.assertTrue(tool.annotations.readOnlyHint)
+                    self.assertFalse(tool.annotations.readOnlyHint)
+                    self.assertFalse(tool.annotations.idempotentHint)
                     self.assertTrue(tool.annotations.openWorldHint)
                     value = await client.call_tool('diagnose_destination', {'destination': 'test'})
                     self.assertFalse(value.isError)

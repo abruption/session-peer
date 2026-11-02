@@ -30,7 +30,88 @@ class DiagnosticOutputLimit(ValueError):
 WAKE_CLI_CLEANUP_GRACE = core.CODEX_WAKE_CLEANUP_BUDGET + 1
 
 
+async def _read_diagnostic_pipe(stream, output_limit):
+    """Read only while owned by this event loop; never wait for inherited EOF."""
+    loop = asyncio.get_running_loop()
+    descriptor = stream.fileno()
+    os.set_blocking(descriptor, False)
+    finished = loop.create_future()
+    kept = bytearray()
+
+    def ready():
+        if finished.done():
+            return
+        try:
+            chunk = os.read(descriptor, min(8192, output_limit - len(kept) + 1))
+        except BlockingIOError:
+            return
+        except OSError as exc:
+            finished.set_exception(exc)
+            return
+        if not chunk:
+            finished.set_result(bytes(kept))
+        elif len(chunk) > output_limit - len(kept):
+            # Reject the entire response, including a syntactically valid prefix.
+            finished.set_exception(DiagnosticOutputLimit())
+        else:
+            kept.extend(chunk)
+
+    loop.add_reader(descriptor, ready)
+    try:
+        return await finished
+    finally:
+        loop.remove_reader(descriptor)
+
+
+async def invoke_bounded_diagnostic(argv, *, timeout, output_limit):
+    if os.name != "posix" or type(output_limit) is not int or output_limit < 1:
+        raise ValueError("Bounded diagnostics require POSIX pipes and a positive limit")
+    # Keep the Popen leader unreaped until group cleanup, even if it exits before
+    # an escaped descendant releases an inherited pipe. No child watcher/poll().
+    process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, start_new_session=True)
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='session-peer-diagnostic-cleanup')
+    loop = asyncio.get_running_loop()
+    readers = [asyncio.create_task(_read_diagnostic_pipe(stream, output_limit))
+               for stream in (process.stdout, process.stderr)]
+    io = asyncio.gather(*readers)
+    interrupted = False
+    try:
+        stdout, _ = await asyncio.wait_for(asyncio.shield(io), timeout)
+    finally:
+        # EOF is outside our authority when a descendant creates a new session.
+        # Cancel loop readers before cleanup; no thread can remain blocked on IO.
+        for reader in readers:
+            reader.cancel()
+        settled_readers = asyncio.gather(*readers, return_exceptions=True)
+        cleanup = loop.run_in_executor(executor, core.stop_codex_wake, process,
+                                       core.CODEX_WAKE_CLEANUP_GRACE)
+        settled = asyncio.gather(cleanup, settled_readers, return_exceptions=True)
+        while not settled.done():
+            try:
+                await asyncio.shield(settled)
+            except asyncio.CancelledError:
+                interrupted = True
+        try:
+            # Consume the gather exception/cancellation too, avoiding orphaned
+            # futures when timeout or overflow completed before reader cleanup.
+            if io.done() and not io.cancelled():
+                io.exception()
+            cleanup.result()
+        finally:
+            for stream in (process.stdout, process.stderr):
+                stream.close()
+            executor.shutdown(wait=False)
+        if interrupted:
+            raise asyncio.CancelledError
+    return stdout, process.returncode
+
+
 async def invoke_posix(argv, message, *, timeout=CLI_TIMEOUT, output_limit=None):
+    if output_limit is not None:
+        if message is not None:
+            raise ValueError("Diagnostics do not accept stdin")
+        return await invoke_bounded_diagnostic(argv, timeout=timeout, output_limit=output_limit)
     # Unlike asyncio's child watcher, Popen leaves the leader unreaped until
     # explicit wait(). That reserves its PID through process-group cleanup.
     process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -48,59 +129,18 @@ async def invoke_posix(argv, message, *, timeout=CLI_TIMEOUT, output_limit=None)
             pass
         finally:
             process.stdin.close()
-    overflow = []
-    limit_hit = asyncio.Event()
-    limit_wait = None
-    def read(stream):
-        if output_limit is None:
-            return stream.read()
-        kept = bytearray()
-        while True:
-            chunk = stream.read(min(8192, output_limit - len(kept) + 1))
-            if not chunk:
-                return bytes(kept)
-            remaining = output_limit - len(kept)
-            kept.extend(chunk[:max(0, remaining)])
-            if len(chunk) > remaining:
-                overflow.append(True)
-                loop.call_soon_threadsafe(limit_hit.set)
-                return bytes(kept)
-    io = asyncio.gather(loop.run_in_executor(executor, read, process.stdout),
-                        loop.run_in_executor(executor, read, process.stderr),
+    io = asyncio.gather(loop.run_in_executor(executor, process.stdout.read),
+                        loop.run_in_executor(executor, process.stderr.read),
                         loop.run_in_executor(executor, feed))
     interrupted = False
     completed = False
     try:
-        if output_limit is None:
-            stdout, _, _ = await asyncio.wait_for(asyncio.shield(io), timeout)
-        else:
-            limit_wait = asyncio.create_task(limit_hit.wait())
-            done, _ = await asyncio.wait((io, limit_wait), timeout=timeout,
-                                         return_when=asyncio.FIRST_COMPLETED)
-            if not done:
-                raise asyncio.TimeoutError()
-            if overflow:
-                raise DiagnosticOutputLimit()
-            stdout, _, _ = io.result()
+        stdout, _, _ = await asyncio.wait_for(asyncio.shield(io), CLI_TIMEOUT)
         completed = True
     finally:
-        if limit_wait is not None:
-            limit_wait.cancel()
         grace = (WAKE_CLI_CLEANUP_GRACE if '--wake' in argv and not completed
                  else core.CODEX_WAKE_CLEANUP_GRACE)
-        def stop():
-            if os.name == "posix":
-                core.stop_codex_wake(process, grace)
-            else:
-                # Diagnostic-only Windows path: no native child is submitted.
-                if process.poll() is None:
-                    process.terminate()
-                    try:
-                        process.wait(timeout=core.CODEX_WAKE_CLEANUP_WAIT)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait(timeout=core.CODEX_WAKE_CLEANUP_WAIT)
-        cleanup = loop.run_in_executor(executor, stop)
+        cleanup = loop.run_in_executor(executor, core.stop_codex_wake, process, grace)
         # Repeated cancellation cannot abandon cleanup or the owned pipe tasks.
         while not cleanup.done():
             try:
@@ -121,8 +161,6 @@ async def invoke_posix(argv, message, *, timeout=CLI_TIMEOUT, output_limit=None)
             executor.shutdown(wait=False)
         if interrupted:
             raise asyncio.CancelledError
-    if overflow:
-        raise DiagnosticOutputLimit()
     return stdout, process.returncode
 
 
@@ -264,9 +302,19 @@ class Adapter:
                 [sys.executable, str(Path(core.__file__).resolve()), *argv,
                  "--json", "--no-update-notice"], None,
                 timeout=timeout, output_limit=DIAGNOSTIC_OUTPUT_BYTES)
+            try:
+                value = json.loads(stdout)
+            except (ValueError, UnicodeError, RecursionError):
+                return {"ok": False, "reason": "diagnostic_failed" if code else "diagnostic_response_unavailable"}
             if code:
-                return {"ok": False, "reason": "diagnostic_failed"}
-            value = json.loads(stdout)
+                failure = value.get("sshFailure") if isinstance(value, dict) else None
+                reply = {"ok": False, "reason": "diagnostic_failed"}
+                if (isinstance(value, dict) and value.get("command") == "doctor"
+                        and type(value.get("schemaVersion")) is int and value["schemaVersion"] == 1
+                        and isinstance(failure, str) and failure in (
+                            "authentication_failed", "host_key_failed", "timeout", "transport_failed")):
+                    reply["sshFailure"] = failure
+                return reply
             if (not isinstance(value, dict) or value.get("command") != "doctor"
                     or type(value.get("schemaVersion")) is not int or value["schemaVersion"] != 1
                     or value.get("ok") is not True):
@@ -296,10 +344,12 @@ class Adapter:
         value = {"ok": True, "schemaVersion": 1, "command": "mcp.diagnostics",
                  "destination": destination, "mode": "active" if active_probe else "metadata",
                  "transport": "ssh" if entry.get("host") else "local", "agents": {},
-                 "limitations": {"callerIdentity": "unavailable", "returnRoute": "not_checked",
+                 "limitations": {"callerIdentity": "unavailable", "readiness": "not_checked",
+                                 "returnRoute": "not_checked",
+                                 "tcpAccept": "not_checked", "tls": "not_checked", "peerAuthentication": "not_checked",
                                  "submission": "not_attempted", "consumption": "not_checked",
                                  "ack": "not_checked"}}
-        if active_probe and os.name != "posix":
+        if active_probe and (os.name != "posix" or sys.platform not in ("darwin", "linux")):
             value.update(ok=False, reason="diagnostics_platform_unsupported")
             value["agents"] = {name: {"status": "not_checked", "checks": []} for name in names}
             return value
@@ -316,7 +366,11 @@ class Adapter:
         deadline = asyncio.get_running_loop().time() + DIAGNOSTIC_TIMEOUT
         for name in names:
             if not active_probe:
-                value["agents"][name] = {"status": "not_checked", "checks": []}
+                caps = core.AGENTS.get(name).capabilities
+                value["agents"][name] = {"status": "not_checked", "checks": [],
+                    "declaredCapabilities": {key: getattr(caps, key) if type(getattr(caps, key)) is bool else None
+                                             for key in ("send", "wake", "wait", "ack")},
+                    "capabilityBasis": "adapter_declaration"}
                 continue
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
@@ -335,20 +389,32 @@ class Adapter:
                     reason if isinstance(reason, str) and reason in {
                         "diagnostic_timeout", "diagnostic_output_limit", "diagnostic_failed"}
                     else "diagnostic_response_unavailable"}
+                failure = result.get("sshFailure")
+                if isinstance(failure, str) and failure in (
+                        "authentication_failed", "host_key_failed", "timeout", "transport_failed"):
+                    value["agents"][name]["sshFailure"] = failure
                 continue
             status = raw.get("status")
             checks = raw.get("checks")
             projected = []
+            complete = isinstance(status, str) and status in statuses and isinstance(checks, list)
+            truncated = isinstance(checks, list) and len(checks) > 32
+            complete = complete and not truncated
             if isinstance(checks, list):
                 for check in checks[:32]:
                     if not isinstance(check, dict):
+                        complete = False
                         continue
                     code, state = check.get("code"), check.get("status")
                     if (isinstance(code, str) and code in codes and isinstance(state, str)
                             and state in {"ok", "warning", "error", "unknown"}):
                         projected.append({"code": code, "status": state})
-            value["agents"][name] = {"status": status if isinstance(status, str) and status in statuses
-                                    else "unknown", "checks": projected}
+                    else:
+                        complete = False
+            value["agents"][name] = {"status": status if complete else "unknown", "checks": projected}
+            if not complete:
+                value["ok"] = False
+                value["agents"][name].update(reason="diagnostic_incomplete", truncated=truncated)
         return value
 
     async def list_sessions(self, destination: str = "local", agent: str | None = None,
@@ -561,8 +627,8 @@ def create_server(adapter: Adapter):
         """
         return await result(adapter.list_destinations(), command="mcp.destinations")
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False,
-                                           idempotentHint=True, openWorldHint=True))
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
+                                           idempotentHint=False, openWorldHint=True))
     async def diagnose_destination(destination: str = "local", agent: str | None = None,
                                    active_probe: bool = False):
         """Read bounded configured metadata; active probes require additional policy permission.

@@ -80,6 +80,8 @@ def build_delivery_explanation(args, result, *, mode="readiness", failed=False):
         declared = result.get("capabilities", {})
         declared = declared.get("agents", {}) if isinstance(declared, dict) else {}
         for name in ("claude", "codex", "antigravity"):
+            if getattr(args, "agent", None) is not None and name != args.agent:
+                continue
             diagnostic = result.get(name, {})
             status = diagnostic.get("status") if isinstance(diagnostic, dict) else None
             allowed_status = {"available", "unavailable", "missing_home", "permission_denied",

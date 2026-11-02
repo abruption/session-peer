@@ -608,7 +608,7 @@ Codex 消息限制为 32 KiB 的 UTF-8 文本（包括发送者/回复头），�
 
 `doctor` 在拥有会话的机器上执行只读检查。它报告 Claude 配置的会话目录和收件箱可用性，Codex 的可执行文件和有界目录/状态数据库候选，不支持的数据库模式，并将权限或未知失败报告为不同的代码。它不会连接到收件箱、写入队列、扫描任意目录或更改代理/SSH 设置。
 
-尚未发布的 v1.4.0 候选版本 (#358)：`doctor --agent NAME` 将检查和声明的代理功能限制为所选的已注册代理，包括通过 SSH 运行时。`doctor --agent codex --selected-home-only --codex-home /absolute/home` 仅检查所选 Codex 主目录，跳过其他主目录的清单。这些选项不启用反向路由检查。省略时，现有的全代理和有界多主目录诊断行为保持不变。
+尚未发布的 v1.4.0 候选版本 (#358)：`doctor --agent NAME` 将检查和声明的代理功能限制为所选的已注册代理，包括通过 SSH 运行时，并跳过共享的已安装技能清单检查。`doctor --agent codex --selected-home-only --codex-home /absolute/home` 仅检查所选 Codex 主目录，跳过其他主目录的清单。这些选项不启用反向路由检查。省略时，现有的全代理和有界多主目录诊断行为保持不变。
 
 反向 SSH 仅在指定 `--check-return-route` 时进行检查。目标端会运行一个固定的 `ssh ... true` 探测，且禁用了提示、密码身份验证、主机密钥注册和配置更改。正向 SSH 成功绝不能作为反向路径可用的证据。当自动 Tailscale 检测无法识别来源时，请使用 `--reply-to USER@HOST`。JSON 详情和状态值记录在 [docs/diagnostics.md](diagnostics.md) 中。
 

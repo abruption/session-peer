@@ -4721,6 +4721,8 @@ def build_delivery_explanation(args, result, *, mode="readiness", failed=False):
         declared = result.get("capabilities", {})
         declared = declared.get("agents", {}) if isinstance(declared, dict) else {}
         for name in ("claude", "codex", "antigravity"):
+            if getattr(args, "agent", None) is not None and name != args.agent:
+                continue
             diagnostic = result.get(name, {})
             status = diagnostic.get("status") if isinstance(diagnostic, dict) else None
             allowed_status = {"available", "unavailable", "missing_home", "permission_denied",
@@ -5428,7 +5430,7 @@ def doctor_payload(args: argparse.Namespace) -> dict:
         },
     }
     skill_checks = []
-    skills = installed_skills()
+    skills = [] if selected else installed_skills()
     for skill in skills:
         version, minimum = skill["version"], skill["runtimeMinVersion"]
         if version is None or minimum is None:
@@ -5444,7 +5446,7 @@ def doctor_payload(args: argparse.Namespace) -> dict:
                 location=skill["location"], skillVersion=version,
                 runtimeMinVersion=minimum,
             ))
-    payload["skill"] = {"status": "incompatible" if any(
+    payload["skill"] = {"status": "not_checked" if selected else "incompatible" if any(
         check["code"] == "skill_runtime_incompatible" for check in skill_checks) else
         "unknown" if skill_checks else "compatible" if skills else "not_installed",
         "checks": skill_checks}
