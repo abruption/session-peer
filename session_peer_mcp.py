@@ -651,10 +651,11 @@ class Adapter:
                 argv += core.wake_chain_options(core.wake_chain_context(argparse.Namespace()))
             except core.CcPeerError as exc:
                 return {"ok": False, "error": str(exc), **exc.details}
+        selected_metadata = self.preset_metadata(plan) if plan else None
         self.recheck_preset(destination, plan, capability="send", agent=agent)
         try:
             value = await self.invoke(argv, "From: session-peer MCP (caller session unavailable)\n\n" + message)
-        except (OSError, ValueError):
+        except Exception:
             if plan is None:
                 raise
             value = {"ok": False, "status": "unknown", "submitted": None,
@@ -663,7 +664,7 @@ class Adapter:
             value = {"ok": False, "status": "unknown", "submitted": None,
                      "reason": "outcome_unknown", "retryAllowed": False}
         return {**value, "schemaVersion": 1, "command": "mcp.preset.send",
-                "preset": self.preset_metadata(plan)} if plan else value
+                "preset": selected_metadata} if plan else value
 
     async def preflight_send(self, destination: str, target: str, message: str,
                              wake: bool = False, wake_timeout: int = 30,
