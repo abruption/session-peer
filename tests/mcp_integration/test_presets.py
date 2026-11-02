@@ -55,6 +55,8 @@ class PresetPolicy(unittest.TestCase):
         self.assertNotIn('presets', peer.load_policy(None)['local']['capabilities'])
 
 
+@unittest.skipUnless(os.name == 'posix' and sys.platform in ('darwin', 'linux'),
+                     'Preset storage is macOS/Linux only')
 class PresetSelection(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.adapter = peer.Adapter({'local': policy(), 'remote': policy(REMOTE)})
@@ -268,6 +270,8 @@ class SharedSecureReader(unittest.IsolatedAsyncioTestCase):
 
 
 @unittest.skipUnless(importlib.util.find_spec('mcp'), 'optional MCP SDK')
+@unittest.skipUnless(os.name == 'posix' and sys.platform in ('darwin', 'linux'),
+                     'Preset storage is macOS/Linux only')
 class PresetProtocol(unittest.IsolatedAsyncioTestCase):
     async def run_case(self, folder, entry, *, snapshot=None, deny_read=False, tiny_budget=False,
                        native_result=None):
