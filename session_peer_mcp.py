@@ -411,6 +411,31 @@ class Adapter:
                         projected.append({"code": code, "status": state})
                     else:
                         complete = False
+            check_codes = {item["code"] for item in projected}
+            if name == "codex":
+                executables = check_codes & {"codex_executable_found", "codex_executable_missing"}
+                databases = check_codes & {"state_db_missing", "state_db_permission_denied",
+                    "state_db_unreadable", "state_db_not_regular", "unsupported_threads_schema", "state_db_readable"}
+                scan_truncated = raw.get("unsavedWriterScanTruncated")
+                complete = (complete and len(executables) == 1 and len(databases) == 1
+                            and type(scan_truncated) is bool and not scan_truncated
+                            and "unsaved_writer_check_unavailable" not in check_codes)
+                truncated = truncated or scan_truncated is True
+                if status == "available":
+                    complete = complete and {"codex_executable_found", "state_db_readable"} <= check_codes
+            elif name == "claude":
+                # Every current Claude diagnostic branch reports a check; an
+                # available inbox is filesystem metadata, never a TCP accept.
+                complete = complete and bool(projected)
+                if status == "available":
+                    count = raw.get("availableInboxes")
+                    complete = (complete and type(count) is int and count > 0
+                                and any(isinstance(item, dict) and item.get("code") == "inbox_present"
+                                    and item.get("status") == "ok" and item.get("verification") == "filesystem_only"
+                                    for item in checks))
+            elif name == "antigravity":
+                complete = complete and raw.get("scope") == "registered_bridges"
+            complete = complete and status != "unknown"
             value["agents"][name] = {"status": status if complete else "unknown", "checks": projected}
             if not complete:
                 value["ok"] = False

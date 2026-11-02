@@ -17,6 +17,7 @@ import session_peer as core
 import session_peer_mcp as peer
 
 FIXTURE_MARKER = '/fixture/nonreflected-path'
+ACTIVE_DIAGNOSTICS = os.name == 'posix' and sys.platform in ('darwin', 'linux')
 
 
 def entry(capabilities=('diagnostics', 'diagnostics_probe'), agents=('codex',)):
@@ -88,6 +89,7 @@ class Diagnostics(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(metadata['ok'])
         adapter.invoke_diagnostic.assert_not_called()
 
+    @unittest.skipUnless(ACTIVE_DIAGNOSTICS, 'Active diagnostics are macOS/Linux only')
     async def test_active_projects_poison_and_pins_each_scope(self):
         adapter = peer.Adapter({'test': entry(agents=('codex', 'claude'))})
         async def respond(argv, timeout):
@@ -112,6 +114,7 @@ class Diagnostics(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(FIXTURE_MARKER, json.dumps(value))
         self.assertLess(len(json.dumps(value)), peer.DESTINATION_METADATA_BYTES)
 
+    @unittest.skipUnless(ACTIVE_DIAGNOSTICS, 'Active diagnostics are macOS/Linux only')
     async def test_deadline_stops_further_calls_and_no_retry(self):
         adapter = peer.Adapter({'test': entry(agents=('codex', 'claude'))})
         async def respond(argv, timeout):
@@ -143,6 +146,7 @@ class Diagnostics(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await adapter.invoke_diagnostic(['doctor'], .1)
 
+    @unittest.skipUnless(ACTIVE_DIAGNOSTICS, 'Active diagnostics are macOS/Linux only')
     async def test_check_and_unknown_status_bounds(self):
         adapter = peer.Adapter({'test': entry()})
         adapter.invoke_diagnostic = AsyncMock(return_value={'ok': True, 'codex': {
@@ -169,6 +173,7 @@ class Diagnostics(unittest.IsolatedAsyncioTestCase):
             else:
                 self.assertNotIn('sshFailure', value)
 
+    @unittest.skipUnless(ACTIVE_DIAGNOSTICS, 'Active diagnostics are macOS/Linux only')
     async def test_missing_or_malformed_checks_cannot_report_available(self):
         adapter = peer.Adapter({'test': entry()})
         for row in ({}, {'status': 'available'}, {'status': 'available', 'checks': 'invalid'},
@@ -178,6 +183,24 @@ class Diagnostics(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(value['ok'])
             self.assertEqual(value['agents']['codex']['status'], 'unknown')
             self.assertEqual(value['agents']['codex']['reason'], 'diagnostic_incomplete')
+
+    @unittest.skipUnless(ACTIVE_DIAGNOSTICS, 'Active diagnostics are macOS/Linux only')
+    async def test_required_codex_checks_and_producer_scan_completeness(self):
+        adapter = peer.Adapter({'test': entry()})
+        complete = {'status': 'available', 'unsavedWriterScanTruncated': False, 'checks': [
+            {'code': 'codex_executable_found', 'status': 'ok'},
+            {'code': 'state_db_readable', 'status': 'ok'}]}
+        for row, accepted in ((complete, True), ({**complete, 'checks': []}, False),
+                              ({**complete, 'checks': complete['checks'][:1]}, False),
+                              ({**complete, 'unsavedWriterScanTruncated': True}, False),
+                              ({**complete, 'unsavedWriterScanTruncated': None}, False),
+                              ({**complete, 'unsavedWriterScanTruncated': 0}, False)):
+            adapter.invoke_diagnostic = AsyncMock(return_value={'ok': True, 'codex': row})
+            value = await adapter.diagnose_destination('test', active_probe=True)
+            self.assertEqual(value['ok'], accepted)
+            self.assertEqual(value['agents']['codex']['status'], 'available' if accepted else 'unknown')
+            if not accepted:
+                self.assertEqual(value['agents']['codex']['reason'], 'diagnostic_incomplete')
 
 
 class OwnedChildren(unittest.IsolatedAsyncioTestCase):
