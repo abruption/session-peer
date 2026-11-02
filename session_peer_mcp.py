@@ -316,6 +316,13 @@ class Adapter:
         args.to = agent + ":target" if agent != "claude" else "target"
         output = core.structured_delivery_preflight(args, evidence,
             failed=not valid or checked.get("validation") in ("not_run", "not_confirmed"))
+        if valid and (type(value.get("retryAllowed")) is not bool
+                or any(value.get(key) != output[key] for key in (
+                    "limitations", "declaredCapabilities", "reason", "retryAllowed", "operatorActions"))):
+            # In particular, do not erase an unknown/reported submission in
+            # another field merely because checked.validation says passed.
+            valid = False
+            output = core.structured_delivery_preflight(args, {"reason": "outcome_unknown"}, failed=True)
         if not valid:
             output["reason"] = "preflight_response_unavailable"
         return output

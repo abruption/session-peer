@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, patch
 import session_peer_mcp as peer
 
 THREAD = '01900000-0000-7000-8000-000000000001'
-SECRET = 'PRIVATE-host-home-body-error'
+NONREFLECTED_VALUE = 'PRIVATE-host-home-body-error'
 
 
 def preview(agent='claude', *, wake=False, result=None):
@@ -25,9 +25,9 @@ class PreflightPolicy(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.adapter = peer.Adapter({
             'local': {'agents': ['claude'], 'capabilities': ['preflight']},
-            'remote': {'agents': ['codex'], 'capabilities': ['preflight'], 'host': SECRET,
-                       'codexHome': '/' + SECRET},
-            'wake': {'agents': ['codex'], 'capabilities': ['preflight', 'wake'], 'codexHome': '/' + SECRET}})
+            'remote': {'agents': ['codex'], 'capabilities': ['preflight'], 'host': NONREFLECTED_VALUE,
+                       'codexHome': '/' + NONREFLECTED_VALUE},
+            'wake': {'agents': ['codex'], 'capabilities': ['preflight', 'wake'], 'codexHome': '/' + NONREFLECTED_VALUE}})
         self.adapter.invoke = AsyncMock(return_value=preview())
 
     async def test_preflight_only_policy_cannot_send_or_wake(self):
@@ -49,14 +49,14 @@ class PreflightPolicy(unittest.IsolatedAsyncioTestCase):
 
     async def test_uri_host_home_mismatch_rejected_before_invoke(self):
         base = 'session-peer://v1/reply?agent=codex&session=' + THREAD + '&transport=ssh&host='
-        for tail in ('other&codexHome=%2F' + SECRET, SECRET + '&codexHome=%2Fother'):
+        for tail in ('other&codexHome=%2F' + NONREFLECTED_VALUE, NONREFLECTED_VALUE + '&codexHome=%2Fother'):
             with self.assertRaises(peer.PolicyError):
                 await self.adapter.preflight_send('remote', base + tail, 'message')
         self.adapter.invoke.assert_not_called()
 
     async def test_matching_uri_and_ssh_preserve_policy_route(self):
         uri = ('session-peer://v1/reply?agent=codex&session=' + THREAD +
-               '&transport=ssh&host=' + SECRET + '&codexHome=%2F' + SECRET)
+               '&transport=ssh&host=' + NONREFLECTED_VALUE + '&codexHome=%2F' + NONREFLECTED_VALUE)
         self.adapter.invoke.return_value = preview('codex')
         value = await self.adapter.preflight_send('remote', uri, 'message')
         self.assertTrue(value['ok'])
@@ -64,28 +64,48 @@ class PreflightPolicy(unittest.IsolatedAsyncioTestCase):
         argv = self.adapter.invoke.call_args.args[0]
         self.assertNotIn('--host', argv)
         self.assertEqual(argv[argv.index('--to') + 1], uri)
-        self.assertNotIn(SECRET, json.dumps(value))
+        self.assertNotIn(NONREFLECTED_VALUE, json.dumps(value))
 
     async def test_response_allowlist_unknown_and_conflicting_evidence(self):
         for native, expected in (({'submitted': True, 'dryRun': True}, 'unexpected_submission'),
                                  ({'status': 'unknown', 'dryRun': True}, 'unknown'),
                                  ({'submitted': None}, 'unknown'), ({}, 'not_confirmed')):
             value = preview(result=native)
-            value.update(error=SECRET, path=SECRET, raw=SECRET)
+            value.update(error=NONREFLECTED_VALUE, path=NONREFLECTED_VALUE, raw=NONREFLECTED_VALUE)
             self.adapter.invoke.return_value = value
-            output = await self.adapter.preflight_send('local', 'fixture', SECRET)
+            output = await self.adapter.preflight_send('local', 'fixture', NONREFLECTED_VALUE)
             self.assertFalse(output['ok'])
             self.assertEqual(output['checked']['validation'], expected)
             self.assertFalse(output['retryAllowed'])
-            self.assertNotIn(SECRET, json.dumps(output))
+            self.assertNotIn(NONREFLECTED_VALUE, json.dumps(output))
         malformed = preview()
         malformed['checked']['validation'] = []
         self.adapter.invoke.return_value = malformed
         self.assertFalse((await self.adapter.preflight_send('local', 'fixture', 'message'))['ok'])
-        self.adapter.invoke.return_value = {'ok': True, 'dryRun': True, 'raw': SECRET}
+        self.adapter.invoke.return_value = {'ok': True, 'dryRun': True, 'raw': NONREFLECTED_VALUE}
         output = await self.adapter.preflight_send('local', 'fixture', 'message')
         self.assertFalse(output['ok'])
         self.assertEqual(output['reason'], 'preflight_response_unavailable')
+
+    async def test_contradictory_or_missing_projection_evidence_fails_closed(self):
+        for field, replacement in (
+                ('limitations', {**preview()['limitations'], 'submission': 'unknown'}),
+                ('limitations', {**preview()['limitations'], 'submission': 'reported_submission'}),
+                ('limitations', None), ('retryAllowed', True), ('retryAllowed', 0),
+                ('declaredCapabilities', {}), ('reason', 'untrusted reason'),
+                ('operatorActions', ['grant_all_permissions'])):
+            value = preview()
+            value[field] = replacement
+            self.adapter.invoke.return_value = value
+            output = await self.adapter.preflight_send('local', 'fixture', 'message')
+            self.assertFalse(output['ok'])
+            self.assertEqual(output['checked']['validation'], 'unknown')
+            self.assertEqual(output['limitations']['submission'], 'unknown')
+            self.assertFalse(output['retryAllowed'])
+        missing = preview()
+        del missing['limitations']
+        self.adapter.invoke.return_value = missing
+        self.assertFalse((await self.adapter.preflight_send('local', 'fixture', 'message'))['ok'])
 
     async def test_missing_wake_evidence_cannot_pass(self):
         self.adapter.invoke.return_value = preview('codex', wake=True)
@@ -100,10 +120,10 @@ class PreflightPolicy(unittest.IsolatedAsyncioTestCase):
         self.adapter.invoke.assert_not_called()
 
     async def test_timeout_unknown_and_cancellation_never_retry(self):
-        self.adapter.invoke.return_value = {'ok': False, 'reason': 'outcome_unknown', 'error': SECRET}
+        self.adapter.invoke.return_value = {'ok': False, 'reason': 'outcome_unknown', 'error': NONREFLECTED_VALUE}
         output = await self.adapter.preflight_send('local', 'fixture', 'message')
         self.assertFalse(output['ok'])
-        self.assertNotIn(SECRET, json.dumps(output))
+        self.assertNotIn(NONREFLECTED_VALUE, json.dumps(output))
         self.adapter.invoke.assert_awaited_once()
         self.adapter.invoke.reset_mock()
         self.adapter.invoke.side_effect = asyncio.CancelledError
@@ -113,14 +133,14 @@ class PreflightPolicy(unittest.IsolatedAsyncioTestCase):
 
     async def test_wake_preflight_requires_explicit_permission_and_fixed_dryrun(self):
         self.adapter.invoke.return_value = preview('codex', wake=True,
-            result={'dryRun': True, 'wake': {'status': 'validated', 'cwd': SECRET}})
+            result={'dryRun': True, 'wake': {'status': 'validated', 'cwd': NONREFLECTED_VALUE}})
         output = await self.adapter.preflight_send('wake', 'codex:' + THREAD, 'message', wake=True)
         self.assertTrue(output['ok'])
         self.assertEqual(output['checked']['wake'], 'validated')
         argv = self.adapter.invoke.call_args.args[0]
         self.assertIn('--dry-run', argv)
         self.assertIn('--wake', argv)
-        self.assertNotIn(SECRET, json.dumps(output))
+        self.assertNotIn(NONREFLECTED_VALUE, json.dumps(output))
 
     def test_schema_v1_stays_closed_and_v2_requires_explicit_grant(self):
         with tempfile.TemporaryDirectory(prefix='codex-preflight-policy-', dir=os.environ.get('SESSION_PEER_TEST_TMP')) as folder:
@@ -172,17 +192,17 @@ class PreflightProtocol(unittest.IsolatedAsyncioTestCase):
                     self.assertFalse(tool.annotations.readOnlyHint)
                     self.assertTrue(tool.annotations.openWorldHint)
                     self.assertEqual(set(tool.inputSchema['required']), {'destination', 'target', 'message'})
-                    value = await client.call_tool('preflight_send', {'destination': 'local', 'target': 'fixture', 'message': SECRET})
+                    value = await client.call_tool('preflight_send', {'destination': 'local', 'target': 'fixture', 'message': NONREFLECTED_VALUE})
                     self.assertFalse(value.isError)
                     self.assertTrue(value.structuredContent['ok'])
                     self.assertEqual(received, [])
                     self.assertEqual(value.structuredContent['schemaVersion'], 1)
                     self.assertEqual(json.loads(value.content[0].text), value.structuredContent)
-                    self.assertNotIn(SECRET, value.content[0].text)
+                    self.assertNotIn(NONREFLECTED_VALUE, value.content[0].text)
                     self.assertNotIn(folder, value.content[0].text)
-                    refused = await client.call_tool('preflight_send', {'destination': 'local', 'target': 'fixture', 'message': SECRET, 'wake': True})
+                    refused = await client.call_tool('preflight_send', {'destination': 'local', 'target': 'fixture', 'message': NONREFLECTED_VALUE, 'wake': True})
                     self.assertTrue(refused.isError)
                     self.assertEqual(refused.structuredContent['reason'], 'request_rejected')
-                    self.assertNotIn(SECRET, refused.content[0].text)
-                    sent = await client.call_tool('send_message', {'destination': 'local', 'target': 'fixture', 'message': SECRET})
+                    self.assertNotIn(NONREFLECTED_VALUE, refused.content[0].text)
+                    sent = await client.call_tool('send_message', {'destination': 'local', 'target': 'fixture', 'message': NONREFLECTED_VALUE})
                     self.assertTrue(sent.isError)

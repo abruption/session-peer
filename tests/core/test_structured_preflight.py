@@ -9,13 +9,13 @@ from unittest import mock
 import session_peer as peer
 
 THREAD = '01900000-0000-7000-8000-000000000001'
-SECRET = 'PRIVATE-message-path-host-transcript'
+NONREFLECTED_VALUE = 'PRIVATE-message-path-host-transcript'
 
 
 class StructuredPreflight(unittest.TestCase):
     def invoke(self, flags=(), *, target='worker'):
         out, err = io.StringIO(), io.StringIO()
-        argv = ['send', '--to', target, '--no-from', '--no-reply-to', '--message', SECRET,
+        argv = ['send', '--to', target, '--no-from', '--no-reply-to', '--message', NONREFLECTED_VALUE,
                 '--dry-run', '--explain-json', '--no-update-notice', *flags]
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = peer.main(argv)
@@ -46,14 +46,14 @@ class StructuredPreflight(unittest.TestCase):
                  ({'status': 'queued'}, 'unexpected_submission', 'unexpected submission evidence'),
                  ({}, 'not_confirmed', 'not confirmed')]
         for facts, expected, text in cases:
-            facts.update(error=SECRET, codexHome=SECRET, target={'id': SECRET}, body=SECRET)
+            facts.update(error=NONREFLECTED_VALUE, codexHome=NONREFLECTED_VALUE, target={'id': NONREFLECTED_VALUE}, body=NONREFLECTED_VALUE)
             before = json.dumps(facts)
             result = peer.structured_delivery_preflight(args, facts)
             self.assertEqual(result['checked']['validation'], expected)
             self.assertIn(text, peer.render_delivery_explanation(args, facts))
             self.assertEqual(result['ok'], expected == 'passed')
             self.assertFalse(result['retryAllowed'])
-            self.assertNotIn(SECRET, json.dumps(result))
+            self.assertNotIn(NONREFLECTED_VALUE, json.dumps(result))
             self.assertEqual(before, json.dumps(facts))
 
     def test_claude_actual_dryrun_resolves_once_without_post(self):
@@ -64,7 +64,7 @@ class StructuredPreflight(unittest.TestCase):
             code, result, err = self.invoke()
         self.assertEqual(code, 0)
         self.assertTrue(result['ok'])
-        self.assertNotIn(SECRET, json.dumps(result))
+        self.assertNotIn(NONREFLECTED_VALUE, json.dumps(result))
         self.assertEqual(err, '')
         discover.assert_called_once_with(include_unreachable=True)
 
@@ -72,17 +72,17 @@ class StructuredPreflight(unittest.TestCase):
         for facts, expected in (({'dryRun': False}, 'unexpected_submission'),
                                 ({'submitted': None, 'dryRun': True}, 'unknown'),
                                 ({}, 'not_confirmed'), ({'dryRun': True}, 'passed')):
-            raw = {'ok': True, 'error': SECRET, 'target': {'name': SECRET}, **facts}
+            raw = {'ok': True, 'error': NONREFLECTED_VALUE, 'target': {'name': NONREFLECTED_VALUE}, **facts}
             with self.subTest(facts=facts), mock.patch.object(peer, 'tailscale_status', return_value={}), \
                     mock.patch.object(peer, 'SshTransport') as transport, \
                     mock.patch.object(peer.ClaudeAdapter, 'remote_submission', side_effect=AssertionError('shaping')):
-                transport.return_value.host = SECRET
+                transport.return_value.host = NONREFLECTED_VALUE
                 transport.return_value.ssh_opts = []
                 transport.return_value.execute.return_value = raw
                 code, result, err = self.invoke(['--host', 'fixture'])
             self.assertEqual(result['checked']['validation'], expected)
             self.assertEqual(code, 0 if expected == 'passed' else 1)
-            self.assertNotIn(SECRET, json.dumps(result))
+            self.assertNotIn(NONREFLECTED_VALUE, json.dumps(result))
             argv = transport.return_value.execute.call_args.args[0]
             self.assertIn('--dry-run', argv)
             self.assertNotIn('--explain-json', argv)
@@ -90,20 +90,20 @@ class StructuredPreflight(unittest.TestCase):
             self.assertEqual(err, '')
 
     def test_refusal_and_unexpected_exceptions_have_only_safe_facts(self):
-        for exc, expected in ((peer.CcPeerError(SECRET, {'reason': 'sqlite_home_configuration', 'path': SECRET}), 'not_confirmed'),
-                              (RuntimeError(SECRET), 'unknown')):
+        for exc, expected in ((peer.CcPeerError(NONREFLECTED_VALUE, {'reason': 'sqlite_home_configuration', 'path': NONREFLECTED_VALUE}), 'not_confirmed'),
+                              (RuntimeError(NONREFLECTED_VALUE), 'unknown')):
             with mock.patch.object(peer.LocalTransport, 'execute', side_effect=exc):
                 code, value, _ = self.invoke()
             self.assertEqual(code, 1)
             self.assertEqual(value['checked']['validation'], expected)
-            self.assertNotIn(SECRET, json.dumps(value))
+            self.assertNotIn(NONREFLECTED_VALUE, json.dumps(value))
 
     def test_failed_checks_before_destination_are_not_run(self):
-        with mock.patch.object(peer, 'check_message', side_effect=peer.CcPeerError(SECRET)):
+        with mock.patch.object(peer, 'check_message', side_effect=peer.CcPeerError(NONREFLECTED_VALUE)):
             code, value, _ = self.invoke()
         self.assertEqual(code, 1)
         self.assertEqual(value['checked']['validation'], 'not_run')
-        self.assertNotIn(SECRET, json.dumps(value))
+        self.assertNotIn(NONREFLECTED_VALUE, json.dumps(value))
 
 
 class CodexStructuredDryrun(unittest.TestCase):
@@ -129,7 +129,7 @@ class CodexStructuredDryrun(unittest.TestCase):
             conn.execute('INSERT INTO threads VALUES (?,?,?,?,?,?)', (THREAD, 'fixture', str(self.root), 1, 0, str(self.rollout)))
             conn.commit()
 
-    def invoke(self, wake=False, body=SECRET):
+    def invoke(self, wake=False, body=NONREFLECTED_VALUE):
         out = io.StringIO()
         argv = ['send', '--to', 'codex:' + THREAD, '--codex-home', str(self.root),
                 '--allow-inactive-codex-home', '--dry-run', '--explain-json', '--no-from',
@@ -161,13 +161,15 @@ class CodexStructuredDryrun(unittest.TestCase):
 
     def test_storage_refusal_precedes_version_queue_and_wake_budget(self):
         (self.root / 'config.toml').write_text('sqlite_home = "private-relocation"\n')
-        with mock.patch.object(peer.subprocess, 'run', side_effect=AssertionError('version/queue')), \
-                mock.patch.object(peer.subprocess, 'Popen', side_effect=AssertionError('queue/model')), \
-                mock.patch.object(peer, 'wake_target_rate_reserve', side_effect=AssertionError('budget')):
+        with mock.patch.object(peer.subprocess, 'run', side_effect=AssertionError('version/queue')) as run, \
+                mock.patch.object(peer.subprocess, 'Popen', side_effect=AssertionError('queue/model')) as child, \
+                mock.patch.object(peer, 'wake_target_rate_reserve', side_effect=AssertionError('budget')) as reserve:
             code, result = self.invoke(wake=True)
         self.assertEqual(code, 1)
         self.assertFalse(result['ok'])
         self.assertNotIn('private-relocation', json.dumps(result))
+        for action in (run, child, reserve):
+            action.assert_not_called()
 
     def test_interrupted_wake_probe_cannot_queue_or_reserve_budget(self):
         with mock.patch.object(peer.subprocess, 'run', side_effect=KeyboardInterrupt), \
@@ -177,7 +179,7 @@ class CodexStructuredDryrun(unittest.TestCase):
             with contextlib.redirect_stdout(out):
                 code = peer.main(['send', '--to', 'codex:' + THREAD, '--codex-home', str(self.root),
                     '--allow-inactive-codex-home', '--dry-run', '--explain-json', '--wake', '--no-from',
-                    '--no-reply-to', '--message', SECRET])
+                    '--no-reply-to', '--message', NONREFLECTED_VALUE])
         self.assertEqual(code, 130)
         self.assertEqual(out.getvalue(), '')
         self.assertFalse((self.root / 'session-peer' / 'wake-locks').exists())
@@ -193,9 +195,11 @@ class CodexStructuredDryrun(unittest.TestCase):
         self.assertFalse((self.root / 'session-peer' / 'wake-locks').exists())
 
     def test_framed_native_message_byte_budget_still_refuses_before_effects(self):
-        with mock.patch.object(peer.subprocess, 'Popen', side_effect=AssertionError('queue/model')), \
-                mock.patch.object(peer, 'wake_target_rate_reserve', side_effect=AssertionError('budget')):
+        with mock.patch.object(peer.subprocess, 'Popen', side_effect=AssertionError('queue/model')) as child, \
+                mock.patch.object(peer, 'wake_target_rate_reserve', side_effect=AssertionError('budget')) as reserve:
             code, value = self.invoke(body='界' * 12000)
         self.assertEqual(code, 1)
         self.assertFalse(value['ok'])
         self.assertNotIn('界', json.dumps(value, ensure_ascii=False))
+        child.assert_not_called()
+        reserve.assert_not_called()
