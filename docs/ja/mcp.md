@@ -29,6 +29,12 @@ Python 3.10 以降でインストールします: `pipx install 'session-peer[mc
 
 `codex mcp add session-peer -- /absolute/path/session-peer-mcp --config /absolute/path/policy.json` を使用して登録するか、リポジトリの `plugins/session-peer` バンドルを使用します: `codex plugin marketplace add /absolute/path/to/session-peer`、続いて `codex plugin add session-peer@session-peer`。このプラグインは PATH から `session-peer-mcp` を起動し、環境変数に設定されている場合は `SESSION_PEER_MCP_CONFIG` を読み取ります。最初に Python エクストラをインストールしてください。Python パッケージをインストールしても、既存の Codex 設定が変更されることはありません。
 
+## 未リリースの v1.4.0 候補: 送信先の確認 (#356)
+
+`list_destinations()` は引数を取らず、オペレーターのポリシーのメタデータだけを返します。`schemaVersion` は 1 で、各項目には `destination`、`transport`、`agents`、`capabilities` が含まれます。子プロセスの起動やネットワークリクエストは行いません。実際の SSH ホストと Codex ホームのパスは省略されます。送信先の名前は信頼できないデータとして扱ってください。設定されたケーパビリティはポリシー上の権限を示し、ネイティブエージェントとの互換性は示しません。
+
+応答には制約を明示します: `callerIdentity="unavailable"`、`readiness="not_checked"`、`submission="not_attempted"`、`consumption="not_checked"`、`ack="not_checked"`。送信先は最大 64 件まで許可されます。ID は表示可能な文字で構成され、UTF-8 で 128 バイト以内である必要があり、出力は 64 KiB に制限されます。既定のローカル一覧取得専用ポリシーは変わりません。
+
 ## ツールとパーミッション
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)` は CLI の構造化された一覧を返します。Agent は `claude` または `codex` です。省略した場合は許可されたエージェントを一覧表示します。
@@ -44,7 +50,7 @@ MCP ツールのアノテーションは、一覧取得を読み取り専用、�
 
 MCP エクストラの有無の両方で `python -m unittest discover -s tests -v` を実行します。オプションのテストでは実際の stdio MCP サーバーを起動し、モデルの認証情報なしで初期化、スキーマ、ポリシー拒否、および CLI の部分的な失敗を検証します。wheel と sdist の両方のインストールをテストしてください。実環境チェックでは Codex バージョン、OS、およびホストの承認設定を記録する必要があります。UDS アクセスは環境依存であり、承認のバイパスを約束するものではありません。メッセージには専用のテストセッションを使用してください。
 
-CIではmacOS/LinuxのPython 3.10/3.13で、SDK下限の`mcp==1.30.0`と最新の互換1.xを別々に試験します。両プロファイルでstdio・ポリシー・タイムアウト・キャンセル・所有する子プロセスの終了処理を試験し、解決されたランタイム依存関係を監査して、版とレポートを保存します。推移的依存関係の版は通常の依存関係解決に従って選択されます。すべての推移的パッケージの最小版を試験するものではありません。版を固定したビルド・監査用要件はランタイム環境の外にインストールし、監査対象には初期構成用の`pip`/`setuptools`パッケージも含めます。既存の最新版解決監査とリリース監査も引き続き必須です。
+CIではmacOS/LinuxのPython 3.10/3.13/3.14で、SDK下限の`mcp==1.30.0`と最新の互換1.xを別々に試験します。両プロファイルでstdio・ポリシー・タイムアウト・キャンセル・所有する子プロセスの終了処理を試験し、解決されたランタイム依存関係を監査して、版とレポートを保存します。推移的依存関係の版は通常の依存関係解決に従って選択されます。すべての推移的パッケージの最小版を試験するものではありません。版を固定したビルド・監査用要件はランタイム環境の外にインストールし、監査対象には初期構成用の`pip`/`setuptools`パッケージも含めます。既存の最新版解決監査とリリース監査も引き続き必須です。
 
 公式リファレンス: [Codex MCP](https://developers.openai.com/codex/extend/mcp), [Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk)。 [SDK 1.30.0](https://pypi.org/pypi/mcp/1.30.0/json), [GHSA-84m7-p3x7-pcfv](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-84m7-p3x7-pcfv), [GHSA-fmmv-w9g8-j3gc](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-fmmv-w9g8-j3gc).
 
