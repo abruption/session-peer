@@ -193,6 +193,7 @@ def build_parser() -> argparse.ArgumentParser:
                          help="wake deadline, 1..60 seconds (default: 30)")
     sending.add_argument("--dry-run", action="store_true", help="resolve the target, send nothing")
     sending.add_argument("--explain", action="store_true", help="explain existing dry-run evidence in text")
+    sending.add_argument("--explain-json", action="store_true", help="return an allowlisted structured dry-run explanation")
     doctor.add_argument("--explain", action="store_true", help="explain existing diagnostic capabilities in text")
     sending.set_defaults(func=cmd_send)
 
@@ -420,6 +421,19 @@ def _main(argv: list[str] | None = None) -> int:
     if args.json and output_format == "text":
         parser.error("--json conflicts with --output-format text")
     args.json = args.json or output_format == "json"
+    if getattr(args, "explain_json", False):
+        if not args.dry_run:
+            parser.error("--explain-json requires --dry-run")
+        if getattr(args, "explain", False) or output_format == "text":
+            parser.error("--explain-json requires structured output without --explain")
+        if (getattr(args, "device", None) or getattr(args, "preset", None)
+                or getattr(args, "address", None) or handoff_requested(args)
+                or any(getattr(args, key, None) is not None for key in (
+                    "_handoff_native_context", "_handoff_native_cutoff_ms", "_handoff_native_total_ms"))):
+            parser.error("--explain-json does not support device, preset, address or handoff routes")
+        args.json = True
+        args._delivery_explanation_started = False
+        args._delivery_explanation_host = None
     if getattr(args, "explain", False):
         if args.json:
             parser.error("--explain requires text output")
@@ -453,7 +467,9 @@ def _main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         return 130
     except CcPeerError as exc:
-        if args.json:
+        if getattr(args, "explain_json", False):
+            print(json.dumps(structured_delivery_preflight(args, exc.details, failed=True)))
+        elif args.json:
             print(json.dumps(json_error_result(args, {"error": str(exc), **exc.details}), ensure_ascii=False))
         else:
             print(human_text(f"session-peer: {exc}"), file=sys.stderr)
@@ -476,7 +492,9 @@ def _main(argv: list[str] | None = None) -> int:
     try:
         prepare_trusted_ssh_config(parser, args)
     except CcPeerError as exc:
-        if args.json:
+        if getattr(args, "explain_json", False):
+            print(json.dumps(structured_delivery_preflight(args, exc.details, failed=True)))
+        elif args.json:
             print(json.dumps(json_error_result(args, {"error": str(exc), **exc.details}), ensure_ascii=False))
         else:
             print(human_text(f"session-peer: {exc}"), file=sys.stderr)
@@ -499,7 +517,9 @@ def _main(argv: list[str] | None = None) -> int:
         exit_code = args.func(args)
     except CcPeerError as exc:
         message = redact_ssh_config_path(str(exc))
-        if args.json:
+        if getattr(args, "explain_json", False):
+            print(json.dumps(structured_delivery_preflight(args, exc.details, failed=True)))
+        elif args.json:
             payload = json_error_result(args, {"error": message, **exc.details})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
@@ -518,7 +538,10 @@ def _main(argv: list[str] | None = None) -> int:
         exit_code = 130
     except Exception as exc:
         message = redact_ssh_config_path(f"{type(exc).__name__}: {exc}")
-        if getattr(args, "json", False):
+        if getattr(args, "explain_json", False):
+            evidence = {"reason": "outcome_unknown"} if args._delivery_explanation_started else {}
+            print(json.dumps(structured_delivery_preflight(args, evidence, failed=True)))
+        elif getattr(args, "json", False):
             payload = json_error_result(args, {"error": message})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:

@@ -90,12 +90,9 @@ def render_delivery_explanation(args: argparse.Namespace, result: dict, *,
         home = facts["home"]
         lines.append(("Codex home: " if agent == "codex" else "Antigravity home: ")
                      + (explanation_text(home) if isinstance(home, str) else "unknown (not reported)"))
-    started = getattr(args, "_delivery_explanation_started", True)
-    unknown = result.get("status") == "unknown" or result.get("reason") in (
-        "outcome_unknown", "ssh_identity_evidence_unavailable") or (
-        "submitted" in result and result["submitted"] is None)
-    unexpected = delivery_explanation_has_submission(result)
-    dry_run_reported = result.get("dryRun") is True or result.get("status") in ("dry_run", "validated")
+    state = classify_delivery_readiness(args, result, failed=failed)
+    started, unknown, unexpected = state["started"], state["unknown"], state["unexpected"]
+    dry_run_reported = state["validation"] == "passed"
     if not started:
         lines.append("Destination checks: not run (command failed before destination checks)")
         lines.append("Validation: not confirmed")

@@ -4812,6 +4812,52 @@ def render_delivery_fact_lines(facts):
             "Task completion: unknown"]
 
 
+def classify_delivery_readiness(args, result, *, failed=False):
+    """Pure evidence classification shared by text and structured previews.
+
+    This reads original native facts, before any compatibility output shaping.
+    A requested dry run is never itself evidence of a completed dry run.
+    """
+    started = getattr(args, "_delivery_explanation_started", True)
+    unknown = result.get("status") == "unknown" or result.get("reason") in (
+        "outcome_unknown", "ssh_identity_evidence_unavailable") or (
+        "submitted" in result and result["submitted"] is None)
+    unexpected = delivery_explanation_has_submission(result)
+    reported = result.get("dryRun") is True or result.get("status") in ("dry_run", "validated")
+    validation = ("unexpected_submission" if unexpected else "unknown" if unknown else
+                  "not_run" if not started else "not_confirmed" if failed else
+                  "passed" if reported else "not_confirmed")
+    wake = ("not_requested" if not getattr(args, "wake", False) else
+            "validated" if validation == "passed" and isinstance(result.get("wake"), dict)
+            and result["wake"].get("status") == "validated" else "not_confirmed")
+    return {"validation": validation, "wake": wake, "unknown": unknown,
+            "unexpected": unexpected, "started": bool(started)}
+
+
+def structured_delivery_preflight(args, result, *, failed=False):
+    """Versioned, bounded allowlist; never include native errors or route data."""
+    state = classify_delivery_readiness(args, result, failed=failed)
+    facts = build_delivery_explanation(args, result, failed=failed)
+    validation = state["validation"]
+    reason = {"passed": None, "not_run": "checks_not_run",
+              "not_confirmed": "validation_not_confirmed", "unknown": "outcome_unknown",
+              "unexpected_submission": "unexpected_submission"}[validation]
+    passed = validation == "passed" and state["wake"] in ("not_requested", "validated")
+    if validation == "passed" and not passed:
+        reason = "wake_preflight_not_confirmed"
+    return {"schemaVersion": 1, "command": "send.preflight", "ok": passed,
+            "checked": {"validation": validation, "agent": facts["agent"], "wake": state["wake"]},
+            "declaredCapabilities": facts["capabilities"],
+            "limitations": {"callerIdentity": "unavailable", "readiness": "point_in_time_only",
+                            "submission": "reported_submission" if state["unexpected"] else
+                                "unknown" if state["unknown"] else "not_attempted",
+                            "consumption": "not_checked", "ack": "not_checked",
+                            "hostApproval": "not_granted", "routeReservation": "none"},
+            "reason": reason, "retryAllowed": False,
+            "operatorActions": ["repeat_validation_before_send", "review_host_approvals"]
+                if passed else ["inspect_existing_evidence_before_send"]}
+
+
 # --------------------------------------------------------------------------
 # Output
 # --------------------------------------------------------------------------
@@ -4904,12 +4950,9 @@ def render_delivery_explanation(args: argparse.Namespace, result: dict, *,
         home = facts["home"]
         lines.append(("Codex home: " if agent == "codex" else "Antigravity home: ")
                      + (explanation_text(home) if isinstance(home, str) else "unknown (not reported)"))
-    started = getattr(args, "_delivery_explanation_started", True)
-    unknown = result.get("status") == "unknown" or result.get("reason") in (
-        "outcome_unknown", "ssh_identity_evidence_unavailable") or (
-        "submitted" in result and result["submitted"] is None)
-    unexpected = delivery_explanation_has_submission(result)
-    dry_run_reported = result.get("dryRun") is True or result.get("status") in ("dry_run", "validated")
+    state = classify_delivery_readiness(args, result, failed=failed)
+    started, unknown, unexpected = state["started"], state["unknown"], state["unexpected"]
+    dry_run_reported = state["validation"] == "passed"
     if not started:
         lines.append("Destination checks: not run (command failed before destination checks)")
         lines.append("Validation: not confirmed")
@@ -12122,9 +12165,13 @@ def cmd_send(args: argparse.Namespace) -> int:
     validate_agent_send(adapter, args, text)
 
     if not args.host:
-        if getattr(args, "explain", False):
+        if getattr(args, "explain", False) or getattr(args, "explain_json", False):
             args._delivery_explanation_started = True
         result = LocalTransport().execute("send", adapter, args, text)
+        if getattr(args, "explain_json", False):
+            value = structured_delivery_preflight(args, result, failed=result.get("ok") is False)
+            print(json.dumps(value, ensure_ascii=False))
+            return 0 if value["ok"] else EXIT_ERROR
         result.update(routing_metadata)
         emit(args.json, result, adapter.submission_text(result, "this machine"), command="send")
         if getattr(args, "explain", False):
@@ -12141,13 +12188,13 @@ def cmd_send(args: argparse.Namespace) -> int:
     for requested_host in args.host:
         host = requested_host
         try:
-            if getattr(args, "explain", False):
+            if getattr(args, "explain", False) or getattr(args, "explain_json", False):
                 args._delivery_explanation_started = True
                 args._delivery_explanation_host = requested_host
             transport = SshTransport(requested_host, args, tailnet_status)
             host, ssh_opts = transport.host, transport.ssh_opts
             shown_host = display_host(requested_host, host)
-            if getattr(args, "explain", False):
+            if getattr(args, "explain", False) or getattr(args, "explain_json", False):
                 args._delivery_explanation_host = shown_host
             encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
             remote_argv = ["send", "--no-update-notice", "--to", args.to, "--b64", encoded]
@@ -12170,6 +12217,12 @@ def cmd_send(args: argparse.Namespace) -> int:
                 raise CcPeerError("SSH response did not preserve the requested generation; do not retry automatically",
                                   {**native_facts, **ssh_metadata_from(result),
                                    "status": "unknown", "reason": "outcome_unknown", "retryAllowed": False})
+            if getattr(args, "explain_json", False):
+                value = structured_delivery_preflight(args, result, failed=result.get("ok") is False)
+                all_results.append(value)
+                if not value["ok"]:
+                    exit_code = EXIT_ERROR
+                continue
             payload = adapter.remote_submission(result, args, text)
             payload.update(host_metadata(requested_host, host))
             payload.update(routing_metadata)
@@ -12185,6 +12238,9 @@ def cmd_send(args: argparse.Namespace) -> int:
                                               failed=payload.get("ok") is False or result.get("ok") is False)
         except CcPeerError as exc:
             exit_code = EXIT_ERROR
+            if getattr(args, "explain_json", False):
+                all_results.append(structured_delivery_preflight(args, exc.details, failed=True))
+                continue
             all_results.append(json_result(
                 "send",
                 {**host_metadata(requested_host, host), "error": str(exc), **exc.details},
@@ -12197,7 +12253,9 @@ def cmd_send(args: argparse.Namespace) -> int:
                                               host=display_host(requested_host, host),
                                               failed=True, stream=sys.stderr)
 
-    if args.json:
+    if getattr(args, "explain_json", False):
+        print(json.dumps(one_or_many(all_results), ensure_ascii=False))
+    elif args.json:
         emit_json_results(all_results)
     elif (
         advertised_route and advertised_route["status"] == "unverified"
@@ -12478,6 +12536,7 @@ def build_parser() -> argparse.ArgumentParser:
                          help="wake deadline, 1..60 seconds (default: 30)")
     sending.add_argument("--dry-run", action="store_true", help="resolve the target, send nothing")
     sending.add_argument("--explain", action="store_true", help="explain existing dry-run evidence in text")
+    sending.add_argument("--explain-json", action="store_true", help="return an allowlisted structured dry-run explanation")
     doctor.add_argument("--explain", action="store_true", help="explain existing diagnostic capabilities in text")
     sending.set_defaults(func=cmd_send)
 
@@ -12705,6 +12764,19 @@ def _main(argv: list[str] | None = None) -> int:
     if args.json and output_format == "text":
         parser.error("--json conflicts with --output-format text")
     args.json = args.json or output_format == "json"
+    if getattr(args, "explain_json", False):
+        if not args.dry_run:
+            parser.error("--explain-json requires --dry-run")
+        if getattr(args, "explain", False) or output_format == "text":
+            parser.error("--explain-json requires structured output without --explain")
+        if (getattr(args, "device", None) or getattr(args, "preset", None)
+                or getattr(args, "address", None) or handoff_requested(args)
+                or any(getattr(args, key, None) is not None for key in (
+                    "_handoff_native_context", "_handoff_native_cutoff_ms", "_handoff_native_total_ms"))):
+            parser.error("--explain-json does not support device, preset, address or handoff routes")
+        args.json = True
+        args._delivery_explanation_started = False
+        args._delivery_explanation_host = None
     if getattr(args, "explain", False):
         if args.json:
             parser.error("--explain requires text output")
@@ -12738,7 +12810,9 @@ def _main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         return 130
     except CcPeerError as exc:
-        if args.json:
+        if getattr(args, "explain_json", False):
+            print(json.dumps(structured_delivery_preflight(args, exc.details, failed=True)))
+        elif args.json:
             print(json.dumps(json_error_result(args, {"error": str(exc), **exc.details}), ensure_ascii=False))
         else:
             print(human_text(f"session-peer: {exc}"), file=sys.stderr)
@@ -12761,7 +12835,9 @@ def _main(argv: list[str] | None = None) -> int:
     try:
         prepare_trusted_ssh_config(parser, args)
     except CcPeerError as exc:
-        if args.json:
+        if getattr(args, "explain_json", False):
+            print(json.dumps(structured_delivery_preflight(args, exc.details, failed=True)))
+        elif args.json:
             print(json.dumps(json_error_result(args, {"error": str(exc), **exc.details}), ensure_ascii=False))
         else:
             print(human_text(f"session-peer: {exc}"), file=sys.stderr)
@@ -12784,7 +12860,9 @@ def _main(argv: list[str] | None = None) -> int:
         exit_code = args.func(args)
     except CcPeerError as exc:
         message = redact_ssh_config_path(str(exc))
-        if args.json:
+        if getattr(args, "explain_json", False):
+            print(json.dumps(structured_delivery_preflight(args, exc.details, failed=True)))
+        elif args.json:
             payload = json_error_result(args, {"error": message, **exc.details})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:
@@ -12803,7 +12881,10 @@ def _main(argv: list[str] | None = None) -> int:
         exit_code = 130
     except Exception as exc:
         message = redact_ssh_config_path(f"{type(exc).__name__}: {exc}")
-        if getattr(args, "json", False):
+        if getattr(args, "explain_json", False):
+            evidence = {"reason": "outcome_unknown"} if args._delivery_explanation_started else {}
+            print(json.dumps(structured_delivery_preflight(args, evidence, failed=True)))
+        elif getattr(args, "json", False):
             payload = json_error_result(args, {"error": message})
             print(json.dumps(with_client_update(payload), ensure_ascii=False))
         else:

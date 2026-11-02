@@ -35,6 +35,14 @@ Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(
 
 응답은 한계를 명시합니다: `callerIdentity="unavailable"`, `readiness="not_checked"`, `submission="not_attempted"`, `consumption="not_checked"`, `ack="not_checked"`. 이 도구는 목적지가 64개를 넘거나 ID에 출력할 수 없는 문자가 있거나 UTF-8 기준 128바이트를 넘으면 조회를 거부합니다. 텍스트와 구조화된 내용을 합친 MCP 도구 결과는 64 KiB 이내이며, 바깥 JSON-RPC 봉투는 이 한도에 포함되지 않습니다. 이는 조회 도구의 제한으로, 정책 읽기와 기존 도구의 동작은 바뀌지 않습니다. 출력 가능한 문자 판정에는 실행 중인 Python의 유니코드 데이터베이스를 사용합니다. 기본 로컬 목록 조회 전용 정책은 그대로 유지됩니다.
 
+## 미출시 v1.4.0 후보: 전송 사전 검증 (#357)
+
+`preflight_send(destination, target, message, wake=false, wake_timeout=30)`는 기존 CLI dry-run 검사로 일반 메시지를 검증합니다. 운영자 정책은 `schemaVersion` 2를 사용하고 해당 목적지와 에이전트에 `preflight`를 명시적으로 허용해야 합니다. 버전 1의 기존 기능 집합에는 새 권한이 추가되지 않으며, 기본값은 로컬 목록 조회 전용으로 유지됩니다. 사전 검증에는 `send`가 필요하지 않으며 전송 권한을 부여하지 않습니다. wake 적격성을 검사하려면 별도로 `wake`가 필요하지만, 모델을 활성화하거나 wake 예산을 예약하지는 않습니다.
+
+버전이 지정된 설명은 SSH 어댑터가 결과를 가공하기 전의 네이티브 응답에서 허용된 사실만 추출하고, 정해진 거부·불확실 사유와 운영자 조치를 제공합니다. 메시지 내용, 원시 오류, 자격 증명, 호스트·홈 경로와 네이티브 기록은 제외됩니다. 결과가 불확실하거나 예상치 못한 제출 증거가 있으면 `retryAllowed=false`로 검증에 실패합니다. 자동으로 재전송하지 마십시오. 사전 검증은 메시지를 제출하거나 handoff 권한을 만들지 않습니다. 기기 및 handoff 모드는 지원하지 않습니다.
+
+기존 dry-run 검사는 로컬·버전 확인 프로세스와 SSH 연결을 시작할 수 있으며, SSH 설정 자체도 명령을 실행할 수 있습니다. 따라서 이 도구는 `readOnlyHint=false`와 `openWorldHint=true`를 사용합니다. 호스트 승인은 정책 권한과 별개입니다. 통과는 검사 시점의 결과이며, 경로 예약, 유효 저장소의 증명, 승인, 이후 전송의 보장, 소비 또는 ACK를 뜻하지 않습니다.
+
 ## 도구 및 권한
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)`는 CLI의 구조화된 목록을 반환합니다. Agent는 `claude` 또는 `codex`일 수 있으며, 생략 시 허용된 에이전트를 나열합니다.

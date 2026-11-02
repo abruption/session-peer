@@ -35,6 +35,14 @@
 
 响应明确列出限制：`callerIdentity="unavailable"`、`readiness="not_checked"`、`submission="not_attempted"`、`consumption="not_checked"` 和 `ack="not_checked"`。目的地超过 64 个、ID 含不可打印字符或 UTF-8 编码超过 128 字节时，此工具拒绝查询。文本与结构化内容合计的 MCP 工具结果不超过 64 KiB，不包括外层 JSON-RPC 信封。这些限制仅适用于查询工具，策略加载及现有工具的行为保持不变。可打印字符的判定遵循运行中 Python 的 Unicode 数据库。默认的仅限本地列表查询的策略保持不变。
 
+## 尚未发布的 v1.4.0 候选版本：发送预检 (#357)
+
+`preflight_send(destination, target, message, wake=false, wake_timeout=30)` 通过现有 CLI dry-run 检查验证普通消息。操作员策略必须使用 `schemaVersion` 2，并为目的地和代理显式授予 `preflight`。版本 1 保留原有的功能集合，不会自动获得新权限；默认策略仍仅允许本地列表查询。预检不需要 `send`，也不能授予发送权限。如需检查唤醒资格，还必须单独具有 `wake`，但不会激活模型或预留唤醒额度。
+
+带有版本的说明会在 SSH 适配器加工结果前，从原生响应中提取允许的事实，并提供固定的拒绝或未知原因及操作员处置建议。它不包含消息内容、原始错误、凭据、主机或主目录路径、原生记录。结果未知或存在意外提交证据时，验证失败并返回 `retryAllowed=false`；切勿自动重发。预检不会提交消息或创建 handoff 授权。不支持设备和 handoff 模式。
+
+现有 dry-run 检查可能启动本地或版本查询进程、建立 SSH 连接；SSH 配置本身也可能执行命令。因此该工具使用 `readOnlyHint=false` 和 `openWorldHint=true`。宿主批准独立于策略权限。通过仅表示检查时点的结果，不代表预留路由、证明有效存储、批准、保证后续发送、消费或 ACK。
+
 ## 工具与权限
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)` 返回 CLI 的结构化列表。Agent 可以是 `claude` 或 `codex`；省略则列出允许的代理。

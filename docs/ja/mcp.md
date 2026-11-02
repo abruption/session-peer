@@ -35,6 +35,14 @@ Python 3.10 以降でインストールします: `pipx install 'session-peer[mc
 
 応答には制約を明示します: `callerIdentity="unavailable"`、`readiness="not_checked"`、`submission="not_attempted"`、`consumption="not_checked"`、`ack="not_checked"`。このツールは宛先が64件を超える場合や、IDに表示できない文字がある場合、UTF-8で128バイトを超える場合に取得を拒否します。テキストと構造化データを合わせたMCPツール結果は64 KiB以内で、外側のJSON-RPCエンベロープは含みません。これは取得ツールの制限であり、ポリシーの読み込みと既存ツールの動作は変わりません。表示可能な文字の判定は、実行中のPythonのUnicodeデータベースに従います。既定のローカル一覧取得専用ポリシーは変わりません。
 
+## 未リリースの v1.4.0 候補: 送信の事前検証 (#357)
+
+`preflight_send(destination, target, message, wake=false, wake_timeout=30)` は、既存の CLI dry-run 検査で通常のメッセージを検証します。オペレーターのポリシーは `schemaVersion` 2 を使用し、送信先とエージェントに対して `preflight` を明示的に許可する必要があります。バージョン 1 の既存のケーパビリティには新たな権限を追加せず、既定はローカル一覧取得専用のままです。事前検証に `send` は不要で、送信を許可するものではありません。wake の適格性を調べる場合は別途 `wake` が必要ですが、モデルの起動や wake 予算の予約は行いません。
+
+バージョン付きの説明は、SSH アダプターによる整形前のネイティブ応答から許可された事実だけを抽出し、定められた拒否・不明の理由とオペレーターの対処を示します。メッセージ本文、生のエラー、認証情報、ホスト・ホームのパス、ネイティブの記録は含めません。結果が不明な場合や予期しない投入の証拠がある場合は、`retryAllowed=false` として検証に失敗します。自動再送しないでください。事前検証はメッセージの投入や handoff 権限の作成を行いません。デバイスと handoff のモードには対応しません。
+
+既存の dry-run 検査はローカル・バージョン確認のプロセスや SSH 接続を開始する場合があり、SSH 設定自体がコマンドを実行する場合もあります。このため、このツールは `readOnlyHint=false` と `openWorldHint=true` を使用します。ホストの承認はポリシーの権限とは別です。合格は検査時点の結果であり、経路の予約、有効なストレージの証明、承認、後の送信の保証、消費、ACK を意味しません。
+
 ## ツールとパーミッション
 
 - `list_sessions(destination="local", agent=null, include_inactive=false)` は CLI の構造化された一覧を返します。Agent は `claude` または `codex` です。省略した場合は許可されたエージェントを一覧表示します。
