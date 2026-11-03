@@ -24,6 +24,8 @@ installation paths.
 
 ## Development and history
 
+- [v1.4.1 maintenance preparation](releases/v1.4.1.md) records documentation and the published skill v0.5.1 compatibility copy; runtime behavior, independent skill installation and operations remain separate.
+
 - [v1.4.0 preparation](releases/v1.4.0.md) records the merged MCP policy, preflight, diagnostics and preset changes at the 2026-11-02 source checkpoint; publication and independent skill adoption remain separate.
 
 - [v1.3.3 maintenance preparation](releases/v1.3.3.md) covers Python 3.14 CI/metadata, contributor and publication guidance, and the verified compatibility skill v0.4.1 snapshot. Publication and operational deployment remain separate.
