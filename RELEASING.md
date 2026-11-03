@@ -1,5 +1,13 @@
 # Releasing session-peer
 
+## v1.4.1 preparation
+
+Prepared on 2026-11-03 against published v1.4.0. At this dated checkpoint, v1.4.1 is an unpublished maintenance candidate. Integrated maintenance base: `192b77ec4a168859c26fe886ff42901f24060608`, before version preparation, not the final release commit. The [maintenance notes](docs/releases/v1.4.1.md) cover the independently published skill v0.5.1 compatibility copy and publication guidance from PR #366 / #369. They claim no runtime defect fix or #370 test repair; #367 and Long-term work remain separate.
+
+The prospective `SKILL.md` support asset uses skill v0.5.1, source `95cf5e1dd92654775b2f0ea86c1cb4b6107f49c3`, 31688 UTF-8 bytes, SHA-256 `922512869577cc3d8b9d305641479e2dd659f0e669298584ca06f1ca15de1d31`, minimum 0.9.1/full 1.4.0 and receiver `codexBin` floor 1.0.1, outside wheel/sdist. The skill release API reports `immutable=false`; exact source/hash pinning is not GitHub-enforced immutability. The immutable runtime v1.4.0 skill asset remains v0.4.1.
+
+The owner has authorized normal merge, tagging and publication, not protection bypasses. Require current-head review/checks, final protected-main CI, all 7 frozen assets, `SHA256SUMS`, `release-provenance.json`, authenticated attestations, dependency audits, fresh wheel/sdist installation checks and the required human PyPI environment approval. These gates are not asserted complete here; skipping the private login/binding recheck does not waive human approval. Preserve old tags/assets and history; record actual publication separately. No new native/SSH/ACK/platform qualification, global install or operational rollout is included.
+
 ## Publication record — v1.4.0 (verified 2026-11-03)
 
 Runtime v1.4.0 was published from `476c67e636ef02cb93797dd2f42252dfe577625f` on GitHub at `2026-11-02T04:36:59Z`; PyPI uploaded the wheel and sdist at `2026-11-02T04:38:34.686393Z` and `2026-11-02T04:38:36.363777Z`. The [publication record](docs/releases/v1.4.0.md#v140-publication-record) links exact hashes and successful preparation/publication evidence. The runtime's immutable skill asset remains v0.4.1; subsequent repository snapshot synchronization to the separately published skill v0.5.1 does not replace it or update installed skills. Keep the dated preparation sections below as history; publication does not establish operational rollout or new native/ACK acceptance.

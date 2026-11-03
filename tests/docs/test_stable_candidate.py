@@ -11,6 +11,25 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StableCandidate(unittest.TestCase):
+    def test_v141_maintenance_keeps_runtime_and_skill_release_boundaries(self):
+        expected = ("2026-11-03", "1.4.1", "1.4.0", "0.5.1", "0.9.1", "1.0.1",
+                    "192b77ec4a168859c26fe886ff42901f24060608",
+                    "95cf5e1dd92654775b2f0ea86c1cb4b6107f49c3", "31688",
+                    "922512869577cc3d8b9d305641479e2dd659f0e669298584ca06f1ca15de1d31",
+                    "immutable=false", "#366", "#369", "#370", "#367",
+                    "SHA256SUMS", "release-provenance.json", "0.4.1")
+        for locale, suffix in (("", ""), ("ko/", ".ko"), ("ja/", ".ja"), ("zh-CN/", ".zh-CN")):
+            with self.subTest(locale=locale):
+                notes = (ROOT / ("docs/" + locale + "releases/v1.4.1.md")).read_text(encoding="utf-8")
+                for marker in expected:
+                    self.assertIn(marker, notes)
+                for stem in ("README", "RELEASING"):
+                    self.assertIn("releases/v1.4.1.md", (ROOT / (stem + suffix + ".md")).read_text(encoding="utf-8"))
+        english = (ROOT / "docs/releases/v1.4.1.md").read_text(encoding="utf-8")
+        self.assertIn("no runtime defect is claimed fixed", english)
+        self.assertIn("This patch does not fix #370", english)
+        self.assertIn("Required human PyPI environment approval remains", english)
+
     def test_v140_publication_record_preserves_preparation_and_pinned_skill_history(self):
         source = "476c67e636ef02cb93797dd2f42252dfe577625f"
         facts = (source, "2026-11-03", "2026-11-02T04:36:59Z",
@@ -338,8 +357,8 @@ class StableCandidate(unittest.TestCase):
             self.assertIn(marker, english)
 
     def test_package_and_generated_core_version_agree(self):
-        self.assertEqual(session_peer.__version__, "1.4.0")
-        self.assertIn('__version__ = "1.4.0"',
+        self.assertEqual(session_peer.__version__, "1.4.1")
+        self.assertIn('__version__ = "1.4.1"',
                       (ROOT / "session_peer_core/common.py").read_text(encoding="utf-8"))
 
     def test_current_readmes_and_runbooks_match_source_version(self):
@@ -348,8 +367,8 @@ class StableCandidate(unittest.TestCase):
                 with self.subTest(stem=stem, suffix=suffix):
                     text = (ROOT / (stem + suffix + ".md")).read_text(encoding="utf-8")
                     if stem == "README":
-                        prefixes = {"": "Published runtime: ", ".ko": "공개 런타임: ",
-                                    ".ja": "公開済みランタイム：", ".zh-CN": "已发布运行时："}
+                        prefixes = {"": "Source version: ", ".ko": "소스 버전: ",
+                                    ".ja": "ソースバージョン：", ".zh-CN": "源码版本："}
                         line = next(line for line in text.splitlines() if line.startswith(prefixes[suffix]))
                         self.assertTrue(line.startswith(prefixes[suffix] + "**" + session_peer.__version__ + "**"))
                     else:
@@ -378,16 +397,16 @@ class StableCandidate(unittest.TestCase):
 
     def test_stable_release_keeps_operational_deployment_separate(self):
         profiles = (
-            ("", "Published runtime: **1.4.0**",
+            ("", "Source version: **1.4.1**",
              "At the 2026-10-28 preparation checkpoint, the last verified published stable release was **1.3.1**.",
              "Development candidate 1.2.1 is unpublished"),
-            (".ko", "공개 런타임: **1.4.0**",
+            (".ko", "소스 버전: **1.4.1**",
              "2026-10-28 준비 시점의 마지막 확인 공개 안정판은 **1.3.1**이었습니다.",
              "개발 후보 1.2.1은 미공개입니다"),
-            (".ja", "公開済みランタイム：**1.4.0**",
+            (".ja", "ソースバージョン：**1.4.1**",
              "2026-10-28の準備時点で、最後に確認した公開済み安定版は**1.3.1**でした。",
              "開発候補1.2.1は未公開です"),
-            (".zh-CN", "已发布运行时：**1.4.0**",
+            (".zh-CN", "源码版本：**1.4.1**",
              "在2026-10-28的准备检查时，最后确认的已发布稳定版本为**1.3.1**。",
              "开发候选版本1.2.1尚未发布"),
         )
