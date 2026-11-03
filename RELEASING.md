@@ -1,5 +1,9 @@
 # Releasing session-peer
 
+## Publication record — v1.4.0 (verified 2026-11-03)
+
+Runtime v1.4.0 was published from `476c67e636ef02cb93797dd2f42252dfe577625f` on GitHub at `2026-11-02T04:36:59Z`; PyPI uploaded the wheel and sdist at `2026-11-02T04:38:34.686393Z` and `2026-11-02T04:38:36.363777Z`. The [publication record](docs/releases/v1.4.0.md#v140-publication-record) links exact hashes and successful preparation/publication evidence. The runtime's immutable skill asset remains v0.4.1; subsequent repository snapshot synchronization to the separately published skill v0.5.1 does not replace it or update installed skills. Keep the dated preparation sections below as history; publication does not establish operational rollout or new native/ACK acceptance.
+
 ## v1.4.0 preparation
 
 Prepared on 2026-11-02 against published v1.3.3. At this dated checkpoint, v1.4.0 is an unpublished candidate. Integrated source base: `f290973962c63548f24153eeee12a8e3666fd043`, before version preparation, not the final release commit. The [release notes](docs/releases/v1.4.0.md) cover #356–#359 / #361–#364: bounded MCP discovery, delivery preflight and diagnostics, and approved route presets. Integrated-base [CI](https://github.com/abruption/session-peer/actions/runs/41381070618) passed 37 jobs and [CodeQL](https://github.com/abruption/session-peer/actions/runs/41381070309) passed at the same base; neither replaces final preparation-head or protected-main checks.

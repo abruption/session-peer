@@ -33,7 +33,7 @@ in this ~22-second animation, not a screen recording; send success alone is not 
 ### Install
 
 Python 3.9+. The core local/SSH CLI has no third-party Python dependencies.
-Source version: **1.4.0** (at the 2026-11-02 preparation checkpoint: unpublished candidate; latest published version 1.3.3). The [release notes](docs/releases/v1.4.0.md) describe bounded MCP discovery, delivery preflight and diagnostics, route presets, and the independent skill proposal. Python publication, Node Control deployment and independently managed skill updates are separate.
+Published runtime: **1.4.0**, verified on GitHub and PyPI on 2026-11-03. The [publication record](docs/releases/v1.4.0.md#v140-publication-record) identifies the exact source, upload times and artifact hashes. The [release notes](docs/releases/v1.4.0.md) describe bounded MCP discovery, delivery preflight and diagnostics, route presets, and independent skill compatibility. Python publication, Node Control deployment and independently managed skill updates are separate.
 
 The optional [MCP extra](docs/mcp.md) now requires `mcp>=1.30,<2`; its Python 3.10+ requirement and the dependency-free Python 3.9 core remain unchanged. Existing MCP environments need an explicit package upgrade.
 

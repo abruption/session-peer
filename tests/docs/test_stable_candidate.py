@@ -11,6 +11,28 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StableCandidate(unittest.TestCase):
+    def test_v140_publication_record_preserves_preparation_and_pinned_skill_history(self):
+        source = "476c67e636ef02cb93797dd2f42252dfe577625f"
+        facts = (source, "2026-11-03", "2026-11-02T04:36:59Z",
+                 "2026-11-02T04:38:34.686393Z", "2026-11-02T04:38:36.363777Z",
+                 "b9d931ae9046f081dac15fcbeb5ca886aa437aa8e3bbb4be8296b81b2cec6832",
+                 "cfb06b3a8c4410178ddf0bbdd3f2b1733288d6221174b05309cf2dfaba7930bf",
+                 "41389266767", "41389462046", "0.4.1", "0.5.0", "0.5.1",
+                 "95cf5e1dd92654775b2f0ea86c1cb4b6107f49c3", "31688",
+                 "922512869577cc3d8b9d305641479e2dd659f0e669298584ca06f1ca15de1d31",
+                 "immutable=false", "0.9.1", "1.4.0", "1.0.1")
+        for locale, suffix in (("", ""), ("ko/", ".ko"), ("ja/", ".ja"), ("zh-CN/", ".zh-CN")):
+            with self.subTest(locale=locale):
+                notes = (ROOT / ("docs/" + locale + "releases/v1.4.0.md")).read_text(encoding="utf-8")
+                preparation, publication = notes.split('<a id="v140-publication-record"></a>', 1)
+                for fact in facts:
+                    self.assertIn(fact, publication)
+                self.assertIn("f290973962c63548f24153eeee12a8e3666fd043", preparation)
+                self.assertNotIn(source, preparation)
+                for stem in ("README", "RELEASING"):
+                    text = (ROOT / (stem + suffix + ".md")).read_text(encoding="utf-8")
+                    self.assertIn("releases/v1.4.0.md#v140-publication-record", text)
+
     def test_v140_preparation_separates_source_publication_and_skill_contracts(self):
         for locale in ('', 'ko/', 'ja/', 'zh-CN/'):
             notes = (ROOT / ('docs/' + locale + 'releases/v1.4.0.md')).read_text(encoding='utf-8')
@@ -326,8 +348,8 @@ class StableCandidate(unittest.TestCase):
                 with self.subTest(stem=stem, suffix=suffix):
                     text = (ROOT / (stem + suffix + ".md")).read_text(encoding="utf-8")
                     if stem == "README":
-                        prefixes = {"": "Source version: ", ".ko": "소스 버전: ",
-                                    ".ja": "ソースバージョン：", ".zh-CN": "源码版本："}
+                        prefixes = {"": "Published runtime: ", ".ko": "공개 런타임: ",
+                                    ".ja": "公開済みランタイム：", ".zh-CN": "已发布运行时："}
                         line = next(line for line in text.splitlines() if line.startswith(prefixes[suffix]))
                         self.assertTrue(line.startswith(prefixes[suffix] + "**" + session_peer.__version__ + "**"))
                     else:
@@ -356,16 +378,16 @@ class StableCandidate(unittest.TestCase):
 
     def test_stable_release_keeps_operational_deployment_separate(self):
         profiles = (
-            ("", "Source version: **1.4.0**",
+            ("", "Published runtime: **1.4.0**",
              "At the 2026-10-28 preparation checkpoint, the last verified published stable release was **1.3.1**.",
              "Development candidate 1.2.1 is unpublished"),
-            (".ko", "소스 버전: **1.4.0**",
+            (".ko", "공개 런타임: **1.4.0**",
              "2026-10-28 준비 시점의 마지막 확인 공개 안정판은 **1.3.1**이었습니다.",
              "개발 후보 1.2.1은 미공개입니다"),
-            (".ja", "ソースバージョン：**1.4.0**",
+            (".ja", "公開済みランタイム：**1.4.0**",
              "2026-10-28の準備時点で、最後に確認した公開済み安定版は**1.3.1**でした。",
              "開発候補1.2.1は未公開です"),
-            (".zh-CN", "源码版本：**1.4.0**",
+            (".zh-CN", "已发布运行时：**1.4.0**",
              "在2026-10-28的准备检查时，最后确认的已发布稳定版本为**1.3.1**。",
              "开发候选版本1.2.1尚未发布"),
         )

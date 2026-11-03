@@ -3,7 +3,7 @@ name: session-peer
 description: Send user-requested messages to Claude Code, Codex, or a live registered Antigravity TUI on this machine, an SSH host, or a paired device using session-peer. Use for cross-session handoffs and notifications when the available native tools do not cover the requested target.
 allowed-tools: Bash, Read
 metadata:
-  version: "0.5.0"
+  version: "0.5.1"
   runtime-min-version: "0.9.1"
   runtime-full-version: "1.4.0"
 ---
@@ -15,7 +15,19 @@ Otherwise use `session-peer`, or the standalone script at
 `~/.local/share/session-peer/session_peer.py`. The executable can also be installed
 with pipx, uv tool, or pip. Do not assume it lives in a Claude configuration directory.
 
-Before discovery or delivery, run `session-peer --version`. This skill expects
+For paired work, a missing Relay dependency in one CLI does not establish that
+no Relay-capable environment exists. The standalone script and a receiver
+service's package environment are separate installations. Before proposing an
+install, inspect only operator-known launcher/service metadata or explicitly
+supplied environment paths. Do not scan arbitrary private/credential directories,
+dump secrets, run a service command, or automatically execute a discovered
+interpreter. Have the operator review/select the intended existing runtime and
+initialized state; preserve existing manager, extras, identities and settings.
+Resolve ambiguous runtimes/state contexts with the operator before execution.
+
+Before discovery or delivery, check session-peer's version through the selected,
+approved CLI invocation (`session-peer --version` when that is the launcher).
+Check the Python interpreter version separately when needed. This skill expects
 session-peer 0.9.1 or newer. `--allow-inactive-codex-home` and `--relay-login`
 exist only in 1.0.0 and newer; confirm them with `session-peer send --help`
 before use. For security fixes, recommend Python runtime 1.0.3 or newer;
@@ -63,7 +75,9 @@ the same UUID in different homes identifies different saved copies. Explicit
 `list --codex-home PATH` lists only that home. Inspect `discovery.codex.homes` and
 `errors` for partial failures; `not_installed` is a normal empty automatic result.
 MCP destinations remain restricted to their explicitly configured home.
-`list --all` adds stale or inbox-less Claude records and archived Codex threads.
+For ordinary local/SSH discovery, `list --all` adds stale or inbox-less Claude
+records and archived Codex threads. Default listing is local; `--all` does not
+discover all paired devices or widen receiver policy.
 
 In Python runtime 1.1.0 and newer, a nonempty inherited `CODEX_SQLITE_HOME`
 or a root `sqlite_home` setting in an inspected home refuses discovery, dry-run,
@@ -160,6 +174,29 @@ newer, `--relay-login`. Admission files, device state, and private keys are
 credentials; do not print, copy, or attach them. Paired requests reject `--wake`,
 explicit SSH reply routes, and native home, binary, or SSH options. They also
 advertise no automatic `Reply-To`.
+
+For an already configured paired receiver, use the operator-selected runtime
+and exact existing initialized state for lookup before choosing an alias:
+
+```bash
+<relay-runtime> device peers --state <existing-state>
+<relay-runtime> list --device <fingerprint> \
+  --device-state <existing-state> --device-route direct --json
+```
+
+These are placeholders, not commands to execute literally. Copy the intended
+stored peer/device ID, then the permitted receiver alias; a stored pair does not
+grant access to every native session or prove reachability. `--device` selects
+one receiver. Direct is an explicitly selected, already configured route, not a
+connectivity guarantee; preserve the admission/route rules for other choices.
+These lookup commands can take state locks and maintain the existing store
+schema, so never probe guessed, missing or incomplete state paths. `device routes`
+changes stored routes and is not a connectivity inspection. After discovery, keep the same selected runtime and initialized state for the
+exact peer/alias dry-run and one send within user authorization.
+`receiverAccepted` can describe lookup/dry-run acceptance without native
+submission; it does not establish consumption or ACK. Unknown never permits
+resend. Do not implicitly install, initialize, pair, repair, restart services,
+log in or activate a native target to obtain discovery.
 
 For macOS/Linux paired Codex targets, receiver policy `codexBin` requires
 session-peer 1.0.1 or newer; the receiver service's `PATH` can also expose the

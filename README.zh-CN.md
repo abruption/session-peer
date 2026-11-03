@@ -33,7 +33,7 @@ session-peer使用各智能体自身的收件箱和队列；接收方智能体�
 ### 安装
 
 需要Python 3.9或更高版本。核心本地与SSH CLI没有第三方Python依赖。
-源码版本：**1.4.0**（截至2026-11-02准备检查点：尚未发布的候选版本，当时最新已发布版本为1.3.3）。[发布说明](docs/zh-CN/releases/v1.4.0.md)介绍有限范围的MCP发现、传递预检与诊断、路由预设及独立技能提案。Python发布、Node Control部署及独立管理的技能更新是不同的工作。
+已发布运行时：**1.4.0**。已于2026-11-03确认GitHub和PyPI上的发布状态。[发布记录](docs/zh-CN/releases/v1.4.0.md#v140-publication-record)列出了确切源码、上传时间和分发文件哈希。[发布说明](docs/zh-CN/releases/v1.4.0.md)介绍有限范围的MCP发现、传递预检与诊断、路由预设以及独立技能的兼容性。Python发布、Node Control部署及独立管理的技能更新是不同的工作。
 
 可选的[MCP extra](docs/zh-CN/mcp.md)现在要求`mcp>=1.30,<2`；MCP的Python 3.10+要求和无外部依赖的Python 3.9核心保持不变。现有MCP环境需要显式升级软件包。
 

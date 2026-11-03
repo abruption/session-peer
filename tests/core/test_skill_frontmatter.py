@@ -27,15 +27,15 @@ UNKNOWN = {"version": None, "runtimeMinVersion": None}
 
 
 class SkillFrontmatter(unittest.TestCase):
-    def test_published_v050_snapshot_is_exact_and_metadata_remains_readable(self):
-        # session-peer-skill v0.5.0, source ee2d16e954b6a0204f9a085ad3c308f4fba83ccd.
+    def test_published_v051_snapshot_is_exact_and_metadata_remains_readable(self):
+        # session-peer-skill v0.5.1, source 95cf5e1dd92654775b2f0ea86c1cb4b6107f49c3.
         path = Path(__file__).resolve().parents[2] / "skills/session-peer/SKILL.md"
         content = path.read_bytes()
-        self.assertEqual(29326, len(content))
-        self.assertEqual("532d370c3acf18f59d2b53213bfa9b08a877fcb3415de2f3fb607219c665ca0d",
+        self.assertEqual(31688, len(content))
+        self.assertEqual("922512869577cc3d8b9d305641479e2dd659f0e669298584ca06f1ca15de1d31",
                          hashlib.sha256(content).hexdigest())
         self.assertGreater(len(content), LIMIT)
-        self.assertEqual({"version": "0.5.0", "runtimeMinVersion": "0.9.1"},
+        self.assertEqual({"version": "0.5.1", "runtimeMinVersion": "0.9.1"},
                          peer.installed_skill_metadata(path))
 
     def setUp(self):
