@@ -72,17 +72,7 @@ jobs:
         run: python tools/generate_session_peer.py --check
       - name: Core tests
         timeout-minutes: 5
-        shell: bash
-        run: |
-          python -X faulthandler - <<'PY'
-          import faulthandler
-          import unittest
-          faulthandler.dump_traceback_later(240)
-          try:
-              unittest.main(module=None, argv=["unittest", "discover", "-s", "tests/core", "-t", ".", "-v"])
-          finally:
-              faulthandler.cancel_dump_traceback_later()
-          PY
+        run: python -X faulthandler -m unittest discover -s tests/core -t . -v
       - name: Adapter tests
         run: python -m unittest discover -s tests/adapters -t . -v
       - name: Codex tests
