@@ -46,6 +46,7 @@ jobs:
   test:
     name: test (${{ matrix.os }}, python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -70,7 +71,8 @@ jobs:
       - name: Generated standalone is current
         run: python tools/generate_session_peer.py --check
       - name: Core tests
-        run: python -m unittest discover -s tests/core -t . -v
+        timeout-minutes: 5
+        run: python -X faulthandler -m unittest discover -s tests/core -t . -v
       - name: Adapter tests
         run: python -m unittest discover -s tests/adapters -t . -v
       - name: Codex tests

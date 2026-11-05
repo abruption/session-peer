@@ -130,6 +130,17 @@ class HandoffWatch(unittest.TestCase):
         self.assertTrue(raw.endswith(b"\n"), "truncated output frame")
         return [json.loads(line) for line in raw.decode().splitlines()]
 
+    def read_pipe_bytes(self, descriptor, size, *, timeout=3):
+        # A reaped helper does not imply EOF: the test still owns the writer.
+        # Only this test reads the descriptor, so readiness cannot be consumed
+        # by another reader between select and read.
+        ready, _, _ = select.select([descriptor], [], [], timeout)
+        self.assertTrue(ready, "pipe output deadline exceeded; diagnostics=" +
+                        repr(getattr(self, "output_diagnostics", [])[-4:]))
+        data = os.read(descriptor, size)
+        self.assertTrue(data, "pipe output ended before expected bytes")
+        return data
+
     def test_ascii_parsers(self):
         for value in ("1", "30", "60"):
             self.assertEqual(peer.handoff_watch_timeout(value), int(value))
@@ -309,7 +320,7 @@ class HandoffWatch(unittest.TestCase):
             # Darwin may expose an internal "has been written" bit after the
             # first write. Establish it before comparing restorable flags.
             os.write(write_fd, b"x")
-            os.read(read_fd, 1)
+            self.read_pipe_bytes(read_fd, 1)
             original = peer.fcntl.fcntl(write_fd, peer.fcntl.F_GETFL)
             try:
                 if not interrupt:
@@ -320,9 +331,27 @@ class HandoffWatch(unittest.TestCase):
                 else:
                     def lookup(*args, **kwargs):
                         raise KeyboardInterrupt
-                    code, _ = self.invoke(lookup, stream, real_clock=True)
+                    initialize = peer.HandoffWatchOutput.__init__
+                    warmup_errors = []
+                    def ready_writer(writer, *args, **kwargs):
+                        initialize(writer, *args, **kwargs)
+                        try:
+                            # Prove actual helper output before the command's
+                            # 100ms interrupt finish window starts. No sleep or
+                            # extension of the production deadline is needed.
+                            self.assertIsNone(writer.write("{}"))
+                            self.assertEqual(self.read_pipe_bytes(read_fd, 4096), b"{}\n")
+                        except BaseException as error:
+                            warmup_errors.append(error)
+                            writer.close()
+                            raise
+                    with mock.patch.object(peer.HandoffWatchOutput, "__init__", new=ready_writer):
+                        code, _ = self.invoke(lookup, stream, real_clock=True)
+                    if warmup_errors:
+                        raise warmup_errors[0]
                     self.assertEqual(code, 130)
-                    data = os.read(read_fd, 4096)
+                    data = self.read_pipe_bytes(read_fd, 4096,
+                                                timeout=getattr(self, "interrupt_read_timeout", 3))
                     self.assertEqual(json.loads(data)["reason"], "interrupted")
                 self.assertEqual(peer.fcntl.fcntl(write_fd, peer.fcntl.F_GETFL), original)
                 self.assertTrue(all(process.poll() is not None for process in self.output_processes))
@@ -330,6 +359,67 @@ class HandoffWatch(unittest.TestCase):
                 stream.close()
                 if read_fd is not None:
                     os.close(read_fd)
+
+    def test_missing_interrupted_end_frame_fails_fixture_without_hanging(self):
+        # An outer watchdog keeps this regression finite even if the original
+        # blocking read is accidentally restored.
+        environment = dict(os.environ, SESSION_PEER_TEST_TMP=str(self.ledger.root.parent))
+        command = [peer.sys.executable]
+        if peer.sys.flags.dev_mode:
+            command.extend(["-X", "dev"])
+        for option in peer.sys.warnoptions:
+            command.extend(["-W", option])
+        command.extend(["-m", "unittest", "-q",
+                        "tests.core.test_handoff_watch.HandoffWatch._missing_interrupted_end_frame"])
+        process = subprocess.Popen(command, cwd=Path(__file__).resolve().parents[2],
+                                   env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            _, error_output = process.communicate(timeout=8)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate(timeout=2)
+            self.fail("missing-frame regression exceeded outer watchdog")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=2)
+        # Only unittest result headers are reflected, never arbitrary traceback
+        # values, frames, IDs, paths or capability data from the child.
+        summary = [line for line in error_output.decode("utf-8", "replace").splitlines()
+                   if line.startswith(("FAIL: ", "ERROR: ", "Ran ", "FAILED ("))]
+        self.assertEqual(process.returncode, 0,
+                         "bounded missing-frame regression failed; " + " | ".join(summary[-4:])[:500])
+        self.assertTrue(b"Ran 1 test in " in error_output and b"skipped=" not in error_output,
+                        "missing-frame regression did not execute exactly one case")
+
+    def test_warmup_failure_preserves_diagnostic_and_reaps_helper(self):
+        original_write = peer.HandoffWatchOutput.write
+        def unavailable_warmup(writer, text, **kwargs):
+            if text == "{}":
+                return "output_unavailable"
+            return original_write(writer, text, **kwargs)
+        with mock.patch.object(peer.HandoffWatchOutput, "write", new=unavailable_warmup):
+            with self.assertRaisesRegex(AssertionError, "output_unavailable"):
+                self.test_real_pipe_never_changes_flags_and_reaps_on_interrupt_or_broken_pipe()
+        self.assertTrue(all(process.poll() is not None for process in self.output_processes))
+
+    def _missing_interrupted_end_frame(self):
+        original_write = peer.HandoffWatchOutput.write
+
+        def unavailable_end(writer, text, *, end=False):
+            if end and json.loads(text).get("reason") == "interrupted":
+                return "output_unavailable"
+            return original_write(writer, text, end=end)
+
+        # Exercise the original fixture, including its open parent write FD,
+        # with a real helper and a legitimate failure to deliver the end frame.
+        # Shorten only the observation deadline, not the runtime finish budget.
+        with mock.patch.object(peer.HandoffWatchOutput, "write", new=unavailable_end), \
+                mock.patch.object(self, "interrupt_read_timeout", 0.1, create=True):
+            with self.assertRaisesRegex(AssertionError, "pipe output deadline exceeded"):
+                self.test_real_pipe_never_changes_flags_and_reaps_on_interrupt_or_broken_pipe()
+        self.assertTrue(all(process.poll() is not None for process in self.output_processes))
+        self.assertEqual(self.output_diagnostics[-1]["result"], "output_unavailable")
 
     def test_full_real_pipe_is_bounded_without_inherited_flag_mutation(self):
         read_fd, write_fd = os.pipe()
