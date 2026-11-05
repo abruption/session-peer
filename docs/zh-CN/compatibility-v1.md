@@ -35,14 +35,16 @@ JSON schema version 1 稳定且允许增加字段。每个命令结果保持当�
 
 MCP 工具结果把 CLI JSON 复用为`structuredContent`，所以 CLI 的新增字段在 MCP 中同样是
 新增字段。MCP policy `schemaVersion: 1`和 relay receiver policy 是稳定的严格 allowlist。
-未知 policy key 会被拒绝。新增 capability 必须写入文档，并在 operator opt in 前保持拒绝。
+未知 policy key 会被拒绝。新增策略权限必须写入文档，并在 operator opt in 前保持拒绝。
 参阅 [MCP](mcp.md)和[配对设备](paired-devices.md)。
 
-## 设备状态、备份与操作回执
+<a id="设备状态备份与操作回执"></a>
+
+## 设备状态、备份与操作处理记录
 
 设备状态和 backup manifest 是版本化的 operator 管理数据，只能通过随附的 backup、restore
 和 rotation 命令移动。不能静默重新编号、解释或删除 backup manifest schema 1、稳定 device
-principal、key generation、revocation tombstone 和 durable operation receipt。不兼容变更需要
+principal、key generation、revocation tombstone 和 持久管理操作处理记录（operation receipt）。不兼容变更需要
 新的 manifest 或 DB schema，以及明确 migration 与 recovery fence。
 
 control/replay DB、public-state snapshot、spent-ticket 文件和 revision high-water 记录属于

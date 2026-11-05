@@ -356,7 +356,7 @@ never commit them or copy browser credentials. Raw env values are also supported
 for operator-controlled local/test environments; never print environment dumps.
 For enabled GitHub/Google providers add LoadCredential entries and corresponding
 `GITHUB_CLIENT_SECRET_FILE`/`GOOGLE_CLIENT_SECRET_FILE` paths in the deployment
-override. Missing half-configured credentials refuse startup. Disabled providers
+override. Startup is refused if only one of a provider's client ID and client secret is configured. Disabled providers
 must have neither client ID nor secret file configured.
 
 Use the same protected config and exclusive writer lock when running the compiled

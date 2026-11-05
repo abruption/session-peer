@@ -26,12 +26,12 @@ session-peer setup --mode relay --interactive --role client --no-browser
 检查点的诊断信息，不证明当前权限。向导报告接收锁和已知服务文件，但不保证发现所有
 服务，也不修改已有服务。策略只新建私密0600文件或复用完全相同的文件，不覆盖其他
 策略、不扩大权限。应用前重新检查目标，但不保证之后原生会话仍为同一实例。
-已有密钥、数据库不完整，或当前轮换密钥丢失时，即使批准初始化也需要手动恢复，
+已有身份、数据库不完整，或当前轮换密钥丢失时，即使批准初始化也需要手动恢复，
 设置工具不会重新生成。
 
 私密 `setup.json` 在请求前持久保存原注册 UUID、名称、服务器、密钥标识及完整注册请求。中断、丢失
 响应后，用相同状态、名称明确恢复 `enroll`，现有 API 核对同一操作，不更换成新修改。
-意图、密钥、请求（包括证书 PEM 的空白）变化会在联网前被拒绝。登录过期需重新 `login`，但 UUID 保留。邀请生成结果不明时，
+意图、身份、载荷（包括证书 PEM 格式）变化会在联网前被拒绝。登录过期需重新 `login`，但 UUID 保留。邀请生成结果不明时，
 等待操作员核对。提示命令和 `--action receiver --apply` 在前台运行，直到 Ctrl-C 或
 `--seconds` 到期；不安装自动启动、服务、配置文件，已有 launchd、systemd 管理独立进行。
 `--action cancel --apply`、EOF、Ctrl-C 只停止设置等待，不撤销已提交注册或原消息。
@@ -76,7 +76,7 @@ session-peer device offer-cancel --state /private/device-state --offer-id OFFER-
 
 配对提议带有256位秘密，按接收端系统时钟在10分钟后过期，并绑定一个指定的当前密钥。状态为open、reserved、consumed、cancelled和expired。预留、经过认证且绑定邀请的提交、取消和过期在接收端数据库中串行处理。另一份邀请不能接管待定预留，已配对设备也不会降级为待定。取消只移除该提议拥有的待定信任，不吊销既有密钥绑定或已经完成的配对。完成后，应在相应端点使用现有显式命令 `device revoke --peer RECEIVER-OR-CLIENT-PRINCIPAL` 吊销信任。
 
-只有保存的提议ID、受保护的链接内容摘要、接收端标识/密钥及当前客户端密钥全部匹配，才能核对中断的提交结果。没有匹配历史的过期链接会在联网前被拒绝。过期后的核对只能通过认证提交取得已经完成的结果，不能重新准备、延期或撤销吊销。接收端清理结果后，即使仍将该peer视为已配对，也无法再核对原提议；此实现不重建历史回执，也没有超期修复命令。保留双方状态，与操作者明确制定恢复计划；盲目吊销密钥可能使恢复更困难。流程不会发送原生消息，也不会自动重发。
+只有保存的提议ID、受保护的链接内容摘要、接收端标识/密钥及当前客户端密钥全部匹配，才能核对中断的提交结果。没有匹配历史的过期链接会在联网前被拒绝。过期后的核对只能通过认证提交取得已经完成的结果，不能重新准备、延期或撤销吊销。接收端清理结果后，即使仍将该peer视为已配对，也无法再核对原提议；此实现不重建历史配对结果记录，也没有超期修复命令。保留双方状态，与操作者明确制定恢复计划；盲目吊销密钥可能使恢复更困难。流程不会发送原生消息，也不会自动重发。
 
 创建限制为每分钟5份、同时最多8份有效提议。准备请求持久限制为全局每分钟32次、每份提议每分钟8次，错误猜测也计数；全局限制同样适用于既有私密文件配对。达到上限后，拒绝尝试不会更新或延长该窗口。未知ID不会分配独立状态。终态结果保留7天，提议总数上限为1,024份；清理时将符合条件的提议元数据和邀请行一并移除。包括未认证负载在内，限制可能暂时拒绝正常配对。已配对的原生请求不使用此准备额度。这些是资源限制，不是身份或投递证据，并以接收端时钟可信为前提。接收端在信任变更决策前检查过期，持久提交可能稍后完成；客户端时钟偏差也可能使请求提前被拒绝。
 
@@ -99,19 +99,19 @@ session-peer setup --mode relay --state /private/device-state --action offer-can
 
 ## 连接失败诊断与安全的连接重试
 
-`no_authenticated_route` 保留 `retryAllowed:false` 和 `consumptionConfirmed:false`。`routeFailures` 给出每条失败路径最后一次的 `stage`、允许列表中的 `reason` 和 `attempts`。有界的 `attemptHistory` 保留每次尝试的阶段、原因和 `elapsedMs`；HTTP 拒绝还可能包含 `httpStatus`，WebSocket 关闭可能包含 `closeCode`。控制、准入、升级、attach、对端 TLS 和 probe 故障可以区分，但不会记录 URL、凭据、原始异常或消息正文。第二次尝试成功时会有 `setupDegraded:true`、`setupAttempts:2` 和 `setupFailureHistory`，不能算作干净的稳定性测试通过。
+`no_authenticated_route` 保留 `retryAllowed:false` 和 `consumptionConfirmed:false`。`routeFailures` 给出每条失败路径最后一次的 `stage`、允许列表中的 `reason` 和 `attempts`。有界的 `attemptHistory` 保留每次尝试的阶段、原因和 `elapsedMs`；HTTP 拒绝还可能包含 `httpStatus`，WebSocket 关闭可能包含 `closeCode` 和 `closeSource`（接收或发送）。控制、准入、升级、attach、对端 TLS 和 probe 故障可以区分，但不会记录 URL、凭据、原始异常或消息正文。第二次尝试成功时会有 `setupDegraded:true`、`setupAttempts:2` 和 `setupFailureHistory`，不能算作干净的稳定性测试通过。
 
-仅在**WebSocket 升级前的控制或准入超时**时，等待 0.5 秒后再尝试连接一次。attach、对端 TLS 和 probe 超时不会重试。WebSocket 升级超时也不重试，因为 origin 可能已经配对并消耗了接收端房间。使用新的准入票据和通道，不重用已消耗的票据，也不重发代理消息。HTTP 拒绝、身份/证书错误和未知失败也不会重试。直接路径获选时仍可取消 Relay 尝试。提交后丢失响应仍为 `unknown`，不重发、不切换路径。此有限缓解措施不代表公开网络故障已经解决；部署后必须重新验证实际 ACK 和长时间运行。
+仅在**WebSocket 升级前的控制或准入超时**时，等待 0.5 秒后再尝试连接一次。attach、对端 TLS 和 probe 超时不会重试。WebSocket 升级超时也不重试：即使 101 响应丢失，origin 也可能已经配对了一个接收端。使用新的准入票据和通道，不重用已消耗的票据，也不重发代理消息。HTTP 拒绝、身份/证书错误和未知失败也不会重试。直接路径获选时仍可取消 Relay 尝试。提交后丢失响应仍为 `unknown`，不重发、不切换路径。此有限缓解措施不代表公开网络故障已经解决；部署后必须重新验证实际 ACK 和长时间运行，才能将相应验收条件标记为完成。
 
 接收端每分钟最多向 stderr 输出一条经过清理的 `relay_connection_failed` 警告。疑似正常空闲到期的关闭与故障警告分开。显式使用 `device serve --diagnostic-events` 和 `relay serve --diagnostic-events` 时，只向 stderr 记录房间、attach、关闭阶段、耗时、允许列表内的原因及关闭代码。默认关闭；不会记录设备身份、房间名、URL、标头、凭据或正文。Relay 指标还会增加房间创建与配对、每条连接的 attach 发送以及到期计数。attach 发送不能证明客户端已收到。接收端的 `idle_expiry_like` 不能证明服务器端原因。
 
-WebSocket 关闭的 `closeSource` 区分代码来自接收还是发送。Relay 计数器区分接收端先到和客户端先到的房间。`receiverWsAgeMs` 只表示等待时长，不能证明连接健康；需要对照配对时间与接收端的 `attach_received`、对端 TLS 事件。
+Relay 计数器区分接收端先到和客户端先到的房间。`receiverWsAgeMs` 只表示等待时长，不能证明连接健康；在推断存在失效的连接段之前，需要对照房间配对时间与接收端的 `attach_received`、对端 TLS 事件。
 
 `stream_close.closeCode` 是从远端收到的关闭代码。`1006` 表示未收到关闭帧，可能提示连接停滞。`peer_closed` 表示另一条连接结束后 Relay 关闭了本连接；`remote_going_away` 表示远端在 Relay 未发起关闭时自行发送了 1001 代码。`receiverRoleBusy`、`clientRoleBusy` 统计同一房间中被拒绝的重复连接；接收端计数上升可能意味着接收端重连时 Relay 仍持有旧连接。
 
 显式启用的 Relay 和接收端生命周期事件包含 `eventTimeUtcMs`（UTC Unix 毫秒）。客户端每次尝试建立 Relay 连接都会生成新的随机 UUIDv4 `attemptId`，并在成功结果或逐次失败元数据中记录。新版 Relay 在已配对房间事件中记录该 ID，并通过 attach 通知传给新版接收端；接收端的 `attach_received` 和 peer-TLS 事件也记录同一 ID。该 ID 不由身份、房间名、请求 ID 或消息内容派生，也不会改变授权或重试安全性。归因失败时，应确认完全相同的 `attemptId` 只对应一个 Relay 房间和一条接收端连接，并在比较 UTC 时间时考虑时钟偏差。若事件缺失、重复或某条连接使用旧版本，不要仅凭时间或汇总计数推断，应记为 `unattributed`。
 
-如果公开路径停滞再次出现，可在显式启用的 Relay `stream_close` 事件中比较每条连接的 `ingressFrames`/`ingressBytes`、`egressCompletedFrames`/`egressCompletedBytes` 以及首末帧 UTC 时间。这些是加密 WebSocket 帧计数，不是消息数。发送完成只表示 Relay 的套接字 send 已返回，不能证明 Cloudflare、接收端、TLS 或应用程序收到了这些字节。先比较同一房间和 `attemptId` 下的两个角色，再对照接收端事件。事件缺失或匹配模糊时仍应记为 `unattributed`。仅凭计数无法判定 Cloudflare、OCI 或中间链路的责任。元数据时间和帧大小也会透露活动信息，因此应将 opt-in 日志私密且限期保存。
+如果公开路径停滞再次出现，可在显式启用的 Relay `stream_close` 事件中比较每条连接的 `ingressFrames`/`ingressBytes`、`egressCompletedFrames`/`egressCompletedBytes` 以及首末帧 UTC 时间。这些是加密 WebSocket 帧计数，不是消息数。发送完成只表示 Relay 的套接字 send 已返回，不能证明 Cloudflare、接收端、TLS 或应用程序处理了这些字节。先比较同一房间和 `attemptId` 下的两个角色，再对照接收端事件。事件缺失或匹配模糊时仍应记为 `unattributed`。仅凭计数无法判定 Cloudflare、OCI 或中间链路的责任。元数据时间和帧大小也会透露活动信息，因此应将 opt-in 日志私密且限期保存。
 
 若等待房间已开启至少 1 秒后被 Relay 正常关闭，接收端会在 0.5 秒后重连，而不会增加退避时间。其他失败以及 1 秒内关闭的房间仍按指数退避，最长 5 秒。Relay 连接两端均使用 10 秒的 WebSocket ping 间隔与超时，因此停滞连接约 20 秒即可检测到，而不是约 40 秒。这些改动只缩短重连空档，并不能修复停滞的网络路径。
 
@@ -243,7 +243,7 @@ session-peer device pair --state /private/client-state \
 ```
 
 邀请包含一次性密钥和固定的接收端证书。待处理的配对可以通过证明相同的
-设备密钥来调和丢失的提交响应。证书替换将会失败。配对完成后请删除邀请文件；
+设备密钥来核对丢失响应的提交结果。证书替换将会失败。配对完成后请删除邀请文件；
 它们包含机密信息。IPv6 直接地址使用 `[address]:port`。直接访问需要
 TCP 可达性；不存在自动路由器、防火墙、VPN 或 NAT 配置。
 
@@ -269,7 +269,7 @@ session-peer relay serve --accounts /private/accounts.json \
 将哈希存储在 `/etc/session-peer-relay/accounts.json` 中，并调整经审查的
 [systemd 模板](../../deploy/examples/static-account/session-peer-relay.service)。在启用前使用
 `systemd-analyze verify` 进行验证。该模板以动态用户（dynamic user）、
-无特权功能（capabilities）、不可访问的主目录、只读系统、私有临时目录
+无 Linux 特权能力（capabilities）、不可访问的主目录、只读系统、私有临时目录
 和显式资源限制运行。它适用于**盲中继**，而非原生接收端；
 后者需要其代理拥有的运行时路径和套接字。
 
@@ -294,7 +294,9 @@ TLS1.3 内部。请勿禁用外部 TLS 验证。
 明文 `ws://` 仅限于环回以进行隔离测试。接收端就绪输出确认其本地监听器；
 `relayReadyConfirmed: false` 刻意不声明端到端中继就绪。
 
-## 列出、发送与调和
+<a id="列出发送与调和"></a>
+
+## 列出、发送与结果核对
 
 ```sh
 session-peer list --device RECEIVER-FINGERPRINT --device-state /private/client-state \
@@ -345,7 +347,7 @@ session-peer device revoke --state /private/device-state --peer CLIENT-FINGERPRI
 ```
 
 吊销可防止新的授权工作并关闭受跟踪的通道。已被接受的原生调用可能会完成；
-请调和其 ID。接收端重启会保留身份、配对和日志。中继重启会断开连接；
+请按其 ID 核对结果。接收端重启会保留身份、配对和日志。中继重启会断开连接；
 端点会重新连接并获取新的准入凭据。在发起新提交之前，就绪探测必须成功。
 中继凭单具有短暂性且一次性有效；连接和帧大小均有上限。中继上不存在
 明文/离线原生请求的队列。
@@ -371,7 +373,9 @@ session-peer device routes --state ./client-state --peer RECEIVER_FINGERPRINT \
 路由变更不会授权新身份或恢复已被吊销的设备。有关有界实时 Antigravity
 测试和剩余发布关卡，请参阅[公开试点证据](relay-public-pilot-2026-09-17.md)。
 
-## 首次连接公共Relay
+<a id="首次连接公共relay"></a>
+
+## 首次连接托管Relay
 
 需要Python 3.11+的macOS/Linux(Windows使用WSL)和另装的Relay extra，skill/plugin本身不会安装。新pipx环境使用 `pipx install --python python3.11 'session-peer[relay]'`，已有环境保留原管理器；standalone继续用于local/SSH，另选Relay环境。两端分别使用私有state执行以下命令，将 `FULL-UUID` 替换为新的操作UUID，响应不确定时保留此UUID。
 
@@ -381,6 +385,6 @@ session-peer device login --state /private/device-state --server https://relay.a
 session-peer device enroll --state /private/device-state --name laptop --operation-id FULL-UUID
 ```
 
-按上方schema创建receiver policy，启动 `session-peer` `device serve --state /private/device-state --policy /private/receiver-policy.json --relay wss://relay.abruption.dev/v1/connect --login --seconds 3600`。在另一终端运行 `session-peer` `device invite --state /private/device-state --relay wss://relay.abruption.dev/v1/connect --out /private/invite.json`，安全转交邀请。已登录并注册的client须在10分钟内运行 `session-peer` `device pair --state /private/client-state --invite /private/invite.json --route relay --login`，然后 `session-peer list --device RECEIVER-ID --device-state /private/client-state --device-route relay --relay-login --json`。保持receiver运行。注册、配对和native权限互不等同。发送前先dry-run；queued不是ACK。引导不会自动安装、登录或重试。一般403/404或 `no_authenticated_route` 不能证明receiver已停止。仅按证据区分登录缺失/过期和设备查询失败，不确定的发送须核对而非重发。
+按上方schema创建receiver policy，启动 `session-peer` `device serve --state /private/device-state --policy /private/receiver-policy.json --relay wss://relay.abruption.dev/v1/connect --login --seconds 3600`。在另一终端运行 `session-peer` `device invite --state /private/device-state --relay wss://relay.abruption.dev/v1/connect --out /private/invite.json`，安全转交邀请。已登录并注册的client须在10分钟内运行 `session-peer` `device pair --state /private/client-state --invite /private/invite.json --route relay --login`，然后 `session-peer list --device RECEIVER-ID --device-state /private/client-state --device-route relay --relay-login --json`。保持receiver运行。注册、配对和native权限互不等同。发送前先dry-run；queued不是ACK。引导不会自动安装、登录或重试。一般403/404或 `no_authenticated_route` 不能证明receiver已停止。登录缺失/过期与明确的设备未找到证据会获得不同的提示，不确定的发送须核对而非重发。
 
-配对接收端会在引用正文之外显示已认证的 TLS 证书指纹。它识别的是配对设备的密钥，而不是人员或原生代理会话；正文中的 From 或 Reply-To 声明不能替换它。最终的引用正文、指纹和警告必须在开始记录或原生投递之前满足 32 KiB 限制。Reply-To 的可信度不会超过其外围标记的可信度；第三方路由应由会话所有者确认。此机制不绕过审批，也不保证完全抵御提示注入。
+配对接收端会在引用正文之外显示已认证的 TLS 证书指纹。它识别的是配对设备的密钥，而不是人员或原生代理会话；正文中的 From 或 Reply-To 声明不能替换它。最终的引用正文、指纹和警告必须在将请求纳入处理日志或进行原生投递之前满足 32 KiB 限制。Reply-To 的可信度不会超过其外围标记的可信度；第三方路由应由会话所有者确认。此机制不绕过审批，也不保证完全抵御提示注入。

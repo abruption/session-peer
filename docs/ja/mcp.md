@@ -35,7 +35,7 @@ Python 3.10 以降でインストールします: `pipx install 'session-peer[mc
 
 ## v1.4.0 ソース: 宛先メタデータの取得 (#356)
 
-`list_destinations()` は引数を取らず、オペレーターのポリシーのメタデータだけを返します。`schemaVersion` は 1 で、各項目には `destination`、`transport`、`agents`、`capabilities` が含まれます。子プロセスの起動やネットワークリクエストは行いません。SSH ホストの値と Codex ホームのパスは省略されます。送信先の名前は信頼できないデータとして扱ってください。設定されたケーパビリティはポリシー上の権限を示し、ネイティブエージェントとの互換性は示しません。
+`list_destinations()` は引数を取らず、オペレーターのポリシーのメタデータだけを返します。`schemaVersion` は 1 で、各項目には `destination`、`transport`、`agents`、`capabilities` が含まれます。子プロセスの起動やネットワークリクエストは行いません。SSH ホストの値と Codex ホームのパスは省略されます。送信先の名前は信頼できないデータとして扱ってください。設定された権限はポリシー上の権限を示し、ネイティブエージェントとの互換性は示しません。
 
 応答には制約を明示します: `callerIdentity="unavailable"`、`readiness="not_checked"`、`submission="not_attempted"`、`consumption="not_checked"`、`ack="not_checked"`。このツールは宛先が64件を超える場合や、IDに表示できない文字がある場合、UTF-8で128バイトを超える場合に取得を拒否します。テキストと構造化データを合わせたMCPツール結果は64 KiB以内で、外側のJSON-RPCエンベロープは含みません。これは取得ツールの制限であり、ポリシーの読み込みと既存ツールの動作は変わりません。表示可能な文字の判定は、実行中のPythonのUnicodeデータベースに従います。既定のローカル一覧取得専用ポリシーは変わりません。
 
@@ -43,7 +43,7 @@ Python 3.10 以降でインストールします: `pipx install 'session-peer[mc
 
 ## v1.4.0 ソース: 送信の事前検証 (#357)
 
-`preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)` は、既存の CLI dry-run 検査で通常のメッセージを検証します。オペレーターのポリシーは `schemaVersion` 2 を使用し、送信先とエージェントに対して `preflight` を明示的に許可する必要があります。バージョン 1 の既存のケーパビリティには新たな権限を追加せず、既定はローカル一覧取得専用のままです。事前検証に `send` は不要で、送信を許可するものではありません。wake の適格性を調べる場合は別途 `wake` が必要ですが、モデルの起動や wake 予算の予約は行いません。
+`preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)` は、既存の CLI dry-run 検査で通常のメッセージを検証します。オペレーターのポリシーは `schemaVersion` 2 を使用し、送信先とエージェントに対して `preflight` を明示的に許可する必要があります。バージョン 1 の既存の権限には新たな権限を追加せず、既定はローカル一覧取得専用のままです。事前検証に `send` は不要で、送信を許可するものではありません。wake の適格性を調べる場合は別途 `wake` が必要ですが、モデルの起動や wake 予算の予約は行いません。
 
 バージョン付きの説明は、SSH アダプターによる整形前のネイティブ応答から許可された事実だけを抽出し、定められた拒否・不明の理由とオペレーターの対処を示します。メッセージ本文、生のエラー、認証情報、ホスト・ホームのパス、ネイティブの記録は含めません。結果が不明な場合や予期しない投入の証拠がある場合は、`retryAllowed=false` として検証に失敗します。自動再送しないでください。事前検証はメッセージの投入や handoff 権限の作成を行いません。デバイスと handoff のモードには対応しません。
 
@@ -83,7 +83,7 @@ MCP ラッパーが対応する検査と実行上の影響は、次の範囲に�
 
 入力シグネチャ: `list_sessions(destination="local", agent=null, include_inactive=false, preset=null, preset_revision=null)`; `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30, preset=null, preset_revision=null)`; `preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)`.
 
-`list_presets(destination)` は承認済みの経路メタデータだけを読みます。`schemaVersion` 2 のポリシーで `presets` を明示的に許可し、宛先ごとの `presets` リストに `[a-z][a-z0-9_-]{0,63}` に一致する承認済みの名前を 1 件以上、128 件以下で指定する必要があります。バージョン 1 は新しいケーパビリティとフィールドを拒否します。ストアを読む前に権限を確認します。結果には宛先と一致する承認済みの `name`、`agent`、`transport`、`revision` と既存の `dp1:` トークンだけが含まれ、実際のホスト、ホーム、ストアのパスは省略されます。保存済み経路の参照では、セッションの探索、対象の選択、SSH・ネイティブ・バージョン確認のプローブ、データの更新を行いません。バージョン付きのテキストと構造化されたツール結果は、合計 64 KiB に制限されます。
+`list_presets(destination)` は承認済みの経路メタデータだけを読みます。`schemaVersion` 2 のポリシーで `presets` を明示的に許可し、宛先ごとの `presets` リストに `[a-z][a-z0-9_-]{0,63}` に一致する承認済みの名前を 1 件以上、128 件以下で指定する必要があります。バージョン 1 は新しい権限とフィールドを拒否します。ストアを読む前に権限を確認します。結果には宛先と一致する承認済みの `name`、`agent`、`transport`、`revision` と既存の `dp1:` トークンだけが含まれ、実際のホスト、ホーム、ストアのパスは省略されます。保存済み経路の参照では、セッションの探索、対象の選択、SSH・ネイティブ・バージョン確認のプローブ、データの更新を行いません。バージョン付きのテキストと構造化されたツール結果は、合計 64 KiB に制限されます。
 
 `list_sessions`、`preflight_send`、`send_message` は任意の `preset`、`preset_revision` 入力を受け付けます。選択には既存の操作権限と `presets` の両方が必要です。保存済み経路やリビジョンが権限を与えることはありません。送信には明示的な対象が必要で、実際の送信には現在のリビジョンが必要です。プリセットを wake や Reply-To URI の対象と組み合わせることはできません。macOS/Linux の既存の Claude Code・Codex のローカルまたは SSH 経路だけをサポートし、Windows、デバイス、アドレス帳、handoff、プリセット管理のサポートは追加しません。
 
@@ -99,12 +99,12 @@ MCP ラッパーが対応する検査と実行上の影響は、次の範囲に�
 
 以下の二つのシグネチャは既存の基本インターフェースを説明します。v1.4.0ソースのツールと省略可能なプリセット引数は、上の各節と初期化済みMCPの`tools/list`スキーマを確認してください。ツールが表示されても、ポリシー上の権限が付与されるわけではありません。
 
-- `list_sessions(destination="local", agent=null, include_inactive=false)` は CLI の構造化された一覧を返します。Agent は `claude` または `codex` です。省略した場合は許可されたエージェントを一覧表示します。
+- `list_sessions(destination="local", agent=null, include_inactive=false)` はCLIの構造化一覧を返します。 エージェントの選択は送信先ポリシーが許可する登録済みアダプター（例：`claude`、`codex`）に制限され、省略時は許可されたエージェントを一覧表示します。
 - `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30)` は、`send` が明示的に許可されている場所にのみ 1 回送信します。Target は Claude 名/PID、`codex:<UUID>`、または設定されたホストとホームに正確に一致する Reply-To URI です。
 
 MCP ツールのアノテーションは、一覧取得を読み取り専用、送信を非冪等としてマークします。必要に応じてホストクライアントのツール承認を設定してください。サーバーポリシーは宛先を個別に制限し、サンドボックスやホストの承認をバイパスすることはありません。別のホスト名が同じマシンに解決される場合でも、Reply-To URI 内の SSH エイリアスはポリシーと完全に一致する必要があります。そうでない場合は、直接ターゲットと設定済みの宛先 ID を使用してください。
 
-応答は MCP の structuredContent と text の両方で CLI の JSON フィールドを保持します。一覧取得の部分的な失敗では、検出されたセッションを保持し、isError を設定します。キューへの送信は消費ではありません。結果が unknown の送信を自動的に再試行しないでください。リモート送信後にキャンセルやトランスポートの切断が発生する可能性があります。received/status/wait ツールはありません。[明示的な wake](wake.md) には、`send` に加えて個別の `wake` ケーパビリティが必要です。wake を有効にする場合は、クライアントツールのタイムアウトを 150 秒に設定してください。
+応答は MCP の structuredContent と text の両方で CLI の JSON フィールドを保持します。一覧取得の部分的な失敗では、検出されたセッションを保持し、isError を設定します。キューへの送信は消費ではありません。結果が unknown の送信を自動的に再試行しないでください。リモート送信後にキャンセルやトランスポートの切断が発生する可能性があります。received/status/wait ツールはありません。[明示的な wake](wake.md) には、`send` に加えて個別の `wake` 権限が必要です。wake を有効にする場合は、クライアントツールのタイムアウトを 150 秒に設定してください。
 
 共有 MCP プロセスは、呼び出し元のスレッドを確実には識別できません。サーバーを起動したセッションに帰属させるのではなく、メッセージは `session-peer MCP (caller session unavailable)` と識別し、Reply-To を省略します。認証のためにこのヘッダーに依存しないでください。メッセージ本文はシェルコマンド文字列ではなく stdin 経由で渡されます。通常の CLI の制限が依然として適用されます。
 

@@ -44,7 +44,7 @@ session-peer send --host ubuntu@worker --to antigravity:FULL-CONVERSATION-UUID \
 - `consumptionConfirmed: false`는 계속 false로 유지됩니다. 자동화된 ACK/대기 기능은 제공되지 않습니다. `--wake`는 지원되지 않습니다. 필요한 경우 회신을 별도로 확인하십시오.
 - 타임아웃, 시작 실패, 0이 아닌 네이티브 종료 코드 또는 유실된 브리지 응답은 `status: unknown`, `ok: false`, `retryAllowed: false`를 반환합니다. 자동으로 재전송하지 마십시오.
 - 요청 유효성 검사 오류는 네이티브 호출 전에 거부됩니다. `reason` 및 `error`를 확인하십시오. 구조화된 응답 전의 원격 트랜스포트 실패 또한 결과를 알 수 없는 상태로 남겨둘 수 있습니다.
-- `requestId`와 `generation`은 이번 시도를 식별합니다. 선택형 `--request-id UUID`에는 `--antigravity-generation UUID`가 필요합니다. **동일한 브리지 세대** 내에서 동일한 ID/본문은 `duplicateSuppressed: true`와 함께 캐시된 결과를 반환합니다. 해당 ID로 변경된 내용은 거부됩니다. 영구적인 보관함, 재시작 간 재생, 또는 정확히 한 번 보장은 없습니다. 알 수 없는 상태를 재시도하기 위해 ID를 변경하지 마십시오.
+- `requestId`와 `generation`은 이번 시도를 식별합니다. 선택형 `--request-id UUID`에는 `--antigravity-generation UUID`가 필요합니다. **동일한 브리지 세대** 내에서 동일한 ID/본문은 `duplicateSuppressed: true`와 함께 캐시된 결과를 반환합니다. 해당 ID로 변경된 내용은 거부됩니다. 영구적인 보관함, 재시작 후 요청 재처리(replay), 또는 정확히 한 번 보장은 없습니다. 알 수 없는 상태를 재시도하기 위해 ID를 변경하지 마십시오.
 
 브리지에는 동일 UID 검사와 비공개 `/tmp/session-peer-agy-UID` 디렉터리(0700), 등록 및 소켓(0600), 제한된 프레임 JSON 읽기, 15초 네이티브 호출 타임아웃이 있습니다. 네이티브 stdout/stderr는 폐기되며, 오류에 시크릿은 포함되지 않습니다. agentapi에 전달된 메시지 본문은 네이티브 프로세스 인자이며 충분한 권한을 가진 프로세스 검사에 표시될 수 있습니다. 동일한 OS 사용자로 실행되는 다른 프로그램은 동일한 신뢰 경계 내에 있습니다.
 

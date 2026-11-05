@@ -42,7 +42,7 @@
 
 - [v1.1.1维护说明](releases/v1.1.1.md)介绍2026-10-12准备的文档与测试维护版本；运行时行为与1.1.0相同。软件包发布需单独确认。
 
-- [实验性Handoff运行时](handoff-runtime.md)说明1.1.0中已发布的有限私有收据功能、支持路径及剩余验收条件。
+- [实验性Handoff运行时](handoff-runtime.md)说明1.1.0中已发布的有限私有接收确认回执功能、支持路径及剩余验收条件。
 - [v1兼容性契约](compatibility-v1.md)对stable、versioned、migrated、internal和experimental surface分类。
 - [代理传输架构](architecture/agent-transports.md)和[中继开发计划](relay-development-plan.md)介绍实现边界。
 - [v1.1.0发布说明](releases/v1.1.0.md)保留已发布1.1.0的证据、变更及部分支持范围。

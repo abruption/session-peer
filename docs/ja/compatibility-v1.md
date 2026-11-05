@@ -38,14 +38,14 @@ URI authority versionが必要です。
 
 MCP tool resultはCLI JSONを`structuredContent`として再利用するため、CLIのadditive fieldは
 MCPでもadditiveです。MCP policy `schemaVersion: 1`とrelay receiver policyはstableな厳格
-allowlistです。未知のpolicy keyは拒否します。capability追加は文書化し、operatorがopt in
+allowlistです。未知のpolicy keyは拒否します。ポリシー権限の追加は文書化し、operatorがopt in
 するまで拒否します。[MCP](mcp.md)と[ペアデバイス](paired-devices.md)を参照してください。
 
 ## Device state、backup、operation receipt
 
 Device stateとbackup manifestはversionedなoperator管理dataです。同梱のbackup、restore、
 rotation commandでのみ移動します。backup manifest schema 1、stable device principal、key
-generation、revocation tombstone、durable operation receiptを暗黙に再番号化、再解釈、削除
+generation、revocation tombstone、永続的な管理操作の処理記録を暗黙に再番号化、再解釈、削除
 できません。非互換変更には新manifestまたはDB schemaと明示migration・recovery fenceが必要です。
 
 control/replay DB、public-state snapshot、spent-ticket file、revision high-water recordはoperator
@@ -81,7 +81,7 @@ release noteは新たにtestedとなったversionとcoverage低下を明記し�
 ## 変更とdeprecation rule
 
 Stable surfaceはv1中additiveに変更します。削除、型変更、意味の再利用、以前有効だったpublic
-inputの厳格化には新しいversioned surfaceまたは次major releaseが必要です。安全上継続できない
+inputに対する拒否の厳格化には新しいversioned surfaceまたは次major releaseが必要です。安全上継続できない
 場合を除き、削除前に少なくとも一minor releaseのrelease noteでdeprecationを示します。
 
 Persistent formatはpreflight、backup、post-migration verificationを含む明示migrationを使います。

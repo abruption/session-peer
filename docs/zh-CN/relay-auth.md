@@ -101,7 +101,7 @@ https://relay.abruption.dev/api/auth/callback/google
 { principal, certificatePEM, keyGeneration, name, operationId, expectedGeneration }
 ```
 
-`principal` 是一个固定的、随机的 64 位小写十六进制设备身份，与证书分离。`operationId` 是在得知
+`principal` 是一个固定的、随机的 64 个字符的小写十六进制设备身份，与证书分离。`operationId` 是在得知
 结果前一直保留的 UUID v4。初始注册要求 principal 等于初始证书 DER
 SHA256、设备尚不存在、`keyGeneration=0`，
 且省略 `expectedGeneration`。更新则要求同一所有者现有的活动 principal、
@@ -126,7 +126,7 @@ P-256 密钥且当前有效期限超过 60 秒。新证书
 旧密钥需要所有者吊销并创建新的 principal。已吊销的身份绝不能
 通过注册、更新或重试来恢复。
 
-变更、质询消耗和已提交收据构成同一个 SQLite 事务。
+变更、一次性质询的使用和已提交的管理操作处理记录构成同一个 SQLite 事务。
 更新会立即使所有者未完成的质询失效，立即重新发布状态，
 并拒绝跨越世代变更的准入签名。
 
@@ -153,10 +153,10 @@ P-256 密钥且当前有效期限超过 60 秒。新证书
 
 未知的 ID 和其他所有者的 ID 均返回 404。待处理的预留
 在质询过期后仍将保留。对于相同的已完成所有者/有效载荷/operationId 进行重试，
-将返回存储的历史收据，而不会再次执行变更或证明，
+将返回存储的历史管理操作处理记录，而不会再次执行变更或证明，
 即使质询已过期或设备随后已被吊销也是如此。更改了有效载荷
-或不同所有者的 operationId 重用将被拒绝。收据**不是当前设备
-状态**；请使用设备列表查看当前世代/吊销情况。对已吊销收据
+或不同所有者的 operationId 重用将被拒绝。管理操作处理记录**不是当前设备
+状态**；请使用设备列表查看当前世代/吊销情况。对已吊销设备的操作记录
 重试无法复活设备。发布失败将回滚变更并使其操作保持
 未提交状态，同时健康检查会在发布恢复之前阻止
 准入。丢失响应时请保留 ID 并查询状态；切勿创建新
@@ -241,7 +241,7 @@ OAuth 登录/注册不会取代端点 E2EE 配对/PIN 策略。
 汇总视图。
 
 `admin.abruption.dev` 继续作为现有的 Authelia 管理门户。其根路径和
-`/api/*` 路由已由认证控制台占用。请使用精确的 `/session-peer` 门户页面，
+`/api/*` 路由已由认证控制台占用。将 session-peer 与精确的 `/session-peer` 门户页面集成，
 并用 Authelia 同时保护该页面和 `/session-peer/api/metrics`。聚合 API 由
 独立的 `127.0.0.1:3771` 监听器提供，绝不能经由公共中继主机路由。这样
 Authelia 就是唯一的浏览器登录边界，同时公共中继无需信任转发的身份标头。
@@ -284,7 +284,7 @@ SQLite 数据库中持久预留一个新的安全整数 `revision`。
 过期或 issuedAt>now+5 秒，Python 将故障闭锁。它会在每次准入时重新读取，
 并每秒重新检查现有连接，关闭已吊销/轮换的会话。仅凭 JWT TTL
 并不是活动会话吊销。实际的连接/时钟/重启行为需要
-Python/分级环境验证。发布失败会回滚数据库变更并
+Python/预发布环境验证。发布失败会回滚数据库变更并
 将健康状态标记为失败；SQLite 和文件并不是分布式原子事务。
 发布后发生数据库提交失败可能会暂时拒绝访问；切勿将该失败
 操作报告为成功或绕过过时状态检查。
@@ -293,8 +293,8 @@ Python/分级环境验证。发布失败会回滚数据库变更并
 毫秒级质询、独立域 rotate 端点、2s/10s
 状态）。切勿将旧工件/客户端与此验证器混用。启动时会拒绝包含
 `contract_migration_required` 的已存 SPKI 设备行；绝不会
-暗中重新解释旧设备指纹或操作历史。注册模式标记还会
-拒绝较早的已填充候选数据库，而不会重新编号世代或丢弃收据。请使用新的隔离候选状态，
+暗中重新解释旧设备指纹或操作历史。注册数据模式标记还会
+拒绝较早的已填充候选数据库，而不会重新编号世代或丢弃管理操作处理记录。请使用新的隔离候选状态，
 或规划经过运维人员审查且保留旧状态的显式迁移。此处不执行自动
 凭据/设备状态删除。
 
@@ -336,10 +336,10 @@ GOOGLE_CLIENT_ID=REPLACE_WITH_OPERATOR_APP_ID
 本地/测试环境中也支持原始环境变量值；切勿打印环境转储。
 对于已启用的 GitHub/Google 提供商，请在部署覆盖配置中添加 LoadCredential 条目及相应的
 `GITHUB_CLIENT_SECRET_FILE`/`GOOGLE_CLIENT_SECRET_FILE` 路径。
-缺失或配置不全的凭据将拒绝启动。已禁用的提供商不得配置
+若只配置某个提供商的客户端 ID 与客户端密钥两者之一，则拒绝启动。已禁用的提供商不得配置
 客户端 ID 或密钥文件。
 
-运行已编译的 `node dist/server/migrate.js` 时，请使用相同的受保护配置和独占 writer lock，然后运行 `npm start`。该命令会先迁移 Better Auth 和版本化的 session-peer 第一方架构，再报告已安装的版本。迁移是显式的；生产启动会验证该架构，并以 `migration_required` 失败，而不是暗中创建或重写表。升级前请创建一致且受保护的快照，也不要将迁移放入 `ExecStartPre` 或自动重启路径。本地开发仅允许在 localhost 或 127.0.0.1 上使用 HTTP，且不得使用生产密钥。状态必须位于源码之外且位于
+运行已编译的 `node dist/server/migrate.js` 时，请使用相同的受保护配置和独占 writer lock，然后运行 `npm start`。该命令会先迁移 Better Auth 和版本化的 session-peer 第一方数据模式，再报告已安装的版本。迁移是显式的；生产启动会验证该数据模式，并以 `migration_required` 失败，而不是暗中创建或重写表。升级前请创建一致且受保护的快照，也不要将迁移放入 `ExecStartPre` 或自动重启路径。本地开发仅允许在 localhost 或 127.0.0.1 上使用 HTTP，且不得使用生产密钥。状态必须位于源码之外且位于
 iCloud 之外。私有签名密钥仅生成一次，权限为 0600 模式，并在
 重启后保留。所有私有数据库/状态父级仅限所有者访问；备份必须将
 control SQLite 一致快照、签名密钥和 OAuth 策略作为单独的
@@ -351,14 +351,14 @@ control SQLite 一致快照、签名密钥和 OAuth 策略作为单独的
 `/opt` 挂载、不可访问的其他服务 data/config/log 路径、无
 capabilities、256MiB/50% CPU/64 任务。
 部署必须在 `/usr/bin/node` 处提供受支持的 Node，安装已构建的
-control 树，在服务私有状态中迁移认证模式，并设置提供商
+control 树，在服务私有状态中迁移认证数据模式，并设置提供商
 凭据/策略。启动锁可防止多个 systemd control 写入者同时运行；
 手动启动必须使用相同的锁。安装过程中请检查锁所有权/状态路径。
-Node 内存/运行时行为仍需在分级环境中进行观察。
+Node 内存/运行时行为仍需在预发布环境中进行观察。
 
 Caddy 集成应将 `/api/control/*`、`/api/auth/*`、`/api/relay/*` 以及
 网页/资产分流至 3770，与现有的 Python 中继 WebSocket/准入路径分开。
-在与分级环境所有者共同审查集成工件和资源隔离之前，切勿重载
+在与预发布环境所有者共同审查集成工件和资源隔离之前，切勿重载
 Caddy 或开放主机名。未知路径返回 404；
 `.env` 和源码/状态文件不是静态资产。安全标头包括
 no-store、严格的 CSP、防框架嵌套和 no-referrer。HTTP 服务器既不信任
@@ -366,7 +366,7 @@ X-Forwarded-Host 也不信任任意 Host 值。代理必须保留配置的
 源 Host。服务器会从回环套接字覆盖其认证 IP 标头；不受信任的
 X-Forwarded-For 无法绕过认证速率限制器。该保守的候选版本在
 本地代理间共享认证端点限制，因此多用户容量仍需在
-分级环境中进行评估。多个 Set-Cookie 标头分别保留。
+预发布环境中进行评估。多个 Set-Cookie 标头分别保留。
 未启用请求 URL/标头/正文/令牌日志记录；诊断
 消息仅包含固定的操作错误代码。
 
@@ -420,7 +420,7 @@ OAuth、Mac 用户浏览器、Python JWT 集成、24 小时运行或真实 Claud
 证书和稳定可靠的新轮换操作 UUID。针对同一质询消息添加
 旧密钥的 `previousKeyProof`。在响应不确定的情况下请保留该操作 ID，
 并使用 `GET /api/relay/operations/<operationId>` 查询其仅所有者可查的
-历史收据。
+历史管理操作处理记录。
 
 初始注册必须省略 `expectedGeneration`；轮换时则必须提供。
 切勿推断或暗中转换较旧候选版本所使用的世代。
@@ -430,6 +430,6 @@ OAuth、Mac 用户浏览器、Python JWT 集成、24 小时运行或真实 Claud
 
 ### 可选的认证代理标识
 
-Control 默认按 socket IP 限流，不信任转发 IP 头。启用时，通过 `SESSION_PEER_TRUSTED_PROXY_TOKEN_FILE` 指定仅与本机代理共享的专用32–128字符 base64url 密钥文件(0600，也支持 systemd credentials)。代理必须为每个 Control 请求覆盖 `X-Session-Peer-Proxy-Token` 和 `X-Session-Peer-Client-IP`，填入密钥与验证过的单一客户端 IP。Control 仅接受 loopback 连接中的这对头，规范化 IPv4/IPv6 并在路由前删除两者。缺失或无效时回退到 socket IP。原始 `X-Forwarded-For`、`CF-Connecting-IP`、`X-Session-Peer-IP` 均不可信。使用 CDN 时须单独验证代理的可信 upstream/IP 配置，不能直接复制任意输入头。密钥不得进入日志或响应。现有限流保持启用；启用此功能是独立运维操作。
+Control 默认按 socket IP 限流，不信任转发 IP 头。启用时，通过 `SESSION_PEER_TRUSTED_PROXY_TOKEN_FILE` 指定仅与本机代理共享的专用32–128字符 base64url 密钥文件(0600，也支持 systemd credentials)。代理必须为每个 Control 请求覆盖 `X-Session-Peer-Proxy-Token` 和 `X-Session-Peer-Client-IP`，填入密钥与验证过的单一客户端 IP；切勿传递客户端提供的值。Control 仅接受 loopback 连接中的这对头，规范化 IPv4/IPv6 并在路由前删除两者。缺失或无效时回退到 socket IP。原始 `X-Forwarded-For`、`CF-Connecting-IP`、`X-Session-Peer-IP` 均不可信。使用 CDN 时须单独验证代理的可信 upstream/IP 配置，不能直接复制任意输入头。密钥不得进入日志或响应。现有限流保持启用；启用此功能是独立运维操作；安装软件包不会配置代理。
 
-Control在发布及提交变更前，按Python reader的1MiB UTF-8上限检查完整公开state，并预留revision与时间戳增长空间。超限变更以 `public_state_capacity_exceeded`(409)回滚，不会自动删除撤销tombstone。已有超大DB保持unhealthy，直至运维安全解决容量问题。限制按字节而非固定设备数；heartbeat和重启仍须读取最后有效snapshot。
+Control在发布及提交变更前，按Python reader的1MiB UTF-8上限检查完整公开state，并预留revision与时间戳增长空间。超限变更以 `public_state_capacity_exceeded`(409)回滚，不会自动删除撤销tombstone。已有超大DB保持unhealthy，直至运维安全解决容量问题。限制按字节而非固定用户/设备数；heartbeat和重启仍须读取最后有效snapshot。

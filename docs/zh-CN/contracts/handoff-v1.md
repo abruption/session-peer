@@ -200,4 +200,4 @@ ACK 证据还要求非 null 的原始 targetGeneration 和 submitted submission�
 
 夹具必须覆盖各运行时的可选字段缺失、由请求上下文允许的 queued true 显式等待超时、伪造的未启用 handoff、错误原生目标、认证成功/错误令牌/过期的重复请求、已提交/提交前/顺序未知的回执恢复、手动确认拒绝、原始/新/null 代次、不反射秘密、上下文缺失的查询错误与已知 tombstone 的区别、等待历史、缺失/恢复/过期/已满账本、自定义未知 ID、截止时间/帧边界、格式错误的模式以及 SSH 保留。严格的 SSH 显式启用验证必须在 handoff 被拒绝时仍保留有效的原生快照；旧版 Claude 重建或通用失败路径都不得丢弃它。完整响应只有通过同一严格且识别原始请求的解析器，才能在传输超时/非零退出后保留；部分帧仍为 unknown。
 
-实现验收前须验证：生成方引导与收集器所有权/重启、持久意图与容量预留、各受支持 platform/version/home 下的清理、仅元数据的 Codex 观测、严格的本地/SSH 元组，以及零提交 status/wait/ack/confirm 操作。本设计 PR 不提供原生/实际运行证据。Side Session 与 wake 实验是单独的未来工作，不是前提条件。不会悄然加入配对设备/Relay 去重和操作员监控。
+实现验收前须验证：生成方引导与收集器所有权/重启、持久意图与容量预留、各受支持 platform/version/home 下的清理、仅元数据的 Codex 观测、严格的本地/SSH 元组，以及零提交 status/wait/ack/confirm 操作。本设计 PR 不提供原生/实际运行证据。Side Session 与 wake 实验是单独的未来工作，不是前提条件。不会向 v1 悄然加入配对设备/Relay 去重和操作员监控。
