@@ -1,5 +1,11 @@
 # Releasing session-peer
 
+## Publication record — v1.4.2 (verified 2026-11-05)
+
+[GitHub v1.4.2](https://github.com/abruption/session-peer/releases/tag/v1.4.2) was published as stable/Latest and immutable at `2026-11-05T09:45:30Z`, from `27b088735f065b6785dc6f3892cf132926657bdf`. PyPI uploaded the wheel at `2026-11-05T09:47:52.170326Z` and sdist at `2026-11-05T09:47:54.295391Z`; both are non-yanked and match the locked asset hashes. The [publication record](docs/releases/v1.4.2.md#v142-publication-record) contains the exact filenames, hashes and verification boundaries.
+
+The [preparation workflow](https://github.com/abruption/session-peer/actions/runs/42004210137) and [publication workflow](https://github.com/abruption/session-peer/actions/runs/42005013865) succeeded for that source, including asset/provenance authentication, fresh dependency audits and independent wheel/sdist installation checks. Required human `pypi` approval by `abruption` was observed in the review history; the response exposes no exact approval timestamp. Preserve the dated preparation sections below and the immutable assets. Publication does not establish fleet rollout, service restarts, independent skill updates or new native/SSH/ACK/platform acceptance.
+
 ## v1.4.2 preparation
 
 Prepared on 2026-11-05 against published v1.4.1 ([GitHub](https://github.com/abruption/session-peer/releases/tag/v1.4.1), [PyPI](https://pypi.org/project/session-peer/1.4.1/)). At this dated checkpoint, v1.4.2 is an unpublished maintenance candidate. Integrated maintenance base: `c265861d5251f8bab65229521444168e23bc13a9`, before version preparation, not the final release commit. The [maintenance notes](docs/releases/v1.4.2.md) cover PR #372 / #370 test/CI time bounds and PR #374 / #373 localized operator terminology and documentation checks. Runtime behavior changes only in the version value; neither the original CI stall cause nor a runtime defect fix is claimed. #316 monitoring, #367 aggregate discovery and Long-term work remain separate.

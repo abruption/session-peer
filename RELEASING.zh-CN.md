@@ -1,5 +1,11 @@
 # 发布session-peer
 
+## 发布记录 — v1.4.2（2026-11-05核实）
+
+[GitHub v1.4.2](https://github.com/abruption/session-peer/releases/tag/v1.4.2)从`27b088735f065b6785dc6f3892cf132926657bdf`于`2026-11-05T09:45:30Z`作为稳定版／Latest发布，且为不可变状态。PyPI的wheel上传时间为`2026-11-05T09:47:52.170326Z`，sdist为`2026-11-05T09:47:54.295391Z`；两个文件均未撤回，并与锁定资产的哈希一致。[发布记录](docs/zh-CN/releases/v1.4.2.md#v142-publication-record)包含准确的文件名、哈希及验证边界。
+
+该源码的[准备工作流](https://github.com/abruption/session-peer/actions/runs/42004210137)与[发布工作流](https://github.com/abruption/session-peer/actions/runs/42005013865)均成功，包含资产与provenance认证、最新依赖审计和wheel/sdist独立安装检查。审查历史显示`abruption`完成必需的`pypi`人工批准，但响应不提供准确批准时间。保留下方注明日期的准备记录和不可变资产。发布不表示全机群部署、服务重启、独立技能更新或新的原生／SSH／ACK／平台验证。
+
 ## v1.4.2准备
 
 于2026-11-05基于已发布的v1.4.1（[GitHub](https://github.com/abruption/session-peer/releases/tag/v1.4.1)、[PyPI](https://pypi.org/project/session-peer/1.4.1/)）准备。在该日期的检查时点，v1.4.2仍是未发布的维护候选版本。整合维护基准为版本准备之前的`c265861d5251f8bab65229521444168e23bc13a9`，并非最终发布提交。[维护说明](docs/zh-CN/releases/v1.4.2.md)涵盖PR #372 / #370的测试／CI时间限制，以及PR #374 / #373的多语言运维术语和文档检查。运行时行为仅改变版本值；不宣称确定原始CI停滞原因或修复运行时缺陷。#316监控、#367汇总发现及Long-term工作仍独立处理。

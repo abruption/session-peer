@@ -1,5 +1,11 @@
 # session-peerのリリース
 
+## 公開記録 — v1.4.2（2026-11-05確認）
+
+[GitHub v1.4.2](https://github.com/abruption/session-peer/releases/tag/v1.4.2)は、`27b088735f065b6785dc6f3892cf132926657bdf`から`2026-11-05T09:45:30Z`に安定版・Latestとして公開され、不変状態です。PyPIのwheelアップロード時刻は`2026-11-05T09:47:52.170326Z`、sdistは`2026-11-05T09:47:54.295391Z`です。両方とも取り下げられておらず、ロック済み資産のハッシュと一致します。[公開記録](docs/ja/releases/v1.4.2.md#v142-publication-record)に正確なファイル名、ハッシュ、検証範囲を記載しています。
+
+当該ソースの[準備ワークフロー](https://github.com/abruption/session-peer/actions/runs/42004210137)と[公開ワークフロー](https://github.com/abruption/session-peer/actions/runs/42005013865)は、資産・provenanceの認証、最新の依存関係監査、wheel/sdistの独立したインストール検査を含めて成功しました。レビュー履歴で`abruption`による必須の`pypi`環境の人手承認を確認しましたが、応答は正確な承認時刻を公開しません。以下の日付付き準備記録と不変資産を保持します。公開は、全機器への配備、サービス再起動、独立したスキルの更新、新たなネイティブ・SSH・ACK・プラットフォーム検証を意味しません。
+
 ## v1.4.2 準備
 
 公開済みのv1.4.1（[GitHub](https://github.com/abruption/session-peer/releases/tag/v1.4.1)、[PyPI](https://pypi.org/project/session-peer/1.4.1/)）を基準に2026-11-05に準備しました。この日付の確認時点でv1.4.2は未公開のメンテナンス候補です。統合メンテナンスの基準はバージョン準備前の`c265861d5251f8bab65229521444168e23bc13a9`であり、最終リリースコミットではありません。[メンテナンスノート](docs/ja/releases/v1.4.2.md)はPR #372 / #370のテスト・CI時間制限と、PR #374 / #373の多言語運用用語・文書検査を扱います。ランタイム動作の変更はバージョン値だけであり、元のCI停止原因やランタイム不具合の修正は主張しません。#316の監視、#367の一括検出、Long-termの作業は別です。
