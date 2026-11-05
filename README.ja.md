@@ -37,11 +37,11 @@ Python 3.9以上が必要です。基本のローカル・SSH CLIに外部Python
 
 任意の[MCPエクストラ](docs/ja/mcp.md)は`mcp>=1.30,<2`を必要とします。MCPのPython 3.10+要件と依存関係のないPython 3.9コアは変更しません。既存のMCP環境では明示的なパッケージ更新が必要です。
 
-1.3.0では配信説明、ローカル・SSH経路プリセットと受信者アドレス帳、時間制限付きhandoff観察、信頼したSSH設定、ペアリングリンク、バージョン別通知設定を追加します。対応する組み合わせと制限は[リリース範囲と検証条件](docs/ja/releases/v1.3.0.md)を参照してください。パッケージ公開と本番環境への配備は別です。
+1.3.0では配信説明、ローカル・SSH経路プリセットと受信者アドレス帳、時間制限付きのhandoff状態確認、信頼したSSH設定、ペアリングリンク、バージョン別通知設定が追加されました。対応する組み合わせと制限は[リリース範囲と検証条件](docs/ja/releases/v1.3.0.md)を参照してください。パッケージ公開と本番環境への配備は別です。
 
 入手できるバージョンは[GitHub Releases](https://github.com/abruption/session-peer/releases)と[PyPI](https://pypi.org/project/session-peer/)で確認してください。ソースのバージョンだけではパッケージの公開状況は確認できません。
 
-実験的なhandoffは明示的に選択する機能です。ローカルPOSIX Claudeは受領ACKに対応し、CodexとSSHは相関IDによる送信のみ対応してACKの観察には対応しません。公開済みの範囲と残る検証条件は[handoffガイド](docs/ja/handoff-runtime.md)を参照してください。
+実験的なhandoffは、明示的に選択した場合にのみ使用できます。ローカルPOSIX環境のClaudeは、handoffプロトコルの受信確認応答（ACK）に対応しています。CodexとSSHはリクエストを区別する相関IDを用いた送信にのみ対応し、handoffのACK確認機能には対応していません。現在の対応範囲と残る検証条件は[handoffガイド](docs/ja/handoff-runtime.md)を参照してください。
 
 ```bash
 pipx install session-peer
@@ -68,7 +68,7 @@ session-peer CLIのインストールは不要です。独自のCodexホーム�
 セッションを所有する接続先アカウントを使ってください（`--host USER@HOST`）。
 SSHのアクセス権と受信側の権限は引き続き適用されます。
 
-**`posted` / `queued` は受信箱やキューに受け付けられたことを示すだけで、消費・ACK・作業完了を意味しません。**
+**`posted` / `queued` はメッセージの送信を受け付けたことだけを示します。受信側エージェントが読んだことや、ACKの受領、作業完了までは示しません。**
 必要なら明示的な返信を依頼してください。通常の送信は停止中のCodex接続先をデフォルトで拒否し、
 起動もしません。結果が不確かな送信を自動で再試行しないでください。
 
@@ -105,7 +105,7 @@ Unix、Python 3.11以上、`session-peer[relay]`、固定した識別情報と�
 パッケージの公開はホスト型サービスの可用性を保証しません。
 ブラインドRelayはアプリケーションのメッセージ内容を復号できません。
 [MCP・Codexプラグイン](https://github.com/abruption/session-peer/blob/main/docs/ja/mcp.md)にはPython 3.10以上と
-`session-peer[mcp]` が必要で、MCP の送信で実際に wake を要求するには `send` と `wake` の両方の機能（capability）が必要です。
+`session-peer[mcp]` が必要で、MCP の送信で実際に wake を要求するには `send` と `wake` の両方の権限（capability）が必要です。
 [Wake](https://github.com/abruption/session-peer/blob/main/docs/ja/wake.md)は明示的に依頼した場合だけ実行し、
 ターンの開始、利用枠の消費、プロジェクトファイルの変更を伴う場合があります。
 [Antigravityブリッジ](https://github.com/abruption/session-peer/blob/main/docs/ja/antigravity.md)は実験段階です。
@@ -126,5 +126,5 @@ Unix、Python 3.11以上、`session-peer[relay]`、固定した識別情報と�
 
 非公開のご質問や代替のセキュリティ窓口には、件名に `[session-peer]` を付けて
 [support@abruption.dev](mailto:support@abruption.dev)へご連絡ください。
-できる限り対応しますが、対応期限は保証しません。メールは手動で確認し、公開Issueへ自動投稿しません。
+できる限り対応しますが、返信までの時間は保証しません。メールは手動で確認し、公開Issueへ自動投稿しません。
 英語・韓国語での報告を受け付けています。
