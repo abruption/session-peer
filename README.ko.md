@@ -13,7 +13,7 @@
 
 </div>
 
-다른 세션에 변경 사항 검토, 진행 상황 공유, 작업을 이어받아 달라고 요청할 수 있습니다.
+다른 세션에 변경 사항을 검토하거나 진행 상황을 공유하거나 작업을 이어받아 달라고 요청할 수 있습니다.
 session-peer는 각 에이전트가 기본 제공하는 수신함과 큐를 사용하며, 응답 방식은 수신 에이전트가 결정합니다.
 
 <a id="see-it-in-action"></a>
@@ -35,13 +35,13 @@ session-peer 1.0.2를 사용해 실제 로컬 요청과 회신을 주고받았�
 Python 3.9 이상이 필요합니다. 기본 로컬·SSH CLI는 외부 Python 패키지에 의존하지 않습니다.
 소스 버전: **1.4.1** (2026-11-03 준비 시점: 미공개 후보, 마지막으로 확인한 공개 런타임은 1.4.0). [유지보수 노트](docs/ko/releases/v1.4.1.md)는 문서와 공개된 스킬 v0.5.1 호환 사본을 설명하며, 런타임 결함 수정을 주장하지 않습니다. 이전 [공개 기록](docs/ko/releases/v1.4.0.md#v140-publication-record)에 정확한 v1.4.0 소스, 업로드 시각과 해시를 남겼습니다. Python 공개, Node Control 배포, 별도로 관리하는 스킬의 갱신은 서로 구분합니다.
 
-선택형 [MCP extra](docs/ko/mcp.md)는 이제 `mcp>=1.30,<2`를 요구합니다. MCP의 Python 3.10+ 요건과 의존성 없는 Python 3.9 핵심 CLI는 유지됩니다. 기존 MCP 환경에는 명시적인 패키지 업그레이드가 필요합니다.
+선택 설치 항목인 [MCP extra](docs/ko/mcp.md)는 이제 `mcp>=1.30,<2`를 요구합니다. MCP의 Python 3.10+ 요건과 외부 의존성이 없는 Python 3.9 기본 CLI는 유지됩니다. 기존 MCP 환경의 패키지는 별도로 업그레이드해야 합니다.
 
-1.3.0에는 전달 설명, 로컬·SSH 경로 프리셋과 수신자 주소록, 유한 시간 handoff 관찰, 신뢰한 SSH 설정, 페어링 링크와 버전별 알림 설정이 추가됩니다. 지원 조합과 제한은 [릴리스 범위와 검증 조건](docs/ko/releases/v1.3.0.md)을 참고하십시오. 패키지 공개와 운영 배포는 별개입니다.
+1.3.0에서는 전달 설명, 로컬·SSH 경로 프리셋과 수신 대상 주소록, 시간이 제한된 handoff 상태 확인, 사용자가 신뢰한 SSH 설정, 페어링 링크와 버전별 알림 설정이 추가됐습니다. 지원 조합과 제한은 [릴리스 범위와 검증 조건](docs/ko/releases/v1.3.0.md)을 참고하십시오. 패키지 공개와 운영 배포는 별개입니다.
 
 설치할 수 있는 버전은 [GitHub Releases](https://github.com/abruption/session-peer/releases)와 [PyPI](https://pypi.org/project/session-peer/)에서 확인하십시오. 소스 버전만으로 패키지 공개 여부가 확인되는 것은 아닙니다.
 
-실험적 handoff는 명시적으로 선택해야 합니다. 로컬 POSIX Claude는 영수증 ACK를 지원하지만, Codex와 SSH는 상관 ID를 이용한 제출만 지원하며 ACK 관찰은 지원하지 않습니다. 공개된 범위와 남은 검증 조건은 [handoff 가이드](docs/ko/handoff-runtime.md)를 참고하십시오.
+실험적 handoff는 명시적으로 선택한 경우에만 사용할 수 있습니다. 로컬 POSIX 환경의 Claude는 handoff 프로토콜의 수신 확인 응답(ACK)을 지원합니다. Codex와 SSH는 요청을 구분하는 상관 ID를 이용한 제출만 지원하며, handoff ACK를 확인하는 기능은 지원하지 않습니다. 현재 지원 범위와 추가로 충족해야 할 검증 조건은 [handoff 가이드](docs/ko/handoff-runtime.md)를 참고하십시오.
 
 ```bash
 pipx install session-peer
@@ -66,9 +66,9 @@ SSH 대상에는 Python과 대상 에이전트가 기본 제공하는 수신함�
 대상에 session-peer CLI를 설치할 필요는 없습니다. 사용자 지정 Codex 홈을 사용한다면 조회 결과의
 `codexHome`을 `--codex-home`으로 지정하고, 실제 전송 없이 `--dry-run`으로 검증하십시오.
 세션을 소유한 대상 계정을 지정하십시오(`--host USER@HOST`).
-SSH 접근 제어와 수신 세션의 권한은 그대로 적용됩니다.
+SSH 접근 제어와 수신 측 권한은 그대로 적용됩니다.
 
-**`posted` / `queued`는 제출 확인일 뿐, 메시지 소비·ACK·작업 완료를 뜻하지 않습니다.**
+**`posted` / `queued`는 메시지 제출을 확인한 결과입니다. 이 결과만으로는 수신 에이전트가 메시지를 읽었는지, ACK가 확인됐는지, 작업이 완료됐는지 알 수 없습니다.**
 필요하면 명시적으로 회신을 요청하십시오. 일반 전송은 비활성 Codex 대상을 기본적으로 거부하며,
 해당 세션을 시작하지 않습니다. 결과가 불확실한 전송은 자동으로 다시 시도하지 마십시오.
 
@@ -94,8 +94,8 @@ pipx upgrade session-peer
 
 ## 문서
 
-- [문서 지도](https://github.com/abruption/session-peer/blob/main/docs/ko/README.md): 사용자·통합·운영·개발 가이드
-- [CLI 참조](https://github.com/abruption/session-peer/blob/main/docs/ko/cli-reference.md): 옵션·JSON·설치 변형·마이그레이션
+- [문서 안내](https://github.com/abruption/session-peer/blob/main/docs/ko/README.md): 사용자·통합·운영·개발 가이드
+- [CLI 참조](https://github.com/abruption/session-peer/blob/main/docs/ko/cli-reference.md): 옵션·JSON·설치 방식·전환 안내
 - [진단과 회신](https://github.com/abruption/session-peer/blob/main/docs/ko/diagnostics.md) · [여러 Codex 홈](https://github.com/abruption/session-peer/blob/main/docs/ko/multi-home-list.md)
 - [AI 도구를 활용한 설치](https://github.com/abruption/session-peer/blob/main/docs/ko/ai-assistant-guide.md) · [프로젝트 사이트](https://abruption.dev/projects/session-peer/) · [릴리스 노트](https://github.com/abruption/session-peer/releases)
 - [릴리스 절차](https://github.com/abruption/session-peer/blob/main/RELEASING.ko.md)
@@ -103,7 +103,7 @@ pipx upgrade session-peer
 [기기 페어링·암호화 Relay](https://github.com/abruption/session-peer/blob/main/docs/ko/paired-devices.md)는
 Unix·Python 3.11 이상·`session-peer[relay]`, 고정된 기기 신원, 명시적 수신 정책이 필요합니다.
 패키지를 공개해도 호스팅 서비스의 가용성이 보장되지는 않습니다.
-블라인드 Relay는 애플리케이션 메시지 내용을 복호화할 수 없습니다.
+Relay 중계 서버는 애플리케이션 메시지 내용을 복호화할 수 없습니다.
 [MCP(Model Context Protocol)·Codex 플러그인](https://github.com/abruption/session-peer/blob/main/docs/ko/mcp.md)은 Python 3.10 이상과
 `session-peer[mcp]`가 필요하며, MCP 전송에서 실제 wake를 요청하려면 `send`와 `wake` 권한이 모두 필요합니다.
 [Wake](https://github.com/abruption/session-peer/blob/main/docs/ko/wake.md)는 명시적으로 요청한 경우에만 실행됩니다.
@@ -126,5 +126,5 @@ Unix·Python 3.11 이상·`session-peer[relay]`, 고정된 기기 신원, 명시
 
 비공개 문의나 대체 보안 연락은 제목에 `[session-peer]`를 넣어
 [support@abruption.dev](mailto:support@abruption.dev)로 이메일을 보내십시오.
-최선을 다해 지원하지만 응답 시한은 보장하지 않습니다. 이메일은 수동으로 검토하며 공개 이슈로 자동 게시하지 않습니다.
+지원은 가능한 범위에서 제공하며 응답 시한을 보장하지 않습니다. 접수된 이메일은 사람이 검토하며 공개 이슈로 자동 게시하지 않습니다.
 영어와 한국어로 제보할 수 있습니다.
