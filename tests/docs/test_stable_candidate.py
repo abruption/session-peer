@@ -357,8 +357,8 @@ class StableCandidate(unittest.TestCase):
             self.assertIn(marker, english)
 
     def test_package_and_generated_core_version_agree(self):
-        self.assertEqual(session_peer.__version__, "1.4.1")
-        self.assertIn('__version__ = "1.4.1"',
+        self.assertEqual(session_peer.__version__, "1.4.2")
+        self.assertIn('__version__ = "1.4.2"',
                       (ROOT / "session_peer_core/common.py").read_text(encoding="utf-8"))
 
     def test_current_readmes_and_runbooks_match_source_version(self):
@@ -397,16 +397,16 @@ class StableCandidate(unittest.TestCase):
 
     def test_stable_release_keeps_operational_deployment_separate(self):
         profiles = (
-            ("", "Source version: **1.4.1**",
+            ("", "Source version: **1.4.2**",
              "At the 2026-10-28 preparation checkpoint, the last verified published stable release was **1.3.1**.",
              "Development candidate 1.2.1 is unpublished"),
-            (".ko", "소스 버전: **1.4.1**",
+            (".ko", "소스 버전: **1.4.2**",
              "2026-10-28 준비 시점의 마지막 확인 공개 안정판은 **1.3.1**이었습니다.",
              "개발 후보 1.2.1은 미공개입니다"),
-            (".ja", "ソースバージョン：**1.4.1**",
+            (".ja", "ソースバージョン：**1.4.2**",
              "2026-10-28の準備時点で、最後に確認した公開済み安定版は**1.3.1**でした。",
              "開発候補1.2.1は未公開です"),
-            (".zh-CN", "源码版本：**1.4.1**",
+            (".zh-CN", "源码版本：**1.4.2**",
              "在2026-10-28的准备检查时，最后确认的已发布稳定版本为**1.3.1**。",
              "开发候选版本1.2.1尚未发布"),
         )

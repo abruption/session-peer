@@ -1,5 +1,13 @@
 # Releasing session-peer
 
+## v1.4.2 preparation
+
+Prepared on 2026-11-05 against published v1.4.1 ([GitHub](https://github.com/abruption/session-peer/releases/tag/v1.4.1), [PyPI](https://pypi.org/project/session-peer/1.4.1/)). At this dated checkpoint, v1.4.2 is an unpublished maintenance candidate. Integrated maintenance base: `c265861d5251f8bab65229521444168e23bc13a9`, before version preparation, not the final release commit. The [maintenance notes](docs/releases/v1.4.2.md) cover PR #372 / #370 test/CI time bounds and PR #374 / #373 localized operator terminology and documentation checks. Runtime behavior changes only in the version value; neither the original CI stall cause nor a runtime defect fix is claimed. #316 monitoring, #367 aggregate discovery and Long-term work remain separate.
+
+The prospective `SKILL.md` support asset remains skill v0.5.1, minimum 0.9.1/full 1.4.0 and receiver `codexBin` floor 1.0.1, outside wheel/sdist; exact source/hash details are in the maintenance notes. This patch does not publish a new skill, update independently managed installations, restart receivers or deploy Node Control.
+
+The owner requested preparation, not merge, tag/draft creation, workflow dispatch, publication or operations. Require current-head review/checks and final protected-main CI. Any later authorized publication must verify all 7 frozen assets (including `SHA256SUMS` and `release-provenance.json`) and authenticated attestations against the exact tag/source, run current dependency audits and fresh wheel/sdist installation checks, and retain required human PyPI environment approval. These gates are pending, not results asserted here; omitting a private login/binding recheck does not waive human approval or repository protections. Preserve old tags/assets and dated records, and record actual publication separately. No new native/SSH/ACK/platform qualification is included.
+
 ## v1.4.1 preparation
 
 Prepared on 2026-11-03 against published v1.4.0. At this dated checkpoint, v1.4.1 is an unpublished maintenance candidate. Integrated maintenance base: `192b77ec4a168859c26fe886ff42901f24060608`, before version preparation, not the final release commit. The [maintenance notes](docs/releases/v1.4.1.md) cover the independently published skill v0.5.1 compatibility copy and publication guidance from PR #366 / #369. They claim no runtime defect fix or #370 test repair; #367 and Long-term work remain separate.
