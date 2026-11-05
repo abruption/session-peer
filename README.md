@@ -33,7 +33,7 @@ in this ~22-second animation, not a screen recording; send success alone is not 
 ### Install
 
 Python 3.9+. The core local/SSH CLI has no third-party Python dependencies.
-Source version: **1.4.1** (2026-11-03 preparation checkpoint: unpublished candidate; latest verified published runtime 1.4.0). The [maintenance notes](docs/releases/v1.4.1.md) describe documentation and the published skill v0.5.1 compatibility copy; they do not claim a runtime defect fix. The previous [publication record](docs/releases/v1.4.0.md#v140-publication-record) identifies the exact v1.4.0 source, upload times and hashes. Python publication, Node Control deployment and independently managed skill updates are separate.
+Source version: **1.4.2** (2026-11-05 preparation checkpoint: unpublished maintenance candidate; latest verified published runtime [v1.4.1](https://github.com/abruption/session-peer/releases/tag/v1.4.1), also available on [PyPI](https://pypi.org/project/session-peer/1.4.1/)). The [maintenance notes](docs/releases/v1.4.2.md) cover bounded test-fixture pipe waits and operator-guide terminology; they do not claim a runtime defect fix or a proven cause of earlier CI stalls. The previous [v1.4.1 notes](docs/releases/v1.4.1.md) and [v1.4.0 publication record](docs/releases/v1.4.0.md#v140-publication-record) remain historical references. Python publication, Node Control deployment and independently managed skill updates are separate.
 
 The optional [MCP extra](docs/mcp.md) now requires `mcp>=1.30,<2`; its Python 3.10+ requirement and the dependency-free Python 3.9 core remain unchanged. Existing MCP environments need an explicit package upgrade.
 
