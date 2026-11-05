@@ -134,7 +134,7 @@ Claude 세션은 `tg1:` 토큰을 `send --target-generation TOKEN`에 전달할 
 
 `{"status":"refused","reason":"stale_target","submitted":false,"retryAllowed":false,"lastSeenTarget":{"agent":"claude","targetGeneration":"tg1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`
 
-`target_generation_unavailable`은 운영체제의 신원을 확인할 수 없다는 뜻이고,
+`target_generation_unavailable`은 네이티브 대상의 식별 정보를 검증할 수 없다는 뜻이고,
 `unsupported_target_generation`은 대상이 이 전송 조건을 지원하지 않는다는 뜻입니다.
 두 결과에는 `lastSeenTarget`을 넣지 않으며 재전송 권한도 주지 않습니다.
 소스 전송·재시작 회귀 테스트는 전용 프로토콜 수신함과 로컬 SSH 대역을 사용합니다.
@@ -566,7 +566,7 @@ session-peer device offer-status --state /private/device-state --offer-id OFFER-
 session-peer device offer-cancel --state /private/device-state --offer-id OFFER-UUID
 ```
 
-생성 시 양쪽 신원을 확인하고 소유자의 터미널에만 링크를 표시합니다. `--link`에는 값을 붙이지 않습니다. 링크는 크기가 제한되고 화면에 표시되지 않는 입력으로 받습니다. 클라이언트는 신뢰할 수 있는 별도 경로로 확보한 수신 기기의 현재 키 지문을 입력하도록 요청하며, 신뢰 정보의 임시 등록이나 네트워크 연결 전에 일치 여부를 확인합니다. 터미널이 없으면 입력 노출이나 자동 승인 대신 거부합니다. 링크를 명령 인자, 브라우저 기록, 로그나 이슈에 남기지 마십시오. 설정 안내는 링크·비공개 파일을 선택할 수 있으며 기존 파일 명령도 유지합니다. 취소는 해당 페어링 제안의 보류 신뢰에만 적용됩니다. 완료된 페어링은 별도의 명시적 철회가 필요합니다. 기록 없는 만료 링크는 거부하고, 정확히 일치하는 저장 기록이 있어야 이미 완료된 인증 결과만 확인할 수 있습니다. 페어링은 수신 대상 정책이나 네이티브 CLI의 승인을 대신하지 않습니다. 키 교체 제한, 만료·횟수 제한, 중단과 위협 모델은 [기기 페어링 안내](paired-devices.md)를 참조하십시오.
+생성 시 양쪽 신원을 확인하고 소유자의 터미널에만 링크를 표시합니다. `--link`에는 값을 붙이지 않습니다. 링크는 크기가 제한되고 화면에 표시되지 않는 입력으로 받습니다. 클라이언트는 신뢰할 수 있는 별도 경로로 확보한 수신 기기의 현재 키 지문을 입력하도록 요청하며, 신뢰 정보의 임시 등록이나 네트워크 연결 전에 일치 여부를 확인합니다. 터미널이 없으면 입력 노출이나 자동 승인 대신 거부합니다. 링크를 명령 인자, 브라우저 기록, 로그나 이슈에 남기지 마십시오. 설정 안내는 링크·비공개 파일을 선택할 수 있으며 기존 파일 명령도 유지합니다. 취소는 해당 페어링 제안의 보류 신뢰에만 적용됩니다. 완료된 페어링은 별도의 명시적 철회가 필요합니다. 기록 없는 만료 링크는 거부하고, 정확히 일치하는 저장 기록이 있어야 이미 완료된 인증 결과만 확인할 수 있습니다. 페어링은 수신 대상 정책이나 네이티브 승인을 대신하지 않습니다. 키 교체 제한, 만료·횟수 제한, 중단과 위협 모델은 [기기 페어링 안내](paired-devices.md)를 참조하십시오.
 
 <a id="updating"></a>
 ### 업데이트

@@ -103,7 +103,7 @@ Antigravity 需要在现有 TUI 内显式启动桥接器；参见 [Antigravity �
 
 `{"status":"refused","reason":"stale_target","submitted":false,"retryAllowed":false,"lastSeenTarget":{"agent":"claude","targetGeneration":"tg1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`
 
-`target_generation_unavailable` 表示无法核实操作系统身份；
+`target_generation_unavailable` 表示无法核实原生目标的身份信息；
 `unsupported_target_generation` 表示目标不支持该前置条件。
 这两种结果均不包含 `lastSeenTarget`，也不授权重发。
 源码传输与重启回归测试使用专用协议收件箱和本地 SSH 替身，
@@ -452,7 +452,7 @@ session-peer device offer-status --state /private/device-state --offer-id OFFER-
 session-peer device offer-cancel --state /private/device-state --offer-id OFFER-UUID
 ```
 
-创建时核对双方身份，只在所有者终端显示链接。`--link` 不接值；链接采用长度受限的不回显输入。客户端会要求输入经可信独立渠道获取的接收端当前密钥指纹，并在暂存信任信息或联网前核对是否匹配。无终端时拒绝，不改为回显或自动批准。不要把链接放进参数、浏览器历史、日志或Issue。设置向导提供链接/私密文件选项，现有文件命令仍受支持。取消只影响该提议的待定信任；已完成的配对须显式吊销。没有历史的过期链接会被拒绝，只有完全匹配的保存上下文才能核对已经完成的认证结果。配对不替代接收目标策略或原生CLI的审批。密钥轮换限制、有效期、频率限制、中断与威胁模型见[配对设备指南](paired-devices.md)。
+创建时核对双方身份，只在所有者终端显示链接。`--link` 不接值；链接采用长度受限的不回显输入。客户端会要求输入经可信独立渠道获取的接收端当前密钥指纹，并在暂存信任信息或联网前核对是否匹配。无终端时拒绝，不改为回显或自动批准。不要把链接放进参数、浏览器历史、日志或Issue。设置向导提供链接/私密文件选项，现有文件命令仍受支持。取消只影响该提议的待定信任；已完成的配对须显式吊销。没有历史的过期链接会被拒绝，只有完全匹配的保存上下文才能核对已经完成的认证结果。配对不替代接收目标策略或原生审批。密钥轮换限制、有效期、频率限制、中断与威胁模型见[配对设备指南](paired-devices.md)。
 
 <a id="updating"></a>
 ### 更新

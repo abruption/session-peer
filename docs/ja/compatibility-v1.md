@@ -82,7 +82,7 @@ release noteは新たにtestedとなったversionとcoverage低下を明記し�
 
 Stable surfaceはv1中additiveに変更します。削除、型変更、意味の再利用、以前有効だったpublic
 inputに対する拒否の厳格化には新しいversioned surfaceまたは次major releaseが必要です。安全上継続できない
-場合を除き、削除前に少なくとも一minor releaseのrelease noteでdeprecationを示します。
+場合を除き、削除前に少なくとも一つのマイナーリリースのリリースノートで非推奨化を示します。
 
 Persistent formatはpreflight、backup、post-migration verificationを含む明示migrationを使います。
 Experimental surfaceはprereleaseで変更できますがrelease noteに変更とreplacementを記載します。
