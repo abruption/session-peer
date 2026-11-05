@@ -13,7 +13,7 @@ from urllib.parse import unquote, urlparse
 ROOT = Path(__file__).resolve().parents[2]
 LANGUAGES = ("ko", "ja", "zh-CN")
 FENCE_RE = re.compile(r"```[^\n]*\n.*?```", re.DOTALL)
-INLINE_CODE_RE = re.compile(r"(?<!`)`([^`\n]+)`(?!`)")
+INLINE_CODE_RE = re.compile(r"(?<!`)`([^`]+)`(?!`)")
 LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)(?:\s+[\"'][^)]*[\"'])?\)")
 HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*$", re.MULTILINE)
 EXPLICIT_ANCHOR_RE = re.compile(r'<a\s+(?:name|id)=["\']([^"\']+)["\']\s*></a>', re.IGNORECASE)
@@ -62,6 +62,12 @@ def anchors(text):
 class DocumentationTranslationsTest(unittest.TestCase):
     maxDiff = None
 
+    def test_inline_code_spans_can_wrap_without_capturing_translated_prose(self):
+        source = "`vault\nstatus` reported `integrity=ok`"
+        translated = "`vault\nstatus`는 `integrity=ok`를 보고했습니다."
+        self.assertEqual(["vault\nstatus", "integrity=ok"], INLINE_CODE_RE.findall(source))
+        self.assertEqual(INLINE_CODE_RE.findall(source), INLINE_CODE_RE.findall(translated))
+
     def test_every_canonical_document_has_each_translation(self):
         sources = canonical_documents()
         self.assertEqual(55, len(sources), "Update the translation manifest for new canonical docs")
@@ -104,6 +110,7 @@ class DocumentationTranslationsTest(unittest.TestCase):
         for source in canonical_documents():
             source_text = (ROOT / source).read_text(encoding="utf-8")
             heading_count = len(HEADING_RE.findall(source_text))
+            heading_levels = re.findall(r"^(#{1,6})\s+", FENCE_RE.sub("", source_text), re.MULTILINE)
             link_count = len(LINK_RE.findall(source_text))
             source_structure = tuple(len(re.findall(pattern, source_text, re.MULTILINE)) for pattern in structure_patterns)
             for language in LANGUAGES:
@@ -111,6 +118,11 @@ class DocumentationTranslationsTest(unittest.TestCase):
                 translated_structure = tuple(len(re.findall(pattern, translated_text, re.MULTILINE)) for pattern in structure_patterns)
                 with self.subTest(source=str(source), language=language):
                     self.assertEqual(heading_count, len(HEADING_RE.findall(translated_text)))
+                    self.assertEqual(
+                        heading_levels,
+                        re.findall(r"^(#{1,6})\s+", FENCE_RE.sub("", translated_text), re.MULTILINE),
+                        "Translated sections must preserve the canonical heading hierarchy",
+                    )
                     self.assertEqual(link_count, len(LINK_RE.findall(translated_text)))
                     self.assertEqual(source_structure, translated_structure)
 

@@ -31,8 +31,8 @@ AGENTS.register(ExampleAdapter())
 - `submit` 接收已经过验证、包装好的消息恰好一次。在原生副作用之前遵循 dry-run。返回原生提交事实；不要从套接字/队列接受推断确认。已知提交之后的原生失败必须保留其 ID 和部分结果。
 - `identity` 和 `target` 转换原生身份与 CLI/Reply-To 目标。默认值为 `name:identifier`；Claude 保留无前缀的名称/PID。
 - `diagnose`、`diagnostic_text`、`listing_notes`、`submission_text`、`remote_submission` 和 `remote_options` 在不改变通用路由的情况下，专门处理证据以及现有输出的兼容性。参数选项仍必须在解析器中显式声明；agent 无法注入 shell 代码。
-- 功能布尔值仅报告实现支持情况。为 false 的功能会在提交前失败。宣告 wake 不会跳过原生运行时检查或 MCP 授权；wait/ack 在此版本中没有 CLI 实现。
+- 支持能力的布尔值仅报告实现支持情况。不支持的能力会在提交前拒绝。宣告 wake 不会跳过原生运行时检查或 MCP 授权；wait/ack 在此版本中没有 CLI 实现。
 
 MCP 仅允许显式授权的目标和 agent。仅靠源码注册绝不会授予远程/发送权限。可选依赖项必须保持在核心导入路径之外；添加后端依赖项需要单独的打包决策。未实现公共外部加载和安装。
 
-在未安装和已安装可选 MCP SDK 的情况下分别运行现有测试套件和共享契约测试。同时独立构建/安装 wheel 和 sdist，并运行隔离的独立安装器测试。使用测试固件传输来进行新的契约覆盖，而不是使用生产会话。
+在未安装和已安装可选 MCP SDK 的情况下分别运行现有测试套件和共享契约测试。同时独立构建/安装 wheel 和 sdist，并运行隔离的独立安装器测试。使用测试夹具传输来进行新的契约覆盖，而不是使用生产会话。

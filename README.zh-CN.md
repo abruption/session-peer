@@ -37,11 +37,11 @@ session-peer使用各智能体自身的收件箱和队列；接收方智能体�
 
 可选的[MCP extra](docs/zh-CN/mcp.md)现在要求`mcp>=1.30,<2`；MCP的Python 3.10+要求和无外部依赖的Python 3.9核心保持不变。现有MCP环境需要显式升级软件包。
 
-1.3.0增加传递说明、本地与SSH路由预设及收件人地址簿、有时限的handoff观察、受信任SSH配置、配对链接和按版本设置的通知偏好。支持的组合与限制请参阅[发布范围与验证条件](docs/zh-CN/releases/v1.3.0.md)。软件包发布与生产环境部署是两项独立操作。
+1.3.0新增了传递说明、本地与SSH路由预设及收件人地址簿、有时限的handoff状态查询、受信任SSH配置、配对链接和按版本设置的通知偏好。支持的组合与限制请参阅[发布范围与验证条件](docs/zh-CN/releases/v1.3.0.md)。软件包发布与生产环境部署是两项独立操作。
 
 可用版本请查看[GitHub Releases](https://github.com/abruption/session-peer/releases)和[PyPI](https://pypi.org/project/session-peer/)。仅凭源码版本不能确认软件包是否已发布。
 
-实验性handoff需要明确选择启用：本地POSIX Claude支持收据ACK；Codex与SSH仅支持关联标识提交，不支持ACK观察。已发布范围与剩余验收条件请参阅[handoff指南](docs/zh-CN/handoff-runtime.md)。
+实验性handoff仅在明确选择后使用。本地POSIX环境中的Claude支持handoff协议的接收确认响应（ACK）。Codex与SSH仅支持使用关联ID区分请求并提交消息，不支持handoff的ACK确认功能。当前支持范围与剩余验收条件请参阅[handoff指南](docs/zh-CN/handoff-runtime.md)。
 
 ```bash
 pipx install session-peer
@@ -68,7 +68,7 @@ SSH目标需要Python以及目标智能体自身的收件箱或队列，
 请使用拥有该会话的目标账户（`--host USER@HOST`）。
 SSH访问权限和接收方权限仍然适用。
 
-**`posted` / `queued` 仅表示消息已提交到接收箱或队列，不代表消息已被消费、已收到ACK或任务已完成。**
+**`posted` / `queued` 仅表示消息已提交到收件箱或队列，不代表接收方智能体已读取消息，也不代表ACK已得到确认或任务已完成。**
 需要时请明确要求对方回复。普通发送默认拒绝未运行的Codex目标，
 也不会启动它们。切勿自动重试结果不确定的发送。
 
@@ -105,7 +105,7 @@ Unix、Python 3.11以上和 `session-peer[relay]`，并要求固定设备身份�
 软件包发布不保证托管服务可用性。
 盲转发Relay无法解密应用消息的内容。
 [MCP与Codex插件](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/mcp.md)需要Python 3.10以上及
-`session-peer[mcp]`；MCP 发送中实际请求 wake 时，需要同时具备 `send` 和 `wake` 两项能力。
+`session-peer[mcp]`；MCP 发送中实际请求 wake 时，需要同时具备 `send` 和 `wake` 两项权限。
 [Wake](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/wake.md)仅在显式请求时运行，
 可能启动一轮任务、消耗使用额度或修改项目文件。
 [Antigravity桥接](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/antigravity.md)仍处于实验阶段。
@@ -126,5 +126,5 @@ Unix、Python 3.11以上和 `session-peer[relay]`，并要求固定设备身份�
 
 非公开咨询或替代安全联系方式，请发送邮件至
 [support@abruption.dev](mailto:support@abruption.dev)，标题注明 `[session-peer]`。
-我们会尽力提供支持，但不保证响应时限。邮件由维护者手动审核，不会自动转为公开议题。
+我们会尽力提供支持，但不保证响应时间。邮件由维护者手动审核，不会自动转为公开议题。
 欢迎英文与韩文报告。

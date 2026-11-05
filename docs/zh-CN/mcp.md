@@ -35,7 +35,7 @@
 
 ## v1.4.0 源码：目的地发现 (#356)
 
-`list_destinations()` 不接受参数，仅返回操作员策略的元数据：`schemaVersion` 为 1，每个条目包含 `destination`、`transport`、`agents` 和 `capabilities`。它不会启动子进程，也不会发起网络请求。SSH 主机配置值和 Codex 主目录路径会被省略。目的地名称是不可信数据。已配置的功能表示策略权限，不表示原生代理的兼容性。
+`list_destinations()` 不接受参数，仅返回操作员策略的元数据：`schemaVersion` 为 1，每个条目包含 `destination`、`transport`、`agents` 和 `capabilities`。它不会启动子进程，也不会发起网络请求。SSH 主机配置值和 Codex 主目录路径会被省略。目的地名称是不可信数据。已配置的权限表示策略授权范围，不表示原生代理的兼容性。
 
 响应明确列出限制：`callerIdentity="unavailable"`、`readiness="not_checked"`、`submission="not_attempted"`、`consumption="not_checked"` 和 `ack="not_checked"`。目的地超过 64 个、ID 含不可打印字符或 UTF-8 编码超过 128 字节时，此工具拒绝查询。文本与结构化内容合计的 MCP 工具结果不超过 64 KiB，不包括外层 JSON-RPC 信封。这些限制仅适用于查询工具，策略加载及现有工具的行为保持不变。可打印字符的判定遵循运行中 Python 的 Unicode 数据库。默认的仅限本地列表查询的策略保持不变。
 
@@ -43,7 +43,7 @@
 
 ## v1.4.0 源码：发送预检 (#357)
 
-`preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)` 通过现有 CLI dry-run 检查验证普通消息。操作员策略必须使用 `schemaVersion` 2，并为目的地和代理显式授予 `preflight`。版本 1 保留原有的功能集合，不会自动获得新权限；默认策略仍仅允许本地列表查询。预检不需要 `send`，也不能授予发送权限。如需检查唤醒资格，还必须单独具有 `wake`，但不会激活模型或预留唤醒额度。
+`preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)` 通过现有 CLI dry-run 检查验证普通消息。操作员策略必须使用 `schemaVersion` 2，并为目的地和代理显式授予 `preflight`。版本 1 保留原有的权限集合，不会自动获得新权限；默认策略仍仅允许本地列表查询。预检不需要 `send`，也不能授予发送权限。如需检查唤醒资格，还必须单独具有 `wake`，但不会激活模型或预留唤醒额度。
 
 带有版本的说明会在 SSH 适配器加工结果前，从原生响应中提取允许的事实，并提供固定的拒绝或未知原因及操作员处置建议。它不包含消息内容、原始错误、凭据、主机或主目录路径、原生记录。结果未知或存在意外提交证据时，验证失败并返回 `retryAllowed=false`；切勿自动重发。预检不会提交消息或创建 handoff 授权。不支持设备和 handoff 模式。
 
@@ -53,7 +53,7 @@
 
 ## v1.4.0 源码：有界诊断 (#358)
 
-`diagnose_destination(destination="local", agent=null, active_probe=false)` 要求在 `schemaVersion` 2 策略中显式授予 `diagnostics` 权限。默认模式仅返回策略元数据和声明的代理功能，不启动 CLI 或发现进程，也不发起网络请求。目的地 ID 采用与目的地发现相同的可打印字符及 UTF-8 128 字节限制。版本 1 和默认策略均不授予诊断权限。 默认模式的 `declaredCapabilities` 包含来自适配器声明的布尔值，不证明实际送达或就绪状态。
+`diagnose_destination(destination="local", agent=null, active_probe=false)` 要求在 `schemaVersion` 2 策略中显式授予 `diagnostics` 权限。默认模式仅返回策略元数据和声明的代理支持能力，不启动 CLI 或发现进程，也不发起网络请求。目的地 ID 采用与目的地发现相同的可打印字符及 UTF-8 128 字节限制。版本 1 和默认策略均不授予诊断权限。 默认模式的 `declaredCapabilities` 包含来自适配器声明的布尔值，不证明实际送达或就绪状态。
 
 设置 `active_probe=true` 还需要 `diagnostics_probe`。元数据模式支持所有平台。主动模式目前仅支持 macOS 和 Linux；在 Windows 上返回固定原因 `diagnostics_platform_unsupported`，不启动 CLI 进程或网络请求。检查仅使用配置的目的地、固定的 Codex 主目录和获准的代理。按代理限定范围的 doctor 调用最多检查三个代理，共享 20 秒的执行预算，然后清理进程；这并非严格的实际耗时上限，也不保证清理远程进程。子进程的 stdout 和 stderr 各限 64 KiB。Codex 检查仅访问所选主目录。不进行反向路由探测、消息提交、原生模型激活或自动重试。主动检查可能启动 CLI 进程和 SSH 连接，操作员的 SSH 配置本身也可能执行命令。宿主批准独立于策略权限。由于可选的主动检查能够执行操作员 SSH 配置，组合工具使用 `readOnlyHint=false` 和 `idempotentHint=false`。
 
@@ -99,12 +99,12 @@ MCP 包装层仅支持以下检查及执行效果：
 
 以下两个签名说明原有的基本接口。v1.4.0源码工具及可选预设参数请参阅上文各节和初始化后的MCP `tools/list`模式。工具可见并不授予策略权限。
 
-- `list_sessions(destination="local", agent=null, include_inactive=false)` 返回 CLI 的结构化列表。Agent 可以是 `claude` 或 `codex`；省略则列出允许的代理。
+- `list_sessions(destination="local", agent=null, include_inactive=false)` 返回CLI结构化列表。 智能体选择仅限目的地策略允许的已注册适配器（如 `claude` 或 `codex`）；省略时列出允许的智能体。
 - `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30)` 仅在显式允许 `send` 的情况下提交一次。Target 是 Claude 名称/PID、`codex:<UUID>` 或与配置的主机和主目录完全匹配的 Reply-To URI。
 
 MCP 工具注解将列出标记为只读，将发送标记为非幂等。根据需要配置宿主客户端的工具批准；服务器策略独立限制目的地，且不会绕过沙盒/宿主批准。Reply-To URI 中的 SSH 别名必须与策略完全匹配，即使另一个主机名解析到同一台机器也是如此。否则请使用直接目标和配置的目的地 ID。
 
-响应在 MCP structuredContent 和文本中均保留 CLI JSON 字段。部分列表失败会保留已发现的会话并设置 isError。队列提交并非消费；切勿自动重试结果未知的发送。远程提交后可能会发生取消或传输丢失。不存在 received/status/wait 工具。[显式 wake](wake.md) 除了 `send` 之外还需要单独的 `wake` 功能。启用 wake 时，请将客户端工具超时配置为 150 秒。
+响应在 MCP structuredContent 和文本中均保留 CLI JSON 字段。部分列表失败会保留已发现的会话并设置 isError。队列提交并非消费；切勿自动重试结果未知的发送。远程提交后可能会发生取消或传输丢失。不存在 received/status/wait 工具。[显式 wake](wake.md) 除了 `send` 之外还需要单独的 `wake` 权限。启用 wake 时，请将客户端工具超时配置为 150 秒。
 
 共享 MCP 进程无法可靠地识别调用线程。消息标识为 `session-peer MCP (caller session unavailable)` 并省略 Reply-To，而不是将其归因于启动服务器的会话。请勿依赖此标头进行身份验证。消息正文通过 stdin 传递，而非 shell 命令字符串；正常的 CLI 限制仍然适用。
 

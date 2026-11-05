@@ -83,7 +83,7 @@ may become more specific without a schema change.
 
 `doctor --host worker --check-return-route` asks `worker` to test an SSH command
 back to the detected origin. `--reply-to USER@HOST` overrides that detected
-address. The check uses a fixed `true` command with batch mode, password and
+address. The check uses a fixed `true` command with batch mode enabled, password and
 keyboard-interactive authentication disabled, strict host-key checking, and
 host-key updates disabled. It never retries with credentials or relaxed policy.
 
@@ -156,12 +156,15 @@ and [the session inbox socket](https://code.claude.com/docs/en/cross-session-mes
 
 ## List discovery outcomes
 
-`list` defaults to both agents; `--agent claude|codex` selects one.
+`list` includes all registered adapters by default; `--agent claude|codex|antigravity` selects one.
 The `discovery` object reports each requested agent. Claude retains `ok`/`error`;
 Codex reports `ok`, `not_installed`, or `error` plus per-home diagnostics.
+Antigravity listing covers live registered bridges; `not_installed` with
+`no_live_registration` means no live bridge was found, not that the CLI is absent.
 Failures preserve successful rows but set `ok=false`, a top-level error summary,
-and exit code 1. No automatic Codex installation is `not_installed`, an empty
-result with exit code 0. Missing explicitly configured homes remain errors.
+and exit code 1. When automatic Codex discovery finds no readable state database
+and no inspection errors, it reports `not_installed`, empty sessions and exit code 0.
+Missing explicitly configured homes remain errors.
 A missing Claude session directory is an empty result; an unreadable directory
 is an error. SSH preserves partial results and repeated-host envelopes.
 Every row has an `agent` discriminator. See [multi-home listing](multi-home-list.md)

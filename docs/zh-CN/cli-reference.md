@@ -4,39 +4,8 @@
 
 [返回概览](../../README.zh-CN.md)
 
-## 固定接收会话代次的前置条件（开发中）
-
-`list --with-target-generation --json` 为每行添加 `targetGeneration` 和
-`generationStatus`。对于能核实操作系统进程创建信息的 Claude 接收端，可将 `tg1:`
-标记传给 `send --target-generation TOKEN`；`--dry-run` 和 SSH 也使用原目标的标记。
-它是发送前置条件，不是秘密、权限、ACK 或重发、去重凭据。不使用时保留现有输出和行为。
-
-发送前重新核实注册记录、进程创建信息和接收端，再核实已连接的套接字或管道服务器 PID，
-之后才写入消息和 Windows 认证行。名称、PID 被复用或接收端变化时以 `stale_target`
-拒绝；无法证明身份时不作猜测。同一进程的状态或名称更新本身不会改变代次。
-此功能不认证模型身份，也不防范同一 OS 账户的恶意进程；缺少所需 OS API 时不可使用。
-创建信息的精度取决于 OS（Linux 使用启动 ID 和开始时间的 clock tick），并不保证全局唯一、
-防克隆的身份或密码学上的 SSH 主机密钥连续性。
-
-`stale_target` 拒绝结果包含 `lastSeenTarget`，记录原请求指定的 Claude 代次，
-不是重新查找后继进程的结果。这一有限元数据不包含进程创建值、路径、用户名或主机名。
-
-`{"status":"refused","reason":"stale_target","submitted":false,"retryAllowed":false,"lastSeenTarget":{"agent":"claude","targetGeneration":"tg1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`
-
-`target_generation_unavailable` 表示无法核实操作系统身份；
-`unsupported_target_generation` 表示目标不支持该前置条件。
-这两种结果均不包含 `lastSeenTarget`，也不授权重发。
-源码传输与重启回归测试使用专用协议收件箱和本地 SSH 替身，
-不代表实际远程主机或原生代理的验证。
-
-Codex 队列、Antigravity 和配对设备不具备此接收进程代次保证。通用代次固定请求会在入队、
-wake 前拒绝，并保留各自既有契约。重新核实 Codex 写入进程，不能原子地限制之后消费
-持久队列的进程。#180 的完整工作仍未完成；该功能尚未在 v1.0.4 发布，不会自动回退或重发。
-
-2026-10-15 对 native Codex [0.162.1](https://github.com/openai/codex/tree/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs) 的队列输入路径进行了审查，但未找到可用的、原子检查原始写入进程代次的前置条件。在已检查的源码中，获取锁的路径不写入代次令牌，线程的 `sessionId` 在恢复后保持不变，而 `thread/queue/add` 接受线程、输入和客户端消息 ID，而非代次前置条件。已检查的 `turn/steer` 路径在活动轮次锁内检查 `expectedTurnId`，但 session-peer 不将这种轮次专用检查用作写入进程代次。这些结论仅限于固定的源码路径，并不证明所有 native API 或未来版本都不存在该功能。PID、启动时间和锁的复查、队列 ID、`canAcceptDirectInput`、`sessionId` 不能确立所需的原始代次保证，因此 Codex 的 `targetGeneration` 继续报告为 `unsupported`。#180 保持未完成，以等待另行验证的 native 契约。
-
 以下是详细的命令行为、安装选项、传输限制和历史验证记录。
-机器consumer还应遵循[v1兼容性契约](compatibility-v1.md)。
+程序化使用者还应遵循[v1兼容性契约](compatibility-v1.md)。
 
 [![PyPI](https://img.shields.io/pypi/v/session-peer)](https://pypi.org/project/session-peer/)
 [![CI](https://github.com/abruption/session-peer/actions/workflows/ci.yml/badge.svg)](https://github.com/abruption/session-peer/actions/workflows/ci.yml)
@@ -114,6 +83,37 @@ Send 的消息输入要求和限制保持不变。按原有方式使用 `--messa
 Antigravity 需要在现有 TUI 内显式启动桥接器；参见 [Antigravity 设置](antigravity.md)。它是可选的，不会改变 Claude/Codex 发现机制；活跃的 Antigravity 注册项也会出现在未过滤的列表中。常规的本地和 SSH 命令保留其仅依赖标准库的安装方式。参见 [v0.9 发布说明](releases/v0.9.0.md)。
 
 ### 消息输入与结果输出
+
+#### 固定接收会话代次的前置条件（开发中）
+
+`list --with-target-generation --json` 为每行添加 `targetGeneration` 和
+`generationStatus`。对于能核实操作系统进程创建信息的 Claude 接收端，可将 `tg1:`
+标记传给 `send --target-generation TOKEN`；`--dry-run` 和 SSH 也使用原目标的标记。
+它是发送前置条件，不是秘密、权限、ACK 或重发、去重凭据。不使用时保留现有输出和行为。
+
+发送前重新核实注册记录、进程创建信息和接收端，再核实已连接的套接字或管道服务器 PID，
+之后才写入消息和 Windows 认证行。名称、PID 被复用或接收端变化时以 `stale_target`
+拒绝；无法证明身份时不作猜测。同一代次进程的状态或名称更新本身不会使标记失效。
+此功能不认证模型身份，也不防范同一 OS 账户的恶意进程；缺少所需 OS API 时不可使用。
+创建信息的精度取决于 OS（Linux 使用启动 ID 和开始时间的 clock tick），并不保证全局唯一、
+防克隆的身份或密码学上的 SSH 主机密钥连续性。
+
+`stale_target` 拒绝结果包含 `lastSeenTarget`，记录原请求指定的 Claude 代次，
+不是重新查找后继进程的结果。这一有限元数据不包含进程创建值、路径、用户名或主机名。
+
+`{"status":"refused","reason":"stale_target","submitted":false,"retryAllowed":false,"lastSeenTarget":{"agent":"claude","targetGeneration":"tg1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`
+
+`target_generation_unavailable` 表示无法核实原生目标的身份信息；
+`unsupported_target_generation` 表示目标不支持该前置条件。
+这两种结果均不包含 `lastSeenTarget`，也不授权重发。
+源码传输与重启回归测试使用专用协议收件箱和本地 SSH 替身，
+不代表实际远程主机或原生代理的验证。
+
+Codex 队列、Antigravity 和配对设备不具备此接收进程代次保证。通用代次固定请求会在入队、
+wake 前拒绝，并保留各自既有契约。重新核实 Codex 写入进程，不能原子地限制之后消费
+持久队列的进程。#180 的完整工作仍未完成；该功能尚未在 v1.0.4 发布，不会自动回退或重发。
+
+2026-10-15 对 native Codex [0.162.1](https://github.com/openai/codex/tree/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs) 的队列输入路径进行了审查，但未找到可用的、原子检查原始写入进程代次的前置条件。在已检查的源码中，获取锁的路径不写入代次令牌，线程的 `sessionId` 在恢复后保持不变，而 `thread/queue/add` 接受线程、输入和客户端消息 ID，而非代次前置条件。已检查的 `turn/steer` 路径在活动轮次锁内检查 `expectedTurnId`，但 session-peer 不将这种轮次专用检查用作写入进程代次。这些结论仅限于固定的源码路径，并不证明所有 native API 或未来版本都不存在该功能。PID、启动时间和锁的复查、队列 ID、`canAcceptDirectInput`、`sessionId` 不能确立所需的原始代次保证，因此 Codex 的 `targetGeneration` 继续报告为 `unsupported`。#180 保持未完成，以等待另行验证的 native 契约。
 
 `--message TEXT`（短形式 `-m`）指定发送到目标端的文本。`--output-format text|json` 选择命令结果的格式，而非消息格式。它适用于 `list`、`send`、`doctor` 和 `update`；默认值为 `text`。现有的 `--json` 保留为 `--output-format json` 的别名。
 
@@ -415,7 +415,7 @@ session-peer handoff watch --correlation-id PREPARED_UUID --watch-timeout 30 --i
 
 使用本地所有者 POSIX 记录中已有的准备 UUID。状态查询仍为一次快照；观察运行 1..60 秒（默认 30），间隔 1000..5000 毫秒（默认 1000），仅接受 ASCII 整数，最多采样 61 次。观察仅在预算允许生成有效公开结果时输出初始快照，随后仅输出公开元数据/historyPhase 的变化；可能不输出任何快照。JSON 观察输出使用通用 schemaVersion 1 NDJSON 封装，其中 operation 为 watch，event 为 snapshot 或 end，快照嵌套原有 handoff 对象；status JSON 不变。到期完成的退出码 0 仅表示观察完成，并非 ACK 或等待成功；SIGINT 为 130，历史、输出故障为 1，无效参数为 2。历史缺失、损坏或 ledgerEpoch 改变会停止观察。 historyPhase 为 prepared、attempted、terminal、tombstone 或 quarantined；attempted 表示已持久保存的尝试屏障，不表示正在执行。
 
-观察为只读操作，不创建意图、等待、收据，不写入记录、提交或唤醒。不增加主机、设备、Windows 路径或 Codex ACK。每帧上限为 16 KiB，总量为 256 KiB，并预留 2 KiB 用于结束帧。真实文件描述符标准输出使用一个专属、隔离的 Python 输出辅助进程；它仅接收有界的已序列化公开字节，不更改共享描述符标志，也不读取记录或原生数据。父进程将 IPC 纳入原始总预算，开始新的记录读取或验证阶段前也检查期限；总时间内预留 100 ms 用于最终输出和清理，因此采样可能提前结束。超时、SIGINT 或错误时终止并回收辅助进程，但不可中断的 OS 操作不具备严格实时保证。部分写入或无完成回复后禁止后续帧、结束帧；消费方必须拒绝被截断的最后一行 NDJSON。辅助进程完成仅表示 OS 写入完成，不证明接收者消费。快照并非无损事件流，本地 UTC 观察不证明 ACK 到达顺序。有关隐私、保留的提交/ACK/等待含义、只读收集器查询及现有隔离限制，参见 [handoff 运行时指南](handoff-runtime.md)。观察不启动原生消息进程或收集器。不公开载荷或权限摘要，公开 targetGeneration 保持既有约定。 只读记录在读取不可变快照字节后、解析和验证前释放共享锁。 中断后的最终输出和清理在剩余总预算内最多使用 100 ms。 整体成功需要完整的成功结束帧和退出码 0：该帧之后清理仍可能失败。非零退出表示整体失败，不表示 ACK 升级、丢弃独立有效的提交事实或允许重试。
+观察为只读操作，不创建意图、等待、接收确认回执，不写入记录、提交或唤醒。不增加主机、设备、Windows 路径或 Codex ACK。每帧上限为 16 KiB，总量为 256 KiB，并预留 2 KiB 用于结束帧。真实文件描述符标准输出使用一个专属、隔离的 Python 输出辅助进程；它仅接收有界的已序列化公开字节，不更改共享描述符标志，也不读取记录或原生数据。父进程将 IPC 纳入原始总预算，开始新的记录读取或验证阶段前也检查期限；总时间内预留 100 ms 用于最终输出和清理，因此采样可能提前结束。超时、SIGINT 或错误时终止并回收辅助进程，但不可中断的 OS 操作不具备严格实时保证。部分写入或无完成回复后禁止后续帧、结束帧；消费方必须拒绝被截断的最后一行 NDJSON。辅助进程完成仅表示 OS 写入完成，不证明接收者消费。快照并非无损事件流，本地 UTC 观察不证明 ACK 到达顺序。有关隐私、保留的提交/ACK/等待含义、只读收集器查询及现有隔离限制，参见 [handoff 运行时指南](handoff-runtime.md)。观察不启动原生消息进程或收集器。不公开载荷或权限摘要，公开 targetGeneration 保持既有约定。 只读记录在读取不可变快照字节后、解析和验证前释放共享锁。 中断后的最终输出和清理在剩余总预算内最多使用 100 ms。 整体成功需要完整的成功结束帧和退出码 0：该帧之后清理仍可能失败。非零退出表示整体失败，不表示 ACK 升级、丢弃独立有效的提交事实或允许重试。
 
 <a id="可信本地-ssh-配置v13-候选尚未发布"></a>
 
@@ -452,7 +452,7 @@ session-peer device offer-status --state /private/device-state --offer-id OFFER-
 session-peer device offer-cancel --state /private/device-state --offer-id OFFER-UUID
 ```
 
-创建时核对双方身份，只在所有者终端显示链接。`--link` 不接值；使用长度受限的不回显输入，客户端独立核对接收端当前密钥指纹后，才登记信任并联网。无终端时拒绝，不改为回显或自动批准。不要把链接放进参数、浏览器历史、日志或Issue。设置向导提供链接/私密文件选项，现有文件命令仍受支持。取消只影响该提议的待定信任；已完成的配对须显式吊销。没有历史的过期链接会被拒绝，只有完全匹配的保存上下文才能核对已经完成的认证结果。配对不替代接收目标策略或原生CLI的审批。密钥轮换限制、有效期、频率限制、中断与威胁模型见[配对设备指南](paired-devices.md)。
+创建时核对双方身份，只在所有者终端显示链接。`--link` 不接值；链接采用长度受限的不回显输入。客户端会要求输入经可信独立渠道获取的接收端当前密钥指纹，并在暂存信任信息或联网前核对是否匹配。无终端时拒绝，不改为回显或自动批准。不要把链接放进参数、浏览器历史、日志或Issue。设置向导提供链接/私密文件选项，现有文件命令仍受支持。取消只影响该提议的待定信任；已完成的配对须显式吊销。没有历史的过期链接会被拒绝，只有完全匹配的保存上下文才能核对已经完成的认证结果。配对不替代接收目标策略或原生审批。密钥轮换限制、有效期、频率限制、中断与威胁模型见[配对设备指南](paired-devices.md)。
 
 <a id="updating"></a>
 ### 更新
@@ -511,7 +511,7 @@ session-peer update --host web-01                 # push this program if version
 部分错误时保留正常列表，但**任何搜索错误（包括存活会话冲突）都会拒绝所有目标选择，
 即使目标是无关的正常 PID**。此规则适用于 dry-run、发送和 handoff。
 显式目录可隔离其他档案的错误，但不能修复所选目录内部的冲突或搜索限制。
-保留原有单目录对无效记录的处理方式。核对所选记录和端点时不会重新搜索其他档案。
+保留原有单目录对无效记录的处理方式。核对所选记录和端点证据时不会重新搜索其他档案。
 保留普通 Unix 套接字别名支持及其既有可选代际检查限制；代际令牌不是发送权限或 ACK。
 这些检查不验证模型身份，不消除所有文件系统竞争，也不证明收件。
 不会自动搜索其他 Orca 布局或任意配置目录。
@@ -533,7 +533,7 @@ session-peer update --host web-01                 # push this program if version
 
 ## Codex 会话
 
-Codex 发现使用只读 SQLite 连接读取 `state_5.sqlite`。此内部模式是实验性的，已在 macOS 上的 Codex CLI 0.154.0 上进行测试；跨平台固件测试并不代表在所有操作系统上都进行了实时 Codex 验证。已保存的会话不一定处于活跃状态。`--all` 包含已归档的线程。
+Codex 发现使用只读 SQLite 连接读取 `state_5.sqlite`。此内部模式是实验性的，已在 macOS 上的 Codex CLI 0.154.0 上进行测试；跨平台测试夹具并不代表在所有操作系统上都进行了实时 Codex 验证。已保存的会话不一定处于活跃状态。`--all` 包含已归档的线程。
 
 `--codex-home` 覆盖目标端的 `CODEX_HOME`（默认为 `~/.codex`）。`--codex-bin` 覆盖用于发送的 `codex` PATH 查找。在 SSH 上，这些是远程路径。发送需要具备 `queue` 命令的 Codex 可执行文件以及该目录下相应的已保存线程/rollout；仅凭列表并不能证明队列可以接受它。
 
@@ -553,7 +553,7 @@ wake 在预留预算前检查已知存储设置，但如果预留后配置或写
 
 2026-10-15 对 native Codex [0.162.1](https://github.com/openai/codex/tree/092d3acd6bec3e3a14bdc7e7a2810ab628ab759d/codex-rs) 的调查发现，存储优先级依次为管理员要求、合并后的配置层、`CODEX_SQLITE_HOME`、`CODEX_HOME`。可以设置 `sqlite_home` 的配置层包括系统文件、macOS 托管配置描述文件、用户的 `config.toml`、通过 `--profile` 选择的配置档文件，以及 native 进程工作目录的项目层（从工作目录到最近的默认 `.git` 根目录之间的 `.codex/config.toml`；未找到根目录时只检查工作目录，仅对受信任项目启用）。旧版 `[profiles.*]` 表没有存储键。如果目录中的 `app-server-control/app-server-control.sock` 上有接受连接的 app-server 守护进程在运行，`codex queue` 会通过该守护进程提交，否则通过内嵌服务器提交。除非通过 `--no-daemon` 等方式排除，native TUI 默认会自动启动此类守护进程。守护进程的 QueueStore 保留启动时选择的数据库，而 `config/read` 会重新读取当前磁盘上的配置层；`initialize` 会报告目录和平台，但已审查的 `initialize`、`config/read` 和队列 API 都没有证明启动时 SQLite 身份的稳定约定。线程 UUID 一致或连接到同一服务器并不代表存储相同（复制的数据库也可能包含相同的 UUID），队列 API 也没有预期存储或进程代次前置条件。消费队列消息的进程会轮询其自身存储中的队列。这些是源码调查结果，并非实际投递或平台验证。
 
-如果继承的 `CODEX_SQLITE_HOME` 非空，或任何被检查目录的配置中存在根级 `sqlite_home`，session-peer 会在发现、预检或队列提交之前拒绝。即使配置路径等于所选目录也会拒绝，包括带引号或转义的根级键以及根级点分键和表。未选中的嵌套键不被视为根级存储设置。空环境变量覆盖会从 native 子进程环境中移除；POSIX 区分环境变量名称的大小写，Windows 不区分。现有的 native 目录路径转换保持不变，不新增迁移存储位置的支持。此外，如果系统配置和要求文件（`/etc/codex/config.toml`、`/etc/codex/managed_config.toml`、`/etc/codex/requirements.toml`，Windows 上为 Known Folder API 返回的 ProgramData 目录下的 `OpenAI\Codex\config.toml` 和 `requirements.toml`）或 macOS 托管配置值中存在根级 `sqlite_home`，无论项目是否受信任都会拒绝。队列提交会在被检查的目录中启动 native 进程，因此调用方所在目录不会增加项目层。预检在不启动队列或 app-server 子进程（wake 和 macOS 普通队列的预检仍可能运行 native 版本检查进程）的情况下检查相同的执行计划（目录、子进程工作目录、环境、已知配置层和消费目录），实际发送则在产生效果之前再次检查；两者都无法消除 native Codex 读取配置之前的时间差，因此预检通过并不保证之后发送时存储一致。根据用户策略，无论守护进程控制套接字是活动的还是遗留的，都不会成为拒绝原因，session-peer 也不会尝试连接；守护进程与内嵌服务器的选择仍由 native Codex 决定，且不声称具有存储权威。除转换后的 native 目录路径外，预检、队列提交和 wake 还会检查已保存线程目录的项目层，消费消息的写入进程或 wake 服务器通常从该目录启动；线程元数据无法读取或格式错误时会拒绝。wake 会在预留单目标预算之前执行这些存储检查。拒绝原因包括 `sqlite_environment_override`、`sqlite_home_configuration`、`sqlite_home_system_configuration`、`sqlite_home_managed_configuration`、`sqlite_home_project_configuration`、`consumer_directory_unverifiable`、`storage_config_unreadable` 和 `storage_config_unverifiable`。
+如果继承的 `CODEX_SQLITE_HOME` 非空，或任何被检查目录的配置中存在根级 `sqlite_home`，session-peer 会在发现、预检或队列提交之前拒绝。即使配置路径等于所选目录也会拒绝，包括带引号或转义的根级键以及根级点分键和表。未选中的嵌套键不被视为根级存储设置。空环境变量覆盖会从 native 子进程环境中移除；POSIX 区分环境变量名称的大小写，Windows 不区分。现有的 native 目录路径转换保持不变，不新增迁移存储位置的支持。此外，如果系统配置和要求文件（`/etc/codex/config.toml`、`/etc/codex/managed_config.toml`、`/etc/codex/requirements.toml`，Windows 上为 Known Folder API 返回的 ProgramData 目录下的 `OpenAI\Codex\config.toml` 和 `requirements.toml`）或 macOS 托管配置值中存在根级 `sqlite_home`，无论项目是否受信任都会拒绝。队列提交会在被检查的目录中启动 native 进程，因此调用方所在目录不会增加项目层。预检在不启动队列或 app-server 子进程（wake 和 macOS 普通队列的预检仍可能运行 native 版本检查进程）的情况下检查相同的执行计划（目录、子进程工作目录、环境、已知配置层和消费目录），实际发送则在产生效果之前再次检查；两者都无法消除 native Codex 读取配置之前的时间差，因此预检通过并不保证之后发送时存储一致。根据用户策略，无论守护进程控制套接字是活动的还是遗留的，都不会成为拒绝原因，session-peer 也不会尝试连接；守护进程与内嵌服务器的选择仍由 native Codex 决定，且不声称已验证实际使用的存储。除转换后的 native 目录路径外，预检、队列提交和 wake 还会检查已保存线程目录的项目层，消费消息的写入进程或 wake 服务器通常从该目录启动；线程元数据无法读取或格式错误时会拒绝。wake 会在预留单目标预算之前执行这些存储检查。拒绝原因包括 `sqlite_environment_override`、`sqlite_home_configuration`、`sqlite_home_system_configuration`、`sqlite_home_managed_configuration`、`sqlite_home_project_configuration`、`consumer_directory_unverifiable`、`storage_config_unreadable` 和 `storage_config_unverifiable`。
 
 被检查的 TOML 文件必须是不超过 1 MiB 的 UTF-8 常规文件，不能是符号链接。Windows 系统目录通过 `SHGetKnownFolderPath(FOLDERID_ProgramData)` 获取；API 失败时与 native Codex 一样使用固定的 `C:\ProgramData`，不使用 `ProgramData` 环境变量。macOS 通过 CoreFoundation 同步 Codex 配置域并释放所拥有的值。强制设置专用策略在复制后再次检查强制状态并忽略普通用户设置；按版本选择的保守策略也读取普通值，如上所述。选定的 base64 字符串最多为 2 MiB，解码后的 UTF-8 TOML 最多为 1 MiB。同步、类型、解码或大小错误均拒绝；TOML 文件或配置值不存在时允许继续。默认项目搜索在最近的非目录 `.git` 条目（仅检查 metadata）或含有 `HEAD` 的 .git 目录处停止；保守拒绝符号链接标记；没有根目录时只检查工作目录。`<cwd>/config.toml` 不是项目配置层。已知配置中存在根级 `project_root_markers` 覆盖时，保守检查所有上级目录，而不声称精确解释了自定义标记。API 已通过模拟测试验证；实际重新定位的 Windows Known Folder 和强制 MDM 配置描述文件尚未测试。无法读取、发生变化、超出大小限制或键语法无法分类的文件会被拒绝，且不会输出其内容。不依赖外部库的键分类器支持 Python 3.9，但不是完整的 TOML 或模式验证器；其他值仍由 native Codex 验证。队列和 wake 会在启动子进程前重新检查该边界。拒绝结果包含 `status=refused`、`submitted=false` 和 `retryAllowed=false`；正常的既有输出及写入进程所有权检查保持不变。SSH 在目标端检查，而不是检查发送端的环境。
 
@@ -591,7 +591,7 @@ export SESSION_PEER_CODEX_HOMES='["/srv/codex/account-a", "/srv/codex/account-b"
 
 请在目标命令的环境中进行配置；本地 export 的变量不会被 `--host` 转发。在 Windows 上，使用符合 JSON 要求的带反斜杠转义的绝对 Windows 路径。允许配置空数组；对于隐式发送，格式错误的配置会引发错误。
 
-对于每次发送和预检运行，session-peer 都会查找保存该 UUID 的所有已知目录，并检查每个目录中确切的 `thread-writer-locks/<uuid>.lock`。单个候选目录和显式 `--codex-home` 也包括在内。它会独立探测内核建议锁，并通过两次稳定的 `lsof` 观察来关联打开该文件的进程。隐式发送会选择唯一具有稳定同用户 Codex 写入者的目录。显式目录必须与该写入者一致；如果另一个目录拥有唯一的活跃写入者，命令将返回结构化冲突，且绝不会暗中更换目录。在队列提交前会再次检查所选 PID、进程启动时间以及持有的锁。空闲或过期的锁不会仅仅因为文件存在而胜出。
+对于每次发送和预检运行，session-peer 都会查找保存该 UUID 的所有已知目录，并检查每个目录中确切的 `thread-writer-locks/<uuid>.lock`。单个候选目录和显式 `--codex-home` 也包括在内。它会独立探测内核协作式文件锁（advisory lock），并通过两次稳定的 `lsof` 观察来关联打开该文件的进程。隐式发送会选择唯一具有稳定同用户 Codex 写入者的目录。显式目录必须与该写入者一致；如果另一个目录拥有唯一的活跃写入者，命令将返回结构化冲突，且绝不会暗中更换目录。在队列提交前会再次检查所选 PID、进程启动时间以及持有的锁。空闲或过期的锁不会仅仅因为文件存在而胜出。
 
 未知证据、多个活跃写入者、缺少 `lsof`、权限失败、PID/启动时间/inode 变化以及冲突证据都会在排队前以安全方式失败（fail-closed）。已归档的保存副本仍然计算在内。无法读取或不兼容的已知数据库以及缺失的已配置数据库也会阻止提交。如果所有保存副本都处于非活动状态，要有意为未来 resume 排队，必须同时使用显式 `--codex-home` 和 `--allow-inactive-codex-home`；`--wake` 已被视为显式激活 opt-in。没有显式目录时仅使用 inactive 标志会被拒绝。解析后的符号链接别名和重复路径视为同一个目录。
 
@@ -646,7 +646,7 @@ MCP 包装层仅支持以下检查及执行效果：
 
 反向 SSH 仅在指定 `--check-return-route` 时进行检查。目标端会运行一个固定的 `ssh ... true` 探测，且禁用了提示、密码身份验证、主机密钥注册和配置更改。正向 SSH 成功绝不能作为反向路径可用的证据。当自动 Tailscale 检测无法识别来源时，请使用 `--reply-to USER@HOST`。JSON 详情和状态值记录在 [docs/diagnostics.md](diagnostics.md) 中。
 
-这里特意没有提供通用的 `--wait`。Claude Code 具有原生的同机器 `notify_when_idle` 机制，但这并不涵盖远程会话、子代理或 Codex，且套接字/队列提交成功并非确认。因此 session-peer 报告 `capabilities.replyObservation.status: unsupported`，而不是去跟踪可变的脚本记录并冒误匹配的风险。当关注完成情况时，请要求目标向提供的 `Reply-To` 地址发送显式回复。可选唤醒功能仍在 [#46](https://github.com/abruption/session-peer/issues/46) 中跟进。
+这里特意没有提供通用的 `--wait`。Claude Code 具有原生的同机器 `notify_when_idle` 机制，但这并不涵盖远程会话、子代理或 Codex，且套接字/队列提交成功并非确认。因此 session-peer 报告 `capabilities.replyObservation.status: unsupported`，而不是去跟踪可变的对话记录并冒误匹配的风险。当关注完成情况时，请要求目标向提供的 `Reply-To` 地址发送显式回复。可选唤醒功能仍在 [#46](https://github.com/abruption/session-peer/issues/46) 中跟进。
 
 <a id="moving-from-cc-peer"></a>
 ## 从 cc-peer 迁移
@@ -711,7 +711,7 @@ session-peer 在拥有该收件箱的机器上发起连接。对于 SSH 发送�
 python3 -m unittest discover -s tests -v
 ```
 
-默认测试套件不需要活跃的代理、SSH 服务器或网络。它包含遗留兼容性测试、共享 CLI 辅助函数、基于测试夹具的 Codex 发现和队列子进程测试，以及隔离的独立安装/共存检查。Codex 覆盖范围包括 argv/有效负载处理、目标目录选择、真实建议锁探测、稳定所有者证据、不分发消息的预检运行、失败/超时语义以及远程选项转发。多目录夹具复现了跨默认目录和 Orca/已配置目录的重复 UUID、唯一/多个/变动的写入者证据、安全失败的清单错误、显式选择、别名去重、单目录兼容性以及结构化的目录/提交元数据。它们绝不会根据保存的行推断活跃写入者，也不会向真实会话提交消息。更新通知覆盖范围检查了新鲜度和过期性、严格的稳定版本、原子私有写入、单飞（single-flight）后台刷新、退出行为、包管理器指引、多主机作用域以及故障隔离。
+默认测试套件不需要活跃的代理、SSH 服务器或网络。它包含遗留兼容性测试、共享 CLI 辅助函数、基于测试夹具的 Codex 发现和队列子进程测试，以及隔离的独立安装/共存检查。Codex 覆盖范围包括 argv/有效负载处理、目标目录选择、真实协作式文件锁探测、稳定所有者证据、不分发消息的预检运行、失败/超时语义以及远程选项转发。多目录夹具复现了跨默认目录和 Orca/已配置目录的重复 UUID、唯一/多个/变动的写入者证据、安全失败的清单错误、显式选择、别名去重、单目录兼容性以及结构化的目录/提交元数据。它们绝不会根据保存的行推断活跃写入者，也不会向真实会话提交消息。更新通知覆盖范围检查了新鲜度和过期性、严格的稳定版本、原子私有写入、单飞（single-flight）后台刷新、退出行为、包管理器指引、多主机作用域以及故障隔离。
 
 CI 在 Ubuntu/macOS 上配合 Python 3.9 和 3.13，以及在 Windows 上配合 Python 3.13 运行测试（在此跳过 POSIX 安装程序测试）。单独的作业使用 `shellcheck` 检查 shell 语法，检查独立安装/重新安装/卸载，以及 wheel/sdist 内容和安装。这并非完整的传输覆盖：Claude 发现夹具、真实 UDS 有效负载检查以及更广泛的退出码/远程命令回归测试仍在 [#28](https://github.com/abruption/session-peer/issues/28) 中跟进。
 
@@ -756,7 +756,7 @@ CI 在 Ubuntu/macOS 上配合 Python 3.9 和 3.13，以及在 Windows 上配合 
 
 在重命名之前，曾在 Tailscale 网络上通过 SSH 在五台机器上测试了 Claude Code **v2.1.263**：两台 macOS 26（Apple 芯片）、两台 Ubuntu 24.04（arm64，位于不同区域的 Oracle Ampere A1）以及一台 Windows 10 22H2。这些历史观察结果并不代表使用 session-peer v0.6.0 重复了每项测试：
 
-- 从 macOS 向两个区域的 Linux 会话发送消息；每条消息都作为 `origin.kind: "peer"` 的 `type: user` 记录在接收脚本记录中。
+- 从 macOS 向两个区域的 Linux 会话发送消息；每条消息都作为 `origin.kind: "peer"` 的 `type: user` 记录在接收方对话记录中。
 - 有效负载完整性 —— 引号、反引号、`$HOME` 和表情符号逐字节完整送达。
 - 暂扣路径：bypass 模式会话显示了批准对话框，并在批准后记录了 `Released 1 held cross-session message`。
 - 实际环境中的两种套接字布局：一台 Ubuntu 主机上为 `/tmp/cc-socks/`，另一台运行相同构建的主机上为 `/run/user/1001/cc-socks/`。
@@ -770,11 +770,11 @@ MIT
 
 ### 组合会话发现
 
-默认情况下，`list` 和 `list --json` 会同时查询 Claude 和 Codex。使用 `--agent claude` 可保留先前的仅 Claude 默认设置，或使用 `--agent codex` 仅查询 Codex。每个会话行都包含 `agent: "claude" | "codex"`；特定于代理的字段（如 PID 和线程 UUID）保持不变。人类可读的组合输出包含 AGENT 列。Claude 行排在 Codex 行之前，以保留 Claude 发现顺序；Codex 行按更新时间降序排列，然后按目录和 UUID 排序。
+默认的 `list` 和 `list --json` 查询所有已注册的适配器：Claude、Codex及正在运行的已注册Antigravity桥接。使用 `--agent claude`、`--agent codex` 或 `--agent antigravity` 选择一个。每个会话行包含 `agent: "claude" | "codex" | "antigravity"`；PID、线程UUID等智能体专属字段保持不变。便于阅读的组合输出包含AGENT列。Claude行排在Codex行之前，并保持原有发现顺序；Codex行按更新时间降序、再按主目录与UUID排序。
 
-列表响应包含 `discovery`，以每个请求的代理为键，带有 `status: "ok" | "not_installed" | "error"`（中间状态仅限 Codex），以及针对失败来源的 `error` 说明。任何发现失败都会返回 `ok: false`、顶层错误摘要和退出码 1，同时保留成功发现的会话。未自动发现 Codex 安装属于正常的空结果（`not_installed`，退出码 0）；显式配置的目录缺失则属于错误。Claude 会话目录缺失属于空结果。两者都不是 Codex 进程正在运行的证据。格式错误的单个 Claude 记录将像以前一样继续被跳过。
+列表响应包含按请求智能体区分的 `discovery`、`status: "ok" | "not_installed" | "error"` 以及失败来源的 `error` 说明。Antigravity的 `not_installed` 与 `no_live_registration` 表示没有找到正在运行的已注册桥接，不能证明CLI是否已安装。发现失败时保留成功会话，并返回 `ok: false`、顶层错误摘要和退出码1。Codex自动发现没有可读的状态数据库且没有检查错误时，属于正常空结果（`not_installed`，退出码0）；显式配置的主目录缺失仍为错误。Claude会话目录缺失为空结果。发现结果不能证明Codex进程正在运行。格式错误的单个Claude记录仍会被跳过。
 
-这些语义同样适用于本地和通过 SSH 的场景。重复指定的主机在现有的有序数组中保留独立的结果；任何失败都会导致总体退出码为 1。Codex 列表包括默认目录、环境选择目录、Orca 目录和配置的目录。使用 `--codex-home PATH` 仅检查该目录。`--all` 保留 Claude 的陈旧/无收件箱记录，并包含已归档的 Codex 线程。
+这些语义同样适用于本地与SSH。重复指定的主机在现有有序数组中保留独立结果；任一失败都会使总退出码为1。Codex列表包括默认主目录、环境选择的主目录、Orca及配置的主目录。使用 `--codex-home PATH` 只检查该主目录。`--all` 包含Claude的过期或无收件箱记录以及已归档Codex线程。
 
 ### 可选 MCP / Codex 插件
 
@@ -788,16 +788,16 @@ MIT
 
 代理适配器和本地/SSH 执行共享内部带版本的契约，同时保留单文件 CLI。参见[适配器开发](agent-adapters.md)以及[架构决策](architecture/agent-transports.md)。不支持外部插件加载。`doctor.capabilities.agents` 描述了已实现的 list/send/wake/wait/ack 支持；它并不授予权限或证明就绪状态。
 
-`install.sh` 在目标文件系统暂存本地和SSH更新，先下载runtime和skill并验证暂存CLI版本，再原子替换runtime。下载或验证失败时保留现有runtime、launcher和skill。这不表示全部安装文件的事务、签名验证或后续skill-manager失败的回滚；原有安装管理器归属不变。
+`install.sh` 在目标文件系统暂存本地和SSH更新，先下载runtime和skill并验证暂存CLI版本，再原子替换runtime。下载或验证失败时保留现有runtime、launcher和skill。这不表示全部安装文件的事务、签名验证或后续skill-manager失败的回滚；原有技能管理器（skill-manager）归属不变。
 
 SSH在启动子进程前检查最终shell引用命令的UTF-8字节数。保守上限131071字节包含base64展开、envelope、选项及引用。超限在本地返回 `ssh_command_too_large` 和 `submitted: false`；Unicode不能仅按字符数判断。本地传输限制不变，也不保证所有远端OS的参数与环境总空间。
 
-在向原生会话投递时，session-peer 会引用对方正文的每一行，并将发送会话和回复地址标记为未经验证的声明。Codex 和 Antigravity 还会收到明确警告：对方文字不是用户授权。Claude Code 已提供此警告，因此不再重复。`--no-from` 和 `--no-reply-to` 仅省略发送方元数据，不能移除接收侧的这层标记。Reply-To 只是没有执行权限的路由数据。请检查其所在的标记，并在回复第三方之前向会话所有者确认目的地。此机制减少歧义，但不能阻止所有提示注入。标记和转义后的控制字符也计入消息限制；`chars` 表示实际投递的引用后文本长度。提交与消费、ACK 的含义保持不变。
+在向原生会话投递时，session-peer 会引用对方正文的每一行，并将发送方/会话声明及回复路由标记为未经验证。Codex 和 Antigravity 还会收到明确警告：对方文字不是用户授权。Claude Code 已提供此警告，因此不再重复。`--no-from` 和 `--no-reply-to` 仅省略发送方元数据，不能移除接收侧的这层标记。Reply-To 只是没有执行权限的路由数据。请检查其所在的标记，并在回复第三方之前向会话所有者确认目的地。此机制减少歧义，但不能阻止所有提示注入。标记和转义后的控制字符也计入消息限制；`chars` 表示实际投递的引用后文本长度。提交与消费、ACK 的含义保持不变。
 
 ## 在实际 SSH 连接中核验主机密钥（开发中）
 
 为 `list`、`send`、`doctor --host`添加 `--ssh-identity`可返回
-`sshIdentity`。指纹和密钥算法来自实际 OpenSSH 密钥核验及完整的远端响应。
+`sshIdentity`。只有指纹和密钥算法来自实际 OpenSSH 主机密钥回调及随后完整且经过验证的远端结果。
 目标地址、端口和密钥查询名称仅是连接前的配置，不单独证明最终网络端点。
 若远端响应未完成，所提供的密钥仅记为 `observed`，不记为 `verified`。
 
@@ -810,14 +810,13 @@ session-peer send --host workstation --to reviewer --message="Review this change
 请用发现结果中已经核验的指纹替换占位值。密钥在实际发送连接的认证和远端
 执行之前核验，而不是依靠单独的探测连接。密钥变化会被拒绝；轮换密钥时
 必须明确核验并提供新指纹。此模式禁用连接复用并保留严格的主机密钥检查。
-报告模式沿用现有 known-hosts 信任；固定模式仅信任指定的公钥，不写入
+报告模式沿用现有 known-hosts 信任；固定模式仅信任为该连接提供的公钥指纹，不写入
 known-hosts 文件。多台主机可共用同一密钥，因此它不证明唯一设备、账户、
 会话世代或消息消费。
 
 开发实现仅支持 POSIX 的普通 Ed25519、RSA 和 ECDSA 密钥，不支持主机证书或
 安全密钥算法。已有 `KnownHostsCommand`会被拒绝，而不会被静默替换。SSH
-配置与跳板机的信任仍由操作者管理。此模式省略通过另一个连接进行的安装
-版本补充查询。完整响应后若密钥记录缺失，仍保留提交证据，但无法满足必需
+配置与跳板机的信任仍由操作者管理。身份模式的列表查询省略可选的第二次已安装版本探测，因为该独立连接不在此次 SSH 主机密钥核验记录的覆盖范围内。完整响应后若密钥记录缺失，仍保留提交证据，但无法满足必需
 的密钥固定条件，也不允许自动重发。
 
 未启用时保持原有行为和输出。公开 v1.0.4 尚不包含这些选项。本地验证仅涵盖

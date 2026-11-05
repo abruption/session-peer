@@ -35,7 +35,7 @@ Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(
 
 ## v1.4.0 소스: 목적지 조회 (#356)
 
-`list_destinations()`는 인자를 받지 않으며 운영자 정책의 메타데이터만 반환합니다. `schemaVersion`은 1이고 각 항목은 `destination`, `transport`, `agents`, `capabilities`를 포함합니다. 자식 프로세스를 시작하거나 네트워크 요청을 보내지 않습니다. SSH 호스트 값과 Codex 홈 경로는 생략됩니다. 목적지 이름은 신뢰할 수 없는 데이터입니다. 구성된 기능은 정책상 권한을 나타내며 네이티브 에이전트와의 호환성을 나타내지는 않습니다.
+`list_destinations()`는 인자를 받지 않으며 운영자 정책의 메타데이터만 반환합니다. `schemaVersion`은 1이고 각 항목은 `destination`, `transport`, `agents`, `capabilities`를 포함합니다. 자식 프로세스를 시작하거나 네트워크 요청을 보내지 않습니다. SSH 호스트 값과 Codex 홈 경로는 생략됩니다. 목적지 이름은 신뢰할 수 없는 데이터입니다. 구성된 권한은 정책상 권한을 나타내며 네이티브 에이전트와의 호환성을 나타내지는 않습니다.
 
 응답은 한계를 명시합니다: `callerIdentity="unavailable"`, `readiness="not_checked"`, `submission="not_attempted"`, `consumption="not_checked"`, `ack="not_checked"`. 이 도구는 목적지가 64개를 넘거나 ID에 출력할 수 없는 문자가 있거나 UTF-8 기준 128바이트를 넘으면 조회를 거부합니다. 텍스트와 구조화된 내용을 합친 MCP 도구 결과는 64 KiB 이내이며, 바깥 JSON-RPC 봉투는 이 한도에 포함되지 않습니다. 이는 조회 도구의 제한으로, 정책 읽기와 기존 도구의 동작은 바뀌지 않습니다. 출력 가능한 문자 판정에는 실행 중인 Python의 유니코드 데이터베이스를 사용합니다. 기본 로컬 목록 조회 전용 정책은 그대로 유지됩니다.
 
@@ -43,7 +43,7 @@ Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(
 
 ## v1.4.0 소스: 전송 사전 검증 (#357)
 
-`preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)`는 기존 CLI dry-run 검사로 일반 메시지를 검증합니다. 운영자 정책은 `schemaVersion` 2를 사용하고 해당 목적지와 에이전트에 `preflight`를 명시적으로 허용해야 합니다. 버전 1의 기존 기능 집합에는 새 권한이 추가되지 않으며, 기본값은 로컬 목록 조회 전용으로 유지됩니다. 사전 검증에는 `send`가 필요하지 않으며 전송 권한을 부여하지 않습니다. wake 적격성을 검사하려면 별도로 `wake`가 필요하지만, 모델을 활성화하거나 wake 예산을 예약하지는 않습니다.
+`preflight_send(destination, target, message, wake=false, wake_timeout=30, preset=null, preset_revision=null)`는 기존 CLI dry-run 검사로 일반 메시지를 검증합니다. 운영자 정책은 `schemaVersion` 2를 사용하고 해당 목적지와 에이전트에 `preflight`를 명시적으로 허용해야 합니다. 버전 1의 기존 권한 집합에는 새 권한이 추가되지 않으며, 기본값은 로컬 목록 조회 전용으로 유지됩니다. 사전 검증에는 `send`가 필요하지 않으며 전송 권한을 부여하지 않습니다. wake 적격성을 검사하려면 별도로 `wake`가 필요하지만, 모델을 활성화하거나 wake 예산을 예약하지는 않습니다.
 
 버전이 지정된 설명은 SSH 어댑터가 결과를 가공하기 전의 네이티브 응답에서 허용된 사실만 추출하고, 정해진 거부·불확실 사유와 운영자 조치를 제공합니다. 메시지 내용, 원시 오류, 자격 증명, 호스트·홈 경로와 네이티브 기록은 제외됩니다. 결과가 불확실하거나 예상치 못한 제출 증거가 있으면 `retryAllowed=false`로 검증에 실패합니다. 자동으로 재전송하지 마십시오. 사전 검증은 메시지를 제출하거나 handoff 권한을 만들지 않습니다. 기기 및 handoff 모드는 지원하지 않습니다.
 
@@ -99,12 +99,12 @@ MCP 래퍼가 지원하는 검사와 실행 효과는 다음으로 제한됩니�
 
 아래 두 시그니처는 기존 기본 인터페이스를 설명합니다. v1.4.0 소스 도구와 선택형 프리셋 인자는 위 절과 초기화된 MCP의 `tools/list` 스키마를 확인하십시오. 도구가 표시된다는 사실은 정책 권한을 부여하지 않습니다.
 
-- `list_sessions(destination="local", agent=null, include_inactive=false)`는 CLI의 구조화된 목록을 반환합니다. Agent는 `claude` 또는 `codex`일 수 있으며, 생략 시 허용된 에이전트를 나열합니다.
+- `list_sessions(destination="local", agent=null, include_inactive=false)`는 CLI의 구조화된 목록을 반환합니다. 에이전트 선택은 대상 정책이 허용한 등록 어댑터(예: `claude` 또는 `codex`)로 제한되며, 생략 시 허용된 에이전트를 나열합니다.
 - `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30)`는 `send`가 명시적으로 허용된 곳에만 1회 제출합니다. Target은 Claude 이름/PID, `codex:<UUID>`, 또는 구성된 호스트 및 홈과 정확히 일치하는 Reply-To URI입니다.
 
 MCP 도구 어노테이션은 목록 조회를 읽기 전용으로, 전송을 멱등하지 않음으로 표시합니다. 필요에 따라 호스트 클라이언트의 도구 승인을 구성하십시오. 서버 정책은 목적지를 독립적으로 제한하며 샌드박스/호스트 승인을 우회하지 않습니다. 다른 호스트 이름이 동일한 머신으로 확인되더라도 Reply-To URI의 SSH 별칭은 정책과 정확히 일치해야 합니다. 그렇지 않은 경우 직접 대상 및 구성된 목적지 ID를 사용하십시오.
 
-응답은 MCP structuredContent 및 텍스트 모두에서 CLI JSON 필드를 보존합니다. 부분적인 목록 조회 실패는 검색된 세션을 유지하고 isError를 설정합니다. 큐 제출은 소비가 아닙니다. 알 수 없는 결과의 전송을 절대 자동으로 재시도하지 마십시오. 원격 제출 후 취소 또는 트랜스포트 유실이 발생할 수 있습니다. 수신 확인/상태 확인/대기 도구는 없습니다. [명시적 wake](wake.md)는 `send` 외에 별도의 `wake` 기능이 필요합니다. wake를 활성화할 때 클라이언트 도구 타임아웃을 150초로 구성하십시오.
+응답은 MCP structuredContent 및 텍스트 모두에서 CLI JSON 필드를 보존합니다. 부분적인 목록 조회 실패는 검색된 세션을 유지하고 isError를 설정합니다. 큐 제출은 소비가 아닙니다. 알 수 없는 결과의 전송을 절대 자동으로 재시도하지 마십시오. 원격 제출 후 취소 또는 트랜스포트 유실이 발생할 수 있습니다. 수신 확인/상태 확인/대기 도구는 없습니다. [명시적 wake](wake.md)는 `send` 외에 별도의 `wake` 권한이 필요합니다. wake를 활성화할 때 클라이언트 도구 타임아웃을 150초로 구성하십시오.
 
 공유 MCP 프로세스는 호출 스레드를 안정적으로 식별할 수 없습니다. 메시지는 서버를 시작한 세션에 귀속시키는 대신 `session-peer MCP (caller session unavailable)`을 식별하고 Reply-To를 생략합니다. 인증을 위해 이 헤더에 의존하지 마십시오. 메시지 본문은 셸 명령 문자열이 아닌 stdin을 통해 전달되며, 일반적인 CLI 제한이 계속 적용됩니다.
 

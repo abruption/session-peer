@@ -99,7 +99,7 @@ If any approved item is missing or its route mismatches policy, the whole metada
 
 The two signatures below describe the original baseline interface. For v1.4.0 source tools and optional preset selectors, use the sections above and the initialized MCP `tools/list` schema. Tool availability does not grant policy permission.
 
-- `list_sessions(destination="local", agent=null, include_inactive=false)` returns the CLI's structured listing. Agent may be `claude` or `codex`; omission lists permitted agents.
+- `list_sessions(destination="local", agent=null, include_inactive=false)` returns the CLI's structured listing. Agent selection is restricted to registered adapters allowed by the destination policy (for example `claude` or `codex`); omission lists permitted agents.
 - `send_message(destination, target, message, dry_run=false, wake=false, wake_timeout=30)` submits once, only where `send` is explicitly allowed. Target is a Claude name/PID, `codex:<UUID>`, or a Reply-To URI matching the configured host and home exactly.
 
 MCP tool annotations mark listing as read-only and sending as non-idempotent. Configure the host client's tool approvals as required; the server policy restricts destinations independently and does not bypass sandbox/host approvals. An SSH alias in a Reply-To URI must exactly match the policy, even if another hostname resolves to the same machine. Use a direct target and configured destination ID otherwise.

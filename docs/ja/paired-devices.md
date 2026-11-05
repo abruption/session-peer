@@ -32,12 +32,12 @@ session-peer setup --mode relay --interactive --role client --no-browser
 発見は保証せず既存サービスも変更しません。ポリシーは0600の秘密の新規ファイル作成
 または同一ファイル再利用のみで、異なるポリシーの上書き・権限拡張はしません。
 適用前に再確認しますが、その後もネイティブセッションが同一実体である保証はありません。
-既存の鍵・DB が不完全、または有効なローテーション鍵がない場合は、初期化を承認
+既存の識別情報・DB が不完全、または有効なローテーション鍵がない場合は、初期化を承認
 しても手動復旧が必要であり、設定ツールは再作成しません。
 
 秘密の `setup.json` に元の登録 UUID・名前・サーバー・鍵識別子と登録要求全体を送信前に永続保存します。
 中断・応答紛失後は同じ状態・名前で `enroll` を明示的に再開し、既存 API が同一操作を
-照合します。新規変更へ置換せず、意図・鍵・要求（証明書 PEM の空白を含む）の変更はネットワーク接続前に拒否します。期限切れは `login` を
+照合します。新規変更へ置換せず、意図・識別情報・ペイロード（証明書 PEM の書式を含む）の変更はネットワーク接続前に拒否します。期限切れは `login` を
 やり直しますが UUID は保持します。招待作成結果が不明なら運用者の照合を待ちます。
 提示コマンドと `--action receiver --apply` は前景で Ctrl-C または `--seconds` まで
 実行します。自動起動・サービス・プロファイルは導入せず、既存 launchd・systemd 管理
@@ -104,13 +104,13 @@ session-peer setup --mode relay --state /private/device-state --action offer-can
 
 ## 接続失敗の診断と安全な接続再試行
 
-`no_authenticated_route` は `retryAllowed:false` と `consumptionConfirmed:false` を維持します。`routeFailures` は経路ごとの最後の `stage`、許可リスト内の `reason`、`attempts` を示します。限定された `attemptHistory` は各試行の段階・理由・`elapsedMs` を保持し、HTTP 拒否には `httpStatus`、WebSocket の切断には `closeCode` が含まれる場合があります。制御、入場、アップグレード、attach、ピア TLS、probe の失敗を区別し、URL・認証情報・生の例外・メッセージ本文は記録しません。2 回目で成功した場合は `setupDegraded:true`、`setupAttempts:2`、`setupFailureHistory` が付き、正常な安定性試験の合格とは見なしません。
+`no_authenticated_route` は `retryAllowed:false` と `consumptionConfirmed:false` を維持します。`routeFailures` は経路ごとの最後の `stage`、許可リスト内の `reason`、`attempts` を示します。限定された `attemptHistory` は各試行の段階・理由・`elapsedMs` を保持し、HTTP 拒否には `httpStatus`、WebSocket の切断には `closeCode` と `closeSource`（受信または送信）が含まれる場合があります。制御、入場、アップグレード、attach、ピア TLS、probe の失敗を区別し、URL・認証情報・生の例外・メッセージ本文は記録しません。2 回目で成功した場合は `setupDegraded:true`、`setupAttempts:2`、`setupFailureHistory` が付き、正常な安定性試験の合格とは見なしません。
 
-**WebSocket アップグレード前の制御・入場タイムアウト**のみ、0.5 秒後にもう一度 Relay に接続します。attach、ピア TLS、probe のタイムアウトは再試行しません。WebSocket アップグレードのタイムアウトも、origin で既に受信側ルームがペアリングされた可能性があるため再試行しません。新しい入場チケットとチャネルを使い、消費済みチケットやエージェントへのメッセージを再送しません。HTTP 拒否、認証/証明書エラー、不明な失敗も再試行しません。直接経路が選択されると Relay 試行は取り消せます。送信後の応答喪失は引き続き `unknown` で、再送や経路切り替えは行いません。この限定的な緩和策は公開経路の障害解消を証明しません。デプロイ後に実際の ACK と長時間検証を再実施してください。
+**WebSocket アップグレード前の制御・入場タイムアウト**のみ、0.5 秒後にもう一度 Relay に接続します。attach、ピア TLS、probe のタイムアウトは再試行しません。WebSocket アップグレードのタイムアウトも、101 応答が失われていても origin で既に受信側がペアリングされた可能性があるため再試行しません。新しい入場チケットとチャネルを使い、消費済みチケットやエージェントへのメッセージを再送しません。HTTP 拒否、認証/証明書エラー、不明な失敗も再試行しません。直接経路が選択されると Relay 試行は取り消せます。送信後の応答喪失は引き続き `unknown` で、再送や経路切り替えは行いません。この限定的な緩和策は公開経路の障害解消を証明しません。受け入れ条件を完了扱いにする前に、デプロイ後の実際の ACK と長時間検証を再実施してください。
 
 受信側は安全化した `relay_connection_failed` 警告を stderr に毎分最大一回出力します。通常のアイドル期限切れに見える切断は失敗警告と分けます。`device serve --diagnostic-events` と `relay serve --diagnostic-events` を明示すると、ルーム・attach・切断の段階、所要時間、許可リスト内の理由と切断コードだけを stderr に記録します。既定では無効で、デバイス ID、ルーム名、URL、ヘッダー、認証情報、本文は記録しません。Relay メトリクスにはルーム作成・ペアリング、各レグへの attach 送信、期限切れのカウンターも追加されます。attach 送信はクライアント受信の証明ではありません。受信側の `idle_expiry_like` はサーバー原因の確証ではありません。
 
-WebSocket 切断の `closeSource` はコードの受信・送信方向を区別します。Relay のカウンターは受信側先着とクライアント先着のルームを区別します。`receiverWsAgeMs` は待機時間であり、接続の健全性を証明しません。ペアリングと受信側の `attach_received`・ピア TLS イベントの時刻を照合してください。
+Relay のカウンターは受信側先着とクライアント先着のルームを区別します。`receiverWsAgeMs` は待機時間であり、接続の健全性を証明しません。古い接続レグが残っていると推測する前に、ルームのペアリング時刻と受信側の `attach_received`・ピア TLS イベントを照合してください。
 
 `stream_close.closeCode` はリモートから受信した切断コードです。`1006` は切断フレームを受信しなかったことを意味し、レグの停止を示す可能性があります。`peer_closed` は相手レグの終了後に Relay がこのレグを閉じた場合、`remote_going_away` は Relay の切断要求なしにリモート側が 1001 を送った場合です。`receiverRoleBusy`・`clientRoleBusy` は同じルームで拒否された重複レグの数です。受信側の値が増える場合、受信側の再接続中に Relay が古いレグを保持している可能性があります。
 
@@ -275,7 +275,7 @@ session-peer send --device RECEIVER-FINGERPRINT --device-state /private/client-s
 
 `--to` は受信側ポリシーで許可されたターゲットエイリアスであり、任意のネイティブ UUID やシェルコマンドではありません。`--agent` は許可された一覧結果をフィルタリングします。デバイスルーティングは `--host` と排他的です。ネイティブホーム/バイナリ/SSH オプションは受信側ポリシーに属し、ペアリングされたリクエストでは拒否されます。ここでは `--wake` および明示的な SSH Reply-To はサポートされていません。説明的な From ヘッダーは保持されますが、自動的なペアリング Reply-To ルートは通知されません。このベータ版では MCP デバイス宛先は実装されておらず、既存のローカル/SSH ポリシーは変更されません。
 
-自動ルーティングは、認証済みの準備完了プローブを競争させ、両方が同時に完了した場合は direct を優先します。選択された **1 つ** の接続でアプリケーションリクエストを送信します。不確実な送信の後にフェイルオーバーして再送信することはありません。パスを強制するには、`--device-route direct` または `relay` を設定してください。メッセージはエンベロープの後で 32 KiB UTF-8 に制限されます。`--dry-run` はネイティブへの送信を行わずに、設定されたネイティブターゲットを解決します。
+自動ルーティングは、認証済みの準備完了プローブを競争させ、両方が同時に完了した場合は direct を優先します。選択された **1 つ** の接続でアプリケーションリクエストを送信します。不確実な送信の後にフェイルオーバーして再送信することはありません。パスを強制するには、`--device-route direct` または `relay` を設定してください。メッセージはエンベロープを含めて 32 KiB UTF-8 に制限されます。`--dry-run` はネイティブへの送信を行わずに、設定されたネイティブターゲットを解決します。
 
 32 KiB は送信者エンベロープを含む UTF-8 メッセージのバイト上限です。エスケープ済みのアプリケーション JSON 全体は 64 KiB、運用者のバインディングパスを含む内部 worker JSON は 256 KiB 以下に収めます。エスケープの多い本文は 32 KiB 未満でもアプリケーション上限に達する場合があります。確実なサイズ超過はアプリケーション書き込みやネイティブ journal intent の前に `refused` となります。その後の不確実な I/O 失敗は `unknown` のままで、自動再送を許可しません。
 
@@ -314,7 +314,9 @@ session-peer device routes --state ./client-state --peer RECEIVER_FINGERPRINT \
 
 ルートの変更によって新しいアイデンティティが承認されたり、失効したデバイスが復活したりすることはありません。制限された実稼働 Antigravity テストおよび残りのリリースゲートについては、[パブリックパイロットの証拠](relay-public-pilot-2026-09-17.md) を参照してください。
 
-## 公開Relayへの初回接続
+<a id="公開relayへの初回接続"></a>
+
+## ホスト型Relayへの初回接続
 
 Python 3.11+のmacOS/Linux(WindowsはWSL)と別途Relay extraが必要です。skill/pluginだけでは導入されません。新規pipx環境は `pipx install --python python3.11 'session-peer[relay]'` を使い、既存環境は元の管理者を維持してください。standaloneはlocal/SSH用のまま、Relay環境を別途選びます。両端で個別のprivate stateを使い、`FULL-UUID`を新しい操作UUIDに置き換えます。不確実な応答では同じUUIDを保持します。
 
@@ -324,6 +326,6 @@ session-peer device login --state /private/device-state --server https://relay.a
 session-peer device enroll --state /private/device-state --name laptop --operation-id FULL-UUID
 ```
 
-上記schemaのreceiver policyを作り、`session-peer` `device serve --state /private/device-state --policy /private/receiver-policy.json --relay wss://relay.abruption.dev/v1/connect --login --seconds 3600` を起動します。別terminalで `session-peer` `device invite --state /private/device-state --relay wss://relay.abruption.dev/v1/connect --out /private/invite.json` を実行し、招待を安全にclientへ渡します。login・enroll済みclientで10分以内に `session-peer` `device pair --state /private/client-state --invite /private/invite.json --route relay --login`、続いて `session-peer list --device RECEIVER-ID --device-state /private/client-state --device-route relay --relay-login --json` を実行します。receiverを動かし続けてください。enroll、pairing、native権限は別です。送信前はdry-run、queuedはACKではありません。自動install/login/retryはしません。一般403/404や `no_authenticated_route` からreceiver停止を断定しません。既知のlogin欠落・失効、device照会失敗のみ区別し、不確実な送信は再送せず照合します。
+上記schemaのreceiver policyを作り、`session-peer` `device serve --state /private/device-state --policy /private/receiver-policy.json --relay wss://relay.abruption.dev/v1/connect --login --seconds 3600` を起動します。別terminalで `session-peer` `device invite --state /private/device-state --relay wss://relay.abruption.dev/v1/connect --out /private/invite.json` を実行し、招待を安全にclientへ渡します。login・enroll済みclientで10分以内に `session-peer` `device pair --state /private/client-state --invite /private/invite.json --route relay --login`、続いて `session-peer list --device RECEIVER-ID --device-state /private/client-state --device-route relay --relay-login --json` を実行します。receiverを動かし続けてください。enroll、pairing、native権限は別です。送信前はdry-run、queuedはACKではありません。自動install/login/retryはしません。一般403/404や `no_authenticated_route` からreceiver停止を断定しません。login の欠落・失効と明示的なデバイス未検出の証拠には個別のヒントを示し、不確実な送信は再送せず照合します。
 
-ペアリング済み受信側は、認証した TLS 証明書のフィンガープリントを引用本文の外に表示します。これはペアリングした機器の鍵を識別するもので、人物やネイティブエージェントのセッションを識別するものではありません。本文中の From や Reply-To の申告で置き換えることはできません。引用後の本文、フィンガープリント、警告は、記録の開始やネイティブ配送の前に 32 KiB の上限に収まる必要があります。Reply-To の信頼性は周囲の枠の信頼性を超えません。第三者への経路はセッション所有者に確認してください。この枠は承認を回避せず、プロンプトインジェクションへの完全な防御も保証しません。
+ペアリング済み受信側は、認証した TLS 証明書のフィンガープリントを引用本文の外に表示します。これはペアリングした機器の鍵を識別するもので、人物やネイティブエージェントのセッションを識別するものではありません。本文中の From や Reply-To の申告で置き換えることはできません。引用後の本文、フィンガープリント、警告は、ジャーナルへの受け入れやネイティブ配送の前に 32 KiB の上限に収まる必要があります。Reply-To の信頼性は周囲の枠の信頼性を超えません。第三者への経路はセッション所有者に確認してください。この枠は承認を回避せず、プロンプトインジェクションへの完全な防御も保証しません。

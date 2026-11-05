@@ -82,7 +82,7 @@ Code 值为稳定的机器可读原因。Message 供人类阅读，并
 
 `doctor --host worker --check-return-route` 要求 `worker` 测试一条返回
 所检测来源的 SSH 命令。`--reply-to USER@HOST` 会覆盖该检测到的
-地址。该检查使用固定的 `true` 命令，并禁用了批处理模式、密码和
+地址。该检查使用固定的 `true` 命令，启用了批处理模式，禁用了密码和
 键盘交互式身份验证，启用了严格主机密钥检查，并
 禁用了主机密钥更新。它绝不会使用凭据或放宽策略进行重试。
 
@@ -155,16 +155,7 @@ agent 团队成员以及该机器之外的会话。Codex 队列提交
 
 ## List 发现结果
 
-`list` 默认列出两个 agent；`--agent claude|codex` 选择其中一个。
-`discovery` 对象报告每个请求的 agent。Claude 保留 `ok`/`error`；
-Codex 报告 `ok`、`not_installed` 或 `error`，以及每个主目录的诊断信息。
-失败会保留成功的行，但设置 `ok=false`、顶级错误摘要
-和退出码 1。未自动安装 Codex 为 `not_installed`，这是一个
-退出码为 0 的空结果。缺失显式配置的主目录仍为错误。
-缺失 Claude 会话目录为空结果；不可读目录
-为错误。SSH 会保留部分结果和重复主机的信封。
-每一行都有一个 `agent` 鉴别器。有关候选发现、
-元数据和权限边界，请参见[多主目录列出](multi-home-list.md)。
+`list` 默认查询所有已注册的适配器；`--agent claude|codex|antigravity` 可选择其中一个。`discovery` 对象报告每个请求的智能体结果。Claude保留 `ok`/`error`；Codex报告 `ok`、`not_installed`、`error` 以及各主目录的诊断信息。Antigravity仅列出正在运行的已注册桥接；`not_installed` 与 `no_live_registration` 表示没有找到这样的桥接，并不能证明CLI未安装。失败时保留成功的行，但设置 `ok=false`、顶层错误摘要和退出码1。Codex自动发现未找到可读的状态数据库且没有检查错误时，返回 `not_installed`、空会话列表和退出码0；显式配置的主目录缺失仍为错误。Claude会话目录缺失为空结果，不可读则为错误。SSH保留部分结果及多主机输出格式。每一行都有 `agent` 标识字段。候选发现、元数据及权限范围请参见[多主目录列表](multi-home-list.md)。
 
 Claude 注册表读取在列表、doctor、dry-run 目标选择和发送者发现中共用 1 MiB（1,048,576 字节）限制。
 记录仅包含较小的身份和收件箱元数据，因此该限制为扩展保留空间，同时避免无限读取。

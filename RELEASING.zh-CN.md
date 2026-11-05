@@ -204,4 +204,4 @@ gh attestation verify "$staging/install.sh" --repo "$repo" \
 sh "$staging/install.sh"
 ```
 
-下载上限为单文件8 MiB、辅助文件256 KiB、元数据1 MiB。替换文件前会验证认证过的manifest/来源证明、准确的标签/版本，以及暂存文件的--version。发送端在SSH部署前完成下载与验证；目标需要SSH访问权限、Python和POSIX shell，但不需要互联网连接或预装session-peer CLI。之后发送消息还需要目标智能体的原生收件箱或队列；安装运行时文件不会创建接收会话。验证失败时不会改动已有文件。SSH选项允许列表、既有配对绑定检查及Control登录迁移请参阅发布说明。
+下载上限为单文件8 MiB、辅助文件256 KiB、元数据1 MiB。替换文件前会验证认证过的manifest/来源证明、准确的标签/版本，以及暂存文件的--version。发送端在SSH部署前完成下载与验证；目标需要SSH访问权限、Python和POSIX shell，但不需要互联网连接或预装session-peer CLI。之后发送消息还需要目标智能体的原生收件箱或队列；安装运行时文件不会创建接收会话。验证失败时不会改动已有文件。SSH选项允许列表、既有配对绑定检查及Control登录会话迁移请参阅发布说明。
