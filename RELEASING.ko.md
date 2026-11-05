@@ -1,5 +1,11 @@
 # session-peer 릴리스
 
+## 공개 기록 — v1.4.2 (2026-11-05 확인)
+
+[GitHub v1.4.2](https://github.com/abruption/session-peer/releases/tag/v1.4.2)는 `27b088735f065b6785dc6f3892cf132926657bdf`에서 `2026-11-05T09:45:30Z`에 안정판·Latest로 공개됐으며 불변 상태입니다. PyPI의 wheel 업로드 시각은 `2026-11-05T09:47:52.170326Z`, sdist는 `2026-11-05T09:47:54.295391Z`입니다. 둘 다 철회되지 않았으며 잠긴 자산의 해시와 일치합니다. [공개 기록](docs/ko/releases/v1.4.2.md#v142-publication-record)에 정확한 파일명·해시·검증 범위를 남겼습니다.
+
+해당 소스의 [준비 워크플로](https://github.com/abruption/session-peer/actions/runs/42004210137)와 [게시 워크플로](https://github.com/abruption/session-peer/actions/runs/42005013865)가 자산·provenance 인증, 최신 의존성 감사와 wheel/sdist의 독립 설치 검사를 포함해 성공했습니다. 검토 내역에서 `abruption`의 필수 `pypi` 사람 승인을 확인했으며 응답은 정확한 승인 시각을 제공하지 않습니다. 아래의 날짜별 준비 기록과 불변 자산을 보존합니다. 공개가 전체 기기 배포·서비스 재시작·독립 스킬 갱신이나 새로운 네이티브·SSH·ACK·플랫폼 검증을 뜻하지는 않습니다.
+
 ## v1.4.2 준비
 
 공개된 v1.4.1([GitHub](https://github.com/abruption/session-peer/releases/tag/v1.4.1), [PyPI](https://pypi.org/project/session-peer/1.4.1/))을 기준으로 2026-11-05에 준비했습니다. 이 날짜의 확인 시점에서 v1.4.2는 미공개 유지보수 후보입니다. 통합 유지보수 기준은 버전 준비 이전의 `c265861d5251f8bab65229521444168e23bc13a9`이며, 최종 릴리스 커밋이 아닙니다. [유지보수 노트](docs/ko/releases/v1.4.2.md)는 PR #372 / #370의 테스트·CI 시간 제한과 PR #374 / #373의 다국어 운영 용어·문서 검사를 다룹니다. 런타임 동작은 버전 값만 바뀌며, 원래 CI 정지 원인이나 런타임 결함 수정을 주장하지 않습니다. #316 모니터링, #367 전체 조회와 Long-term 작업은 별도입니다.

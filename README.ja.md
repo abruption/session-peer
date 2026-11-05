@@ -33,7 +33,7 @@ session-peer 1.0.2による実際のローカル通信です。CodexがClaude Co
 ### インストール
 
 Python 3.9以上が必要です。基本のローカル・SSH CLIに外部Python依存パッケージはありません。
-ソースバージョン：**1.4.2**（2026-11-05の準備時点では未公開のメンテナンス候補。最後に確認した公開済みランタイムは[v1.4.1](https://github.com/abruption/session-peer/releases/tag/v1.4.1)で、[PyPI](https://pypi.org/project/session-peer/1.4.1/)でも提供されています）。[メンテナンスノート](docs/ja/releases/v1.4.2.md)はテストコードのパイプ待機の時間制限と運用ガイドの用語修正を説明し、ランタイム不具合の修正や過去のCI停止原因の特定を主張しません。以前の[v1.4.1ノート](docs/ja/releases/v1.4.1.md)と[v1.4.0公開記録](docs/ja/releases/v1.4.0.md#v140-publication-record)は過去の根拠として保持します。Pythonの公開、Node Controlの配備、独立管理するスキルの更新は別々の作業です。
+ソースバージョン：**1.4.2**（2026-11-05に安定版[GitHub v1.4.2](https://github.com/abruption/session-peer/releases/tag/v1.4.2)として公開され、[PyPI](https://pypi.org/project/session-peer/1.4.2/)でも提供されています）。[公開記録](docs/ja/releases/v1.4.2.md#v142-publication-record)にソース`27b088735f065b6785dc6f3892cf132926657bdf`、アップロード時刻、ハッシュを記載しています。このメンテナンスはテスト・CIの保護策と運用ガイドの用語を対象とし、ランタイム不具合の修正や過去のCI停止原因の特定を意味しません。以前の[v1.4.1ノート](docs/ja/releases/v1.4.1.md)と[v1.4.0公開記録](docs/ja/releases/v1.4.0.md#v140-publication-record)は過去の根拠として保持します。Pythonの公開、Node Controlの配備、独立管理するスキルの更新は別々の作業です。
 
 任意の[MCPエクストラ](docs/ja/mcp.md)は`mcp>=1.30,<2`を必要とします。MCPのPython 3.10+要件と依存関係のないPython 3.9コアは変更しません。既存のMCP環境では明示的なパッケージ更新が必要です。
 

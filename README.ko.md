@@ -33,7 +33,7 @@ session-peer 1.0.2를 사용해 실제 로컬 요청과 회신을 주고받았�
 ### 설치
 
 Python 3.9 이상이 필요합니다. 기본 로컬·SSH CLI는 외부 Python 패키지에 의존하지 않습니다.
-소스 버전: **1.4.2** (2026-11-05 준비 시점: 미공개 유지보수 후보. 마지막으로 확인한 공개 런타임은 [v1.4.1](https://github.com/abruption/session-peer/releases/tag/v1.4.1)이며 [PyPI](https://pypi.org/project/session-peer/1.4.1/)에서도 제공됩니다). [유지보수 노트](docs/ko/releases/v1.4.2.md)는 테스트 코드의 파이프 대기 시간 제한과 운영 가이드 용어 정정을 설명하며, 런타임 결함 수정이나 과거 CI 정지 원인의 규명을 주장하지 않습니다. 이전 [v1.4.1 노트](docs/ko/releases/v1.4.1.md)와 [v1.4.0 공개 기록](docs/ko/releases/v1.4.0.md#v140-publication-record)은 과거 근거로 보존합니다. Python 공개, Node Control 배포, 별도로 관리하는 스킬의 갱신은 서로 구분합니다.
+소스 버전: **1.4.2** (2026-11-05에 안정판 [GitHub v1.4.2](https://github.com/abruption/session-peer/releases/tag/v1.4.2)로 공개됐으며 [PyPI](https://pypi.org/project/session-peer/1.4.2/)에서도 제공됩니다). [공개 기록](docs/ko/releases/v1.4.2.md#v142-publication-record)에 소스 `27b088735f065b6785dc6f3892cf132926657bdf`, 업로드 시각과 해시를 남겼습니다. 이번 유지보수는 테스트·CI 보호 장치와 운영 가이드 용어를 다루며, 런타임 결함 수정이나 과거 CI 정지 원인 규명을 뜻하지 않습니다. 이전 [v1.4.1 노트](docs/ko/releases/v1.4.1.md)와 [v1.4.0 공개 기록](docs/ko/releases/v1.4.0.md#v140-publication-record)은 과거 근거로 보존합니다. Python 공개, Node Control 배포, 별도로 관리하는 스킬의 갱신은 서로 구분합니다.
 
 선택 설치 항목인 [MCP extra](docs/ko/mcp.md)는 이제 `mcp>=1.30,<2`를 요구합니다. MCP의 Python 3.10+ 요건과 외부 의존성이 없는 Python 3.9 기본 CLI는 유지됩니다. 기존 MCP 환경의 패키지는 별도로 업그레이드해야 합니다.
 
