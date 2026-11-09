@@ -20,6 +20,6 @@
 
 ## 依赖漏洞监控
 
-Dependabot 漏洞警报已启用，与版本更新拉取请求相互独立。Dependabot 自动安全更新拉取请求仍处于禁用状态，也没有 Dependabot 版本更新配置。维护者会审查警报并手动更新依赖和构建工具的固定版本。
+Dependabot 每周检查 Python 要求、`control/` npm 和 GitHub Actions 的版本更新。minor/patch 更新分组，major 更新保持独立并需审查。此配置不启用自动合并，也不更改 GitHub 独立的漏洞警报或安全更新设置。现有依赖审计保持不变。`secret-scan` 在 PR、main 推送、每周计划及手动运行中，用校验和固定的 Gitleaks CLI 检查已获取的完整 Git 历史。输出脱敏，不上传秘密报告。例外仅限文档哈希和历史非秘密递增表达式。通过不代表从未泄露凭证。
 
 独立的[定期依赖审计](.github/workflows/dependency-audit.yml)每周一 06:23 UTC 运行，也可通过 `workflow_dispatch` 手动启动。它使用 `pip-audit` 审计隔离环境中的 Python `relay,mcp` 运行时依赖，并使用 `npm audit --omit=dev` 审计 `control/` 的 Node 运行时依赖。发现漏洞或审计错误会使该次审计运行失败，并显示在作业摘要以及保留 30 天的可下载 JSON/日志工件中。该工作流不在拉取请求中运行，也不参与 CI 的 `release-gate`；现有 CI 和发布审计仍然适用。

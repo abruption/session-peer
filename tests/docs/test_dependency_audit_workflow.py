@@ -68,7 +68,15 @@ class DependencyAuditWorkflow(unittest.TestCase):
         self.assertNotIn("continue-on-error", self.text)
         self.assertNotIn("needs:", self.text)
         self.assertNotIn("release-gate", self.text)
-        self.assertFalse((ROOT / ".github/dependabot.yml").exists())
+        updates = (ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
+        self.assertIn("package-ecosystem: pip", updates)
+        self.assertIn("directory: /.github/requirements", updates)
+        self.assertIn("directory: /control", updates)
+        self.assertIn("package-ecosystem: github-actions", updates)
+        self.assertEqual(4, updates.count("interval: weekly"))
+        self.assertEqual(4, updates.count("- minor\n"))
+        self.assertEqual(4, updates.count("- patch\n"))
+        self.assertNotIn("- major\n", updates)
         self.assertEqual(2, self.text.count("persist-credentials: false"))
 
     def test_audits_use_only_runtime_dependencies_and_always_retain_reports(self):
