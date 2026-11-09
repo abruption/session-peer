@@ -1,5 +1,11 @@
 # session-peer 릴리스
 
+## 공개 기록 — v1.5.0 (2026-11-09 확인)
+
+[GitHub v1.5.0](https://github.com/abruption/session-peer/releases/tag/v1.5.0)은 소스 `9a0b23ff5e1f83e1cee4dc22bec7e3c0ca8063bb`에서 `2026-11-09T11:53:51Z`에 안정판·Latest로 공개됐으며 불변 상태입니다. PyPI의 wheel 업로드 시각은 `2026-11-09T11:56:07.458092Z`, sdist는 `2026-11-09T11:56:09.127893Z`입니다. 둘 다 철회되지 않았으며 잠긴 자산 해시와 일치합니다. [공개 기록](docs/ko/releases/v1.5.0.md#v150-publication-record)에 정확한 해시·태그 객체·근거 링크를 보존합니다.
+
+해당 소스의 [main CI](https://github.com/abruption/session-peer/actions/runs/42609705390), [준비](https://github.com/abruption/session-peer/actions/runs/42612126606), [게시](https://github.com/abruption/session-peer/actions/runs/42612614015)가 인증된 자산과 독립 패키지 설치 검증을 포함해 성공했습니다. `abruption`의 필수 `pypi` 사람 승인을 확인했으며 검토 응답은 정확한 승인 시각을 제공하지 않습니다. 아래 준비 절은 모두 날짜별 이력으로 보존합니다. 태그·자산을 교체하지 않았으며 서비스·전체 기기·Control·스킬 적용이나 새로운 네이티브·SSH·ACK 검증을 뜻하지 않습니다.
+
 ## v1.5.0 준비
 
 공개된 v1.4.2를 기준으로 한 2026-11-09 준비 점검의 미공개 소스 후보였으며, 이 기록은 발행 공지가 아닙니다. 통합 소스 기준은 `a622dc0d9f04a252af65147eb36188998bf0c8b4`로, 버전 준비 전의 값이지 최종 공개 커밋이 아닙니다. [후보 노트](docs/ko/releases/v1.5.0.md)는 #390 SDK 1/2 호환성, 의존성 유지보수 #386/#383/#385/#382, #379의 테스트 전용 Paramiko 5.1.0·단언 갱신, #381의 Control 의존성·검사를 다룹니다. 도구 6개와 결과·정책·권한·ACK 경계 및 Python 하한은 유지하며, 새로운 실제 OAuth·운영 데이터베이스·네이티브·SSH·Windows 검증을 주장하지 않습니다. #387/#388과 연구 Draft는 별도입니다.

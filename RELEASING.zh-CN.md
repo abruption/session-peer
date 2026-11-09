@@ -1,5 +1,11 @@
 # 发布session-peer
 
+## 发布记录 — v1.5.0（2026-11-09核实）
+
+[GitHub v1.5.0](https://github.com/abruption/session-peer/releases/tag/v1.5.0)从源码`9a0b23ff5e1f83e1cee4dc22bec7e3c0ca8063bb`于`2026-11-09T11:53:51Z`作为稳定版／Latest发布，且为不可变状态。PyPI的wheel上传时间为`2026-11-09T11:56:07.458092Z`，sdist为`2026-11-09T11:56:09.127893Z`；两者均未撤回，且与锁定资产哈希一致。[发布记录](docs/zh-CN/releases/v1.5.0.md#v150-publication-record)保留准确哈希、标签对象与证据链接。
+
+该源码的[main CI](https://github.com/abruption/session-peer/actions/runs/42609705390)、[准备](https://github.com/abruption/session-peer/actions/runs/42612126606)及[发布](https://github.com/abruption/session-peer/actions/runs/42612614015)均成功，包含认证资产与独立软件包安装验证。已观察到`abruption`完成必需的`pypi`人工批准，审查响应不提供准确批准时间。完整保留下方准备节作为注明日期的历史。未替换标签或资产，也不表示服务／全机群／Control／技能应用或新的原生／SSH／ACK验证。
+
 ## v1.5.0 准备
 
 2026-11-09基于已发布v1.4.2进行准备检查时，该源码候选版本尚未发布；此记录并非发布公告。集成源码基准为`a622dc0d9f04a252af65147eb36188998bf0c8b4`，是版本准备之前的值，并非最终发布提交。[候选说明](docs/zh-CN/releases/v1.5.0.md)涵盖#390 SDK 1/2兼容性、依赖维护#386/#383/#385/#382、#379仅用于测试的Paramiko 5.1.0及断言更新，以及#381 Control依赖与检查。6个工具及结果／策略／权限／ACK边界、Python下限不变，不宣称完成新的真实OAuth、生产数据库、原生／SSH／Windows验证。#387/#388和研究Draft属于独立范围。

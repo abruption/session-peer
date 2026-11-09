@@ -1,8 +1,12 @@
 # Optional Codex MCP integration
 
-At the 2026-11-09 preparation checkpoint, v1.4.2 was the latest published runtime and included the v1.4.0 tools below and the SDK 1 installation path. The original 2026-11-02 source checkpoint against v1.3.3 remains historical; the [v1.4.0 release notes](releases/v1.4.0.md) retain that scope. At the preparation checkpoint, SDK 2 compatibility below was prepared as an [unpublished v1.5.0 source candidate](releases/v1.5.0.md), not a published-package support announcement.
+Published runtime v1.5.0 is available on GitHub and PyPI; its [publication record](releases/v1.5.0.md#v150-publication-record) identifies the exact source, times and hashes. SDK 1/2 compatibility is part of that published package. The [v1.4.0 release notes](releases/v1.4.0.md) and dated SDK preparation checkpoint below remain history, not current unpublished-status statements.
 
 Install with Python 3.10 or later: `pipx install 'session-peer[mcp]'` (or install the extra in an isolated venv). The dependency-free Python 3.9 CLI and `install.sh` remain supported. The shell installer does not install MCP dependencies. On Python 3.9 the MCP entry point reports that Python 3.10+ is required.
+
+<a id="sdk1-sdk2-published-v150"></a>
+
+The published v1.5.0 extra uses `mcp>=1.30,<3,!=2.0.*,!=2.1.*,!=2.2.*`, accepting stable SDK 1.x from 1.30 or SDK 2.x from 2.3. Server startup rejects prerelease/development SDKs even if forcibly installed; SDK 2.3+ keeps subscriptions disabled. Existing environments need an explicit upgrade through their original manager, interpreter and extra selection; manifest edits, publication or restart are not SDK upgrades. Policy/host approvals, six tools, inner result schema and unknown/no-automatic-retry rules are unchanged. The following v1.4.2 SDK 1 floor paragraph is version-specific historical context.
 
 The published v1.4.2 optional extra requires MCP SDK `mcp>=1.30,<2`. This raises the dependency floor past upstream 1.x security fixes; it does not establish an exploitable issue in this stdio-only server. HTTP transports, OAuth server paths and MCP client paths are not enabled by this change. Existing environments need an explicit package upgrade; changing the manifest does not update an installed SDK.
 

@@ -1,5 +1,11 @@
 # Releasing session-peer
 
+## Publication record — v1.5.0 (verified 2026-11-09)
+
+[GitHub v1.5.0](https://github.com/abruption/session-peer/releases/tag/v1.5.0) was published as stable/Latest and immutable at `2026-11-09T11:53:51Z`, from source `9a0b23ff5e1f83e1cee4dc22bec7e3c0ca8063bb`. PyPI uploaded the wheel at `2026-11-09T11:56:07.458092Z` and sdist at `2026-11-09T11:56:09.127893Z`; both are non-yanked and match locked asset hashes. The [publication record](docs/releases/v1.5.0.md#v150-publication-record) retains exact hashes, tag-object details and evidence links.
+
+[Main CI](https://github.com/abruption/session-peer/actions/runs/42609705390), [preparation](https://github.com/abruption/session-peer/actions/runs/42612126606) and [publication](https://github.com/abruption/session-peer/actions/runs/42612614015) succeeded for that source, including authenticated assets and independent package-install verification. Required human `pypi` approval by `abruption` was observed; the review response does not expose an exact approval timestamp. Preserve every preparation section below as dated history. No tag/assets were replaced; no service, fleet, Control or skill rollout or new native/SSH/ACK qualification is implied.
+
 ## v1.5.0 preparation
 
 Prepared on 2026-11-09 against published v1.4.2. At that preparation checkpoint this was an unpublished source candidate, not a publication announcement. Integrated source base: `a622dc0d9f04a252af65147eb36188998bf0c8b4`, before version preparation, not the final publication commit. The [candidate notes](docs/releases/v1.5.0.md) cover #390 SDK 1/2 compatibility, dependency maintenance #386/#383/#385/#382, #379's test-only Paramiko 5.1.0/assertion update, and #381's Control dependencies and checks. The six tools, result/policy/permission/ACK boundaries and Python floors remain; no new real OAuth, production-database, native/SSH/Windows acceptance is asserted. #387/#388 and research drafts are separate.
