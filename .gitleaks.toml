@@ -1,0 +1,19 @@
+title = "session-peer secret scanning"
+[extend]
+useDefault = true
+
+# Documentation translation hashes are content digests, not credentials.
+[[allowlists]]
+description = "relay-auth documentation SHA-256 in the translation manifest"
+condition = "AND"
+paths = ['''^docs/i18n-manifest\.json$''']
+regexTarget = "match"
+regexes = ['''^relay-auth\.md": "[0-9a-f]{64}"$''']
+
+# Historical prose describes an increment expression, not a token value.
+[[allowlists]]
+description = "documented key generation increment expression"
+condition = "AND"
+paths = ['''^docs/(?:ko/|ja/|zh-CN/)?relay-auth\.md$''']
+regexTarget = "match"
+regexes = ['''^keyGeneration=expectedGeneration\+1`$''']

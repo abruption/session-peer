@@ -39,11 +39,17 @@ For ordinary bugs and feature requests, use the
 
 ## Dependency vulnerability monitoring
 
-Dependabot vulnerability alerts are enabled independently of version-update
-pull requests. Automatic Dependabot security-update pull requests remain
-disabled, and there is no Dependabot version-update configuration. Maintainers
-review alerts and update dependency and build-tool pins manually.
+Dependabot version updates are configured weekly for Python requirements,
+`control/` npm dependencies and GitHub Actions. Minor/patch updates are grouped;
+major updates remain separate reviewed PRs. This configuration does not enable
+auto-merge or change GitHub's separate vulnerability-alert/security-update settings.
+Existing dependency audits remain in place.
 
+The `secret-scan` workflow scans full fetched Git history with checksum-pinned
+Gitleaks CLI on PRs, main pushes, weekly schedules and manual dispatch. Output is
+redacted; no secret-report artifacts are uploaded. The small documented allowlists
+cover only translation digests and a historical non-secret increment expression.
+A clean scan is not proof that no credential has ever been exposed.
 The separate [scheduled dependency audit](.github/workflows/dependency-audit.yml)
 runs every Monday at 06:23 UTC and can be started manually with
 `workflow_dispatch`. It audits the Python `relay,mcp` runtime dependencies in
