@@ -1,0 +1,2 @@
+# SDK 2.3+ provides the public subscription-disable switch.
+mcp>=2.3,<3

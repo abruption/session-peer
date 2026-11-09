@@ -10,6 +10,8 @@ import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from tests.mcp_integration.sdk_wire import wire_field
+
 import session_peer_mcp as peer
 
 THREAD = '01900000-0000-7000-8000-000000000001'
@@ -213,31 +215,31 @@ class PreflightProtocol(unittest.IsolatedAsyncioTestCase):
                 async with ClientSession(read, write) as client:
                     await client.initialize()
                     tool = next(t for t in (await client.list_tools()).tools if t.name == 'preflight_send')
-                    self.assertFalse(tool.annotations.readOnlyHint)
-                    self.assertTrue(tool.annotations.openWorldHint)
-                    self.assertEqual(set(tool.inputSchema['required']), {'destination', 'target', 'message'})
+                    self.assertFalse(wire_field(tool.annotations, 'readOnlyHint'))
+                    self.assertTrue(wire_field(tool.annotations, 'openWorldHint'))
+                    self.assertEqual(set(wire_field(tool, 'inputSchema')['required']), {'destination', 'target', 'message'})
                     value = await client.call_tool('preflight_send', {'destination': 'local', 'target': 'fixture', 'message': NONREFLECTED_VALUE})
-                    self.assertFalse(value.isError)
-                    self.assertTrue(value.structuredContent['ok'])
+                    self.assertFalse(wire_field(value, 'isError'))
+                    self.assertTrue(wire_field(value, 'structuredContent')['ok'])
                     self.assertEqual(received, [])
-                    self.assertEqual(value.structuredContent['schemaVersion'], 1)
-                    self.assertEqual(json.loads(value.content[0].text), value.structuredContent)
+                    self.assertEqual(wire_field(value, 'structuredContent')['schemaVersion'], 1)
+                    self.assertEqual(json.loads(value.content[0].text), wire_field(value, 'structuredContent'))
                     self.assertNotIn(NONREFLECTED_VALUE, value.content[0].text)
                     self.assertNotIn(folder, value.content[0].text)
                     refused = await client.call_tool('preflight_send', {'destination': 'local', 'target': 'fixture', 'message': NONREFLECTED_VALUE, 'wake': True})
-                    self.assertTrue(refused.isError)
-                    self.assertEqual(refused.structuredContent['reason'], 'policy_denied')
-                    self.assertEqual(refused.structuredContent['checked']['validation'], 'not_run')
-                    self.assertEqual(refused.structuredContent['limitations']['submission'], 'not_attempted')
+                    self.assertTrue(wire_field(refused, 'isError'))
+                    self.assertEqual(wire_field(refused, 'structuredContent')['reason'], 'policy_denied')
+                    self.assertEqual(wire_field(refused, 'structuredContent')['checked']['validation'], 'not_run')
+                    self.assertEqual(wire_field(refused, 'structuredContent')['limitations']['submission'], 'not_attempted')
                     invalid = await client.call_tool('preflight_send', {
                         'destination': 'local', 'target': 'fixture',
                         'message': NONREFLECTED_VALUE, 'wake_timeout': 0})
-                    self.assertEqual(invalid.structuredContent['reason'], 'invalid_request')
-                    self.assertEqual(invalid.structuredContent['checked']['validation'], 'not_run')
+                    self.assertEqual(wire_field(invalid, 'structuredContent')['reason'], 'invalid_request')
+                    self.assertEqual(wire_field(invalid, 'structuredContent')['checked']['validation'], 'not_run')
                     blank = await client.call_tool('preflight_send', {
                         'destination': 'local', 'target': 'fixture', 'message': ''})
-                    self.assertTrue(blank.isError)
-                    self.assertEqual(blank.structuredContent['limitations']['submission'], 'not_attempted')
+                    self.assertTrue(wire_field(blank, 'isError'))
+                    self.assertEqual(wire_field(blank, 'structuredContent')['limitations']['submission'], 'not_attempted')
                     self.assertNotIn(NONREFLECTED_VALUE, refused.content[0].text)
                     sent = await client.call_tool('send_message', {'destination': 'local', 'target': 'fixture', 'message': NONREFLECTED_VALUE})
-                    self.assertTrue(sent.isError)
+                    self.assertTrue(wire_field(sent, 'isError'))

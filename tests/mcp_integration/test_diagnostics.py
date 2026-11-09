@@ -14,6 +14,8 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 import session_peer as core
+from tests.mcp_integration.sdk_wire import wire_field
+
 import session_peer_mcp as peer
 
 FIXTURE_MARKER = '/fixture/nonreflected-path'
@@ -345,15 +347,15 @@ class Protocol(unittest.IsolatedAsyncioTestCase):
                     await client.initialize()
                     value = await client.call_tool('diagnose_destination', {
                         'destination': 'fixture', 'active_probe': True})
-                    self.assertFalse(value.isError, value.structuredContent)
-                    row = value.structuredContent['agents']['codex']
+                    self.assertFalse(wire_field(value, 'isError'), wire_field(value, 'structuredContent'))
+                    row = wire_field(value, 'structuredContent')['agents']['codex']
                     self.assertEqual(row['status'], 'available')
                     self.assertIn({'code': 'state_db_readable', 'status': 'ok'}, row['checks'])
-                    self.assertEqual(value.structuredContent['agents']['claude']['status'], 'available')
+                    self.assertEqual(wire_field(value, 'structuredContent')['agents']['claude']['status'], 'available')
                     self.assertFalse(invoked.exists())
                     self.assertEqual(connections, [])
                     self.assertNotIn(folder, value.content[0].text)
-                    self.assertEqual(value.structuredContent['limitations']['submission'], 'not_attempted')
+                    self.assertEqual(wire_field(value, 'structuredContent')['limitations']['submission'], 'not_attempted')
 
     async def test_stdio_schema_metadata_and_probe_denials(self):
         from mcp import ClientSession, StdioServerParameters
@@ -371,22 +373,22 @@ class Protocol(unittest.IsolatedAsyncioTestCase):
                     await client.initialize()
                     tools = (await client.list_tools()).tools
                     tool = next(t for t in tools if t.name == 'diagnose_destination')
-                    self.assertEqual(set(tool.inputSchema['properties']),
+                    self.assertEqual(set(wire_field(tool, 'inputSchema')['properties']),
                                      {'destination', 'agent', 'active_probe'})
-                    self.assertFalse(tool.annotations.readOnlyHint)
-                    self.assertFalse(tool.annotations.idempotentHint)
-                    self.assertTrue(tool.annotations.openWorldHint)
+                    self.assertFalse(wire_field(tool.annotations, 'readOnlyHint'))
+                    self.assertFalse(wire_field(tool.annotations, 'idempotentHint'))
+                    self.assertTrue(wire_field(tool.annotations, 'openWorldHint'))
                     value = await client.call_tool('diagnose_destination', {'destination': 'test'})
-                    self.assertFalse(value.isError)
-                    self.assertEqual(value.structuredContent['mode'], 'metadata')
-                    self.assertEqual(json.loads(value.content[0].text), value.structuredContent)
+                    self.assertFalse(wire_field(value, 'isError'))
+                    self.assertEqual(wire_field(value, 'structuredContent')['mode'], 'metadata')
+                    self.assertEqual(json.loads(value.content[0].text), wire_field(value, 'structuredContent'))
                     self.assertNotIn(FIXTURE_MARKER, value.content[0].text)
-                    self.assertLess(len(value.model_dump_json().encode()), peer.DESTINATION_METADATA_BYTES)
+                    self.assertLess(len(value.model_dump_json(by_alias=True).encode()), peer.DESTINATION_METADATA_BYTES)
                     for request in ({'destination': 'test', 'active_probe': True},
                                     {'destination': 'test', 'agent': 'claude'},
                                     {'destination': 'unknown'}):
                         value = await client.call_tool('diagnose_destination', request)
-                        self.assertTrue(value.isError)
-                        self.assertEqual(value.structuredContent['command'], 'mcp.diagnostics')
-                        self.assertEqual(value.structuredContent['reason'], 'request_rejected')
-                        self.assertNotIn('error', value.structuredContent)
+                        self.assertTrue(wire_field(value, 'isError'))
+                        self.assertEqual(wire_field(value, 'structuredContent')['command'], 'mcp.diagnostics')
+                        self.assertEqual(wire_field(value, 'structuredContent')['reason'], 'request_rejected')
+                        self.assertNotIn('error', wire_field(value, 'structuredContent'))

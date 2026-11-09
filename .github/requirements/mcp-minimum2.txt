@@ -1,0 +1,2 @@
+# Exact SDK 2 floor; public subscription disable first appears in 2.3.
+mcp==2.3.0
