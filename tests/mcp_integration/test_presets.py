@@ -11,6 +11,8 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 import session_peer as core
+from tests.mcp_integration.sdk_wire import wire_field
+
 import session_peer_mcp as peer
 
 THREAD = '01900000-0000-7000-8000-000000000001'
@@ -354,19 +356,19 @@ class PresetProtocol(unittest.IsolatedAsyncioTestCase):
             async with session as client:
                 tools = {tool.name: tool for tool in (await client.list_tools()).tools}
                 self.assertIn('Submission does not confirm consumption.', tools['send_message'].description)
-                self.assertTrue(tools['list_presets'].annotations.readOnlyHint)
-                self.assertFalse(tools['list_presets'].annotations.openWorldHint)
-                self.assertEqual(tools['list_presets'].inputSchema['required'], ['destination'])
+                self.assertTrue(wire_field(tools['list_presets'].annotations, 'readOnlyHint'))
+                self.assertFalse(wire_field(tools['list_presets'].annotations, 'openWorldHint'))
+                self.assertEqual(wire_field(tools['list_presets'], 'inputSchema')['required'], ['destination'])
                 for name in ('list_sessions', 'send_message', 'preflight_send'):
-                    self.assertIn('preset', tools[name].inputSchema['properties'])
-                    self.assertIn('preset_revision', tools[name].inputSchema['properties'])
+                    self.assertIn('preset', wire_field(tools[name], 'inputSchema')['properties'])
+                    self.assertIn('preset_revision', wire_field(tools[name], 'inputSchema')['properties'])
                 result = await client.call_tool('list_presets', {'destination': 'local'})
-                self.assertFalse(result.isError)
-                self.assertEqual(result.structuredContent['schemaVersion'], 1)
-                self.assertEqual(result.structuredContent['command'], 'mcp.presets')
-                self.assertEqual(len(result.structuredContent['presets']), 1)
-                self.assertEqual(result.structuredContent['presets'][0]['revision'], core.preset_revision('work', LOCAL))
-                self.assertEqual(json.loads(result.content[0].text), result.structuredContent)
+                self.assertFalse(wire_field(result, 'isError'))
+                self.assertEqual(wire_field(result, 'structuredContent')['schemaVersion'], 1)
+                self.assertEqual(wire_field(result, 'structuredContent')['command'], 'mcp.presets')
+                self.assertEqual(len(wire_field(result, 'structuredContent')['presets']), 1)
+                self.assertEqual(wire_field(result, 'structuredContent')['presets'][0]['revision'], core.preset_revision('work', LOCAL))
+                self.assertEqual(json.loads(result.content[0].text), wire_field(result, 'structuredContent'))
                 self.assertNotIn(PRIVATE_MARKER, result.content[0].text)
                 self.assertNotIn(folder, result.content[0].text)
                 for tool, args in (('list_sessions', {'preset': 'work'}),
@@ -374,12 +376,12 @@ class PresetProtocol(unittest.IsolatedAsyncioTestCase):
                                                      'target': 'worker', 'message': 'fixture'}),
                                    ('preflight_send', {'preset': 'work', 'target': 'worker', 'message': 'fixture'})):
                     denied = await client.call_tool(tool, {'destination': 'local', **args})
-                    self.assertTrue(denied.isError)
+                    self.assertTrue(wire_field(denied, 'isError'))
                     if tool == 'preflight_send':
-                        self.assertEqual(denied.structuredContent['schemaVersion'], 1)
+                        self.assertEqual(wire_field(denied, 'structuredContent')['schemaVersion'], 1)
                     else:
-                        self.assertNotIn('schemaVersion', denied.structuredContent)
-                self.assertEqual(denied.structuredContent['reason'], 'policy_denied')
+                        self.assertNotIn('schemaVersion', wire_field(denied, 'structuredContent'))
+                self.assertEqual(wire_field(denied, 'structuredContent')['reason'], 'policy_denied')
 
     async def test_real_stdio_denial_happens_before_store_or_cli(self):
         with tempfile.TemporaryDirectory(prefix='codex-preset-deny-', dir=os.environ.get('SESSION_PEER_TEST_TMP')) as folder:
@@ -391,11 +393,11 @@ class PresetProtocol(unittest.IsolatedAsyncioTestCase):
                                                      'target': 'worker', 'message': PRIVATE_MARKER}),
                                    ('preflight_send', {'preset': 'work', 'target': 'worker', 'message': PRIVATE_MARKER})):
                     value = await client.call_tool(name, {'destination': 'local', **args})
-                    self.assertTrue(value.isError)
+                    self.assertTrue(wire_field(value, 'isError'))
                     if name in ('list_presets', 'preflight_send'):
-                        self.assertEqual(value.structuredContent['schemaVersion'], 1)
+                        self.assertEqual(wire_field(value, 'structuredContent')['schemaVersion'], 1)
                     else:
-                        self.assertNotIn('schemaVersion', value.structuredContent)
+                        self.assertNotIn('schemaVersion', wire_field(value, 'structuredContent'))
                     self.assertNotIn(PRIVATE_MARKER, value.content[0].text)
 
     async def test_real_stdio_route_mismatch_stale_revision_and_result_budget(self):
@@ -404,23 +406,23 @@ class PresetProtocol(unittest.IsolatedAsyncioTestCase):
             async with session as client:
                 for name, args in (('list_presets', {}), ('list_sessions', {'preset': 'work'})):
                     value = await client.call_tool(name, {'destination': 'local', **args})
-                    self.assertTrue(value.isError)
+                    self.assertTrue(wire_field(value, 'isError'))
                     self.assertNotIn(REMOTE['host'], value.content[0].text)
                     self.assertNotIn(REMOTE['codexHome'], value.content[0].text)
             session = await self.run_case(folder, policy(), snapshot={'work': dict(LOCAL)})
             async with session as client:
                 value = await client.call_tool('send_message', {'destination': 'local', 'preset': 'work',
                     'preset_revision': 'dp1:' + '0' * 64, 'target': 'worker', 'message': 'fixture'})
-                self.assertTrue(value.isError)
-                self.assertEqual(value.structuredContent['reason'], 'preset_revision_mismatch')
+                self.assertTrue(wire_field(value, 'isError'))
+                self.assertEqual(wire_field(value, 'structuredContent')['reason'], 'preset_revision_mismatch')
             session = await self.run_case(folder, policy(), snapshot={'work': dict(LOCAL)}, tiny_budget=True)
             async with session as client:
                 value = await client.call_tool('list_presets', {'destination': 'local'})
-                self.assertTrue(value.isError)
-                self.assertEqual(value.structuredContent['command'], 'mcp.presets')
-                self.assertEqual(value.structuredContent['schemaVersion'], 1)
-                self.assertNotIn('presets', value.structuredContent)
-                self.assertLessEqual(len(value.model_dump_json().encode()), 64 * 1024)
+                self.assertTrue(wire_field(value, 'isError'))
+                self.assertEqual(wire_field(value, 'structuredContent')['command'], 'mcp.presets')
+                self.assertEqual(wire_field(value, 'structuredContent')['schemaVersion'], 1)
+                self.assertNotIn('presets', wire_field(value, 'structuredContent'))
+                self.assertLessEqual(len(value.model_dump_json(by_alias=True).encode()), 64 * 1024)
 
     async def test_maximum_approved_metadata_is_bounded_as_complete_tool_result(self):
         names = tuple('p' + 'x' * 60 + str(i).zfill(3) for i in range(128))
@@ -428,9 +430,9 @@ class PresetProtocol(unittest.IsolatedAsyncioTestCase):
             session = await self.run_case(folder, policy(names=names), snapshot={name: dict(LOCAL) for name in names})
             async with session as client:
                 value = await client.call_tool('list_presets', {'destination': 'local'})
-                self.assertFalse(value.isError)
-                self.assertEqual(len(value.structuredContent['presets']), 128)
-                self.assertLessEqual(len(value.model_dump_json().encode()), 64 * 1024)
+                self.assertFalse(wire_field(value, 'isError'))
+                self.assertEqual(len(wire_field(value, 'structuredContent')['presets']), 128)
+                self.assertLessEqual(len(value.model_dump_json(by_alias=True).encode()), 64 * 1024)
 
     async def test_large_native_submission_keeps_evidence_instead_of_size_refusal(self):
         with tempfile.TemporaryDirectory(prefix='codex-preset-proof-', dir=os.environ.get('SESSION_PEER_TEST_TMP')) as folder:
@@ -441,6 +443,6 @@ class PresetProtocol(unittest.IsolatedAsyncioTestCase):
                 value = await client.call_tool('send_message', {'destination': 'local',
                     'preset': 'work', 'preset_revision': core.preset_revision('work', LOCAL),
                     'target': 'worker', 'message': 'fixture'})
-                self.assertFalse(value.isError)
+                self.assertFalse(wire_field(value, 'isError'))
                 for key in ('submitted', 'status', 'queueId', 'target'):
-                    self.assertEqual(value.structuredContent[key], native[key])
+                    self.assertEqual(wire_field(value, 'structuredContent')[key], native[key])

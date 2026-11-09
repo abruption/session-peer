@@ -1,10 +1,10 @@
 # オプションの Codex MCP 統合
 
-2026-11-02のソース確認時点では、以下のv1.4.0機能は公開済みv1.3.3を基に準備したもので、公開の告知ではありません。利用前に[リリースノート](releases/v1.4.0.md)と実際のGitHub/PyPIの公開状況を確認してください。
+公開済みランタイムv1.4.2には、以下のv1.4.0ツールとSDK 1のインストール経路が含まれます。v1.3.3を基にした2026-11-02のソース確認は過去の記録で、[v1.4.0リリースノート](releases/v1.4.0.md)に当時の範囲を保持しています。以下のSDK 2互換性はv1.4.2以降の未公開ソース候補であり、配布済みパッケージのサポート告知ではありません。
 
 Python 3.10 以降でインストールします: `pipx install 'session-peer[mcp]'`（または隔離された venv にエクストラをインストール）。依存関係のない Python 3.9 CLI および `install.sh` は引き続きサポートされます。シェルインストーラーは MCP の依存関係をインストールしません。Python 3.9 では、MCP エントリポイントが Python 3.10+ が必要である旨を報告します。
 
-任意のエクストラはMCP SDK `mcp>=1.30,<2`を必要とします。上流の1.xセキュリティ修正を含む版まで依存関係の下限を引き上げるもので、stdio専用のこのサーバーで悪用可能な欠陥を確認したという意味ではありません。HTTP転送、OAuthサーバー経路、MCPクライアント経路は有効にしません。既存環境では明示的なパッケージ更新が必要で、宣言の変更だけではインストール済みSDKは更新されません。
+公開済みv1.4.2の任意エクストラはMCP SDK `mcp>=1.30,<2`を必要とします。上流の1.xセキュリティ修正を含む版まで依存関係の下限を引き上げるもので、stdio専用のこのサーバーで悪用可能な欠陥を確認したという意味ではありません。HTTP転送、OAuthサーバー経路、MCPクライアント経路は今回の変更によって有効化されません。既存環境では明示的なパッケージ更新が必要で、宣言の変更だけではインストール済みSDKは更新されません。
 
 `session-peer-mcp --config /absolute/path/policy.json` を起動します。ポリシーがない場合、サーバーは起動環境の Codex ホームを使用して、ローカルの一覧取得のみを許可します。ポリシーを指定するとデフォルトが置き換えられます。例:
 
@@ -31,7 +31,22 @@ Python 3.10 以降でインストールします: `pipx install 'session-peer[mc
 
 `codex mcp add session-peer -- /absolute/path/session-peer-mcp --config /absolute/path/policy.json` を使用して登録するか、リポジトリの `plugins/session-peer` バンドルを使用します: `codex plugin marketplace add /absolute/path/to/session-peer`、続いて `codex plugin add session-peer@session-peer`。このプラグインは PATH から `session-peer-mcp` を起動し、環境変数に設定されている場合は `SESSION_PEER_MCP_CONFIG` を読み取ります。最初に Python エクストラをインストールしてください。Python パッケージをインストールしても、既存の Codex 設定が変更されることはありません。
 
+<a id="sdk2-compatibility-candidate"></a>
+
+## 未公開ソース候補：SDK 1/2互換性（#389）
+
+2026-11-09のソース確認時点で、候補のエクストラは`mcp>=1.30,<3,!=2.0.*,!=2.1.*,!=2.2.*`を使用します。安定版SDK 1.xの1.30以降を維持し、安定版SDK 2.xの2.3以降を追加します。SDKのプレリリース・開発版は受け入れません。SDK 2.0–2.2は、サーバーが`subscriptions/listen`を常に公開し、公開APIによる無効化手段がないためサポートしません。SDK 2.3+では`MCPServer(subscriptions=False)`でサーバーを生成し、サブスクリプションを無効にします。
+
+バージョンを固定した上流ソース：[SDK 2.0.0サーバー](https://github.com/modelcontextprotocol/python-sdk/blob/v2.0.0/src/mcp/server/mcpserver/server.py)、[SDK 2.2.0サーバー](https://github.com/modelcontextprotocol/python-sdk/blob/v2.2.0/src/mcp/server/mcpserver/server.py)、[SDK 2.3.0サーバー](https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/server/mcpserver/server.py)。[SDK 2.3.0の配布メタデータ](https://pypi.org/pypi/mcp/2.3.0/json)もPython 3.10+を要求し、任意MCPの既存の下限と一致します。
+
+公開ツール名6個、プロジェクト結果データのスキーマバージョン1、ポリシーバージョン1/2、宛先権限、個別のホスト承認、結果・プロセスの制限、結果不明時の扱い、自動再試行の禁止は維持します。サブスクリプション・listen・状態照会・待機のインターフェースは追加しません。SDK 2のPython属性はsnake_caseですが、通信形式ではcamelCaseの別名を使い、モデルのJSONシリアライズには`by_alias=True`を指定します。プロジェクトの結果JSONは変更しませんが、ネゴシエーションされたプロトコルバージョン間でSDK生成のエンベロープや機能フィールドまでバイト単位で同一だとは主張しません。
+
+結果の64 KiB制限は上限であり、それより小さいすべてのデータを受け付ける保証ではありません。SDK 2は旧プロトコルの接続でも新プロトコルのサーバー識別メタデータを含めてサイズを計算するため、上限に近い結果はSDK 1が受け付けても保守的に拒否する場合があります。
+
+公開済みパッケージ向けのインストール・更新コマンドは、引き続き配布済みSDK 1の経路を選びます。このソース候補を提供したり、SDK 2サポートを公開したりするものではありません。レビュー済みソースの採用と、運用者が選んだパッケージ管理ツール・インタープリター・エクストラの維持は別の作業であり、定義の変更やサーバーの再起動だけでは導入済みSDKは更新されません。外部依存のないPython 3.9+の基本CLIと、任意MCPのPython 3.10+の下限は変更しません。この候補は、別途公開済みのスキルv0.5.1、最小0.9.1／文書で案内する全使用手順の基準1.4.0、受信側codexBinの下限1.0.1を変更しません。
+
 <a id="未リリースの-v140-候補-宛先メタデータの取得-356"></a>
+<a id="unreleased-v140-candidate-destination-discovery-356"></a>
 
 ## v1.4.0 ソース: 宛先メタデータの取得 (#356)
 
@@ -40,6 +55,7 @@ Python 3.10 以降でインストールします: `pipx install 'session-peer[mc
 応答には制約を明示します: `callerIdentity="unavailable"`、`readiness="not_checked"`、`submission="not_attempted"`、`consumption="not_checked"`、`ack="not_checked"`。このツールは宛先が64件を超える場合や、IDに表示できない文字がある場合、UTF-8で128バイトを超える場合に取得を拒否します。テキストと構造化データを合わせたMCPツール結果は64 KiB以内で、外側のJSON-RPCエンベロープは含みません。これは取得ツールの制限であり、ポリシーの読み込みと既存ツールの動作は変わりません。表示可能な文字の判定は、実行中のPythonのUnicodeデータベースに従います。既定のローカル一覧取得専用ポリシーは変わりません。
 
 <a id="未リリースの-v140-候補-送信の事前検証-357"></a>
+<a id="unreleased-v140-candidate-send-preflight-357"></a>
 
 ## v1.4.0 ソース: 送信の事前検証 (#357)
 
@@ -50,6 +66,7 @@ Python 3.10 以降でインストールします: `pipx install 'session-peer[mc
 既存の dry-run 検査はローカル・バージョン確認のプロセスや SSH 接続を開始する場合があり、SSH 設定自体がコマンドを実行する場合もあります。このため、このツールは `readOnlyHint=false` と `openWorldHint=true` を使用します。ホストの承認はポリシーの権限とは別です。合格は検査時点の結果であり、経路の予約、有効なストレージの証明、承認、後の送信の保証、消費、ACK を意味しません。
 
 <a id="未リリースの-v140-候補-制限付き診断-358"></a>
+<a id="unreleased-v140-candidate-bounded-diagnostics-358"></a>
 
 ## v1.4.0 ソース: 制限付き診断 (#358)
 
@@ -78,6 +95,7 @@ MCP ラッパーが対応する検査と実行上の影響は、次の範囲に�
 `tcpAccept`、`tls`、`peerAuthentication` の段階は `not_checked` のままです。ここでの `peerAuthentication` はペアリングされたデバイスの認証を指し、順方向 SSH 認証とは別です。`sshFailure` は `authentication_failed` や `host_key_failed` など、サニタイズされた順方向 SSH 失敗の分類だけを報告します。TCP、TLS、ペアリングされたデバイス、返信先ホストへのプローブは追加しません。
 
 <a id="未リリースの-v140-候補-mcp-プリセット-359"></a>
+<a id="unreleased-v140-candidate-mcp-presets-359"></a>
 
 ## v1.4.0 ソース: MCP プリセット (#359)
 
@@ -112,7 +130,16 @@ MCP ツールのアノテーションは、一覧取得を読み取り専用、�
 
 MCP エクストラの有無の両方で `python -m unittest discover -s tests -v` を実行します。オプションのテストでは実際の stdio MCP サーバーを起動し、モデルの認証情報なしで初期化、スキーマ、ポリシー拒否、および CLI の部分的な失敗を検証します。wheel と sdist の両方のインストールをテストしてください。実環境チェックでは Codex バージョン、OS、およびホストの承認設定を記録する必要があります。UDS アクセスは環境依存であり、承認のバイパスを約束するものではありません。メッセージには専用のテストセッションを使用してください。
 
-CIではmacOS/LinuxのPython 3.10/3.13/3.14で、SDK下限の`mcp==1.30.0`と最新の互換1.xを別々に試験します。両プロファイルでstdio・ポリシー・タイムアウト・キャンセル・所有する子プロセスの終了処理を試験し、解決されたランタイム依存関係を監査して、版とレポートを保存します。推移的依存関係の版は通常の依存関係解決に従って選択されます。すべての推移的パッケージの最小版を試験するものではありません。版を固定したビルド・監査用要件はランタイム環境の外にインストールし、監査対象には初期構成用の`pip`/`setuptools`パッケージも含めます。既存の最新版解決監査とリリース監査も引き続き必須です。
+この未公開候補のCIは、以下の4つのSDKプロファイルをmacOS/LinuxのPython 3.10/3.13/3.14に組み合わせ、合計24セルで構成します。構成済みの行列だけで全セルの成功が証明されるわけではありません。現在の実行と保存されたバージョン・監査レポートを確認してください。
+
+| CIプロファイル | SDKの選択 |
+| --- | --- |
+| `minimum` | `mcp==1.30.0` |
+| `latest1` | `mcp>=1.30,<2` |
+| `minimum2` | `mcp==2.3.0` |
+| `latest2` | `mcp>=2.3,<3` |
+
+各プロファイルでstdio、ポリシー、タイムアウト、キャンセル、所有する子プロセスの後処理を試験し、解決されたサーバーと試験用クライアントのランタイム依存関係のグラフを個別に監査し、版とレポートを保存します。どちらかの監査に失敗すると、そのCI組み合わせは失敗します。候補の検証には、隔離された異なるメジャーバージョンのSDKクライアントを両方向で使う`2025-11-25`の実stdio初期化と、SDK 2による`2026-07-28`のネゴシエーションが含まれます。旧プロトコルの通信形式検査では、camelCaseの別名、6個のツール名、変更のないプロジェクト内部の結果を確認します。これらのSDK・プロトコル試験は、新たな実エージェント・SSH・ACKの検証ではありません。推移的依存関係は通常の解決に従い、全推移パッケージの最小版を試験するものではありません。固定版のビルド・監査要件はランタイム環境の外にインストールし、監査対象には初期構成用の`pip`/`setuptools`も含めます。既存の最新版解決監査とリリース監査も引き続き必要です。
 
 公式リファレンス: [Codex MCP](https://developers.openai.com/codex/extend/mcp), [Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk)。 [SDK 1.30.0](https://pypi.org/pypi/mcp/1.30.0/json), [GHSA-84m7-p3x7-pcfv](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-84m7-p3x7-pcfv), [GHSA-fmmv-w9g8-j3gc](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-fmmv-w9g8-j3gc).
 
@@ -120,6 +147,6 @@ CIではmacOS/LinuxのPython 3.10/3.13/3.14で、SDK下限の`mcp==1.30.0`と最
 
 Codex `exec` は、サーバーポリシーが許可している場合でも「requires approval, but approval policy is never」として send ツールを拒否することがあります。`approval_mode="auto"` は無条件の承認ではありません。非対話型統合を明示的に承認するオペレーターは、制限された宛先ポリシーと併せて、その特定の MCP サーバー/ツールに対して `mcp_servers.session_peer.tools.send_message.approval_mode="approve"` を設定できます。プラグインがこの設定を有効にすることはありません。対話型クライアントは、代わりに通常の承認プロンプトを使用できます。テストクライアントがこの承認設定を無関係なサーバーやツールにコピーしてはなりません。
 
-macOS/LinuxではMCP CLI呼び出しごとに新しいプロセスグループを所有します。完了・timeout・取消時はleaderの回収前に制限時間付きのTERM→KILLでTERMを無視する子も整理し、キャンセルは引き続き伝播します。別sessionへ離脱した子やSSH先のプロセスは対象外です。Windowsは直接の子の終了のみで、ツリー終了は保証しません。ローカル終了で遠隔送信は取り消せません。timeoutは `outcome_unknown` のままで自動再送は禁止です。
+macOS/Linuxでは、MCP CLI呼び出しごとに新しいプロセスグループを作成・管理します。完了、タイムアウト、キャンセルの際は、そのグループのリーダーを回収する前に、TERMを無視する子孫プロセスを含めてグループに対し、時間を制限したTERM→KILLの後処理を行います。キャンセルは引き続き伝播します。意図的に別のセッションへ離脱した子孫プロセスと、SSH先で動くリモートプロセスは、このグループの対象外です。Windowsでは引き続き直接の子プロセスの終了だけを行い、Windowsのプロセスツリー全体の後処理は保証しません。ローカルの後処理は、すでに行ったリモートへの提出を取り消しません。タイムアウト時の結果は `outcome_unknown` のままで、自動再送してはなりません。
 
 呼び出し元セッションが不明であることを示す From ラベルを含め、MCP の本文は宛先 CLI の受信側の枠で引用されます。本文のヘッダーや埋め込まれた Reply-To は権限を与えません。第三者への宛先はセッション所有者に確認してください。共有 MCP プロセスは、認証済み呼び出し元セッションや自動返信経路を引き続き提供できません。最終的な枠もネイティブメッセージの上限に含まれます。

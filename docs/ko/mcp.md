@@ -1,10 +1,10 @@
 # 선택형 Codex MCP 연동
 
-2026-11-02 소스 확인 시점: 아래 v1.4.0 기능은 공개된 v1.3.3을 기준으로 준비한 내용이며 발행 공지가 아닙니다. 사용 전 [릴리스 노트](releases/v1.4.0.md)와 실제 GitHub/PyPI 공개 상태를 확인하십시오.
+공개 런타임 v1.4.2에는 아래 v1.4.0 도구와 SDK 1 설치 경로가 포함됩니다. 공개된 v1.3.3을 기준으로 한 2026-11-02 소스 점검은 과거 기록이며, [v1.4.0 릴리스 노트](releases/v1.4.0.md)에 당시 범위를 보존합니다. 아래 SDK 2 호환성은 v1.4.2 이후의 미공개 소스 후보이며, 배포된 패키지의 지원 공지가 아닙니다.
 
 Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(또는 격리된 venv에 extra 설치). 의존성이 없는 Python 3.9 CLI 및 `install.sh`는 계속 지원됩니다. 셸 설치기는 MCP 의존성을 설치하지 않습니다. Python 3.9에서 MCP 엔트리 포인트는 Python 3.10+이 필요하다고 보고합니다.
 
-선택형 extra는 MCP SDK `mcp>=1.30,<2`를 요구합니다. 업스트림 1.x 보안 수정이 포함된 버전으로 의존성 하한을 올리는 것으로, stdio만 사용하는 이 서버에서 악용 가능한 결함이 확인됐다는 뜻은 아닙니다. 이번 변경으로 HTTP 전송, OAuth 서버 경로, MCP 클라이언트 경로가 활성화되지는 않습니다. 기존 환경에는 명시적인 패키지 업그레이드가 필요하며, 선언 변경만으로 설치된 SDK가 업데이트되지는 않습니다.
+공개된 v1.4.2의 선택형 extra는 MCP SDK `mcp>=1.30,<2`를 요구합니다. 업스트림 1.x 보안 수정이 포함된 버전으로 의존성 하한을 올리는 것으로, stdio만 사용하는 이 서버에서 악용 가능한 결함이 확인됐다는 뜻은 아닙니다. 이번 변경으로 HTTP 전송, OAuth 서버 경로, MCP 클라이언트 경로가 활성화되지는 않습니다. 기존 환경에는 명시적인 패키지 업그레이드가 필요하며, 선언 변경만으로 설치된 SDK가 업데이트되지는 않습니다.
 
 `session-peer-mcp --config /absolute/path/policy.json`으로 시작합니다. 정책이 없으면 서버는 실행 환경의 Codex 홈을 사용하여 로컬 목록 조회만 허용합니다. 제공된 정책은 기본값을 대체합니다. 예시:
 
@@ -31,7 +31,22 @@ Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(
 
 `codex mcp add session-peer -- /absolute/path/session-peer-mcp --config /absolute/path/policy.json`을 사용하여 등록하거나, 저장소의 `plugins/session-peer` 번들을 사용하십시오: `codex plugin marketplace add /absolute/path/to/session-peer` 실행 후 `codex plugin add session-peer@session-peer`. 플러그인은 PATH에서 `session-peer-mcp`를 실행하고 환경에 설정된 경우 `SESSION_PEER_MCP_CONFIG`를 읽습니다. 먼저 Python extra를 설치하십시오. Python 패키지를 설치해도 기존 Codex 설정은 수정되지 않습니다.
 
+<a id="sdk2-compatibility-candidate"></a>
+
+## 미공개 소스 후보: SDK 1/2 호환성 (#389)
+
+2026-11-09 소스 점검 시점의 후보 extra는 `mcp>=1.30,<3,!=2.0.*,!=2.1.*,!=2.2.*`를 사용합니다. 안정판 SDK 1.x의 1.30 이상을 유지하고 안정판 SDK 2.x의 2.3 이상을 추가하며, SDK 사전 공개판·개발판은 받지 않습니다. SDK 2.0–2.2는 서버가 `subscriptions/listen`을 항상 노출하고 공개 API로 끌 수 없어 지원하지 않습니다. SDK 2.3+에서는 `MCPServer(subscriptions=False)`로 서버를 생성해 구독을 비활성화합니다.
+
+버전별 업스트림 소스: [SDK 2.0.0 서버](https://github.com/modelcontextprotocol/python-sdk/blob/v2.0.0/src/mcp/server/mcpserver/server.py), [SDK 2.2.0 서버](https://github.com/modelcontextprotocol/python-sdk/blob/v2.2.0/src/mcp/server/mcpserver/server.py), [SDK 2.3.0 서버](https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/server/mcpserver/server.py). [SDK 2.3.0 배포 메타데이터](https://pypi.org/pypi/mcp/2.3.0/json)도 Python 3.10+을 요구하며, 기존 선택형 MCP 하한과 같습니다.
+
+공개 도구 이름 6개, 프로젝트 결과 데이터 스키마 버전 1, 정책 버전 1/2, 목적지 권한, 별도의 호스트 승인, 결과·프로세스 제한, 불확실한 결과 처리와 자동 재시도 금지 원칙은 그대로입니다. 구독·listen·상태 조회·대기 인터페이스를 추가하지 않습니다. SDK 2의 Python 속성은 snake_case이지만 전송 형식에는 camelCase 별칭을 사용하며, 모델 JSON 직렬화에는 `by_alias=True`를 사용합니다. 프로젝트 결과 JSON은 바뀌지 않지만, 협상된 프로토콜 버전 사이에서 SDK가 생성하는 봉투와 기능 필드까지 바이트 단위로 같다고 주장하지는 않습니다.
+
+결과의 64 KiB 제한은 상한이며, 이보다 작은 모든 데이터를 받아들인다고 보장하지는 않습니다. SDK 2는 기존 프로토콜 연결에서도 최신 프로토콜의 서버 식별 메타데이터를 포함해 크기를 계산하므로, 한도에 가까운 결과는 SDK 1에서 허용하더라도 보수적으로 거부할 수 있습니다.
+
+공개 패키지용 설치·업그레이드 명령은 여전히 배포된 SDK 1 경로를 선택합니다. 아직 이 소스 후보를 제공하거나 SDK 2 지원을 공개하지 않습니다. 검토한 소스를 채택하는 일과 운영자의 패키지 관리자·인터프리터·extra 선택을 유지하는 일은 별개이며, 선언 수정이나 서버 재시작만으로 설치된 SDK가 갱신되지는 않습니다. 외부 의존성이 없는 Python 3.9+ 기본 CLI와 선택형 MCP의 Python 3.10+ 하한은 유지됩니다. 이 후보는 별도로 공개된 스킬 v0.5.1, 최소 0.9.1/문서 전체 사용 흐름의 기준 1.4.0 또는 수신측 codexBin 하한 1.0.1을 바꾸지 않습니다.
+
 <a id="미출시-v140-후보-목적지-조회-356"></a>
+<a id="unreleased-v140-candidate-destination-discovery-356"></a>
 
 ## v1.4.0 소스: 목적지 조회 (#356)
 
@@ -40,6 +55,7 @@ Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(
 응답은 한계를 명시합니다: `callerIdentity="unavailable"`, `readiness="not_checked"`, `submission="not_attempted"`, `consumption="not_checked"`, `ack="not_checked"`. 이 도구는 목적지가 64개를 넘거나 ID에 출력할 수 없는 문자가 있거나 UTF-8 기준 128바이트를 넘으면 조회를 거부합니다. 텍스트와 구조화된 내용을 합친 MCP 도구 결과는 64 KiB 이내이며, 바깥 JSON-RPC 봉투는 이 한도에 포함되지 않습니다. 이는 조회 도구의 제한으로, 정책 읽기와 기존 도구의 동작은 바뀌지 않습니다. 출력 가능한 문자 판정에는 실행 중인 Python의 유니코드 데이터베이스를 사용합니다. 기본 로컬 목록 조회 전용 정책은 그대로 유지됩니다.
 
 <a id="미출시-v140-후보-전송-사전-검증-357"></a>
+<a id="unreleased-v140-candidate-send-preflight-357"></a>
 
 ## v1.4.0 소스: 전송 사전 검증 (#357)
 
@@ -50,6 +66,7 @@ Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(
 기존 dry-run 검사는 로컬·버전 확인 프로세스와 SSH 연결을 시작할 수 있으며, SSH 설정 자체도 명령을 실행할 수 있습니다. 따라서 이 도구는 `readOnlyHint=false`와 `openWorldHint=true`를 사용합니다. 호스트 승인은 정책 권한과 별개입니다. 통과는 검사 시점의 결과이며, 경로 예약, 유효 저장소의 증명, 승인, 이후 전송의 보장, 소비 또는 ACK를 뜻하지 않습니다.
 
 <a id="미출시-v140-후보-제한된-진단-358"></a>
+<a id="unreleased-v140-candidate-bounded-diagnostics-358"></a>
 
 ## v1.4.0 소스: 제한된 진단 (#358)
 
@@ -78,6 +95,7 @@ MCP 래퍼가 지원하는 검사와 실행 효과는 다음으로 제한됩니�
 `tcpAccept`, `tls`, `peerAuthentication` 단계는 `not_checked`로 유지됩니다. 여기서 `peerAuthentication`은 페어링된 기기의 인증을 뜻하며 정방향 SSH 인증과 별개입니다. `sshFailure`는 `authentication_failed` 또는 `host_key_failed`처럼 정제된 정방향 SSH 실패 범주만 보고합니다. TCP, TLS, 페어링된 기기 또는 회신 호스트 검사는 추가하지 않습니다.
 
 <a id="미출시-v140-후보-mcp-프리셋-359"></a>
+<a id="unreleased-v140-candidate-mcp-presets-359"></a>
 
 ## v1.4.0 소스: MCP 프리셋 (#359)
 
@@ -112,7 +130,16 @@ MCP 도구 어노테이션은 목록 조회를 읽기 전용으로, 전송을 �
 
 MCP extra가 있는 상태와 없는 상태에서 각각 `python -m unittest discover -s tests -v`를 실행하십시오. 선택형 테스트는 실제 stdio MCP 서버를 시작하고 모델 자격 증명 없이 초기화, 스키마, 정책 거부 및 CLI 부분 실패를 실행합니다. wheel 및 sdist 설치를 모두 테스트하십시오. 실시간 확인 시에는 Codex 버전, OS 및 호스트 승인 설정을 기록해야 합니다. UDS 접근은 환경에 따라 다르며 승인 우회를 약속하는 것이 아닙니다. 메시지에는 전용 테스트 세션을 사용하십시오.
 
-CI는 macOS/Linux의 Python 3.10/3.13/3.14에서 SDK 하한 `mcp==1.30.0`과 최신 호환 1.x를 별도로 시험합니다. 두 프로필 모두 stdio·정책·시간 초과·취소·소유 자식 프로세스 정리 시험을 실행하고, 해결된 런타임 의존성 그래프를 감사하며 버전과 보고서를 보존합니다. 전이 의존성 버전은 패키지 관리자가 일반적인 방식으로 결정합니다. 모든 전이 패키지의 최솟값을 시험하는 것은 아닙니다. 버전을 고정한 빌드·감사 요구 패키지는 런타임 환경 밖에 설치하며, 감사 대상 환경에는 초기 구성용 `pip`/`setuptools` 패키지도 포함됩니다. 기존 최신 버전 해결 감사와 릴리스 감사도 계속 필수입니다.
+이 미공개 후보의 CI는 다음 네 SDK 프로필을 macOS/Linux의 Python 3.10/3.13/3.14에 구성하며, 총 24개 조합입니다. 행렬이 구성돼 있다는 사실만으로 모든 조합이 통과했다고 판단하지 말고, 현재 실행과 보관된 버전·감사 보고서를 확인하십시오.
+
+| CI 프로필 | SDK 선택 |
+| --- | --- |
+| `minimum` | `mcp==1.30.0` |
+| `latest1` | `mcp>=1.30,<2` |
+| `minimum2` | `mcp==2.3.0` |
+| `latest2` | `mcp>=2.3,<3` |
+
+각 프로필은 stdio·정책·시간 초과·취소·소유한 자식 프로세스 정리 검사를 실행하고, 실제로 선택된 서버와 시험용 클라이언트의 런타임 의존성 그래프를 각각 감사하며 버전·보고서를 보관합니다. 어느 한 감사라도 실패하면 해당 CI 조합은 실패합니다. 후보 검증에는 격리된 다른 주 버전의 SDK 클라이언트로 양방향 `2025-11-25` 실제 stdio 초기화를 수행하는 사례와 SDK 2의 `2026-07-28` 협상 사례가 포함됩니다. 기존 프로토콜의 전송 형식 검사에서는 camelCase 별칭, 도구 이름 6개, 바뀌지 않은 내부 프로젝트 결과를 확인합니다. 이 SDK·프로토콜 시험은 새로운 실제 에이전트·SSH·ACK 검증을 뜻하지 않습니다. 전이 의존성 버전은 일반적인 의존성 해결에 따라 선택되며, 모든 전이 패키지의 최소 버전을 시험하는 것은 아닙니다. 버전이 고정된 빌드·감사 도구는 런타임 환경 밖에 설치하며, 감사 대상에는 초기 구성용 `pip`/`setuptools`도 포함됩니다. 기존 최신 버전 해결 감사와 릴리스 감사도 계속 필요합니다.
 
 공식 참조: [Codex MCP](https://developers.openai.com/codex/extend/mcp), [Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk). [SDK 1.30.0](https://pypi.org/pypi/mcp/1.30.0/json), [GHSA-84m7-p3x7-pcfv](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-84m7-p3x7-pcfv), [GHSA-fmmv-w9g8-j3gc](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-fmmv-w9g8-j3gc).
 
