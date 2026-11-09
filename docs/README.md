@@ -24,6 +24,8 @@ installation paths.
 
 ## Development and history
 
+- [v1.5.0 preparation checkpoint (2026-11-09)](releases/v1.5.0.md) describes SDK 1/2 compatibility and dependency/test maintenance after published [v1.4.2](releases/v1.4.2.md#v142-publication-record); configuration and preparation are not publication or operational rollout.
+
 - [v1.4.1 maintenance preparation](releases/v1.4.1.md) records documentation and the published skill v0.5.1 compatibility copy; runtime behavior, independent skill installation and operations remain separate.
 
 - [v1.4.0 preparation](releases/v1.4.0.md) records the merged MCP policy, preflight, diagnostics and preset changes at the 2026-11-02 source checkpoint; publication and independent skill adoption remain separate.

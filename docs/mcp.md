@@ -1,6 +1,6 @@
 # Optional Codex MCP integration
 
-Published runtime v1.4.2 includes the v1.4.0 tools below and the SDK 1 installation path. The original 2026-11-02 source checkpoint against v1.3.3 is historical; the [v1.4.0 release notes](releases/v1.4.0.md) retain that scope. SDK 2 compatibility below is an unreleased source candidate after v1.4.2, not a published-package support announcement.
+At the 2026-11-09 preparation checkpoint, v1.4.2 was the latest published runtime and included the v1.4.0 tools below and the SDK 1 installation path. The original 2026-11-02 source checkpoint against v1.3.3 remains historical; the [v1.4.0 release notes](releases/v1.4.0.md) retain that scope. At the preparation checkpoint, SDK 2 compatibility below was prepared as an [unpublished v1.5.0 source candidate](releases/v1.5.0.md), not a published-package support announcement.
 
 Install with Python 3.10 or later: `pipx install 'session-peer[mcp]'` (or install the extra in an isolated venv). The dependency-free Python 3.9 CLI and `install.sh` remain supported. The shell installer does not install MCP dependencies. On Python 3.9 the MCP entry point reports that Python 3.10+ is required.
 
@@ -32,10 +32,11 @@ Use the actual username and SSH destination, configured keys and known_hosts. No
 Register using `codex mcp add session-peer -- /absolute/path/session-peer-mcp --config /absolute/path/policy.json`, or use the repository's `plugins/session-peer` bundle: `codex plugin marketplace add /absolute/path/to/session-peer`, then `codex plugin add session-peer@session-peer`. The plugin launches `session-peer-mcp` from PATH and reads `SESSION_PEER_MCP_CONFIG` when set in its environment. Install the Python extra first. Existing Codex settings are not modified by installing the Python package.
 
 <a id="sdk2-compatibility-candidate"></a>
+<a id="unreleased-source-candidate-sdk-12-compatibility-389"></a>
 
-## Unreleased source candidate: SDK 1/2 compatibility (#389)
+## v1.5.0 preparation checkpoint (2026-11-09): SDK 1/2 compatibility (#389 / #390)
 
-At the 2026-11-09 source checkpoint, the candidate extra uses `mcp>=1.30,<3,!=2.0.*,!=2.1.*,!=2.2.*`. It retains stable SDK 1.x from 1.30 and adds stable SDK 2.x from 2.3; prerelease/development SDK versions are not accepted. SDK 2.0–2.2 remain unsupported because their server always exposes `subscriptions/listen` without a public off switch. SDK 2.3+ is constructed with `MCPServer(subscriptions=False)` to keep subscriptions disabled.
+At the 2026-11-09 preparation checkpoint, the unpublished v1.5.0 candidate extra used `mcp>=1.30,<3,!=2.0.*,!=2.1.*,!=2.2.*`. It retained stable SDK 1.x from 1.30 and added stable SDK 2.x from 2.3. The candidate enforced stable SDK versions at server startup, rejecting prerelease/development SDKs even if pip had installed them with `--pre`; this is a runtime guard, not only a resolver preference. SDK 2.0–2.2 were excluded because their server always exposes `subscriptions/listen` without a public off switch. For SDK 2.3+, the adapter constructed `MCPServer(subscriptions=False)` to keep subscriptions disabled.
 
 Pinned upstream sources: [SDK 2.0.0 server](https://github.com/modelcontextprotocol/python-sdk/blob/v2.0.0/src/mcp/server/mcpserver/server.py), [SDK 2.2.0 server](https://github.com/modelcontextprotocol/python-sdk/blob/v2.2.0/src/mcp/server/mcpserver/server.py) and [SDK 2.3.0 server](https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/server/mcpserver/server.py). The [SDK 2.3.0 distribution metadata](https://pypi.org/pypi/mcp/2.3.0/json) requires Python 3.10+, matching the unchanged optional MCP floor.
 
@@ -43,7 +44,7 @@ The six public tool names, project result payload schema version 1, policy versi
 
 The 64 KiB result limit is an upper bound, not a promise to accept every smaller payload. SDK 2 measures with its modern server-identity metadata included even for legacy connections, so it can conservatively refuse near-limit results that SDK 1 accepts.
 
-The installation and upgrade commands for the published package still select the released SDK 1 path. They do not yet deliver this source candidate or make SDK 2 support public. Adopting reviewed source and preserving the operator's package manager, interpreter and extra selection are separate actions; a manifest edit or server restart does not upgrade an installed SDK. The core Python 3.9+ dependency-free CLI and optional MCP Python 3.10+ floor are unchanged. This candidate does not change the independently published skill v0.5.1, its minimum 0.9.1/full documented coverage 1.4.0, or the receiver codexBin floor 1.0.1.
+At the 2026-11-09 preparation checkpoint, published-package installation and upgrade commands selected the released SDK 1 path and did not deliver this source candidate or make SDK 2 support public. Adopting reviewed source and preserving the operator's package manager, interpreter and extra selection are separate actions; a manifest edit or server restart does not upgrade an installed SDK. The core Python 3.9+ dependency-free CLI and optional MCP Python 3.10+ floor were unchanged. The candidate kept the independently published skill v0.5.1, its minimum 0.9.1/full documented coverage 1.4.0, and the receiver codexBin floor 1.0.1 unchanged.
 
 <a id="unreleased-v140-candidate-destination-discovery-356"></a>
 
@@ -126,7 +127,7 @@ A shared MCP process cannot reliably identify the invoking thread. Messages iden
 
 Run `python -m unittest discover -s tests -v` with and without the MCP extra. Optional tests start a real stdio MCP server and exercise initialization, schemas, policy rejection and CLI partial failures without model credentials. Test both wheel and sdist installs. Live checks must record Codex version, OS and host approval settings; UDS access is environment-dependent and is not an approval-bypass promise. Use dedicated test sessions for messages.
 
-For this unreleased candidate, CI is configured for the following four SDK profiles on macOS/Linux with Python 3.10/3.13/3.14: 24 cells in total. This configured matrix is not evidence that every cell has passed; inspect the current run and its retained version/audit reports.
+At the 2026-11-09 preparation checkpoint, the v1.5.0 candidate CI configuration specified the following four SDK profiles on macOS/Linux with Python 3.10/3.13/3.14: 24 cells in total. This dated configuration is not evidence that every cell passed; inspect the exact-head run and its retained version/audit reports.
 
 | CI profile | SDK selection |
 | --- | --- |

@@ -1,5 +1,13 @@
 # Releasing session-peer
 
+## v1.5.0 preparation
+
+Prepared on 2026-11-09 against published v1.4.2. At that preparation checkpoint this was an unpublished source candidate, not a publication announcement. Integrated source base: `a622dc0d9f04a252af65147eb36188998bf0c8b4`, before version preparation, not the final publication commit. The [candidate notes](docs/releases/v1.5.0.md) cover #390 SDK 1/2 compatibility, dependency maintenance #386/#383/#385/#382, #379's test-only Paramiko 5.1.0/assertion update, and #381's Control dependencies and checks. The six tools, result/policy/permission/ACK boundaries and Python floors remain; no new real OAuth, production-database, native/SSH/Windows acceptance is asserted. #387/#388 and research drafts are separate.
+
+The prospective `SKILL.md` asset remains skill v0.5.1/minimum 0.9.1/full documented coverage 1.4.0, receiver `codexBin` floor 1.0.1, with its existing exact source/hash. It remains outside wheel/sdist. Control is private version 0.1.0 and is not included in the Python packages; service deployment and independent skill installation remain separate.
+
+The owner requested a preparation PR only. No merge, tag/draft creation, workflow dispatch, publication, global install or operational rollout is performed. Require current-head review/checks and final protected-main CI. Later separately authorized publication must verify all 7 frozen assets (including `SHA256SUMS` and `release-provenance.json`), authenticated attestations, exact tag/source, current audits, fresh independent wheel/sdist installs and mandatory human PyPI environment approval. These are remaining gates, not completed results here. Preserve historical SDK 1 security/CI records and immutable assets; record actual publication separately without replacing old assets.
+
 ## Publication record — v1.4.2 (verified 2026-11-05)
 
 [GitHub v1.4.2](https://github.com/abruption/session-peer/releases/tag/v1.4.2) was published as stable/Latest and immutable at `2026-11-05T09:45:30Z`, from `27b088735f065b6785dc6f3892cf132926657bdf`. PyPI uploaded the wheel at `2026-11-05T09:47:52.170326Z` and sdist at `2026-11-05T09:47:54.295391Z`; both are non-yanked and match the locked asset hashes. The [publication record](docs/releases/v1.4.2.md#v142-publication-record) contains the exact filenames, hashes and verification boundaries.
