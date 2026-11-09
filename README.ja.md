@@ -35,7 +35,9 @@ session-peer 1.0.2による実際のローカル通信です。CodexがClaude Co
 Python 3.9以上が必要です。基本のローカル・SSH CLIに外部Python依存パッケージはありません。
 ソースバージョン：**1.4.2**（2026-11-05に安定版[GitHub v1.4.2](https://github.com/abruption/session-peer/releases/tag/v1.4.2)として公開され、[PyPI](https://pypi.org/project/session-peer/1.4.2/)でも提供されています）。[公開記録](docs/ja/releases/v1.4.2.md#v142-publication-record)にソース`27b088735f065b6785dc6f3892cf132926657bdf`、アップロード時刻、ハッシュを記載しています。このメンテナンスはテスト・CIの保護策と運用ガイドの用語を対象とし、ランタイム不具合の修正や過去のCI停止原因の特定を意味しません。以前の[v1.4.1ノート](docs/ja/releases/v1.4.1.md)と[v1.4.0公開記録](docs/ja/releases/v1.4.0.md#v140-publication-record)は過去の根拠として保持します。Pythonの公開、Node Controlの配備、独立管理するスキルの更新は別々の作業です。
 
-任意の[MCPエクストラ](docs/ja/mcp.md)は`mcp>=1.30,<2`を必要とします。MCPのPython 3.10+要件と依存関係のないPython 3.9コアは変更しません。既存のMCP環境では明示的なパッケージ更新が必要です。
+公開済みv1.4.2の任意の[MCPエクストラ](docs/ja/mcp.md)は`mcp>=1.30,<2`を必要とします。MCPのPython 3.10+要件と依存関係のないPython 3.9コアは変更しません。既存のMCP環境では明示的なパッケージ更新が必要です。
+
+未公開ソース候補（#389）：[SDK 1/2互換性](docs/ja/mcp.md#sdk2-compatibility-candidate)は安定版SDK 1.xを維持し、SDK 2.xの2.3以降を追加しますが、2.0–2.2は除外します。公開済みv1.4.2と以下のパッケージインストールコマンドは引き続きSDK 1を使い、通常の公開済みパッケージ更新ではこの候補は導入されません。
 
 1.3.0では配信説明、ローカル・SSH経路プリセットと受信者アドレス帳、時間制限付きのhandoff状態確認、信頼したSSH設定、ペアリングリンク、バージョン別通知設定が追加されました。対応する組み合わせと制限は[リリース範囲と検証条件](docs/ja/releases/v1.3.0.md)を参照してください。パッケージ公開と本番環境への配備は別です。
 

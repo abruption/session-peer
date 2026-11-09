@@ -19,6 +19,8 @@ import unittest
 from unittest.mock import patch
 
 import session_peer as core
+from tests.mcp_integration.sdk_wire import wire_field
+
 import session_peer_mcp as peer
 
 LOCAL_ROUTE = {'transport': 'local', 'agent': 'claude'}
@@ -152,26 +154,26 @@ class RealPresetStdio(unittest.IsolatedAsyncioTestCase):
         before = self.storage_snapshot(self.xdg)
         async with self.inbox() as (received, arrived), self.client() as client:
             metadata = await client.call_tool('list_presets', {'destination': 'local'})
-            self.assertFalse(metadata.isError)
-            self.assertEqual(metadata.structuredContent['presets'], [{'name': 'work', 'revision': revision,
+            self.assertFalse(wire_field(metadata, 'isError'))
+            self.assertEqual(wire_field(metadata, 'structuredContent')['presets'], [{'name': 'work', 'revision': revision,
                 'transport': 'local', 'agent': 'claude'}])
             listing = await client.call_tool('list_sessions', {'destination': 'local', 'preset': 'work'})
-            self.assertFalse(listing.isError)
-            self.assertEqual(listing.structuredContent['command'], 'list')
-            self.assertEqual(listing.structuredContent['schemaVersion'], 1)
-            self.assertNotIn('preset', listing.structuredContent)
-            self.assertTrue(any(row.get('pid') == os.getpid() for row in listing.structuredContent['sessions']))
+            self.assertFalse(wire_field(listing, 'isError'))
+            self.assertEqual(wire_field(listing, 'structuredContent')['command'], 'list')
+            self.assertEqual(wire_field(listing, 'structuredContent')['schemaVersion'], 1)
+            self.assertNotIn('preset', wire_field(listing, 'structuredContent'))
+            self.assertTrue(any(row.get('pid') == os.getpid() for row in wire_field(listing, 'structuredContent')['sessions']))
             preflight = await client.call_tool('preflight_send', {'destination': 'local', 'preset': 'work',
                 'target': 'preset-fixture', 'message': 'synthetic preflight body'})
-            self.assertFalse(preflight.isError)
-            self.assertEqual(preflight.structuredContent['preset']['revision'], revision)
+            self.assertFalse(wire_field(preflight, 'isError'))
+            self.assertEqual(wire_field(preflight, 'structuredContent')['preset']['revision'], revision)
             self.assertEqual(received, [])
             sent = await client.call_tool('send_message', {'destination': 'local', 'preset': 'work',
                 'preset_revision': revision, 'target': 'preset-fixture', 'message': 'synthetic actual inbox body'})
-            self.assertFalse(sent.isError)
-            self.assertEqual(sent.structuredContent['command'], 'send')
-            self.assertEqual(sent.structuredContent['schemaVersion'], 1)
-            self.assertNotIn('preset', sent.structuredContent)
+            self.assertFalse(wire_field(sent, 'isError'))
+            self.assertEqual(wire_field(sent, 'structuredContent')['command'], 'send')
+            self.assertEqual(wire_field(sent, 'structuredContent')['schemaVersion'], 1)
+            self.assertNotIn('preset', wire_field(sent, 'structuredContent'))
             await asyncio.wait_for(arrived.wait(), 2)
             self.assertEqual(len(received), 1)
             self.assertIn('synthetic actual inbox body', received[0]['message']['content'])
@@ -210,8 +212,8 @@ class RealPresetStdio(unittest.IsolatedAsyncioTestCase):
                         'preset_unsafe_acl', 'preset_acl_unverifiable', 'preset_mount_unverifiable'))
                 async with self.client() as client:
                     value = await client.call_tool('list_presets', {'destination': 'local'})
-                    self.assertTrue(value.isError)
-                    self.assertEqual(value.structuredContent['reason'], 'preset_storage_unavailable')
+                    self.assertTrue(wire_field(value, 'isError'))
+                    self.assertEqual(wire_field(value, 'structuredContent')['reason'], 'preset_storage_unavailable')
                     self.assertNotIn(str(self.xdg), value.content[0].text)
                     self.assertNotIn(str(target), value.content[0].text)
                 self.assertEqual(self.storage_snapshot(self.xdg), before)
@@ -255,13 +257,13 @@ class RealPresetStdio(unittest.IsolatedAsyncioTestCase):
             value = await client.call_tool('send_message', {'destination': 'local', 'preset': 'work',
                 'preset_revision': core.preset_revision('work', LOCAL_ROUTE), 'target': 'preset-fixture',
                 'message': 'must never invoke'})
-            self.assertTrue(value.isError)
-            self.assertFalse(value.structuredContent['ok'])
-            self.assertEqual(value.structuredContent['reason'], 'request_rejected')
+            self.assertTrue(wire_field(value, 'isError'))
+            self.assertFalse(wire_field(value, 'structuredContent')['ok'])
+            self.assertEqual(wire_field(value, 'structuredContent')['reason'], 'request_rejected')
             # The forbidden invoker exits the process; this second successful
             # exchange proves no invoke occurred and no process was replaced.
             inventory = await client.call_tool('list_destinations', {})
-            self.assertFalse(inventory.isError)
+            self.assertFalse(wire_field(inventory, 'isError'))
 
     async def test_stdio_later_snapshot_mutation_does_not_cancel_expanded_local_route(self):
         wrapper = self.race_wrapper(revoke_policy=False)
@@ -269,10 +271,10 @@ class RealPresetStdio(unittest.IsolatedAsyncioTestCase):
             sent = await client.call_tool('send_message', {'destination': 'local', 'preset': 'work',
                 'preset_revision': core.preset_revision('work', LOCAL_ROUTE), 'target': 'preset-fixture',
                 'message': 'expanded local snapshot body'})
-            self.assertFalse(sent.isError)
-            self.assertEqual(sent.structuredContent['command'], 'send')
-            self.assertEqual(sent.structuredContent['schemaVersion'], 1)
-            self.assertNotIn('preset', sent.structuredContent)
+            self.assertFalse(wire_field(sent, 'isError'))
+            self.assertEqual(wire_field(sent, 'structuredContent')['command'], 'send')
+            self.assertEqual(wire_field(sent, 'structuredContent')['schemaVersion'], 1)
+            self.assertNotIn('preset', wire_field(sent, 'structuredContent'))
             await asyncio.wait_for(arrived.wait(), 2)
             self.assertEqual(len(received), 1)
             self.assertIn('expanded local snapshot body', received[0]['message']['content'])
