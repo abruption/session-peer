@@ -1,6 +1,7 @@
 """Stable version and publication boundary agree across package and docs."""
 
 from pathlib import Path
+import hashlib
 import re
 import unittest
 
@@ -11,6 +12,46 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StableCandidate(unittest.TestCase):
+    def test_v150_preparation_keeps_candidate_and_publication_boundaries(self):
+        integrated_base = "a622dc0d9f04a252af65147eb36188998bf0c8b4"
+        self.assertRegex(integrated_base, r"^[0-9a-f]{40}$")
+        skill_sha = "922512869577cc3d8b9d305641479e2dd659f0e669298584ca06f1ca15de1d31"
+        self.assertEqual(skill_sha, hashlib.sha256(
+            (ROOT / "skills/session-peer/SKILL.md").read_bytes()).hexdigest())
+        receiver_floors = {
+            "": "receiver `codexBin` floor remains 1.0.1",
+            "ko/": "수신측 `codexBin` 하한은 1.0.1",
+            "ja/": "受信側`codexBin`の下限は1.0.1",
+            "zh-CN/": "接收端`codexBin`下限仍为1.0.1",
+        }
+        for locale, suffix in (("", ""), ("ko/", ".ko"), ("ja/", ".ja"), ("zh-CN/", ".zh-CN")):
+            notes = (ROOT / ("docs/" + locale + "releases/v1.5.0.md")).read_text(encoding="utf-8")
+            for marker in (integrated_base, "2026-11-09", "1.5.0", "1.4.2", "#390", "#379", "#381",
+                           "mcp>=1.30,<3,!=2.0.*,!=2.1.*,!=2.2.*", "MCPServer(subscriptions=False)",
+                           "64 KiB", "24", skill_sha, "0.5.1", "0.9.1", "1.4.0", "1.0.1",
+                           "#387/#388", "SHA256SUMS", "release-provenance.json"):
+                with self.subTest(locale=locale, marker=marker):
+                    self.assertIn(marker, notes)
+            self.assertNotIn("V150_" + "INTEGRATED_BASE_PENDING", notes)
+            self.assertIn(receiver_floors[locale], notes)
+            runbook = (ROOT / ("RELEASING" + suffix + ".md")).read_text(encoding="utf-8")
+            preparation = re.search(r"^## v1\.5\.0[^\n]*\n[\s\S]*?(?=^## |\Z)",
+                                    runbook, re.MULTILINE)
+            self.assertIsNotNone(preparation)
+            self.assertIn(integrated_base, preparation.group(0))
+            for stem in ("README", "RELEASING"):
+                self.assertIn("releases/v1.5.0.md", (ROOT / (stem + suffix + ".md")).read_text(encoding="utf-8"))
+        english = (ROOT / "docs/releases/v1.5.0.md").read_text(encoding="utf-8")
+        self.assertIn("for 24 CI cells", english)
+        self.assertIn("31688 UTF-8 bytes, SHA-256 `" + skill_sha + "`", english)
+        self.assertIn("documented full workflow coverage 1.4.0", english)
+        self.assertIn("unpublished source candidate", english)
+        self.assertIn("does not authorize merging the release-preparation PR", english)
+        self.assertIn("No tag, draft, workflow dispatch or publication is performed", english)
+        self.assertIn("only the test dependency Paramiko 5.1.0 and its matching test assertion", english)
+        self.assertIn("Control remains private version 0.1.0", english)
+        self.assertIn("Required human PyPI environment approval remains", english)
+
     def test_v141_maintenance_keeps_runtime_and_skill_release_boundaries(self):
         expected = ("2026-11-03", "1.4.1", "1.4.0", "0.5.1", "0.9.1", "1.0.1",
                     "192b77ec4a168859c26fe886ff42901f24060608",
@@ -357,8 +398,8 @@ class StableCandidate(unittest.TestCase):
             self.assertIn(marker, english)
 
     def test_package_and_generated_core_version_agree(self):
-        self.assertEqual(session_peer.__version__, "1.4.2")
-        self.assertIn('__version__ = "1.4.2"',
+        self.assertEqual(session_peer.__version__, "1.5.0")
+        self.assertIn('__version__ = "1.5.0"',
                       (ROOT / "session_peer_core/common.py").read_text(encoding="utf-8"))
 
     def test_current_readmes_and_runbooks_match_source_version(self):
@@ -397,16 +438,16 @@ class StableCandidate(unittest.TestCase):
 
     def test_stable_release_keeps_operational_deployment_separate(self):
         profiles = (
-            ("", "Source version: **1.4.2**",
+            ("", "Source version: **1.5.0**",
              "At the 2026-10-28 preparation checkpoint, the last verified published stable release was **1.3.1**.",
              "Development candidate 1.2.1 is unpublished"),
-            (".ko", "소스 버전: **1.4.2**",
+            (".ko", "소스 버전: **1.5.0**",
              "2026-10-28 준비 시점의 마지막 확인 공개 안정판은 **1.3.1**이었습니다.",
              "개발 후보 1.2.1은 미공개입니다"),
-            (".ja", "ソースバージョン：**1.4.2**",
+            (".ja", "ソースバージョン：**1.5.0**",
              "2026-10-28の準備時点で、最後に確認した公開済み安定版は**1.3.1**でした。",
              "開発候補1.2.1は未公開です"),
-            (".zh-CN", "源码版本：**1.4.2**",
+            (".zh-CN", "源码版本：**1.5.0**",
              "在2026-10-28的准备检查时，最后确认的已发布稳定版本为**1.3.1**。",
              "开发候选版本1.2.1尚未发布"),
         )

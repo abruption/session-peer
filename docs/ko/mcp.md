@@ -1,6 +1,6 @@
 # 선택형 Codex MCP 연동
 
-공개 런타임 v1.4.2에는 아래 v1.4.0 도구와 SDK 1 설치 경로가 포함됩니다. 공개된 v1.3.3을 기준으로 한 2026-11-02 소스 점검은 과거 기록이며, [v1.4.0 릴리스 노트](releases/v1.4.0.md)에 당시 범위를 보존합니다. 아래 SDK 2 호환성은 v1.4.2 이후의 미공개 소스 후보이며, 배포된 패키지의 지원 공지가 아닙니다.
+2026-11-09 준비 점검 당시 최신 공개 런타임은 v1.4.2였으며 아래 v1.4.0 도구와 SDK 1 설치 경로를 포함했습니다. 공개된 v1.3.3을 기준으로 한 2026-11-02 소스 점검은 과거 기록이며, [v1.4.0 릴리스 노트](releases/v1.4.0.md)에 당시 범위를 보존합니다. 준비 점검 시 아래 SDK 2 호환성은 [미공개 v1.5.0 소스 후보](releases/v1.5.0.md)로 준비됐으며, 배포된 패키지의 지원 공지가 아니었습니다.
 
 Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(또는 격리된 venv에 extra 설치). 의존성이 없는 Python 3.9 CLI 및 `install.sh`는 계속 지원됩니다. 셸 설치기는 MCP 의존성을 설치하지 않습니다. Python 3.9에서 MCP 엔트리 포인트는 Python 3.10+이 필요하다고 보고합니다.
 
@@ -32,10 +32,12 @@ Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(
 `codex mcp add session-peer -- /absolute/path/session-peer-mcp --config /absolute/path/policy.json`을 사용하여 등록하거나, 저장소의 `plugins/session-peer` 번들을 사용하십시오: `codex plugin marketplace add /absolute/path/to/session-peer` 실행 후 `codex plugin add session-peer@session-peer`. 플러그인은 PATH에서 `session-peer-mcp`를 실행하고 환경에 설정된 경우 `SESSION_PEER_MCP_CONFIG`를 읽습니다. 먼저 Python extra를 설치하십시오. Python 패키지를 설치해도 기존 Codex 설정은 수정되지 않습니다.
 
 <a id="sdk2-compatibility-candidate"></a>
+<a id="unreleased-source-candidate-sdk-12-compatibility-389"></a>
+<a id="미공개-소스-후보-sdk-12-호환성-389"></a>
 
-## 미공개 소스 후보: SDK 1/2 호환성 (#389)
+## v1.5.0 준비 점검 (2026-11-09): SDK 1/2 호환성 (#389 / #390)
 
-2026-11-09 소스 점검 시점의 후보 extra는 `mcp>=1.30,<3,!=2.0.*,!=2.1.*,!=2.2.*`를 사용합니다. 안정판 SDK 1.x의 1.30 이상을 유지하고 안정판 SDK 2.x의 2.3 이상을 추가하며, SDK 사전 공개판·개발판은 받지 않습니다. SDK 2.0–2.2는 서버가 `subscriptions/listen`을 항상 노출하고 공개 API로 끌 수 없어 지원하지 않습니다. SDK 2.3+에서는 `MCPServer(subscriptions=False)`로 서버를 생성해 구독을 비활성화합니다.
+2026-11-09 준비 점검 시 미공개 v1.5.0 후보 extra는 `mcp>=1.30,<3,!=2.0.*,!=2.1.*,!=2.2.*`를 사용했습니다. 안정판 SDK 1.x의 1.30 이상을 유지하고 안정판 SDK 2.x의 2.3 이상을 추가했습니다. 후보는 서버 시작 시 안정판 SDK만 허용하며, pip의 `--pre`로 설치했더라도 사전 공개판·개발판 SDK를 거부하도록 구현됐습니다. 이는 의존성 해결기의 선택에만 맡기는 것이 아닌 런타임 검사입니다. SDK 2.0–2.2는 서버가 `subscriptions/listen`을 항상 노출하고 공개 API로 끌 수 없어 제외했습니다. SDK 2.3+에서는 `MCPServer(subscriptions=False)`로 서버를 생성해 구독을 비활성화했습니다.
 
 버전별 업스트림 소스: [SDK 2.0.0 서버](https://github.com/modelcontextprotocol/python-sdk/blob/v2.0.0/src/mcp/server/mcpserver/server.py), [SDK 2.2.0 서버](https://github.com/modelcontextprotocol/python-sdk/blob/v2.2.0/src/mcp/server/mcpserver/server.py), [SDK 2.3.0 서버](https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/server/mcpserver/server.py). [SDK 2.3.0 배포 메타데이터](https://pypi.org/pypi/mcp/2.3.0/json)도 Python 3.10+을 요구하며, 기존 선택형 MCP 하한과 같습니다.
 
@@ -43,7 +45,7 @@ Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(
 
 결과의 64 KiB 제한은 상한이며, 이보다 작은 모든 데이터를 받아들인다고 보장하지는 않습니다. SDK 2는 기존 프로토콜 연결에서도 최신 프로토콜의 서버 식별 메타데이터를 포함해 크기를 계산하므로, 한도에 가까운 결과는 SDK 1에서 허용하더라도 보수적으로 거부할 수 있습니다.
 
-공개 패키지용 설치·업그레이드 명령은 여전히 배포된 SDK 1 경로를 선택합니다. 아직 이 소스 후보를 제공하거나 SDK 2 지원을 공개하지 않습니다. 검토한 소스를 채택하는 일과 운영자의 패키지 관리자·인터프리터·extra 선택을 유지하는 일은 별개이며, 선언 수정이나 서버 재시작만으로 설치된 SDK가 갱신되지는 않습니다. 외부 의존성이 없는 Python 3.9+ 기본 CLI와 선택형 MCP의 Python 3.10+ 하한은 유지됩니다. 이 후보는 별도로 공개된 스킬 v0.5.1, 최소 0.9.1/문서 전체 사용 흐름의 기준 1.4.0 또는 수신측 codexBin 하한 1.0.1을 바꾸지 않습니다.
+2026-11-09 준비 점검 당시 공개 패키지용 설치·업그레이드 명령은 배포된 SDK 1 경로를 선택했으며, 이 소스 후보를 제공하거나 SDK 2 지원을 공개하지 않았습니다. 검토한 소스를 채택하는 일과 운영자의 패키지 관리자·인터프리터·extra 선택을 유지하는 일은 별개이며, 선언 수정이나 서버 재시작만으로 설치된 SDK가 갱신되지는 않습니다. 외부 의존성이 없는 Python 3.9+ 기본 CLI와 선택형 MCP의 Python 3.10+ 하한은 그대로였습니다. 후보는 별도로 공개된 스킬 v0.5.1, 최소 0.9.1/문서 전체 사용 흐름의 기준 1.4.0, 수신측 codexBin 하한 1.0.1을 유지했습니다.
 
 <a id="미출시-v140-후보-목적지-조회-356"></a>
 <a id="unreleased-v140-candidate-destination-discovery-356"></a>
@@ -130,7 +132,7 @@ MCP 도구 어노테이션은 목록 조회를 읽기 전용으로, 전송을 �
 
 MCP extra가 있는 상태와 없는 상태에서 각각 `python -m unittest discover -s tests -v`를 실행하십시오. 선택형 테스트는 실제 stdio MCP 서버를 시작하고 모델 자격 증명 없이 초기화, 스키마, 정책 거부 및 CLI 부분 실패를 실행합니다. wheel 및 sdist 설치를 모두 테스트하십시오. 실시간 확인 시에는 Codex 버전, OS 및 호스트 승인 설정을 기록해야 합니다. UDS 접근은 환경에 따라 다르며 승인 우회를 약속하는 것이 아닙니다. 메시지에는 전용 테스트 세션을 사용하십시오.
 
-이 미공개 후보의 CI는 다음 네 SDK 프로필을 macOS/Linux의 Python 3.10/3.13/3.14에 구성하며, 총 24개 조합입니다. 행렬이 구성돼 있다는 사실만으로 모든 조합이 통과했다고 판단하지 말고, 현재 실행과 보관된 버전·감사 보고서를 확인하십시오.
+2026-11-09 준비 점검 시 v1.5.0 후보 CI에는 macOS/Linux의 Python 3.10/3.13/3.14와 다음 네 SDK 프로필을 조합한 24개 구성이 명시돼 있었습니다. 이 날짜의 구성만으로 모든 조합이 통과했다고 판단하지 말고, 정확한 HEAD의 실행과 보관된 버전·감사 보고서를 확인하십시오.
 
 | CI 프로필 | SDK 선택 |
 | --- | --- |

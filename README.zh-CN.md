@@ -33,11 +33,11 @@ session-peer使用各智能体自身的收件箱和队列；接收方智能体�
 ### 安装
 
 需要Python 3.9或更高版本。核心本地与SSH CLI没有第三方Python依赖。
-源码版本：**1.4.2**（2026-11-05作为稳定版[GitHub v1.4.2](https://github.com/abruption/session-peer/releases/tag/v1.4.2)发布，[PyPI](https://pypi.org/project/session-peer/1.4.2/)也已提供）。[发布记录](docs/zh-CN/releases/v1.4.2.md#v142-publication-record)列出了源码`27b088735f065b6785dc6f3892cf132926657bdf`、上传时间及哈希。本次维护涵盖测试／CI保护措施及运维指南术语，不表示修复运行时缺陷或查明过去CI停滞的原因。此前的[v1.4.1说明](docs/zh-CN/releases/v1.4.1.md)与[v1.4.0发布记录](docs/zh-CN/releases/v1.4.0.md#v140-publication-record)作为历史依据保留。Python发布、Node Control部署及独立管理的技能更新是不同的工作。
+源码版本：**1.5.0**（2026-11-09准备检查时点的未发布源码候选版本；最新已发布运行时仍为[v1.4.2](https://github.com/abruption/session-peer/releases/tag/v1.4.2)，由[PyPI](https://pypi.org/project/session-peer/1.4.2/)提供）。[候选说明](docs/zh-CN/releases/v1.5.0.md)涵盖MCP SDK 1/2兼容性与依赖／测试维护。[v1.4.2发布记录](docs/zh-CN/releases/v1.4.2.md#v142-publication-record)、此前的[v1.4.1说明](docs/zh-CN/releases/v1.4.1.md)及[v1.4.0发布记录](docs/zh-CN/releases/v1.4.0.md#v140-publication-record)作为历史依据保留。源码版本不表示软件包已发布；Python发布、Node Control部署和独立管理的技能更新相互区分。
 
 已发布v1.4.2的可选[MCP extra](docs/zh-CN/mcp.md)要求`mcp>=1.30,<2`；MCP的Python 3.10+要求和无外部依赖的Python 3.9核心保持不变。现有MCP环境需要显式升级软件包。
 
-尚未发布的源码候选方案（#389）：[SDK 1/2兼容性](docs/zh-CN/mcp.md#sdk2-compatibility-candidate)保留稳定版SDK 1.x，并增加SDK 2.x的2.3及以上版本，但排除2.0–2.2。已发布v1.4.2及下方的软件包安装命令仍使用SDK 1；常规已发布软件包升级不会安装此候选方案。
+在2026-11-09准备检查时点，v1.5.0的[SDK 1/2兼容性](docs/zh-CN/mcp.md#sdk2-compatibility-candidate)源码候选方案（#389 / #390）尚未发布。审查过的源码保留稳定版SDK 1.x，并增加SDK 2.x的2.3及以上版本，但排除2.0–2.2。当时已发布v1.4.2及下方的软件包安装命令选择SDK 1；常规已发布软件包升级并不提供此候选方案。
 
 1.3.0新增了传递说明、本地与SSH路由预设及收件人地址簿、有时限的handoff状态查询、受信任SSH配置、配对链接和按版本设置的通知偏好。支持的组合与限制请参阅[发布范围与验证条件](docs/zh-CN/releases/v1.3.0.md)。软件包发布与生产环境部署是两项独立操作。
 

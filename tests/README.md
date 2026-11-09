@@ -35,12 +35,28 @@ each independently in fresh environments, checking the installed import origin,
 exact CLI version, help and dependency consistency. The existing Linux 3.13
 package cell is retained.
 
-The MCP CI matrix tests Python 3.10/3.13/3.14 on macOS/Linux with both the exact SDK
-floor (`.github/requirements/mcp-minimum.txt`) and latest compatible 1.x.
+At the 2026-11-09 preparation checkpoint, the v1.5.0 source candidate's MCP CI
+was configured for Python 3.10/3.13/3.14 on macOS/Linux with four SDK profiles,
+for 24 cells:
+
+| Profile | SDK constraint | Constraint file |
+| --- | --- | --- |
+| `minimum` | `mcp==1.30.0` | `.github/requirements/mcp-minimum.txt` |
+| `latest1` | `mcp>=1.30,<2` | `.github/requirements/mcp-latest1.txt` |
+| `minimum2` | `mcp==2.3.0` | `.github/requirements/mcp-minimum2.txt` |
+| `latest2` | `mcp>=2.3,<3` | `.github/requirements/mcp-latest2.txt` |
+
+Each profile retains resolved versions and audits its runtime graph (including
+pip/setuptools bootstrap packages) separately from pinned build/audit tooling.
 Transitive dependencies resolve normally, not at their individual minima.
-Both runtime graphs (including pip/setuptools bootstrap packages) are audited
-separately from the pinned build/audit requirements and retained
-as CI artifacts. Existing latest-resolution and release audits remain required.
+SDK/protocol fixtures exercise real stdio clients, isolated opposite-major
+clients in both directions using `2025-11-25`, and SDK 2 negotiation using
+`2026-07-28`. They check camelCase wire aliases and the unchanged six-tool/project
+result contract without asserting byte-identical SDK framework output across
+protocol versions. The configured matrix does not prove current success; inspect
+the exact-head run and reports. Existing latest-resolution and release audits
+remain required. At that preparation checkpoint, published v1.4.2 used SDK 1;
+ordinary package installation or upgrade did not deliver the candidate.
 
 Relay fixtures also run on macOS/Linux with Python 3.11/3.13/3.14. All core,
 package, MCP and Relay cells are required by the existing release gate. These

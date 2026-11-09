@@ -33,11 +33,11 @@ session-peer 1.0.2による実際のローカル通信です。CodexがClaude Co
 ### インストール
 
 Python 3.9以上が必要です。基本のローカル・SSH CLIに外部Python依存パッケージはありません。
-ソースバージョン：**1.4.2**（2026-11-05に安定版[GitHub v1.4.2](https://github.com/abruption/session-peer/releases/tag/v1.4.2)として公開され、[PyPI](https://pypi.org/project/session-peer/1.4.2/)でも提供されています）。[公開記録](docs/ja/releases/v1.4.2.md#v142-publication-record)にソース`27b088735f065b6785dc6f3892cf132926657bdf`、アップロード時刻、ハッシュを記載しています。このメンテナンスはテスト・CIの保護策と運用ガイドの用語を対象とし、ランタイム不具合の修正や過去のCI停止原因の特定を意味しません。以前の[v1.4.1ノート](docs/ja/releases/v1.4.1.md)と[v1.4.0公開記録](docs/ja/releases/v1.4.0.md#v140-publication-record)は過去の根拠として保持します。Pythonの公開、Node Controlの配備、独立管理するスキルの更新は別々の作業です。
+ソースバージョン：**1.5.0**（2026-11-09の準備時点では未公開ソース候補。最新の公開済みランタイムは引き続き[v1.4.2](https://github.com/abruption/session-peer/releases/tag/v1.4.2)で、[PyPI](https://pypi.org/project/session-peer/1.4.2/)で提供されています）。[候補ノート](docs/ja/releases/v1.5.0.md)はMCP SDK 1/2互換性と依存関係・テスト保守を対象とします。[v1.4.2公開記録](docs/ja/releases/v1.4.2.md#v142-publication-record)、以前の[v1.4.1ノート](docs/ja/releases/v1.4.1.md)、[v1.4.0公開記録](docs/ja/releases/v1.4.0.md#v140-publication-record)は過去の根拠として保持します。ソースの版はパッケージの公開を意味せず、Python公開、Node Control配備、独立管理のスキル更新は別です。
 
 公開済みv1.4.2の任意の[MCPエクストラ](docs/ja/mcp.md)は`mcp>=1.30,<2`を必要とします。MCPのPython 3.10+要件と依存関係のないPython 3.9コアは変更しません。既存のMCP環境では明示的なパッケージ更新が必要です。
 
-未公開ソース候補（#389）：[SDK 1/2互換性](docs/ja/mcp.md#sdk2-compatibility-candidate)は安定版SDK 1.xを維持し、SDK 2.xの2.3以降を追加しますが、2.0–2.2は除外します。公開済みv1.4.2と以下のパッケージインストールコマンドは引き続きSDK 1を使い、通常の公開済みパッケージ更新ではこの候補は導入されません。
+2026-11-09の準備確認時点では、v1.5.0の[SDK 1/2互換性](docs/ja/mcp.md#sdk2-compatibility-candidate)ソース候補（#389 / #390）は未公開でした。レビュー済みソースは安定版SDK 1.xを維持し、SDK 2.xの2.3以降を追加しましたが、2.0–2.2は除外しました。当時の公開済みv1.4.2と以下のパッケージインストールコマンドはSDK 1を選択し、通常の公開パッケージ更新では候補は提供されませんでした。
 
 1.3.0では配信説明、ローカル・SSH経路プリセットと受信者アドレス帳、時間制限付きのhandoff状態確認、信頼したSSH設定、ペアリングリンク、バージョン別通知設定が追加されました。対応する組み合わせと制限は[リリース範囲と検証条件](docs/ja/releases/v1.3.0.md)を参照してください。パッケージ公開と本番環境への配備は別です。
 

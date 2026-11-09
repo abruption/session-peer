@@ -1,6 +1,6 @@
 # 可选 Codex MCP 集成
 
-已发布运行时v1.4.2包含下述v1.4.0工具及SDK 1安装路径。基于v1.3.3的2026-11-02源码检查属于历史记录；[v1.4.0发布说明](releases/v1.4.0.md)保留当时的范围。下方SDK 2兼容性是v1.4.2之后尚未发布的源码候选方案，并非已发布软件包的支持公告。
+在2026-11-09准备检查时点，最新已发布运行时为v1.4.2，包含下述v1.4.0工具及SDK 1安装路径。基于v1.3.3的2026-11-02源码检查属于历史记录；[v1.4.0发布说明](releases/v1.4.0.md)保留当时的范围。准备检查时，下方SDK 2兼容性作为[未发布v1.5.0源码候选版本](releases/v1.5.0.md)准备，并非已发布软件包的支持公告。
 
 在 Python 3.10 或更高版本下安装：`pipx install 'session-peer[mcp]'`（或在隔离的 venv 中安装 extra）。仍支持无依赖的 Python 3.9 CLI 和 `install.sh`。shell 安装程序不安装 MCP 依赖项。在 Python 3.9 上，MCP 入口点会报告需要 Python 3.10+。
 
@@ -32,10 +32,12 @@
 使用 `codex mcp add session-peer -- /absolute/path/session-peer-mcp --config /absolute/path/policy.json` 进行注册，或使用仓库的 `plugins/session-peer` 捆绑包：`codex plugin marketplace add /absolute/path/to/session-peer`，然后 `codex plugin add session-peer@session-peer`。该插件从 PATH 启动 `session-peer-mcp`，并在其环境中设置了 `SESSION_PEER_MCP_CONFIG` 时读取该配置。请先安装 Python extra。安装 Python 软件包不会修改现有的 Codex 设置。
 
 <a id="sdk2-compatibility-candidate"></a>
+<a id="unreleased-source-candidate-sdk-12-compatibility-389"></a>
+<a id="尚未发布的源码候选方案sdk-12兼容性389"></a>
 
-## 尚未发布的源码候选方案：SDK 1/2兼容性（#389）
+## v1.5.0准备检查（2026-11-09）：SDK 1/2兼容性（#389 / #390）
 
-在2026-11-09源码检查时点，候选extra使用`mcp>=1.30,<3,!=2.0.*,!=2.1.*,!=2.2.*`。它保留稳定版SDK 1.x的1.30及以上版本，并增加稳定版SDK 2.x的2.3及以上版本；不接受SDK预发布版或开发版。SDK 2.0–2.2的服务器始终暴露`subscriptions/listen`，且没有公开API可以关闭，因此不受支持。SDK 2.3+使用`MCPServer(subscriptions=False)`创建服务器，使订阅保持禁用。
+在2026-11-09准备检查时点，未发布v1.5.0候选extra使用`mcp>=1.30,<3,!=2.0.*,!=2.1.*,!=2.2.*`，保留稳定版SDK 1.x的1.30及以上版本，并增加稳定版SDK 2.x的2.3及以上版本。候选实现会在服务器启动时强制检查稳定版SDK，即使pip通过`--pre`安装了预发布版或开发版SDK，也会拒绝启动；这不只是依赖解析器的选择规则，而是运行时检查。SDK 2.0–2.2的服务器始终暴露`subscriptions/listen`且无法通过公开API关闭，因此被排除。SDK 2.3+通过`MCPServer(subscriptions=False)`创建服务器，保持禁用订阅。
 
 固定版本的上游源码：[SDK 2.0.0服务器](https://github.com/modelcontextprotocol/python-sdk/blob/v2.0.0/src/mcp/server/mcpserver/server.py)、[SDK 2.2.0服务器](https://github.com/modelcontextprotocol/python-sdk/blob/v2.2.0/src/mcp/server/mcpserver/server.py)和[SDK 2.3.0服务器](https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/server/mcpserver/server.py)。[SDK 2.3.0发行元数据](https://pypi.org/pypi/mcp/2.3.0/json)同样要求Python 3.10+，与可选MCP现有下限一致。
 
@@ -43,7 +45,7 @@
 
 结果的64 KiB限制是上限，并不保证接受所有小于该值的数据。SDK 2即使在旧协议连接中也将新协议的服务器身份元数据计入大小，因此可能保守地拒绝SDK 1能够接受的接近上限的结果。
 
-已发布软件包的安装、升级命令仍选择已发布的SDK 1路径，尚不提供此源码候选方案，也不表示SDK 2支持已经发布。采用经过审查的源码与保留运维选择的软件包管理器、解释器和extra是独立操作；仅修改声明或重启服务器不会升级已安装的SDK。无外部依赖的Python 3.9+基本CLI及可选MCP的Python 3.10+下限不变。此候选方案不会更改独立发布的技能v0.5.1、最低0.9.1／文档所述全部使用流程的覆盖基准1.4.0，或接收端codexBin下限1.0.1。
+在2026-11-09准备检查时点，已发布软件包的安装、升级命令选择已发布的SDK 1路径，不提供此源码候选方案，也不表示SDK 2支持已经发布。采用审查过的源码与保留运维选择的软件包管理器、解释器和extra是独立操作；仅修改声明或重启服务器不会升级已安装的SDK。当时，无外部依赖的Python 3.9+基本CLI及可选MCP的Python 3.10+下限不变；候选方案保留独立发布的技能v0.5.1、最低0.9.1／文档所述全部使用流程的覆盖基准1.4.0，以及接收端codexBin下限1.0.1。
 
 <a id="尚未发布的-v140-候选版本目的地发现-356"></a>
 <a id="unreleased-v140-candidate-destination-discovery-356"></a>
@@ -130,7 +132,7 @@ MCP 工具注解将列出标记为只读，将发送标记为非幂等。根据�
 
 在有和没有 MCP extra 的情况下运行 `python -m unittest discover -s tests -v`。可选测试会启动真实的 stdio MCP 服务器，并在没有模型凭据的情况下执行初始化、模式、策略拒绝和 CLI 部分失败测试。同时测试 wheel 和 sdist 安装。实时检查必须记录 Codex 版本、操作系统和宿主批准设置；UDS 访问取决于环境，不是批准绕过承诺。消息请使用专用测试会话。
 
-此未发布候选方案的CI在macOS/Linux与Python 3.10/3.13/3.14上配置以下四种SDK组合，共24个单元。矩阵已配置并不证明所有单元都已通过；请查看当前运行及保留的版本、审计报告。
+在2026-11-09准备检查时点，v1.5.0候选CI配置规定了macOS/Linux、Python 3.10/3.13/3.14及以下四种SDK组合，共24个单元。此日期的配置不证明所有单元都已通过；请查看确切HEAD的运行及保留的版本、审计报告。
 
 | CI配置 | SDK选择 |
 | --- | --- |
