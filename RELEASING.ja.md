@@ -1,5 +1,11 @@
 # session-peerのリリース
 
+## 公開記録 — v1.5.0（2026-11-09確認）
+
+[GitHub v1.5.0](https://github.com/abruption/session-peer/releases/tag/v1.5.0)はソース`9a0b23ff5e1f83e1cee4dc22bec7e3c0ca8063bb`から`2026-11-09T11:53:51Z`に安定版・Latestとして公開され、不変状態です。PyPIのwheelアップロード時刻は`2026-11-09T11:56:07.458092Z`、sdistは`2026-11-09T11:56:09.127893Z`です。両方とも取り下げられておらず、ロック済み資産のハッシュと一致します。[公開記録](docs/ja/releases/v1.5.0.md#v150-publication-record)に正確なハッシュ、タグオブジェクト、根拠リンクを保持しています。
+
+当該ソースの[main CI](https://github.com/abruption/session-peer/actions/runs/42609705390)、[準備](https://github.com/abruption/session-peer/actions/runs/42612126606)、[公開](https://github.com/abruption/session-peer/actions/runs/42612614015)は認証済み資産と独立パッケージインストール検証を含めて成功しました。`abruption`による必須の`pypi`人手承認を確認しましたが、レビュー応答には正確な承認時刻が含まれません。以下の準備節をすべて日付付き履歴として保持します。タグ・資産は置換せず、サービス・全機器・Control・スキル適用や新たなネイティブ・SSH・ACK検証を意味しません。
+
 ## v1.5.0 準備
 
 公開済みv1.4.2を基にした2026-11-09の準備確認時点では未公開ソース候補であり、この記録は公開の告知ではありません。統合ソース基準は`a622dc0d9f04a252af65147eb36188998bf0c8b4`で、バージョン準備前の値であり最終公開コミットではありません。[候補ノート](docs/ja/releases/v1.5.0.md)は、#390のSDK 1/2互換性、依存保守#386/#383/#385/#382、#379のテスト専用Paramiko 5.1.0・アサーション更新、#381のControl依存と検査を対象とします。6ツールと結果・ポリシー・権限・ACKの境界、Python下限は維持し、新たな実OAuth・本番データベース・ネイティブ・SSH・Windows検証は主張しません。#387/#388と研究Draftは別です。

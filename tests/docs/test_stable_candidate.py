@@ -12,6 +12,55 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StableCandidate(unittest.TestCase):
+    def test_v150_publication_record_preserves_preparation_and_current_guidance(self):
+        source = "9a0b23ff5e1f83e1cee4dc22bec7e3c0ca8063bb"
+        annotation = "a94dc17f7c04cb2691a1079b9e19f8a954c677af"
+        historical_base = "a622dc0d9f04a252af65147eb36188998bf0c8b4"
+        facts = (source, annotation, "2026-11-09T11:53:51Z",
+                 "2026-11-09T11:56:07.458092Z", "2026-11-09T11:56:09.127893Z",
+                 "993029cab7d2b11aaac4e85de0319992d686e8c1338344806be1195ad3637299",
+                 "9f56d785ca5ba250a2e88c5e59e73dc4c6e07d39d60e073a89e9a89bea5617e2",
+                 "42609705390", "42609703536", "42612126606", "42612614015",
+                 "session_peer-1.5.0-py3-none-any.whl", "session_peer-1.5.0.tar.gz")
+        profiles = (("", "", "Source version: "), ("ko/", ".ko", "소스 버전: "),
+                    ("ja/", ".ja", "ソースバージョン："), ("zh-CN/", ".zh-CN", "源码版本："))
+        for locale, suffix, prefix in profiles:
+            notes = (ROOT / ("docs/" + locale + "releases/v1.5.0.md")).read_text(encoding="utf-8")
+            preparation, publication = notes.split('<a id="v150-publication-record"></a>', 1)
+            self.assertIn(historical_base, preparation)
+            self.assertNotIn(source, preparation)
+            for marker in facts:
+                with self.subTest(locale=locale, marker=marker):
+                    self.assertIn(marker, publication)
+            runbook = (ROOT / ("RELEASING" + suffix + ".md")).read_text(encoding="utf-8")
+            old_preparation = re.search(r"^## v1\.5\.0[^\n]*$", runbook, re.MULTILINE)
+            self.assertIsNotNone(old_preparation)
+            record = runbook[:old_preparation.start()]
+            for marker in (source, facts[2], facts[3], facts[4], "#v150-publication-record",
+                           "42609705390", "42612126606", "42612614015", "pypi", "abruption"):
+                self.assertIn(marker, record)
+            self.assertIn(historical_base, runbook[old_preparation.start():])
+            readme = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
+            current = next(line for line in readme.splitlines() if line.startswith(prefix))
+            self.assertIn("**1.5.0**", current)
+            self.assertIn(source, current)
+            self.assertIn("releases/v1.5.0.md#v150-publication-record", current)
+            self.assertIn("https://pypi.org/project/session-peer/1.5.0/", current)
+            sdk = next(part for part in readme.split("\n\n") if "sdk1-sdk2-published-v150" in part)
+            self.assertIn("v1.5.0", sdk)
+            self.assertIn("mcp>=1.30,<3,!=2.0.*,!=2.1.*,!=2.2.*", sdk)
+            mcp = (ROOT / ("docs/" + locale + "mcp.md")).read_text(encoding="utf-8")
+            self.assertIn("releases/v1.5.0.md#v150-publication-record", mcp.split("\n\n")[1])
+            self.assertIn('<a id="sdk2-compatibility-candidate"></a>', mcp)
+        english = (ROOT / "docs/releases/v1.5.0.md").read_text(encoding="utf-8").split(
+            '<a id="v150-publication-record"></a>', 1)[1]
+        self.assertIn("all 49 [main CI]", english)
+        self.assertIn("All 7 GitHub asset attestations", english)
+        self.assertIn("does not expose an exact approval timestamp", english)
+        self.assertIn("No administrator bypass", english)
+        self.assertIn("does not rebuild or replace tags or immutable assets", english)
+        self.assertIn("Publication does not establish fleet/global installation", english)
+
     def test_v150_preparation_keeps_candidate_and_publication_boundaries(self):
         integrated_base = "a622dc0d9f04a252af65147eb36188998bf0c8b4"
         self.assertRegex(integrated_base, r"^[0-9a-f]{40}$")
