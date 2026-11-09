@@ -750,14 +750,61 @@ class Adapter:
         return output
 
 
+def _sdk_release(installed):
+    # Stable PEP 440 releases, including equivalent short release forms,
+    # post releases and local builds; prereleases/dev releases stay excluded.
+    import re
+
+    stable = re.fullmatch(
+        r"v?(?:0!)?([0-9]+(?:\.[0-9]+)*)(?:(?:[-_.]?(?:post|rev|r)[-_.]?[0-9]*)|(?:-[0-9]+))?"
+        r"(?:\+[a-z0-9]+(?:[-_.][a-z0-9]+)*)?", installed.strip(), re.IGNORECASE)
+    if not stable:
+        return ()
+    release = tuple(map(int, stable.group(1).split('.')))
+    return release + (0,) * max(0, 3 - len(release))
+
+
+def _sdk_server_factory():
+    # Choose by installed distribution, not by catching an ImportError: an
+    # incomplete/broken SDK must fail rather than silently load another API.
+    from importlib.metadata import version
+
+    release = _sdk_release(version("mcp"))
+    if release and release[0] == 1 and release >= (1, 30, 0):
+        from mcp.server.fastmcp import FastMCP
+        return FastMCP
+    if release and release[0] == 2 and release >= (2, 3, 0):
+        from functools import partial
+        from mcp.server.mcpserver import MCPServer
+        # SDK 2.0-2.2 always expose subscriptions/listen. Only 2.3+ provides
+        # the public switch to preserve this adapter's non-streaming surface.
+        return partial(MCPServer, subscriptions=False)
+    raise ValueError("Unsupported MCP SDK version; requires stable 1.x>=1.30 or 2.x>=2.3 (<3)")
+
+
 def create_server(adapter: Adapter):
-    from mcp.server.fastmcp import FastMCP
+    server_factory = _sdk_server_factory()
     from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
-    server = FastMCP("session-peer", instructions=(
+    server = server_factory("session-peer", instructions=(
         "List and message configured coding-agent destinations. Queued is not received. "
         "Never retry an ambiguous send automatically. Caller identity and reply route are unavailable. "
         "Only destination capabilities explicitly configured by the operator are allowed."))
+
+    modern_server_meta = None
+    if "result_type" in CallToolResult.model_fields:
+        from mcp.types import Implementation
+        # SDK 2 stamps this exact identity after the handler returns on modern
+        # connections. Include it in the measurement, without adding it to a
+        # legacy result. resultType is already present in the SDK 2 model.
+        modern_server_meta = {"io.modelcontextprotocol/serverInfo": Implementation(
+            name=server.name, version=server.version).model_dump(
+                mode="json", by_alias=True, exclude_none=True)}
+
+    def result_bytes(envelope):
+        measured = (envelope.model_copy(update={"meta": modern_server_meta})
+                    if modern_server_meta is not None else envelope)
+        return len(measured.model_dump_json(by_alias=True).encode('utf-8'))
 
     def preflight_rejection(reason, evidence=None):
         args = argparse.Namespace(to="", wake=False, _delivery_explanation_started=False)
@@ -801,7 +848,7 @@ def create_server(adapter: Adapter):
                                   structuredContent=value, isError=value.get("ok") is False)
         # Bound both representations, including JSON escaping. JSON-RPC is separate.
         # Apply only to the new versioned tools; preserve old response contracts.
-        if command and len(envelope.model_dump_json().encode('utf-8')) > DESTINATION_METADATA_BYTES:
+        if command and result_bytes(envelope) > DESTINATION_METADATA_BYTES:
             if command == "send.preflight":
                 value = preflight_unknown("preflight_result_too_large")
                 return CallToolResult(content=[TextContent(type="text", text=json.dumps(value))],

@@ -191,7 +191,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         python: ['3.10', '3.13', '3.14']
-        profile: [minimum, latest]
+        profile: [minimum, latest1, minimum2, latest2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -209,11 +209,17 @@ jobs:
           python -m venv "$RUNNER_TEMP/session-peer-mcp-runtime"
           runtime="$RUNNER_TEMP/session-peer-mcp-runtime/bin/python"
           "$runtime" -m pip install --upgrade pip setuptools
-          if test "$MCP_PROFILE" = minimum; then
-            "$runtime" -m pip install '.[mcp]' --constraint .github/requirements/mcp-minimum.txt --report mcp-reports/install.json
+          case "$MCP_PROFILE" in
+            minimum) constraint=.github/requirements/mcp-minimum.txt ;;
+            minimum2) constraint=.github/requirements/mcp-minimum2.txt ;;
+            latest1) constraint=.github/requirements/mcp-latest1.txt ;;
+            latest2) constraint=.github/requirements/mcp-latest2.txt ;;
+            *) exit 1 ;;
+          esac
+          if test "$MCP_PROFILE" = minimum || test "$MCP_PROFILE" = minimum2; then
+            "$runtime" -m pip install '.[mcp]' --constraint "$constraint" --report mcp-reports/install.json
           else
-            test "$MCP_PROFILE" = latest
-            "$runtime" -m pip install --upgrade '.[mcp]' --report mcp-reports/install.json
+            "$runtime" -m pip install --upgrade '.[mcp]' --constraint "$constraint" --report mcp-reports/install.json
           fi
           "$runtime" -m pip check
       - name: Record and verify resolved MCP profile
@@ -234,14 +240,46 @@ jobs:
           if len(pins) != 1 or not re.fullmatch(r'mcp==[0-9]+\.[0-9]+\.[0-9]+', pins[0]):
               raise SystemExit('Invalid MCP minimum constraint')
           minimum = pins[0].removeprefix('mcp==')
+          pins2 = [line for line in Path('.github/requirements/mcp-minimum2.txt').read_text().splitlines() if line and not line.startswith('#')]
+          if len(pins2) != 1 or not re.fullmatch(r'mcp==[0-9]+\.[0-9]+\.[0-9]+', pins2[0]):
+              raise SystemExit('Invalid MCP 2 minimum constraint')
+          minimum2 = pins2[0].removeprefix('mcp==')
           version = metadata.version('mcp')
           profile = os.environ['MCP_PROFILE']
-          if profile not in ('minimum', 'latest') or not (version == minimum if profile == 'minimum' else version.startswith('1.')):
+          # Match the startup guard without importing optional runtime code.
+          stable = re.fullmatch(r'v?(?:0!)?([0-9]+(?:\.[0-9]+)*)(?:(?:[-_.]?(?:post|rev|r)[-_.]?[0-9]*)|(?:-[0-9]+))?(?:\+[a-z0-9]+(?:[-_.][a-z0-9]+)*)?', version.strip(), re.IGNORECASE)
+          release = tuple(map(int, stable.group(1).split('.'))) if stable else ()
+          release += (0,) * max(0, 3 - len(release)) if release else ()
+          if not {'minimum': version == minimum, 'minimum2': version == minimum2,
+                  'latest1': bool(release) and release[0] == 1 and release >= (1, 30, 0),
+                  'latest2': bool(release) and release[0] == 2 and release >= (2, 3, 0)}.get(profile, False):
               raise SystemExit('MCP profile version mismatch')
           print(json.dumps({'profile': profile, 'mcp': version, 'python': sys.version, 'platform': sys.platform}))
           PY
+      - name: Install isolated opposite-major negotiation client
+        id: mcp_client
+        shell: bash
+        env:
+          MCP_PROFILE: ${{ matrix.profile }}
+        run: |
+          python -m venv "$RUNNER_TEMP/session-peer-mcp-client"
+          client="$RUNNER_TEMP/session-peer-mcp-client/bin/python"
+          "$client" -m pip install --upgrade pip setuptools
+          case "$MCP_PROFILE" in
+            minimum2) requirement='mcp==1.30.0' ;;
+            latest2) requirement='mcp>=1.30,<2' ;;
+            minimum|latest1) requirement='mcp>=2.3,<3' ;;
+            *) exit 1 ;;
+          esac
+          "$client" -m pip install "$requirement" --report mcp-reports/client-install.json
+          "$client" -m pip check
+          "$client" -m pip list --format=json > mcp-reports/client-runtime.json
       - name: MCP stdio, policy, timeout and owned-child cleanup
         shell: bash
+        env:
+          SESSION_PEER_MCP_CLIENT_PYTHON: ${{ runner.temp }}/session-peer-mcp-client/bin/python
+          SESSION_PEER_MCP_REQUIRE_CLIENT: '1'
+          SESSION_PEER_TEST_TMP: /tmp
         run: '"$RUNNER_TEMP/session-peer-mcp-runtime/bin/python" -m unittest discover -s tests/mcp_integration -t . -v'
       - name: Audit resolved MCP runtime graph
         if: ${{ !cancelled() && steps.mcp_runtime.outcome == 'success' && steps.mcp_profile.outcome == 'success' }}
@@ -254,6 +292,18 @@ jobs:
           set -e
           echo "$audit_status" > mcp-reports/audit-exit-status.txt
           cat mcp-reports/audit.log >&2
+          exit "$audit_status"
+      - name: Audit isolated MCP client runtime graph
+        if: ${{ !cancelled() && steps.mcp_client.outcome == 'success' }}
+        shell: bash
+        run: |
+          audit_path=$("$RUNNER_TEMP/session-peer-mcp-client/bin/python" -I -c 'import site; print(site.getsitepackages()[0])')
+          set +e
+          python -m pip_audit --path "$audit_path" --format=json --output mcp-reports/client-audit.json 2> mcp-reports/client-audit.log
+          audit_status=$?
+          set -e
+          echo "$audit_status" > mcp-reports/client-audit-exit-status.txt
+          cat mcp-reports/client-audit.log >&2
           exit "$audit_status"
       - name: Retain MCP dependency and audit reports
         if: ${{ always() }}

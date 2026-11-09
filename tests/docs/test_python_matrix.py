@@ -59,10 +59,12 @@ class PythonMatrix(unittest.TestCase):
     def test_optional_profiles_keep_their_minimums_and_all_release_gates(self):
         mcp = {(x['os'], x['python'], x['profile']) for x in cells('mcp')}
         self.assertEqual(set(product(('ubuntu-latest', 'macos-latest'),
-                                     ('3.10', '3.13', '3.14'), ('minimum', 'latest'))), mcp)
+                                     ('3.10', '3.13', '3.14'), ('minimum', 'latest1', 'minimum2', 'latest2'))), mcp)
         relay = {(x['os'], x['python']) for x in cells('relay')}
         self.assertEqual(set(product(('ubuntu-latest', 'macos-latest'), ('3.11', '3.13', '3.14'))), relay)
-        self.assertIn('--constraint .github/requirements/mcp-minimum.txt', job('mcp'))
+        for profile in ('minimum', 'latest1', 'minimum2', 'latest2'):
+            self.assertIn('constraint=.github/requirements/mcp-' + profile + '.txt', job('mcp'))
+        self.assertIn('--constraint "$constraint"', job('mcp'))
         self.assertIn('Audit resolved MCP runtime graph', job('mcp'))
         self.assertIn('unittest discover -s tests/mcp_integration', job('mcp'))
         self.assertIn('unittest discover -s tests/relay', job('relay'))

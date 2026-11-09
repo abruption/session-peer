@@ -1,10 +1,10 @@
 # 可选 Codex MCP 集成
 
-2026-11-02 源码检查时点：下述 v1.4.0 功能是在已发布 v1.3.3 的基础上准备的内容，并非发布公告。采用前请查看[发布说明](releases/v1.4.0.md)及实际 GitHub/PyPI 发布状态。
+已发布运行时v1.4.2包含下述v1.4.0工具及SDK 1安装路径。基于v1.3.3的2026-11-02源码检查属于历史记录；[v1.4.0发布说明](releases/v1.4.0.md)保留当时的范围。下方SDK 2兼容性是v1.4.2之后尚未发布的源码候选方案，并非已发布软件包的支持公告。
 
 在 Python 3.10 或更高版本下安装：`pipx install 'session-peer[mcp]'`（或在隔离的 venv 中安装 extra）。仍支持无依赖的 Python 3.9 CLI 和 `install.sh`。shell 安装程序不安装 MCP 依赖项。在 Python 3.9 上，MCP 入口点会报告需要 Python 3.10+。
 
-可选extra要求MCP SDK `mcp>=1.30,<2`。这是将依赖版本下限提高到包含上游1.x安全修复的版本，并不表示已在这个仅使用stdio的服务器中确认可利用漏洞。本次变更不启用HTTP传输、OAuth服务器路径或MCP客户端路径。现有环境需要显式升级软件包；仅修改声明不会更新已安装的SDK。
+已发布v1.4.2的可选extra要求MCP SDK `mcp>=1.30,<2`。这是将依赖版本下限提高到包含上游1.x安全修复的版本，并不表示已在这个仅使用stdio的服务器中确认可利用漏洞。本次变更不启用HTTP传输、OAuth服务器路径或MCP客户端路径。现有环境需要显式升级软件包；仅修改声明不会更新已安装的SDK。
 
 启动 `session-peer-mcp --config /absolute/path/policy.json`。在没有策略的情况下，服务器仅允许本地列出，使用启动环境的 Codex 主目录。提供的策略将替换默认值。例如：
 
@@ -31,7 +31,22 @@
 
 使用 `codex mcp add session-peer -- /absolute/path/session-peer-mcp --config /absolute/path/policy.json` 进行注册，或使用仓库的 `plugins/session-peer` 捆绑包：`codex plugin marketplace add /absolute/path/to/session-peer`，然后 `codex plugin add session-peer@session-peer`。该插件从 PATH 启动 `session-peer-mcp`，并在其环境中设置了 `SESSION_PEER_MCP_CONFIG` 时读取该配置。请先安装 Python extra。安装 Python 软件包不会修改现有的 Codex 设置。
 
+<a id="sdk2-compatibility-candidate"></a>
+
+## 尚未发布的源码候选方案：SDK 1/2兼容性（#389）
+
+在2026-11-09源码检查时点，候选extra使用`mcp>=1.30,<3,!=2.0.*,!=2.1.*,!=2.2.*`。它保留稳定版SDK 1.x的1.30及以上版本，并增加稳定版SDK 2.x的2.3及以上版本；不接受SDK预发布版或开发版。SDK 2.0–2.2的服务器始终暴露`subscriptions/listen`，且没有公开API可以关闭，因此不受支持。SDK 2.3+使用`MCPServer(subscriptions=False)`创建服务器，使订阅保持禁用。
+
+固定版本的上游源码：[SDK 2.0.0服务器](https://github.com/modelcontextprotocol/python-sdk/blob/v2.0.0/src/mcp/server/mcpserver/server.py)、[SDK 2.2.0服务器](https://github.com/modelcontextprotocol/python-sdk/blob/v2.2.0/src/mcp/server/mcpserver/server.py)和[SDK 2.3.0服务器](https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/server/mcpserver/server.py)。[SDK 2.3.0发行元数据](https://pypi.org/pypi/mcp/2.3.0/json)同样要求Python 3.10+，与可选MCP现有下限一致。
+
+公开工具名称6个、项目结果数据模式版本1、策略版本1/2、目的地权限、独立的宿主批准、结果及进程限制、未知结果处理和禁止自动重试的规则均保持不变。不增加订阅、listen、状态查询或等待接口。SDK 2的Python属性使用snake_case，但线上传输使用camelCase别名，模型JSON序列化使用`by_alias=True`。项目结果JSON不变，但不宣称不同协商协议版本下由SDK生成的封装及能力字段也逐字节相同。
+
+结果的64 KiB限制是上限，并不保证接受所有小于该值的数据。SDK 2即使在旧协议连接中也将新协议的服务器身份元数据计入大小，因此可能保守地拒绝SDK 1能够接受的接近上限的结果。
+
+已发布软件包的安装、升级命令仍选择已发布的SDK 1路径，尚不提供此源码候选方案，也不表示SDK 2支持已经发布。采用经过审查的源码与保留运维选择的软件包管理器、解释器和extra是独立操作；仅修改声明或重启服务器不会升级已安装的SDK。无外部依赖的Python 3.9+基本CLI及可选MCP的Python 3.10+下限不变。此候选方案不会更改独立发布的技能v0.5.1、最低0.9.1／文档所述全部使用流程的覆盖基准1.4.0，或接收端codexBin下限1.0.1。
+
 <a id="尚未发布的-v140-候选版本目的地发现-356"></a>
+<a id="unreleased-v140-candidate-destination-discovery-356"></a>
 
 ## v1.4.0 源码：目的地发现 (#356)
 
@@ -40,6 +55,7 @@
 响应明确列出限制：`callerIdentity="unavailable"`、`readiness="not_checked"`、`submission="not_attempted"`、`consumption="not_checked"` 和 `ack="not_checked"`。目的地超过 64 个、ID 含不可打印字符或 UTF-8 编码超过 128 字节时，此工具拒绝查询。文本与结构化内容合计的 MCP 工具结果不超过 64 KiB，不包括外层 JSON-RPC 信封。这些限制仅适用于查询工具，策略加载及现有工具的行为保持不变。可打印字符的判定遵循运行中 Python 的 Unicode 数据库。默认的仅限本地列表查询的策略保持不变。
 
 <a id="尚未发布的-v140-候选版本发送预检-357"></a>
+<a id="unreleased-v140-candidate-send-preflight-357"></a>
 
 ## v1.4.0 源码：发送预检 (#357)
 
@@ -50,6 +66,7 @@
 现有 dry-run 检查可能启动本地或版本查询进程、建立 SSH 连接；SSH 配置本身也可能执行命令。因此该工具使用 `readOnlyHint=false` 和 `openWorldHint=true`。宿主批准独立于策略权限。通过仅表示检查时点的结果，不代表预留路由、证明有效存储、批准、保证后续发送、消费或 ACK。
 
 <a id="尚未发布的-v140-候选版本有界诊断-358"></a>
+<a id="unreleased-v140-candidate-bounded-diagnostics-358"></a>
 
 ## v1.4.0 源码：有界诊断 (#358)
 
@@ -78,6 +95,7 @@ MCP 包装层仅支持以下检查及执行效果：
 `tcpAccept`、`tls` 和 `peerAuthentication` 阶段保持 `not_checked`。这里的 `peerAuthentication` 指配对设备身份验证，与正向 SSH 身份验证不同。`sshFailure` 仅报告经过脱敏的正向 SSH 失败类别，例如 `authentication_failed` 或 `host_key_failed`。不会新增 TCP、TLS、配对设备或回复主机探测。
 
 <a id="尚未发布的-v140-候选版本mcp-预设-359"></a>
+<a id="unreleased-v140-candidate-mcp-presets-359"></a>
 
 ## v1.4.0 源码：MCP 预设 (#359)
 
@@ -112,7 +130,16 @@ MCP 工具注解将列出标记为只读，将发送标记为非幂等。根据�
 
 在有和没有 MCP extra 的情况下运行 `python -m unittest discover -s tests -v`。可选测试会启动真实的 stdio MCP 服务器，并在没有模型凭据的情况下执行初始化、模式、策略拒绝和 CLI 部分失败测试。同时测试 wheel 和 sdist 安装。实时检查必须记录 Codex 版本、操作系统和宿主批准设置；UDS 访问取决于环境，不是批准绕过承诺。消息请使用专用测试会话。
 
-CI在macOS/Linux的Python 3.10/3.13/3.14上分别测试SDK下限`mcp==1.30.0`及最新兼容1.x。两个配置均运行stdio、策略、超时、取消及所属子进程清理测试，并审计解析得到的运行时依赖图，保留版本和报告。传递依赖按常规方式解析；这不是对所有传递依赖包的最低版本进行测试。固定版本的构建与审计依赖安装在运行时环境之外；被审计的环境也包含用于初始配置的`pip`/`setuptools`包。现有的最新版本解析审计和发布审计仍为必需。
+此未发布候选方案的CI在macOS/Linux与Python 3.10/3.13/3.14上配置以下四种SDK组合，共24个单元。矩阵已配置并不证明所有单元都已通过；请查看当前运行及保留的版本、审计报告。
+
+| CI配置 | SDK选择 |
+| --- | --- |
+| `minimum` | `mcp==1.30.0` |
+| `latest1` | `mcp>=1.30,<2` |
+| `minimum2` | `mcp==2.3.0` |
+| `latest2` | `mcp>=2.3,<3` |
+
+各配置运行stdio、策略、超时、取消及所属子进程清理测试，并分别审计解析得到的服务器和测试客户端运行时依赖图，保留版本及报告。任何一项审计失败都会使该CI组合失败。候选测试包含使用隔离的另一SDK主版本客户端，双向进行`2025-11-25`真实stdio初始化，以及SDK 2的`2026-07-28`协商。旧协议传输格式检查会核对camelCase别名、6个工具名称和不变的项目内部结果；这些SDK／协议测试不代表新的真实代理、SSH或ACK验证。传递依赖按常规方式解析，并非测试所有传递依赖包的最低版本。固定版本的构建、审计依赖仍安装在运行时环境之外；审计范围也包括初始配置用的`pip`/`setuptools`。现有的最新版本解析审计和发布审计仍为必需。
 
 官方参考：[Codex MCP](https://developers.openai.com/codex/extend/mcp)、[Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk)。 [SDK 1.30.0](https://pypi.org/pypi/mcp/1.30.0/json), [GHSA-84m7-p3x7-pcfv](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-84m7-p3x7-pcfv), [GHSA-fmmv-w9g8-j3gc](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-fmmv-w9g8-j3gc).
 
@@ -120,6 +147,6 @@ CI在macOS/Linux的Python 3.10/3.13/3.14上分别测试SDK下限`mcp==1.30.0`及
 
 Codex `exec` 可能会以“requires approval, but approval policy is never”拒绝发送工具，即使服务器策略允许也是如此。`approval_mode="auto"` 并不是无条件批准。显式授权非交互式集成的操作员可以为该特定 MCP 服务器/工具配置 `mcp_servers.session_peer.tools.send_message.approval_mode="approve"`，同时配合受限的目的地策略。插件不会启用此设置。交互式客户端可以改用其常规的批准提示。测试客户端切勿将此授权复制到不相关的服务器或工具。
 
-macOS/Linux上的每次MCP CLI调用拥有独立进程组。完成、超时或取消时，在回收leader前通过有时间限制的TERM→KILL清理该组，包括忽略TERM的子进程；取消仍向上传播。主动逃离到新session的子进程和SSH远端进程不在范围内。Windows仍仅终止直接子进程，不保证整个进程树。清理本地进程不撤销远端提交；超时仍为 `outcome_unknown`，不可自动重发。
+macOS/Linux上的每次MCP CLI调用拥有独立进程组。完成、超时或取消时，在回收leader前通过有时间限制的TERM→KILL清理该组，包括忽略TERM的子进程；取消仍会传播。主动逃离到新session的子进程和SSH远端进程不在范围内。Windows仍仅终止直接子进程，不保证整个进程树。清理本地进程不撤销远端提交；超时仍为 `outcome_unknown`，不可自动重发。
 
 MCP 正文，包括表示调用会话不可用的 From 标签，都会被目标 CLI 的接收侧消息框架引用。正文头部或嵌入的 Reply-To 均不授予权限。请向会话所有者确认第三方目的地；共享 MCP 进程仍不能提供已认证的调用会话或自动回复路由。最终消息框架也计入原生消息限制。

@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from tests.mcp_integration.sdk_wire import wire_field
+
 import session_peer_mcp as mcp_peer
 
 THREAD = '01900000-0000-7000-8000-000000000001'
@@ -261,11 +263,11 @@ class Protocol(unittest.IsolatedAsyncioTestCase):
                 async with ClientSession(read, write) as client:
                     await client.initialize()
                     value = await client.call_tool('list_destinations', {})
-                    self.assertTrue(value.isError)
-                    self.assertEqual(value.structuredContent['reason'], 'request_rejected')
-                    self.assertEqual(value.structuredContent['schemaVersion'], 1)
+                    self.assertTrue(wire_field(value, 'isError'))
+                    self.assertEqual(wire_field(value, 'structuredContent')['reason'], 'request_rejected')
+                    self.assertEqual(wire_field(value, 'structuredContent')['schemaVersion'], 1)
                     self.assertNotIn('private', value.content[0].text)
-                    self.assertNotIn('destinations', value.structuredContent)
+                    self.assertNotIn('destinations', wire_field(value, 'structuredContent'))
 
     async def test_stdio_inventory_budget_includes_duplicated_escaped_content(self):
         from mcp import ClientSession, StdioServerParameters
@@ -286,11 +288,11 @@ class Protocol(unittest.IsolatedAsyncioTestCase):
                 async with ClientSession(read, write) as client:
                     await client.initialize()
                     value = await client.call_tool('list_destinations', {})
-                    self.assertEqual(value.structuredContent['schemaVersion'], 1)
-                    self.assertTrue(value.isError)
-                    self.assertEqual(value.structuredContent['error'], 'Destination metadata limit exceeded')
-                    self.assertNotIn('destinations', value.structuredContent)
-                    self.assertLessEqual(len(value.model_dump_json().encode('utf-8')), 64 * 1024)
+                    self.assertEqual(wire_field(value, 'structuredContent')['schemaVersion'], 1)
+                    self.assertTrue(wire_field(value, 'isError'))
+                    self.assertEqual(wire_field(value, 'structuredContent')['error'], 'Destination metadata limit exceeded')
+                    self.assertNotIn('destinations', wire_field(value, 'structuredContent'))
+                    self.assertLessEqual(len(value.model_dump_json(by_alias=True).encode('utf-8')), 64 * 1024)
 
     async def test_stdio_tools_and_policy_errors(self):
         from mcp import ClientSession, StdioServerParameters
@@ -307,31 +309,31 @@ class Protocol(unittest.IsolatedAsyncioTestCase):
                     tools = (await client.list_tools()).tools
                     self.assertEqual({t.name for t in tools}, {'list_destinations','list_sessions','send_message','preflight_send','diagnose_destination','list_presets'})
                     inventory = next(t for t in tools if t.name == 'list_destinations')
-                    self.assertTrue(inventory.annotations.readOnlyHint)
-                    self.assertTrue(inventory.annotations.idempotentHint)
-                    self.assertFalse(inventory.annotations.openWorldHint)
-                    self.assertFalse(inventory.inputSchema.get('properties'))
+                    self.assertTrue(wire_field(inventory.annotations, 'readOnlyHint'))
+                    self.assertTrue(wire_field(inventory.annotations, 'idempotentHint'))
+                    self.assertFalse(wire_field(inventory.annotations, 'openWorldHint'))
+                    self.assertFalse(wire_field(inventory, 'inputSchema').get('properties'))
                     projected = await client.call_tool('list_destinations', {})
-                    self.assertFalse(projected.isError)
-                    self.assertEqual(projected.structuredContent['destinations'], [
+                    self.assertFalse(wire_field(projected, 'isError'))
+                    self.assertEqual(wire_field(projected, 'structuredContent')['destinations'], [
                         {'destination': 'local', 'transport': 'local', 'agents': ['codex'],
                          'capabilities': ['list']}])
-                    self.assertEqual(json.loads(projected.content[0].text), projected.structuredContent)
+                    self.assertEqual(json.loads(projected.content[0].text), wire_field(projected, 'structuredContent'))
                     self.assertNotIn(folder, projected.content[0].text)
                     listing = next(t for t in tools if t.name == 'list_sessions')
-                    self.assertTrue(listing.annotations.readOnlyHint)
+                    self.assertTrue(wire_field(listing.annotations, 'readOnlyHint'))
                     failed = await client.call_tool('send_message', {'destination':'local','target':'codex:'+THREAD,'message':'test'})
-                    self.assertTrue(failed.isError)
-                    self.assertEqual(failed.structuredContent['reason'], 'request_rejected')
+                    self.assertTrue(wire_field(failed, 'isError'))
+                    self.assertEqual(wire_field(failed, 'structuredContent')['reason'], 'request_rejected')
                     missing = await client.call_tool('list_sessions', {})
-                    self.assertTrue(missing.isError)
-                    self.assertIn('discovery', missing.structuredContent)
+                    self.assertTrue(wire_field(missing, 'isError'))
+                    self.assertIn('discovery', wire_field(missing, 'structuredContent'))
 
     @unittest.skipIf(sys.platform == 'win32', 'Unix socket integration')
     async def test_real_stdio_send_reaches_unix_inbox_once(self):
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
-        with tempfile.TemporaryDirectory(dir='/tmp') as folder:
+        with tempfile.TemporaryDirectory(prefix='codex-mcp-inbox-', dir=os.environ.get('SESSION_PEER_TEST_TMP')) as folder:
             root = Path(folder)
             sessions = root / 'sessions'
             sessions.mkdir()
@@ -355,10 +357,10 @@ class Protocol(unittest.IsolatedAsyncioTestCase):
                     async with ClientSession(read, write) as client:
                         await client.initialize()
                         listing = await client.call_tool('list_sessions', {})
-                        self.assertFalse(listing.isError)
+                        self.assertFalse(wire_field(listing, 'isError'))
                         sent = await client.call_tool('send_message', {
                             'destination':'local','target':'mcp-test-inbox','message':'안녕 MCP'})
-                        self.assertFalse(sent.isError)
+                        self.assertFalse(wire_field(sent, 'isError'))
                         self.assertEqual(len(received), 1)
                         self.assertIn('안녕 MCP', received[0]['message']['content'])
                         self.assertNotIn('Reply-To:', received[0]['message']['content'])

@@ -1,10 +1,10 @@
 # Optional Codex MCP integration
 
-Source checkpoint 2026-11-02: the v1.4.0 features below are prepared against published v1.3.3, not a publication announcement. Check the [release notes](releases/v1.4.0.md) and actual GitHub/PyPI availability before adopting them.
+Published runtime v1.4.2 includes the v1.4.0 tools below and the SDK 1 installation path. The original 2026-11-02 source checkpoint against v1.3.3 is historical; the [v1.4.0 release notes](releases/v1.4.0.md) retain that scope. SDK 2 compatibility below is an unreleased source candidate after v1.4.2, not a published-package support announcement.
 
 Install with Python 3.10 or later: `pipx install 'session-peer[mcp]'` (or install the extra in an isolated venv). The dependency-free Python 3.9 CLI and `install.sh` remain supported. The shell installer does not install MCP dependencies. On Python 3.9 the MCP entry point reports that Python 3.10+ is required.
 
-The optional extra requires MCP SDK `mcp>=1.30,<2`. This raises the dependency floor past upstream 1.x security fixes; it does not establish an exploitable issue in this stdio-only server. HTTP transports, OAuth server paths and MCP client paths are not enabled by this change. Existing environments need an explicit package upgrade; changing the manifest does not update an installed SDK.
+The published v1.4.2 optional extra requires MCP SDK `mcp>=1.30,<2`. This raises the dependency floor past upstream 1.x security fixes; it does not establish an exploitable issue in this stdio-only server. HTTP transports, OAuth server paths and MCP client paths are not enabled by this change. Existing environments need an explicit package upgrade; changing the manifest does not update an installed SDK.
 
 Start `session-peer-mcp --config /absolute/path/policy.json`. Without a policy the server allows only local listing, using the launching environment's Codex home. A supplied policy replaces defaults. Example:
 
@@ -30,6 +30,20 @@ Start `session-peer-mcp --config /absolute/path/policy.json`. Without a policy t
 Use the actual username and SSH destination, configured keys and known_hosts. No passwords belong in this file. Every Codex destination must pin an absolute home on that destination; add separate destination IDs for additional homes. Protect the policy from modification by untrusted processes. SSH configuration remains operator-controlled.
 
 Register using `codex mcp add session-peer -- /absolute/path/session-peer-mcp --config /absolute/path/policy.json`, or use the repository's `plugins/session-peer` bundle: `codex plugin marketplace add /absolute/path/to/session-peer`, then `codex plugin add session-peer@session-peer`. The plugin launches `session-peer-mcp` from PATH and reads `SESSION_PEER_MCP_CONFIG` when set in its environment. Install the Python extra first. Existing Codex settings are not modified by installing the Python package.
+
+<a id="sdk2-compatibility-candidate"></a>
+
+## Unreleased source candidate: SDK 1/2 compatibility (#389)
+
+At the 2026-11-09 source checkpoint, the candidate extra uses `mcp>=1.30,<3,!=2.0.*,!=2.1.*,!=2.2.*`. It retains stable SDK 1.x from 1.30 and adds stable SDK 2.x from 2.3; prerelease/development SDK versions are not accepted. SDK 2.0–2.2 remain unsupported because their server always exposes `subscriptions/listen` without a public off switch. SDK 2.3+ is constructed with `MCPServer(subscriptions=False)` to keep subscriptions disabled.
+
+Pinned upstream sources: [SDK 2.0.0 server](https://github.com/modelcontextprotocol/python-sdk/blob/v2.0.0/src/mcp/server/mcpserver/server.py), [SDK 2.2.0 server](https://github.com/modelcontextprotocol/python-sdk/blob/v2.2.0/src/mcp/server/mcpserver/server.py) and [SDK 2.3.0 server](https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/server/mcpserver/server.py). The [SDK 2.3.0 distribution metadata](https://pypi.org/pypi/mcp/2.3.0/json) requires Python 3.10+, matching the unchanged optional MCP floor.
+
+The six public tool names, project result payload schema version 1, policy versions 1/2, destination permissions, separate host approvals, result/process limits, unknown-outcome handling and no-automatic-retry rule remain unchanged. No subscription, listen, status or wait interface is added. SDK 2 uses snake_case Python attributes with camelCase wire aliases; model JSON serialization uses `by_alias=True`. Project result JSON is unchanged, but SDK-generated envelopes and capability fields are not claimed to be byte-identical across negotiated protocol versions.
+
+The 64 KiB result limit is an upper bound, not a promise to accept every smaller payload. SDK 2 measures with its modern server-identity metadata included even for legacy connections, so it can conservatively refuse near-limit results that SDK 1 accepts.
+
+The installation and upgrade commands for the published package still select the released SDK 1 path. They do not yet deliver this source candidate or make SDK 2 support public. Adopting reviewed source and preserving the operator's package manager, interpreter and extra selection are separate actions; a manifest edit or server restart does not upgrade an installed SDK. The core Python 3.9+ dependency-free CLI and optional MCP Python 3.10+ floor are unchanged. This candidate does not change the independently published skill v0.5.1, its minimum 0.9.1/full documented coverage 1.4.0, or the receiver codexBin floor 1.0.1.
 
 <a id="unreleased-v140-candidate-destination-discovery-356"></a>
 
@@ -112,7 +126,16 @@ A shared MCP process cannot reliably identify the invoking thread. Messages iden
 
 Run `python -m unittest discover -s tests -v` with and without the MCP extra. Optional tests start a real stdio MCP server and exercise initialization, schemas, policy rejection and CLI partial failures without model credentials. Test both wheel and sdist installs. Live checks must record Codex version, OS and host approval settings; UDS access is environment-dependent and is not an approval-bypass promise. Use dedicated test sessions for messages.
 
-CI tests the exact SDK floor `mcp==1.30.0` and the latest compatible 1.x separately on macOS/Linux with Python 3.10/3.13/3.14. Both profiles run the stdio/policy/timeout/cancellation/owned-child tests and audit their resolved runtime dependency graphs, retaining versions and reports. Transitive dependencies resolve normally; this is not a test of every transitive package's minimum version. The pinned build/audit requirements are installed outside the runtime environment; the audited environment also includes its `pip`/`setuptools` bootstrap packages. Existing latest-resolution and release audits remain required.
+For this unreleased candidate, CI is configured for the following four SDK profiles on macOS/Linux with Python 3.10/3.13/3.14: 24 cells in total. This configured matrix is not evidence that every cell has passed; inspect the current run and its retained version/audit reports.
+
+| CI profile | SDK selection |
+| --- | --- |
+| `minimum` | `mcp==1.30.0` |
+| `latest1` | `mcp>=1.30,<2` |
+| `minimum2` | `mcp==2.3.0` |
+| `latest2` | `mcp>=2.3,<3` |
+
+Each profile runs stdio/policy/timeout/cancellation/owned-child tests and separately audits the resolved server and test-client runtime dependency graphs, retaining versions and reports. A failure in either audit fails the CI cell. Candidate fixtures include real stdio initialization with an isolated opposite-major SDK client in both directions using `2025-11-25`, and SDK 2 negotiation using `2026-07-28`. Legacy wire checks verify camelCase aliases, the six tool names and unchanged inner project results; these SDK/protocol fixtures are not new live-agent, SSH or ACK qualification. Transitive dependencies resolve normally; this is not a test of every transitive package's minimum version. Pinned build/audit requirements remain outside the runtime environment; the audited environment also includes its `pip`/`setuptools` bootstrap packages. Existing latest-resolution and release audits remain required.
 
 Official references: [Codex MCP](https://developers.openai.com/codex/extend/mcp), [Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk). [SDK 1.30.0](https://pypi.org/pypi/mcp/1.30.0/json), [GHSA-84m7-p3x7-pcfv](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-84m7-p3x7-pcfv), [GHSA-fmmv-w9g8-j3gc](https://github.com/modelcontextprotocol/python-sdk/security/advisories/GHSA-fmmv-w9g8-j3gc).
 
