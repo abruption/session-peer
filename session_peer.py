@@ -5612,7 +5612,9 @@ class ClaudeAdapter(AgentAdapter):
 
     def list(self, context: ExecutionContext) -> DiscoveryResult:
         rows = discover(include_unreachable=context.options.all)
-        errors = getattr(rows, "errors", [])
+        errors = list(getattr(rows, "errors", []))
+        if getattr(rows, "permission_failures", 0) > 0:
+            errors.append("session_record_unavailable")
         return {"sessions": [row if isinstance(row, ClaudeSession) else {**row, "agent": self.name}
                              for row in rows],
                 "discovery": ({"status": "error", "error": "Claude profile discovery incomplete: " +
