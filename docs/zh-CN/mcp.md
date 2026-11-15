@@ -1,5 +1,7 @@
 # 可选 Codex MCP 集成
 
+[v1.6.0准备检查（2026-11-15）](releases/v1.6.0.md)记录7个源码MCP工具，包括有界会话分页及Claude部分错误报告。当时v1.6.0未发布，已发布基准为v1.5.0；可用性请查看实际版本/包记录。
+
 已发布运行时v1.5.0由GitHub及PyPI提供；[发布记录](releases/v1.5.0.md#v150-publication-record)列出确切源码、时间与哈希。SDK 1/2兼容性包含在该发布软件包中。[v1.4.0发布说明](releases/v1.4.0.md)及下方注明日期的SDK准备检查保留为历史，并非当前尚未发布状态的声明。
 
 在 Python 3.10 或更高版本下安装：`pipx install 'session-peer[mcp]'`（或在隔离的 venv 中安装 extra）。仍支持无依赖的 Python 3.9 CLI 和 `install.sh`。shell 安装程序不安装 MCP 依赖项。在 Python 3.9 上，MCP 入口点会报告需要 Python 3.10+。
@@ -121,9 +123,9 @@ MCP 包装层仅支持以下检查及执行效果：
 
 <a id="bounded-session-listing-393"></a>
 
-## 未发布源码：限制大小的会话分页查询 (#393)
+## v1.6.0准备检查（2026-11-15）：限制大小的会话分页查询 (#393)
 
-`list_sessions_page(destination, agent, include_inactive=false, limit=50, cursor=null)`是新增功能的源码候选，不包含在已发布的v1.5.0中。它在macOS/Linux上使用已有的`list`权限，必须明确指定一个目的地和一个获准的智能体。现有`list_sessions`、CLI的本地/多home/SSH/设备发现，以及宿主提供时的原生`codex_tui.list_threads`各自保留原有范围。该工具不会替代这些路径或自动选择其他路径。
+`list_sessions_page(destination, agent, include_inactive=false, limit=50, cursor=null)`是2026-11-15准备检查记录的v1.6.0新增源码功能，当时已发布的v1.5.0并不包含它。它在macOS/Linux上使用已有的`list`权限，必须明确指定一个目的地和一个获准的智能体。现有`list_sessions`、CLI的本地/多home/SSH/设备发现，以及宿主提供时的原生`codex_tui.list_threads`各自保留原有范围。该工具不会替代这些路径或自动选择其他路径。
 
 ```json
 {"name":"list_sessions_page","arguments":{"destination":"worker","agent":"codex","include_inactive":false,"limit":25}}
@@ -137,7 +139,7 @@ MCP 包装层仅支持以下检查及执行效果：
 
 独立的`mcp.sessions_page`模式版本1区分有效页面和拒绝。有效的部分页面返回`ok=true`、`complete=false`、去除原始诊断详情后的不完整性证据和`isError=false`，以便继续获准的分页查询。这只表示收集到了页面，不表示发现完整或目标已就绪。拒绝返回`ok=false`、`type="refusal"`、固定原因和`isError=true`；所有情况均为`retryAllowed=false`。请检查`complete`和证据；它们描述所选CLI报告的快照，并不证明已发现所有可能的原生会话。`retryAllowed=false`禁止自动重试；之后明确获准的新查询属于独立操作。不会检查提交、消费或ACK。现有工具的结果与错误行为不变。
 
-此源码候选对应的运行时或技能版本尚未单独发布。使用前请检查所选服务器的实际`tools/list`模式及操作员批准。源码分支中存在功能不等于已经安装或发布。
+在2026-11-15检查时点，此v1.6.0源码准备并非发布。可用性请查看[准备记录](releases/v1.6.0.md)及实际版本/包记录。应核验所选服务器实际的`tools/list`模式及操作者批准；源码存在不会安装运行时或更新独立技能。
 
 该工具可能启动CLI和操作员配置的SSH，并创建有期限的快照，因此声明`readOnlyHint=false`、`idempotentHint=false`和`openWorldHint=true`。这些注解不授予主机批准。
 

@@ -1,5 +1,7 @@
 # 선택형 Codex MCP 연동
 
+[v1.6.0 준비 점검 (2026-11-15)](releases/v1.6.0.md)은 제한된 세션 페이지와 Claude 부분 오류 보고를 포함한 소스 MCP 도구 일곱 개를 기록합니다. 당시 v1.6.0은 미공개였으며 공개 기준은 v1.5.0이었습니다. 제공 여부는 실제 릴리스·패키지 기록에서 확인하십시오.
+
 공개 런타임 v1.5.0은 GitHub와 PyPI에서 제공되며, [공개 기록](releases/v1.5.0.md#v150-publication-record)에 정확한 소스·시각·해시를 남겼습니다. SDK 1/2 호환성은 이 공개 패키지에 포함됩니다. [v1.4.0 릴리스 노트](releases/v1.4.0.md)와 아래 날짜별 SDK 준비 점검은 과거 이력이며 현재 미공개 상태를 뜻하지 않습니다.
 
 Python 3.10 이상에서 설치하십시오: `pipx install 'session-peer[mcp]'`(또는 격리된 venv에 extra 설치). 의존성이 없는 Python 3.9 CLI 및 `install.sh`는 계속 지원됩니다. 셸 설치기는 MCP 의존성을 설치하지 않습니다. Python 3.9에서 MCP 엔트리 포인트는 Python 3.10+이 필요하다고 보고합니다.
@@ -121,9 +123,9 @@ MCP 래퍼가 지원하는 검사와 실행 효과는 다음으로 제한됩니�
 
 <a id="bounded-session-listing-393"></a>
 
-## 미발행 소스: 크기를 제한한 세션 페이지 조회 (#393)
+## v1.6.0 준비 점검 (2026-11-15): 크기를 제한한 세션 페이지 조회 (#393)
 
-`list_sessions_page(destination, agent, include_inactive=false, limit=50, cursor=null)`는 추가 기능의 소스 후보이며 공개된 v1.5.0에는 포함되지 않습니다. macOS/Linux에서 기존 `list` 권한을 사용하며, 목적지 하나와 허용된 에이전트 하나를 명시해야 합니다. 기존 `list_sessions`, CLI의 로컬·다중 홈·SSH·기기 조회, 호스트가 제공하는 경우의 네이티브 `codex_tui.list_threads`의 범위는 각각 유지됩니다. 이 도구가 기존 경로를 대체하거나 다른 경로를 자동으로 선택하지 않습니다.
+`list_sessions_page(destination, agent, include_inactive=false, limit=50, cursor=null)`는 2026-11-15 준비 점검에서 기록한 v1.6.0 추가 소스 기능이며 당시 공개된 v1.5.0에는 포함되지 않았습니다. macOS/Linux에서 기존 `list` 권한을 사용하며, 목적지 하나와 허용된 에이전트 하나를 명시해야 합니다. 기존 `list_sessions`, CLI의 로컬·다중 홈·SSH·기기 조회, 호스트가 제공하는 경우의 네이티브 `codex_tui.list_threads`의 범위는 각각 유지됩니다. 이 도구가 기존 경로를 대체하거나 다른 경로를 자동으로 선택하지 않습니다.
 
 ```json
 {"name":"list_sessions_page","arguments":{"destination":"worker","agent":"codex","include_inactive":false,"limit":25}}
@@ -137,7 +139,7 @@ MCP 래퍼가 지원하는 검사와 실행 효과는 다음으로 제한됩니�
 
 별도의 `mcp.sessions_page` 스키마 버전 1은 유효한 페이지와 거부를 구분합니다. 유효한 부분 페이지는 `ok=true`, `complete=false`, 정제된 불완전성 근거, `isError=false`를 반환해 허용된 다음 페이지 조회를 이어갈 수 있습니다. 이는 페이지를 수집했다는 뜻이며 탐색 완료나 대상 준비 상태를 뜻하지 않습니다. 거부는 `ok=false`, `type="refusal"`, 고정된 사유와 `isError=true`를 반환하며 모든 경우 `retryAllowed=false`입니다. `complete`와 근거를 확인하십시오. 이는 선택한 CLI가 보고한 스냅샷을 설명하며, 가능한 모든 네이티브 세션을 발견했다는 증명은 아닙니다. `retryAllowed=false`는 자동 재시도를 금지한다는 뜻이며, 이후 명시적으로 허가된 새 조회는 별도 작업입니다. 제출·소비·ACK는 확인하지 않습니다. 기존 도구의 결과·오류 동작은 유지됩니다.
 
-이 소스 후보에 대응하는 런타임이나 스킬 버전은 아직 별도로 발행되지 않았습니다. 사용 전에 선택한 서버의 실제 `tools/list` 스키마와 운영자 승인을 확인하십시오. 소스 브랜치에 기능이 있다는 사실만으로 설치나 발행이 이뤄지지는 않습니다.
+2026-11-15 점검 시 v1.6.0 소스 준비는 공개가 아니었습니다. 제공 여부는 [준비 기록](releases/v1.6.0.md)과 실제 릴리스·패키지 기록에서 확인하십시오. 선택한 서버의 실제 `tools/list` 스키마와 운영자 승인을 확인해야 하며, 소스에 존재한다고 런타임을 설치하거나 독립 스킬을 갱신하지는 않습니다.
 
 이 도구는 CLI·운영자 설정 SSH를 실행하고 만료되는 스냅샷을 만들 수 있어 `readOnlyHint=false`, `idempotentHint=false`, `openWorldHint=true`로 표시합니다. 이 표시는 호스트 승인을 부여하지 않습니다.
 

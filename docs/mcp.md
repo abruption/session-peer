@@ -1,5 +1,7 @@
 # Optional Codex MCP integration
 
+The [v1.6.0 preparation checkpoint (2026-11-15)](releases/v1.6.0.md) records seven source MCP tools, including bounded session pages and Claude partial-error reporting. At that checkpoint v1.6.0 was unpublished and v1.5.0 was the published baseline; consult actual release/package records for availability.
+
 Published runtime v1.5.0 is available on GitHub and PyPI; its [publication record](releases/v1.5.0.md#v150-publication-record) identifies the exact source, times and hashes. SDK 1/2 compatibility is part of that published package. The [v1.4.0 release notes](releases/v1.4.0.md) and dated SDK preparation checkpoint below remain history, not current unpublished-status statements.
 
 Install with Python 3.10 or later: `pipx install 'session-peer[mcp]'` (or install the extra in an isolated venv). The dependency-free Python 3.9 CLI and `install.sh` remain supported. The shell installer does not install MCP dependencies. On Python 3.9 the MCP entry point reports that Python 3.10+ is required.
@@ -116,9 +118,9 @@ If any approved item is missing or its route mismatches policy, the whole metada
 
 <a id="bounded-session-listing-393"></a>
 
-## Unreleased source: bounded session pages (#393)
+## v1.6.0 preparation checkpoint (2026-11-15): bounded session pages (#393)
 
-`list_sessions_page(destination, agent, include_inactive=false, limit=50, cursor=null)` is an additive source candidate, not part of published v1.5.0. It uses an existing `list` grant for one explicit destination and one explicit allowed agent on macOS/Linux. Existing `list_sessions`, CLI local/multi-home/SSH/device discovery and native `codex_tui.list_threads` when the host exposes it retain their separate scopes. This tool does not replace those paths or automatically select a different route.
+`list_sessions_page(destination, agent, include_inactive=false, limit=50, cursor=null)` is the additive v1.6.0 source recorded at the 2026-11-15 preparation checkpoint; then-published v1.5.0 did not include it. It uses an existing `list` grant for one explicit destination and one explicit allowed agent on macOS/Linux. Existing `list_sessions`, CLI local/multi-home/SSH/device discovery and native `codex_tui.list_threads` when the host exposes it retain their separate scopes. This tool does not replace those paths or automatically select a different route.
 
 ```json
 {"name":"list_sessions_page","arguments":{"destination":"worker","agent":"codex","include_inactive":false,"limit":25}}
@@ -132,7 +134,7 @@ The cache retains at most four snapshots, 20,000 rows per snapshot and an 8 MiB 
 
 The separate `mcp.sessions_page` schema version 1 distinguishes a valid page from a refusal. A valid partial page has `ok=true`, `complete=false`, sanitized incomplete evidence and `isError=false`, so permitted continuation remains available. This means a page was collected, not that discovery was complete or targets are ready. A refusal has `ok=false`, `type="refusal"`, a fixed reason and `isError=true`; `retryAllowed=false` applies throughout. Inspect `complete` and the evidence; they describe the selected CLI's reported snapshot, not proof that every possible native session was discovered. `retryAllowed=false` forbids automatic retry; a later, explicitly authorized fresh lookup is a separate operation. Submission, consumption and ACK are not checked. The original tools keep their existing result/error behavior.
 
-This source candidate has no independently published runtime or skill version yet. Check the selected server's actual `tools/list` schema and operator approvals before using it; a feature's presence in a source branch does not install or publish it.
+At the 2026-11-15 checkpoint, this v1.6.0 source preparation was not publication. See the [preparation record](releases/v1.6.0.md) and actual release/package records for availability. Check the selected server's actual `tools/list` schema and operator approvals; source presence does not install a runtime or update an independent skill.
 
 This tool declares `readOnlyHint=false`, `idempotentHint=false` and `openWorldHint=true` because collection can start the CLI and operator-configured SSH, and creates an expiring snapshot. These annotations do not grant host approval.
 

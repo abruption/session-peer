@@ -77,6 +77,9 @@ jobs:
         run: python -m unittest discover -s tests/adapters -t . -v
       - name: Codex tests
         run: python -m unittest discover -s tests/codex -t . -v
+      - name: MCP Windows refusal contract
+        if: matrix.os == 'windows-latest'
+        run: python -m unittest tests.mcp_integration.test_list_pages.ActualWindowsPlatform -v
       - name: Distribution source tests
         run: python -m unittest discover -s tests/distribution -t . -v
       - name: Complete default discovery contract

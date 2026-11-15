@@ -12,7 +12,58 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StableCandidate(unittest.TestCase):
-    def test_v150_publication_record_preserves_preparation_and_current_guidance(self):
+    def test_v160_preparation_preserves_scope_history_and_publication_boundaries(self):
+        source_base = "0c5bd4243d76ac951dd70bca2b56c8a103fa4231"
+        skill_sha = "922512869577cc3d8b9d305641479e2dd659f0e669298584ca06f1ca15de1d31"
+        self.assertEqual(skill_sha, hashlib.sha256((ROOT / "skills/session-peer/SKILL.md").read_bytes()).hexdigest())
+        histories = {
+            "": ("5e5cd23933264be97d3ed8e737efb229198e5cb61eb0837201ad6dcbd7082ce3",
+                 "## Publication record — v1.5.0 (verified 2026-11-09)",
+                 "9a31b8684fc9616615af5359d7491caa96ba84a460c1200360113449a9e14865"),
+            "ko/": ("3a8b2da3d985f3c6706693e7c79d2f84d86cc282861040cbe8dd87b2f21c6908",
+                    "## 공개 기록 — v1.5.0 (2026-11-09 확인)",
+                    "c464bfc892723e06ae70648e3f8c79abdb076d516ef69425c877dfa583b001fd"),
+            "ja/": ("58e4554de49fecae4046a1f94717845ee0cf9dbf1fa21cef4d1d6c8c6a97fc97",
+                    "## 公開記録 — v1.5.0（2026-11-09確認）",
+                    "5b0dff5fd67ee935f1b11c134509ef9b56a059b901018d05384667cd96a2ef91"),
+            "zh-CN/": ("2867db0cf1a24e98c2a7b2fe8c3c64d47e49742a410d4e70c5e3804bdb1b0ef2",
+                       "## 发布记录 — v1.5.0（2026-11-09核实）",
+                       "f2d8889a1eb9d68b2a19c2c3962eaa7b9e281ac61f6aa4ee42acb8bd7d47c243"),
+        }
+        for locale, suffix, prefix in (("", "", "Source version: "), ("ko/", ".ko", "소스 버전: "),
+                ("ja/", ".ja", "ソースバージョン："), ("zh-CN/", ".zh-CN", "源码版本：")):
+            notes = (ROOT / ("docs/" + locale + "releases/v1.6.0.md")).read_text(encoding="utf-8")
+            for marker in (source_base, "2026-11-15", "1.6.0", "1.5.0", "#393", "#394", "#395", "#396",
+                    "4 MiB", "64 KiB", "8 MiB", "20,000", "600", "RSS", "JSON-RPC",
+                    "list_sessions_page", "nameOmitted=true", "nameTruncated=true", "complete=false",
+                    'type="refusal"', "retryAllowed=false", "isError=false", "isError=true", "0.9.1", "1.4.0", "1.0.1",
+                    "mcp>=1.30,<3,!=2.0.*,!=2.1.*,!=2.2.*", "#367", "#380/#387/#388", "31688", skill_sha,
+                    "95cf5e1dd92654775b2f0ea86c1cb4b6107f49c3", "SHA256SUMS", "release-provenance.json"):
+                with self.subTest(locale=locale, marker=marker):
+                    self.assertIn(marker, notes)
+            self.assertNotIn("releases/tag/v1.6.0", notes)
+            self.assertNotIn("pypi.org/project/session-peer/1.6.0/", notes)
+            readme = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
+            active = next(line for line in readme.splitlines() if line.startswith(prefix))
+            self.assertIn("**1.6.0**", active)
+            self.assertIn("2026-11-15", active)
+            self.assertIn("releases/v1.6.0.md", active)
+            runbook = (ROOT / ("RELEASING" + suffix + ".md")).read_text(encoding="utf-8")
+            old_notes_hash, old_runbook_marker, old_runbook_hash = histories[locale]
+            self.assertEqual(old_notes_hash, hashlib.sha256(
+                (ROOT / ("docs/" + locale + "releases/v1.5.0.md")).read_bytes()).hexdigest())
+            self.assertEqual(old_runbook_hash, hashlib.sha256(
+                runbook[runbook.index(old_runbook_marker):].encode("utf-8")).hexdigest())
+            for path in ("docs/" + locale + "README.md", "docs/" + locale + "mcp.md"):
+                self.assertIn("releases/v1.6.0.md", (ROOT / path).read_text(encoding="utf-8"))
+        english = (ROOT / "docs/releases/v1.6.0.md").read_text(encoding="utf-8")
+        for marker in ("unpublished source candidate", "before version preparation, not the final release commit",
+                "seventh MCP tool", "30-second idle deadline", "absolute 600-second lifetime",
+                "no separate elapsed-time deadline", "required human PyPI environment approval",
+                "not certification", "do not replace checks of the exact preparation head"):
+            self.assertIn(marker, english)
+
+    def test_v150_publication_record_preserves_preparation_and_historical_guidance(self):
         source = "9a0b23ff5e1f83e1cee4dc22bec7e3c0ca8063bb"
         annotation = "a94dc17f7c04cb2691a1079b9e19f8a954c677af"
         historical_base = "a622dc0d9f04a252af65147eb36188998bf0c8b4"
@@ -41,16 +92,16 @@ class StableCandidate(unittest.TestCase):
                 self.assertIn(marker, record)
             self.assertIn(historical_base, runbook[old_preparation.start():])
             readme = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
-            current = next(line for line in readme.splitlines() if line.startswith(prefix))
-            self.assertIn("**1.5.0**", current)
-            self.assertIn(source, current)
-            self.assertIn("releases/v1.5.0.md#v150-publication-record", current)
-            self.assertIn("https://pypi.org/project/session-peer/1.5.0/", current)
+            # Publication history stays independently checked when current
+            # source guidance advances to a new preparation version.
+            self.assertIn(source, readme)
+            self.assertIn("releases/v1.5.0.md#v150-publication-record", readme)
+            self.assertIn("https://pypi.org/project/session-peer/1.5.0/", readme)
             sdk = next(part for part in readme.split("\n\n") if "sdk1-sdk2-published-v150" in part)
             self.assertIn("v1.5.0", sdk)
             self.assertIn("mcp>=1.30,<3,!=2.0.*,!=2.1.*,!=2.2.*", sdk)
             mcp = (ROOT / ("docs/" + locale + "mcp.md")).read_text(encoding="utf-8")
-            self.assertIn("releases/v1.5.0.md#v150-publication-record", mcp.split("\n\n")[1])
+            self.assertIn("releases/v1.5.0.md#v150-publication-record", mcp)
             self.assertIn('<a id="sdk2-compatibility-candidate"></a>', mcp)
         english = (ROOT / "docs/releases/v1.5.0.md").read_text(encoding="utf-8").split(
             '<a id="v150-publication-record"></a>', 1)[1]
@@ -447,8 +498,8 @@ class StableCandidate(unittest.TestCase):
             self.assertIn(marker, english)
 
     def test_package_and_generated_core_version_agree(self):
-        self.assertEqual(session_peer.__version__, "1.5.0")
-        self.assertIn('__version__ = "1.5.0"',
+        self.assertEqual(session_peer.__version__, "1.6.0")
+        self.assertIn('__version__ = "1.6.0"',
                       (ROOT / "session_peer_core/common.py").read_text(encoding="utf-8"))
 
     def test_current_readmes_and_runbooks_match_source_version(self):
@@ -487,16 +538,16 @@ class StableCandidate(unittest.TestCase):
 
     def test_stable_release_keeps_operational_deployment_separate(self):
         profiles = (
-            ("", "Source version: **1.5.0**",
+            ("", "Source version: **1.6.0**",
              "At the 2026-10-28 preparation checkpoint, the last verified published stable release was **1.3.1**.",
              "Development candidate 1.2.1 is unpublished"),
-            (".ko", "소스 버전: **1.5.0**",
+            (".ko", "소스 버전: **1.6.0**",
              "2026-10-28 준비 시점의 마지막 확인 공개 안정판은 **1.3.1**이었습니다.",
              "개발 후보 1.2.1은 미공개입니다"),
-            (".ja", "ソースバージョン：**1.5.0**",
+            (".ja", "ソースバージョン：**1.6.0**",
              "2026-10-28の準備時点で、最後に確認した公開済み安定版は**1.3.1**でした。",
              "開発候補1.2.1は未公開です"),
-            (".zh-CN", "源码版本：**1.5.0**",
+            (".zh-CN", "源码版本：**1.6.0**",
              "在2026-10-28的准备检查时，最后确认的已发布稳定版本为**1.3.1**。",
              "开发候选版本1.2.1尚未发布"),
         )
