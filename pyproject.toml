@@ -58,6 +58,7 @@ include = [
     "/session_peer_shorthand",
     "/session_peer.py",
     "/session_peer_mcp.py",
+    "/session_peer_mcp_pages.py",
     "/tools/generate_session_peer.py",
     "/LICENSE",
     "/SECURITY.md",
@@ -73,4 +74,4 @@ include = [
 ]
 
 [tool.hatch.build.targets.wheel]
-only-include = ["session_peer_relay", "session_peer_shorthand", "session_peer.py", "session_peer_mcp.py"]
+only-include = ["session_peer_relay", "session_peer_shorthand", "session_peer.py", "session_peer_mcp.py", "session_peer_mcp_pages.py"]

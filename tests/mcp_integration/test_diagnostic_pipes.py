@@ -74,6 +74,9 @@ class DiagnosticPipes(unittest.IsolatedAsyncioTestCase):
             proxy.wait_for = ready_then_wait_for
             isolated_helper = types.FunctionType(original_helper.__code__,
                 {**original_helper.__globals__, 'asyncio': proxy}, original_helper.__name__)
+            # FunctionType does not copy keyword-only defaults. Preserve the
+            # optional per-stream limit while isolating only the asyncio clock.
+            isolated_helper.__kwdefaults__ = dict(original_helper.__kwdefaults__ or {})
             started = time.monotonic()
             try:
                 with patch.object(peer, 'invoke_bounded_diagnostic',

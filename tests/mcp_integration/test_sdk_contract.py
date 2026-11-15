@@ -106,7 +106,7 @@ class NegotiatedWire(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(value['subscription_error'], -32601)
         tools = {tool['name']: tool for tool in value['tools']['tools']}
         self.assertEqual(set(tools), {'list_destinations', 'list_sessions', 'send_message',
-            'preflight_send', 'diagnose_destination', 'list_presets'})
+            'preflight_send', 'diagnose_destination', 'list_presets', 'list_sessions_page'})
         self.assertEqual(set(tools['send_message']['inputSchema']['required']),
                          {'destination', 'target', 'message'})
         self.assertTrue(tools['list_destinations']['annotations']['readOnlyHint'])
