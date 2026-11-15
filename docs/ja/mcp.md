@@ -1,6 +1,6 @@
 # オプションの Codex MCP 統合
 
-[v1.6.0準備確認（2026-11-15）](releases/v1.6.0.md)は、制限付きセッションページとClaude部分エラー報告を含む7個のソースMCPツールを記録します。当時v1.6.0は未公開で、公開済みの基準はv1.5.0でした。入手可能性は実際のリリース・パッケージ記録で確認してください。
+公開済みランタイムv1.6.0はGitHubとPyPIで提供され、[公開記録](releases/v1.6.0.md#v160-publication-record)にソース、正確なアップロード時刻、ハッシュ、検証を記載しています。制限付きセッションページとClaude部分エラー報告を含む7個のMCPツールが入っています。[2026-11-15準備確認](releases/v1.6.0.md)は日付付き履歴として保持し、公開だけで既存MCP環境のアップグレードや再起動は行いません。
 
 公開済みランタイムv1.5.0はGitHubとPyPIで提供され、[公開記録](releases/v1.5.0.md#v150-publication-record)に正確なソース、時刻、ハッシュを記載しています。SDK 1/2互換性はこの公開済みパッケージに含まれます。[v1.4.0リリースノート](releases/v1.4.0.md)と以下の日付付きSDK準備確認は履歴であり、現在の未公開状態を示しません。
 
@@ -123,9 +123,9 @@ MCP ラッパーが対応する検査と実行上の影響は、次の範囲に�
 
 <a id="bounded-session-listing-393"></a>
 
-## v1.6.0準備確認（2026-11-15）：サイズを制限したセッションのページ取得 (#393)
+## v1.6.0：サイズを制限したセッションのページ取得 (#393)
 
-`list_sessions_page(destination, agent, include_inactive=false, limit=50, cursor=null)`は2026-11-15の準備確認に記録したv1.6.0の追加ソース機能で、当時公開済みのv1.5.0には含まれていませんでした。macOS/Linuxで既存の`list`権限を使い、目的地1つと許可されたエージェント1つを明示する必要があります。既存の`list_sessions`、CLIのローカル・複数home・SSH・デバイス探索、ホストが公開している場合のネイティブ`codex_tui.list_threads`は、それぞれの範囲を維持します。既存経路の置き換えや別経路の自動選択は行いません。
+`list_sessions_page(destination, agent, include_inactive=false, limit=50, cursor=null)`は公開済みv1.6.0に含まれます。日付付きの2026-11-15準備確認は以前のソース候補状態を記録します。このツールは公開済みv1.5.0には含まれていませんでした。macOS/Linuxで既存の`list`権限を使い、目的地1つと許可されたエージェント1つを明示する必要があります。既存の`list_sessions`、CLIのローカル・複数home・SSH・デバイス探索、ホストが公開している場合のネイティブ`codex_tui.list_threads`は、それぞれの範囲を維持します。既存経路の置き換えや別経路の自動選択は行いません。
 
 ```json
 {"name":"list_sessions_page","arguments":{"destination":"worker","agent":"codex","include_inactive":false,"limit":25}}

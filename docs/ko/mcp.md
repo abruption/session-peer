@@ -1,6 +1,6 @@
 # 선택형 Codex MCP 연동
 
-[v1.6.0 준비 점검 (2026-11-15)](releases/v1.6.0.md)은 제한된 세션 페이지와 Claude 부분 오류 보고를 포함한 소스 MCP 도구 일곱 개를 기록합니다. 당시 v1.6.0은 미공개였으며 공개 기준은 v1.5.0이었습니다. 제공 여부는 실제 릴리스·패키지 기록에서 확인하십시오.
+공개된 런타임 v1.6.0은 GitHub와 PyPI에서 제공되며 [공개 기록](releases/v1.6.0.md#v160-publication-record)에 소스·정확한 업로드 시각·해시·검증을 남겼습니다. 제한된 세션 페이지와 Claude 부분 오류 보고를 포함한 MCP 도구 일곱 개가 들어 있습니다. [2026-11-15 준비 점검](releases/v1.6.0.md)은 날짜가 있는 과거 기록이며 공개만으로 기존 MCP 환경이 업그레이드되거나 재시작되지는 않습니다.
 
 공개 런타임 v1.5.0은 GitHub와 PyPI에서 제공되며, [공개 기록](releases/v1.5.0.md#v150-publication-record)에 정확한 소스·시각·해시를 남겼습니다. SDK 1/2 호환성은 이 공개 패키지에 포함됩니다. [v1.4.0 릴리스 노트](releases/v1.4.0.md)와 아래 날짜별 SDK 준비 점검은 과거 이력이며 현재 미공개 상태를 뜻하지 않습니다.
 
@@ -123,9 +123,9 @@ MCP 래퍼가 지원하는 검사와 실행 효과는 다음으로 제한됩니�
 
 <a id="bounded-session-listing-393"></a>
 
-## v1.6.0 준비 점검 (2026-11-15): 크기를 제한한 세션 페이지 조회 (#393)
+## v1.6.0: 크기를 제한한 세션 페이지 조회 (#393)
 
-`list_sessions_page(destination, agent, include_inactive=false, limit=50, cursor=null)`는 2026-11-15 준비 점검에서 기록한 v1.6.0 추가 소스 기능이며 당시 공개된 v1.5.0에는 포함되지 않았습니다. macOS/Linux에서 기존 `list` 권한을 사용하며, 목적지 하나와 허용된 에이전트 하나를 명시해야 합니다. 기존 `list_sessions`, CLI의 로컬·다중 홈·SSH·기기 조회, 호스트가 제공하는 경우의 네이티브 `codex_tui.list_threads`의 범위는 각각 유지됩니다. 이 도구가 기존 경로를 대체하거나 다른 경로를 자동으로 선택하지 않습니다.
+`list_sessions_page(destination, agent, include_inactive=false, limit=50, cursor=null)`는 공개된 v1.6.0에 포함됩니다. 날짜가 있는 2026-11-15 준비 점검은 이전 소스 후보 상태를 기록합니다. 이 도구는 공개된 v1.5.0에는 포함되지 않았습니다. macOS/Linux에서 기존 `list` 권한을 사용하며, 목적지 하나와 허용된 에이전트 하나를 명시해야 합니다. 기존 `list_sessions`, CLI의 로컬·다중 홈·SSH·기기 조회, 호스트가 제공하는 경우의 네이티브 `codex_tui.list_threads`의 범위는 각각 유지됩니다. 이 도구가 기존 경로를 대체하거나 다른 경로를 자동으로 선택하지 않습니다.
 
 ```json
 {"name":"list_sessions_page","arguments":{"destination":"worker","agent":"codex","include_inactive":false,"limit":25}}

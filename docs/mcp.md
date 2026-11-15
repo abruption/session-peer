@@ -1,6 +1,6 @@
 # Optional Codex MCP integration
 
-The [v1.6.0 preparation checkpoint (2026-11-15)](releases/v1.6.0.md) records seven source MCP tools, including bounded session pages and Claude partial-error reporting. At that checkpoint v1.6.0 was unpublished and v1.5.0 was the published baseline; consult actual release/package records for availability.
+Published runtime v1.6.0 is available on GitHub and PyPI; the [publication record](releases/v1.6.0.md#v160-publication-record) identifies source, exact upload times, hashes and validation. It includes seven MCP tools with bounded session pages and Claude partial-error reporting. The [2026-11-15 preparation checkpoint](releases/v1.6.0.md) remains dated history; publication does not upgrade or restart existing MCP environments.
 
 Published runtime v1.5.0 is available on GitHub and PyPI; its [publication record](releases/v1.5.0.md#v150-publication-record) identifies the exact source, times and hashes. SDK 1/2 compatibility is part of that published package. The [v1.4.0 release notes](releases/v1.4.0.md) and dated SDK preparation checkpoint below remain history, not current unpublished-status statements.
 
@@ -118,9 +118,9 @@ If any approved item is missing or its route mismatches policy, the whole metada
 
 <a id="bounded-session-listing-393"></a>
 
-## v1.6.0 preparation checkpoint (2026-11-15): bounded session pages (#393)
+## v1.6.0: bounded session pages (#393)
 
-`list_sessions_page(destination, agent, include_inactive=false, limit=50, cursor=null)` is the additive v1.6.0 source recorded at the 2026-11-15 preparation checkpoint; then-published v1.5.0 did not include it. It uses an existing `list` grant for one explicit destination and one explicit allowed agent on macOS/Linux. Existing `list_sessions`, CLI local/multi-home/SSH/device discovery and native `codex_tui.list_threads` when the host exposes it retain their separate scopes. This tool does not replace those paths or automatically select a different route.
+`list_sessions_page(destination, agent, include_inactive=false, limit=50, cursor=null)` is included in published v1.6.0. The dated 2026-11-15 preparation checkpoint records its earlier source-candidate state; published v1.5.0 did not include it. It uses an existing `list` grant for one explicit destination and one explicit allowed agent on macOS/Linux. Existing `list_sessions`, CLI local/multi-home/SSH/device discovery and native `codex_tui.list_threads` when the host exposes it retain their separate scopes. This tool does not replace those paths or automatically select a different route.
 
 ```json
 {"name":"list_sessions_page","arguments":{"destination":"worker","agent":"codex","include_inactive":false,"limit":25}}

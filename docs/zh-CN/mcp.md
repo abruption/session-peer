@@ -1,6 +1,6 @@
 # 可选 Codex MCP 集成
 
-[v1.6.0准备检查（2026-11-15）](releases/v1.6.0.md)记录7个源码MCP工具，包括有界会话分页及Claude部分错误报告。当时v1.6.0未发布，已发布基准为v1.5.0；可用性请查看实际版本/包记录。
+已发布运行时v1.6.0可从GitHub和PyPI获取；[发布记录](releases/v1.6.0.md#v160-publication-record)列出源码、准确上传时间、哈希及验证。它包含7个MCP工具，包括有界会话分页及Claude部分错误报告。[2026-11-15准备检查](releases/v1.6.0.md)仍作为有日期历史保留；发布本身不会升级或重启既有MCP环境。
 
 已发布运行时v1.5.0由GitHub及PyPI提供；[发布记录](releases/v1.5.0.md#v150-publication-record)列出确切源码、时间与哈希。SDK 1/2兼容性包含在该发布软件包中。[v1.4.0发布说明](releases/v1.4.0.md)及下方注明日期的SDK准备检查保留为历史，并非当前尚未发布状态的声明。
 
@@ -123,9 +123,9 @@ MCP 包装层仅支持以下检查及执行效果：
 
 <a id="bounded-session-listing-393"></a>
 
-## v1.6.0准备检查（2026-11-15）：限制大小的会话分页查询 (#393)
+## v1.6.0：限制大小的会话分页查询 (#393)
 
-`list_sessions_page(destination, agent, include_inactive=false, limit=50, cursor=null)`是2026-11-15准备检查记录的v1.6.0新增源码功能，当时已发布的v1.5.0并不包含它。它在macOS/Linux上使用已有的`list`权限，必须明确指定一个目的地和一个获准的智能体。现有`list_sessions`、CLI的本地/多home/SSH/设备发现，以及宿主提供时的原生`codex_tui.list_threads`各自保留原有范围。该工具不会替代这些路径或自动选择其他路径。
+`list_sessions_page(destination, agent, include_inactive=false, limit=50, cursor=null)`已包含在发布的v1.6.0中。有日期的2026-11-15准备检查记录此前源码候选状态；已发布v1.5.0不包含该工具。它在macOS/Linux上使用已有的`list`权限，必须明确指定一个目的地和一个获准的智能体。现有`list_sessions`、CLI的本地/多home/SSH/设备发现，以及宿主提供时的原生`codex_tui.list_threads`各自保留原有范围。该工具不会替代这些路径或自动选择其他路径。
 
 ```json
 {"name":"list_sessions_page","arguments":{"destination":"worker","agent":"codex","include_inactive":false,"limit":25}}

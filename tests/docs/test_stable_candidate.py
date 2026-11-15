@@ -12,6 +12,57 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StableCandidate(unittest.TestCase):
+    def test_v160_publication_preserves_preparation_and_current_availability(self):
+        source = "8a45803748baf371dd31bb33db5db68373cd45f5"
+        histories = {
+            "": ("6e3e4b551a6494675ef783c01645e150085c4e77d308a3a52cb9ec919cea9022",
+                 "## v1.6.0 preparation", "6720f70290473194226f39fd9f1e16e2226f1261fc3509fc9c5a8b175e8a8f60"),
+            "ko/": ("30134fbbfcc4e92f7fd3d2869790bea5a0550cbcfd5c13010bc4a798c5d7a559",
+                    "## v1.6.0 준비", "63a64fc4268f54ab1ef3a22cb09c6963ccde64d22f1af5579b1a74221638b898"),
+            "ja/": ("dac25b5379063df97017107d4bc74ef9170091dae81be2460994c07419afbb97",
+                    "## v1.6.0準備", "0bb39a549175251a64ba87d61ca5e4244c745c2287462f8c337c45bce6394871"),
+            "zh-CN/": ("553654262be112ece446f2a6d95f89a0ac564fb6954fb7b27460101ea561e357",
+                       "## v1.6.0准备", "c1cf69abb2316f9917b41cb0a45b2b1a54143e9cccf2d2ef37811c803642273f"),
+        }
+        facts = (source, "type=commit", "2026-11-15T05:34:06Z", "2026-11-15T05:36:12.216330Z",
+                 "2026-11-15T05:36:13.738944Z", "session_peer-1.6.0-py3-none-any.whl", "session_peer-1.6.0.tar.gz",
+                 "747b1b454462fa67b812faec42d9cfdf68713a70c1c25e5f723f5ab05569dc8c",
+                 "64b21c22a8c734c18d1c63ecf81308a677f02582d01133a4d33359fc3f49343d",
+                 "43680720785", "43680720818", "43681446312", "43681634997", "pypi", "abruption",
+                 "95cf5e1dd92654775b2f0ea86c1cb4b6107f49c3", "31688", "0.5.1", "0.9.1", "1.4.0", "1.0.1",
+                 "922512869577cc3d8b9d305641479e2dd659f0e669298584ca06f1ca15de1d31")
+        for locale, suffix, prefix in (("", "", "Source version: "), ("ko/", ".ko", "소스 버전: "),
+                ("ja/", ".ja", "ソースバージョン："), ("zh-CN/", ".zh-CN", "源码版本：")):
+            notes = (ROOT / ("docs/" + locale + "releases/v1.6.0.md")).read_text(encoding="utf-8")
+            preparation, publication = notes.split('\n<a id="v160-publication-record"></a>', 1)
+            old_hash, runbook_marker, runbook_hash = histories[locale]
+            self.assertEqual(old_hash, hashlib.sha256(preparation.encode("utf-8")).hexdigest())
+            for fact in facts:
+                with self.subTest(locale=locale, fact=fact):
+                    self.assertIn(fact, publication)
+            self.assertNotIn(source, preparation)
+            book = (ROOT / ("RELEASING" + suffix + ".md")).read_text(encoding="utf-8")
+            self.assertEqual(runbook_hash, hashlib.sha256(
+                book[book.index(runbook_marker):].encode("utf-8")).hexdigest())
+            for fact in (source, *facts[2:5], "#v160-publication-record", "43680720785", "43680720818",
+                         "43681446312", "43681634997", "pypi", "abruption"):
+                self.assertIn(fact, book[:book.index(runbook_marker)])
+            readme = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
+            current = next(line for line in readme.splitlines() if line.startswith(prefix))
+            for fact in ("**1.6.0**", source, "releases/v1.6.0.md#v160-publication-record",
+                         "https://pypi.org/project/session-peer/1.6.0/"):
+                self.assertIn(fact, current)
+            mcp = (ROOT / ("docs/" + locale + "mcp.md")).read_text(encoding="utf-8")
+            self.assertIn("releases/v1.6.0.md#v160-publication-record", mcp.split("\n\n")[1])
+            self.assertIn('<a id="bounded-session-listing-393"></a>', mcp)
+        publication = (ROOT / "docs/releases/v1.6.0.md").read_text(encoding="utf-8").split(
+            '<a id="v160-publication-record"></a>', 1)[1]
+        for marker in ("lightweight tag", "not an annotated tag object", "exactly two non-yanked files",
+                       "metadata alone was not treated as file verification", "All 7 locked GitHub asset hashes",
+                       "does not expose an exact approval timestamp", "No administrator bypass",
+                       "byte-for-byte", "neither rebuilds nor replaces"):
+            self.assertIn(marker, publication)
+
     def test_v160_preparation_preserves_scope_history_and_publication_boundaries(self):
         source_base = "0c5bd4243d76ac951dd70bca2b56c8a103fa4231"
         skill_sha = "922512869577cc3d8b9d305641479e2dd659f0e669298584ca06f1ca15de1d31"
@@ -32,7 +83,8 @@ class StableCandidate(unittest.TestCase):
         }
         for locale, suffix, prefix in (("", "", "Source version: "), ("ko/", ".ko", "소스 버전: "),
                 ("ja/", ".ja", "ソースバージョン："), ("zh-CN/", ".zh-CN", "源码版本：")):
-            notes = (ROOT / ("docs/" + locale + "releases/v1.6.0.md")).read_text(encoding="utf-8")
+            notes = (ROOT / ("docs/" + locale + "releases/v1.6.0.md")).read_text(encoding="utf-8").split(
+                '\n<a id="v160-publication-record"></a>', 1)[0]
             for marker in (source_base, "2026-11-15", "1.6.0", "1.5.0", "#393", "#394", "#395", "#396",
                     "4 MiB", "64 KiB", "8 MiB", "20,000", "600", "RSS", "JSON-RPC",
                     "list_sessions_page", "nameOmitted=true", "nameTruncated=true", "complete=false",
@@ -56,7 +108,8 @@ class StableCandidate(unittest.TestCase):
                 runbook[runbook.index(old_runbook_marker):].encode("utf-8")).hexdigest())
             for path in ("docs/" + locale + "README.md", "docs/" + locale + "mcp.md"):
                 self.assertIn("releases/v1.6.0.md", (ROOT / path).read_text(encoding="utf-8"))
-        english = (ROOT / "docs/releases/v1.6.0.md").read_text(encoding="utf-8")
+        english = (ROOT / "docs/releases/v1.6.0.md").read_text(encoding="utf-8").split(
+            '\n<a id="v160-publication-record"></a>', 1)[0]
         for marker in ("unpublished source candidate", "before version preparation, not the final release commit",
                 "seventh MCP tool", "30-second idle deadline", "absolute 600-second lifetime",
                 "no separate elapsed-time deadline", "required human PyPI environment approval",

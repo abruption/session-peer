@@ -33,7 +33,7 @@ session-peer 1.0.2による実際のローカル通信です。CodexがClaude Co
 ### インストール
 
 Python 3.9以上が必要です。基本のローカル・SSH CLIに外部Python依存パッケージはありません。
-ソースバージョン：**1.6.0**。[2026-11-15準備確認](docs/ja/releases/v1.6.0.md)は当時公開済みのv1.5.0に対する未公開ソース候補を記録しており、ソース準備はパッケージの提供を意味しません。[v1.5.0公開記録](docs/ja/releases/v1.5.0.md#v150-publication-record)にソース`9a0b23ff5e1f83e1cee4dc22bec7e3c0ca8063bb`、正確なアップロード時刻、ハッシュを記載し、[PyPI v1.5.0](https://pypi.org/project/session-peer/1.5.0/)がそのバージョン記録です。[v1.4.2公開記録](docs/ja/releases/v1.4.2.md#v142-publication-record)、以前の[v1.4.1ノート](docs/ja/releases/v1.4.1.md)、[v1.4.0公開記録](docs/ja/releases/v1.4.0.md#v140-publication-record)は過去の根拠として保持します。パッケージ公開、グローバルインストール、Node Control配備、独立管理のスキル更新は別です。
+ソースバージョン：**1.6.0**（2026-11-15に安定版[GitHub v1.6.0](https://github.com/abruption/session-peer/releases/tag/v1.6.0)として公開され、[PyPI](https://pypi.org/project/session-peer/1.6.0/)でも提供されています）。[公開記録](docs/ja/releases/v1.6.0.md#v160-publication-record)にソース`8a45803748baf371dd31bb33db5db68373cd45f5`、正確なアップロード時刻、ハッシュを記載しています。日付付き[準備確認](docs/ja/releases/v1.6.0.md)は履歴として保持します。[v1.5.0公開記録](docs/ja/releases/v1.5.0.md#v150-publication-record)にはソース`9a0b23ff5e1f83e1cee4dc22bec7e3c0ca8063bb`と[PyPIバージョン記録](https://pypi.org/project/session-peer/1.5.0/)を保持し、[v1.4.2](docs/ja/releases/v1.4.2.md#v142-publication-record)、[v1.4.1](docs/ja/releases/v1.4.1.md)、[v1.4.0](docs/ja/releases/v1.4.0.md#v140-publication-record)も過去の証拠として残します。パッケージ公開、グローバルインストール、Node Control配備、独立管理スキルの更新は別です。
 
 公開済みv1.5.0の任意[MCPエクストラ](docs/ja/mcp.md#sdk1-sdk2-published-v150)は`mcp>=1.30,<3,!=2.0.*,!=2.1.*,!=2.2.*`を使い、安定版SDK 1.xの1.30以降またはSDK 2.xの2.3以降を受け入れます。以前のv1.4.2エクストラは`mcp>=1.30,<2`でした。MCPのPython 3.10+要件と外部依存のないPython 3.9基本CLIは維持します。既存MCP環境は元の管理ツール・インタープリター・エクストラを保って明示的に更新する必要があり、公開だけでSDK更新やサーバー再起動は行われません。
 
