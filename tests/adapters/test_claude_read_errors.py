@@ -104,8 +104,16 @@ class ClaudeReadErrors(unittest.TestCase):
         blocked.write_text(json.dumps({'pid': os.getpid()+100000}))
         blocked.chmod(0)
         self.addCleanup(blocked.chmod, 0o600)
-        # This assertion distinguishes actual kernel denial from the injected
-        # inventory control. Do not infer mode000 denial from the mode alone.
+        # Root/DAC-bypass environments can read mode000. Probe the kernel
+        # independently of the production reader, so a reader regression cannot
+        # turn this test into a false skip. Injected coverage remains unconditional.
+        try:
+            with blocked.open('rb') as probe:
+                probe.read(1)
+        except PermissionError:
+            pass
+        else:
+            self.skipTest('mode000 fixture is readable; kernel denial unavailable')
         with self.assertRaises(PermissionError):
             peer.read_claude_record(blocked)
         inventory = peer.discover()
@@ -120,6 +128,28 @@ class ClaudeReadErrors(unittest.TestCase):
         self.assertEqual(error, 'Claude profile discovery incomplete: session_record_unavailable')
         self.assertNotIn(str(self.root), error)
         self.assertNotIn(str(blocked), error)
+
+    @unittest.skipUnless(os.name == 'posix', 'owned POSIX permission probe')
+    def test_readable_mode000_probe_skips_only_actual_permission_case(self):
+        case = type(self)('test_actual_mode000_selected_record_is_partial_without_private_error_path')
+        result = unittest.TestResult()
+        original_open = Path.open
+        blocked_name = str(os.getpid()+100000)+'.json'
+
+        def readable_probe(path, *args, **kwargs):
+            mode = args[0] if args else kwargs.get('mode', 'r')
+            if path.name == blocked_name and mode == 'rb':
+                return io.BytesIO(b'kernel-readable fixture')
+            return original_open(path, *args, **kwargs)
+
+        with mock.patch.object(Path, 'open', readable_probe), mock.patch.object(
+                peer, 'read_claude_record', side_effect=AssertionError('production reader reached')):
+            case.run(result)
+        self.assertEqual(result.testsRun, 1)
+        self.assertEqual(result.errors, [])
+        self.assertEqual(result.failures, [])
+        self.assertEqual(len(result.skipped), 1)
+        self.assertIn('kernel denial unavailable', result.skipped[0][1])
 
     @unittest.skipUnless(os.name == 'posix', 'owned POSIX record fixture')
     def test_actual_nonpermission_invalid_record_is_still_ignored(self):
