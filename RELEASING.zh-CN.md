@@ -1,5 +1,11 @@
 # 发布session-peer
 
+## 发布记录 — v1.6.0（2026-11-15核实）
+
+[GitHub v1.6.0](https://github.com/abruption/session-peer/releases/tag/v1.6.0)于`2026-11-15T05:34:06Z`作为稳定版/Latest发布且为不可变状态。轻量标签直接指向源码`8a45803748baf371dd31bb33db5db68373cd45f5`，不是附注标签。PyPI未撤回wheel的上传时间为`2026-11-15T05:36:12.216330Z`，sdist为`2026-11-15T05:36:13.738944Z`。实际下载匹配锁定资产，准确哈希及标签说明见[发布记录](docs/zh-CN/releases/v1.6.0.md#v160-publication-record)。
+
+[main CI](https://github.com/abruption/session-peer/actions/runs/43680720785) 49项、[CodeQL](https://github.com/abruption/session-peer/actions/runs/43680720818) 3项、[准备](https://github.com/abruption/session-peer/actions/runs/43681446312) 5项及[发布](https://github.com/abruption/session-peer/actions/runs/43681634997) 6项作业全部通过。7个资产哈希、来源记录及认证证明已验证，wheel/sdist发布后验证分别使用独立全新安装环境。已确认`pypi`环境所需的人工批准（`abruption`），但API不提供准确批准时间。没有管理员绕过或保护修改。下方准备记录全部原样保留。发布不证明全局/机群/服务/Control/技能推出或更广泛原生/平台/ACK支持。
+
 ## v1.6.0准备
 
 于2026-11-15以已发布v1.5.0为基准准备。在此检查时点，v1.6.0是未发布源码候选，不是发布公告。集成基准为`0c5bd4243d76ac951dd70bca2b56c8a103fa4231`，位于版本准备之前，不是最终发布提交。[准备说明](docs/zh-CN/releases/v1.6.0.md)涵盖#393/#396的有界MCP分页和#394/#395的Claude权限错误报告。MCP工具有7个，现有策略/宿主批准、原生提交/消费/ACK区分及Python/SDK下限不变。#367及依赖/研究工作均排除。

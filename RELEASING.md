@@ -1,5 +1,11 @@
 # Releasing session-peer
 
+## Publication record — v1.6.0 (verified 2026-11-15)
+
+[GitHub v1.6.0](https://github.com/abruption/session-peer/releases/tag/v1.6.0) was published as stable/Latest and immutable at `2026-11-15T05:34:06Z`. Its lightweight tag points directly to source `8a45803748baf371dd31bb33db5db68373cd45f5`; it is not an annotated tag. PyPI uploaded the non-yanked wheel at `2026-11-15T05:36:12.216330Z` and sdist at `2026-11-15T05:36:13.738944Z`. Actual downloads match the locked assets; exact hashes and tag details are in the [publication record](docs/releases/v1.6.0.md#v160-publication-record).
+
+All 49 [main CI](https://github.com/abruption/session-peer/actions/runs/43680720785), 3 [CodeQL](https://github.com/abruption/session-peer/actions/runs/43680720818), 5 [preparation](https://github.com/abruption/session-peer/actions/runs/43681446312) and 6 [publication](https://github.com/abruption/session-peer/actions/runs/43681634997) jobs passed. All 7 asset hashes, provenance and authenticated attestations were verified, and wheel/sdist postverification used separate fresh installation environments. Required human `pypi` approval by `abruption` was observed; the API exposes no exact approval timestamp. No administrator bypass or protection change occurred. Preserve every preparation record below unchanged. Publication does not establish global/fleet/service/Control/skill rollout or broader native/platform/ACK support.
+
 ## v1.6.0 preparation
 
 Prepared on 2026-11-15 against published v1.5.0. At this checkpoint v1.6.0 was an unpublished source candidate, not a publication announcement. Integrated base: `0c5bd4243d76ac951dd70bca2b56c8a103fa4231`, before version preparation, not the final release commit. The [preparation notes](docs/releases/v1.6.0.md) cover #393/#396 bounded MCP pages and #394/#395 Claude permission-error reporting. There are seven MCP tools; existing policy/host approvals, native submission/consumption/ACK distinctions and Python/SDK floors remain. #367 and dependency/research work are excluded.

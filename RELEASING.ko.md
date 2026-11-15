@@ -1,5 +1,11 @@
 # session-peer 릴리스
 
+## 공개 기록 — v1.6.0 (2026-11-15 확인)
+
+[GitHub v1.6.0](https://github.com/abruption/session-peer/releases/tag/v1.6.0)은 `2026-11-15T05:34:06Z`에 안정판·Latest로 공개됐으며 불변 상태입니다. 경량 태그는 소스 `8a45803748baf371dd31bb33db5db68373cd45f5`를 직접 가리키며 주석 태그가 아닙니다. PyPI의 철회되지 않은 wheel 업로드 시각은 `2026-11-15T05:36:12.216330Z`, sdist는 `2026-11-15T05:36:13.738944Z`입니다. 실제 다운로드가 잠긴 자산과 일치했으며 정확한 해시·태그 설명은 [공개 기록](docs/ko/releases/v1.6.0.md#v160-publication-record)에 있습니다.
+
+[main CI](https://github.com/abruption/session-peer/actions/runs/43680720785) 49개, [CodeQL](https://github.com/abruption/session-peer/actions/runs/43680720818) 3개, [준비](https://github.com/abruption/session-peer/actions/runs/43681446312) 5개, [발행](https://github.com/abruption/session-peer/actions/runs/43681634997) 6개 작업이 모두 통과했습니다. 자산 7개의 해시·출처 증명·인증된 증명을 검증했으며 wheel/sdist 발행 후 검증은 각각 별도의 새 설치 환경을 사용했습니다. `pypi` 환경의 필수 담당자 승인(`abruption`)을 확인했지만 API는 정확한 승인 시각을 제공하지 않습니다. 관리자 우회나 보호 변경은 없었습니다. 아래 준비 기록은 모두 그대로 보존하십시오. 공개는 전역·전체 기기·서비스·Control·스킬 전파나 더 넓은 네이티브·플랫폼·ACK 지원을 입증하지 않습니다.
+
 ## v1.6.0 준비
 
 2026-11-15 준비의 기준은 공개된 v1.5.0입니다. 이 점검에서 v1.6.0은 미공개 소스 후보였으며 공개 발표가 아닙니다. 통합 기준은 `0c5bd4243d76ac951dd70bca2b56c8a103fa4231`로, 버전 준비 전이며 최종 릴리스 커밋이 아닙니다. [준비 노트](docs/ko/releases/v1.6.0.md)는 #393/#396의 제한된 MCP 페이지와 #394/#395의 Claude 권한 오류 보고를 다룹니다. MCP 도구는 일곱 개이며 기존 정책·호스트 승인, 네이티브 제출·소비·ACK 구분, Python·SDK 하한은 유지됩니다. #367과 의존성·연구 작업은 제외합니다.

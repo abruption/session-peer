@@ -1,5 +1,11 @@
 # session-peerのリリース
 
+## 公開記録 — v1.6.0（2026-11-15確認）
+
+[GitHub v1.6.0](https://github.com/abruption/session-peer/releases/tag/v1.6.0)は`2026-11-15T05:34:06Z`に安定版・Latestとして公開され、不変になりました。軽量タグはソース`8a45803748baf371dd31bb33db5db68373cd45f5`を直接指し、注釈付きタグではありません。PyPIの取り下げられていないwheelのアップロードは`2026-11-15T05:36:12.216330Z`、sdistは`2026-11-15T05:36:13.738944Z`です。実際のダウンロードがロック済みアセットと一致し、正確なハッシュ・タグの説明は[公開記録](docs/ja/releases/v1.6.0.md#v160-publication-record)にあります。
+
+[main CI](https://github.com/abruption/session-peer/actions/runs/43680720785) 49件、[CodeQL](https://github.com/abruption/session-peer/actions/runs/43680720818) 3件、[準備](https://github.com/abruption/session-peer/actions/runs/43681446312) 5件、[公開](https://github.com/abruption/session-peer/actions/runs/43681634997) 6件の全ジョブが通過しました。資産7個のハッシュ、来歴、認証済み証明を検証し、wheel/sdist公開後検証では別々の新規インストール環境を使いました。`pypi`環境で必須の担当者承認（`abruption`）を確認しましたが、APIは正確な承認時刻を公開していません。管理者による迂回や保護変更はありません。以下の準備記録はすべてそのまま保持してください。公開はグローバル・フリート・サービス・Control・スキル展開や、より広いネイティブ・プラットフォーム・ACK対応を証明しません。
+
 ## v1.6.0準備
 
 2026-11-15に公開済みv1.5.0を基準に準備しました。この確認時点でv1.6.0は未公開ソース候補であり、公開の告知ではありません。統合基準は`0c5bd4243d76ac951dd70bca2b56c8a103fa4231`で、バージョン準備前であり最終リリースコミットではありません。[準備ノート](docs/ja/releases/v1.6.0.md)は#393/#396の制限付きMCPページと#394/#395のClaude権限エラー報告を扱います。MCPツールは7個で、既存ポリシー・ホスト承認、ネイティブの提出・消費・ACKの区別、Python・SDK下限は維持します。#367と依存関係・研究作業は除外します。
