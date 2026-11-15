@@ -1243,6 +1243,8 @@ For opt-in activation of queued Codex sessions, see [explicit wake](wake.md).
 See [multi-home Codex listing](multi-home-list.md) for candidate sources,
 per-home errors, duplicate UUIDs, and selecting the exact home for send.
 
+The unreleased additive [bounded MCP session pages](mcp.md#bounded-session-listing-393) require one explicit destination and agent. This is a source candidate, not a new CLI flag or a replacement of existing discovery.
+
 ### Internal extension architecture
 
 Agent adapters and local/SSH execution share an internal versioned contract while

@@ -11,6 +11,8 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 
 import session_peer as core
+from session_peer_mcp_pages import (ListingPages, PageRefusal, page_refusal,
+    PAGE_COLLECTION_SECONDS, PAGE_INPUT_BYTES, PAGE_STDERR_BYTES, PAGE_OUTPUT_BYTES)
 
 CLI_TIMEOUT = 130
 DESTINATION_METADATA_LIMIT = 64
@@ -23,6 +25,10 @@ DIAGNOSTIC_OUTPUT_BYTES = 64 * 1024
 
 class DiagnosticOutputLimit(ValueError):
     pass
+
+
+def _listing_pages_supported():
+    return os.name == "posix" and sys.platform in ("darwin", "linux")
 
 
 # Give an interrupted wake CLI its entire native cleanup budget before killing
@@ -63,17 +69,20 @@ async def _read_diagnostic_pipe(stream, output_limit):
         loop.remove_reader(descriptor)
 
 
-async def invoke_bounded_diagnostic(argv, *, timeout, output_limit):
+async def invoke_bounded_diagnostic(argv, *, timeout, output_limit, stderr_output_limit=None):
     if os.name != "posix" or type(output_limit) is not int or output_limit < 1:
         raise ValueError("Bounded diagnostics require POSIX pipes and a positive limit")
+    stderr_output_limit = output_limit if stderr_output_limit is None else stderr_output_limit
+    if type(stderr_output_limit) is not int or stderr_output_limit < 1:
+        raise ValueError("Expected a positive stderr limit")
     # Keep the Popen leader unreaped until group cleanup, even if it exits before
     # an escaped descendant releases an inherited pipe. No child watcher/poll().
     process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, start_new_session=True)
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='session-peer-diagnostic-cleanup')
     loop = asyncio.get_running_loop()
-    readers = [asyncio.create_task(_read_diagnostic_pipe(stream, output_limit))
-               for stream in (process.stdout, process.stderr)]
+    readers = [asyncio.create_task(_read_diagnostic_pipe(stream, limit))
+               for stream, limit in ((process.stdout, output_limit), (process.stderr, stderr_output_limit))]
     io = asyncio.gather(*readers)
     interrupted = False
     try:
@@ -229,6 +238,48 @@ def load_policy(path: str | None) -> dict:
 class Adapter:
     def __init__(self, destinations: dict):
         self.destinations = destinations
+        self.listing_pages = ListingPages()
+
+    async def collect_sessions_page(self, entry, agent, include_inactive):
+        """One explicit policy route; bounded capture reuses diagnostic cleanup.
+
+        The existing CLI may inspect SQLite and execute operator SSH settings.
+        Bounds cover retained pipes, not upstream work or a hard wall deadline.
+        """
+        argv = ["list", *self.route(entry), "--agent", agent]
+        if include_inactive:
+            argv.append("--all")
+        try:
+            stdout, code = await invoke_bounded_diagnostic(
+                [sys.executable, str(Path(core.__file__).resolve()), *argv, "--json", "--no-update-notice"],
+                timeout=PAGE_COLLECTION_SECONDS, output_limit=PAGE_INPUT_BYTES,
+                stderr_output_limit=PAGE_STDERR_BYTES)
+            value = json.loads(stdout)
+        except asyncio.TimeoutError:
+            raise PageRefusal("collection_timeout") from None
+        except DiagnosticOutputLimit:
+            raise PageRefusal("collection_output_limit") from None
+        except (ValueError, UnicodeError, OSError, RecursionError, subprocess.SubprocessError):
+            raise PageRefusal("collection_unavailable") from None
+        return value, code
+
+    async def list_sessions_page(self, arguments, *, measure):
+        def authorize(destination, agent):
+            try:
+                return self.authorize(destination, "list", agent)
+            except PolicyError:
+                raise PageRefusal("policy_denied") from None
+        try:
+            return await self.listing_pages.page(arguments, authorize=authorize,
+                collect=self.collect_sessions_page, measure=measure,
+                supported=_listing_pages_supported())
+        except PageRefusal as exc:
+            return page_refusal(str(exc))
+        except Exception:
+            # Includes policy encoding, projection, spawn/pipe and cleanup errors.
+            # Never reflect native exception text, paths or model input values.
+            # asyncio cancellation is BaseException and deliberately propagates.
+            return page_refusal("collection_unavailable")
 
     async def list_destinations(self) -> dict:
         """Project operator policy only; never discover sessions or probe routes."""
@@ -764,6 +815,27 @@ def _sdk_release(installed):
     return release + (0,) * max(0, 3 - len(release))
 
 
+class _PageDispatch:
+    async def list_tools(self, *args, **kwargs):
+        tools = await super().list_tools(*args, **kwargs)
+        projected = []
+        for tool in tools:
+            if tool.name == "list_sessions_page":
+                wire = tool.model_dump(mode="json", by_alias=True)
+                wire["inputSchema"] = {**wire["inputSchema"], "additionalProperties": False}
+                tool = type(tool).model_validate(wire)
+            projected.append(tool)
+        return projected
+
+    async def call_tool(self, name, arguments, *args, **kwargs):
+        # SDK1 captures this bound method during construction; SDK2 resolves it
+        # at dispatch. Override before construction, not by monkeypatching an
+        # initialized server or mutating private SDK argument models/managers.
+        if name == "list_sessions_page":
+            return await self._session_peer_page_result(arguments)
+        return await super().call_tool(name, arguments, *args, **kwargs)
+
+
 def _sdk_server_factory():
     # Choose by installed distribution, not by catching an ImportError: an
     # incomplete/broken SDK must fail rather than silently load another API.
@@ -772,13 +844,17 @@ def _sdk_server_factory():
     release = _sdk_release(version("mcp"))
     if release and release[0] == 1 and release >= (1, 30, 0):
         from mcp.server.fastmcp import FastMCP
-        return FastMCP
+        class PageFastMCP(_PageDispatch, FastMCP):
+            pass
+        return PageFastMCP
     if release and release[0] == 2 and release >= (2, 3, 0):
         from functools import partial
         from mcp.server.mcpserver import MCPServer
         # SDK 2.0-2.2 always expose subscriptions/listen. Only 2.3+ provides
         # the public switch to preserve this adapter's non-streaming surface.
-        return partial(MCPServer, subscriptions=False)
+        class PageMCPServer(_PageDispatch, MCPServer):
+            pass
+        return partial(PageMCPServer, subscriptions=False)
     raise ValueError("Unsupported MCP SDK version; requires stable 1.x>=1.30 or 2.x>=2.3 (<3)")
 
 
@@ -927,6 +1003,48 @@ def create_server(adapter: Adapter):
         """
         return await result(adapter.send_message(destination, target, message, dry_run, wake, wake_timeout, preset, preset_revision),
                             command=None)
+
+    async def list_sessions_page(destination: str, agent: str, include_inactive: bool = False,
+                                 limit: int = 50, cursor: str | None = None):
+        """Page one explicit authorized listing snapshot; no presets or device routes.
+
+        Strict JSON arguments are checked before SDK coercion. Complete describes
+        source discovery, not consumption or ACK; partial pages retain rows.
+        Captured-output bounds do not bound upstream discovery work.
+        """
+        # Normal transport dispatch is intercepted below before SDK coercion.
+        # Direct public function invocation retains the same strict validation.
+        return await page_result({"destination": destination, "agent": agent,
+            "include_inactive": include_inactive, "limit": limit, "cursor": cursor})
+
+    from typing import Annotated
+    from pydantic import Field, StrictBool, StrictInt
+    # Publish the same constraints enforced by raw dispatch. Assign actual types
+    # because the SDK resolves future annotations outside this local namespace.
+    list_sessions_page.__annotations__.update(
+        destination=Annotated[str, Field(min_length=1, max_length=128,
+            description="Operator-approved destination; at most 128 UTF-8 bytes.")],
+        agent=Annotated[str, Field(min_length=1, max_length=64)],
+        include_inactive=StrictBool, limit=Annotated[StrictInt, Field(ge=1, le=50)],
+        cursor=Annotated[str | None, Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")])
+    server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
+        idempotentHint=False, openWorldHint=True))(list_sessions_page)
+
+    def page_envelope(value):
+        return CallToolResult(content=[TextContent(type="text", text=json.dumps(value, ensure_ascii=False))],
+                              structuredContent=value, isError=value.get("ok") is False)
+
+    async def page_result(arguments):
+        value = await adapter.list_sessions_page(arguments,
+            measure=lambda payload: result_bytes(page_envelope(payload)))
+        envelope = page_envelope(value)
+        if result_bytes(envelope) > PAGE_OUTPUT_BYTES:
+            return page_envelope(page_refusal("result_limit"))
+        return envelope
+
+    # Only the additive tool uses raw-argument dispatch. Every legacy call is
+    # forwarded by _PageDispatch unchanged, including SDK2's context argument.
+    server._session_peer_page_result = page_result
 
     return server
 

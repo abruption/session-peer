@@ -784,6 +784,8 @@ MIT
 
 有关候选来源、各目录错误、重复 UUID 以及为发送选择确切目录的说明，请参阅[多目录 Codex 列表](multi-home-list.md)。
 
+未发布的新增功能[限制大小的MCP会话分页](mcp.md#bounded-session-listing-393)要求明确指定一个目的地和一个智能体。这是源码候选，不是新的CLI选项，也不替代现有发现方式。
+
 ### 内部扩展架构
 
 代理适配器和本地/SSH 执行共享内部带版本的契约，同时保留单文件 CLI。参见[适配器开发](agent-adapters.md)以及[架构决策](architecture/agent-transports.md)。不支持外部插件加载。`doctor.capabilities.agents` 描述了已实现的 list/send/wake/wait/ack 支持；它并不授予权限或证明就绪状态。
