@@ -24,6 +24,8 @@ installation paths.
 
 ## Development and history
 
+- [v1.6.0 preparation checkpoint (2026-11-15)](releases/v1.6.0.md) records bounded MCP pages and Claude permission-error reporting against then-published v1.5.0; preparation does not establish publication or operational rollout.
+
 - [v1.5.0 publication record](releases/v1.5.0.md#v150-publication-record) records the 2026-11-09 GitHub/PyPI publication, source and hashes; installation, services and independent skills remain separate.
 
 - [v1.5.0 preparation checkpoint (2026-11-09)](releases/v1.5.0.md) describes SDK 1/2 compatibility and dependency/test maintenance after published [v1.4.2](releases/v1.4.2.md#v142-publication-record); configuration and preparation are not publication or operational rollout.

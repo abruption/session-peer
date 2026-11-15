@@ -1,5 +1,13 @@
 # Releasing session-peer
 
+## v1.6.0 preparation
+
+Prepared on 2026-11-15 against published v1.5.0. At this checkpoint v1.6.0 was an unpublished source candidate, not a publication announcement. Integrated base: `0c5bd4243d76ac951dd70bca2b56c8a103fa4231`, before version preparation, not the final release commit. The [preparation notes](docs/releases/v1.6.0.md) cover #393/#396 bounded MCP pages and #394/#395 Claude permission-error reporting. There are seven MCP tools; existing policy/host approvals, native submission/consumption/ACK distinctions and Python/SDK floors remain. #367 and dependency/research work are excluded.
+
+The prospective `SKILL.md` asset remains independently published v0.5.1, minimum 0.9.1/full documented coverage 1.4.0 and receiver `codexBin` floor 1.0.1, with the existing exact source/hash outside wheel/sdist. No Control, service, fleet or skill rollout is included.
+
+Only release-PR preparation is requested. Require independent review, exact preparation-head and final protected-main checks, reproducible builds, current audits and fresh installations. Tag/draft creation, workflow dispatch, publication and operations are later separately authorized gates; publication must verify 7 frozen assets including `SHA256SUMS` and `release-provenance.json`, authenticated attestations and required human PyPI environment approval. Preserve every dated record below byte-for-byte and add actual publication evidence separately; never replace old immutable assets.
+
 ## Publication record — v1.5.0 (verified 2026-11-09)
 
 [GitHub v1.5.0](https://github.com/abruption/session-peer/releases/tag/v1.5.0) was published as stable/Latest and immutable at `2026-11-09T11:53:51Z`, from source `9a0b23ff5e1f83e1cee4dc22bec7e3c0ca8063bb`. PyPI uploaded the wheel at `2026-11-09T11:56:07.458092Z` and sdist at `2026-11-09T11:56:09.127893Z`; both are non-yanked and match locked asset hashes. The [publication record](docs/releases/v1.5.0.md#v150-publication-record) retains exact hashes, tag-object details and evidence links.
