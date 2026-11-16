@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -259,7 +260,7 @@ class VerifiedRelease(unittest.TestCase):
                 self.assertEqual(list(root.iterdir()), [target])
 
     @unittest.skipIf(os.name == "nt", "POSIX installer")
-    def test_installer_default_success_and_mismatch_preserve_existing_files(self):
+    def test_installer_isolates_verifier_and_preserves_release_behavior(self):
         for mode in ("success", "digest", "attestation", "version", "nonrunning", "oversized"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
@@ -284,14 +285,36 @@ class VerifiedRelease(unittest.TestCase):
                 gh = fake_bin / "gh"
                 gh.write_text('#!/bin/sh\n[ "$VERIFY_MODE" != attestation ] || exit 1\nprintf "[{}]\\n"\n')
                 gh.chmod(0o755)
-                (fake_bin / "sitecustomize.py").write_text(
+                bootstrap = (
                     'import io,json,os,urllib.request\n'
                     'fixtures=json.load(open(os.environ["RELEASE_FIXTURES"]))\n'
                     'def open_fixture(request,**kwargs):\n'
                     '    response=io.BytesIO(bytes.fromhex(fixtures[request.full_url]))\n'
                     '    response.headers={}\n'
                     '    return response\n'
-                    'urllib.request.urlopen=open_fixture\n')
+                    'urllib.request.urlopen=open_fixture\n'
+                    'exec(compile(__import__("sys").stdin.read(), "<stdin>", "exec"), '
+                    '{"__name__":"__main__"})\n')
+                python = fake_bin / "python3"
+                python.write_text(
+                    '#!/bin/sh\n'
+                    'if [ "$1" = -I ] && [ "$2" = -S ] && [ "$3" = - ]; then\n'
+                    '    shift 3\n'
+                    '    exec "$REAL_PYTHON" -I -S -c "$VERIFIER_BOOTSTRAP" "$@"\n'
+                    'fi\n'
+                    '[ "$1" != - ] || exit 97\n'
+                    'exec "$REAL_PYTHON" "$@"\n')
+                python.chmod(0o755)
+                working_directory = root / "working-directory"
+                working_directory.mkdir()
+                startup_markers = []
+                for source, directory in (("cwd", working_directory), ("pythonpath", fake_bin)):
+                    for module in ("sitecustomize", "usercustomize"):
+                        marker_path = root / f"{source}-{module}-loaded"
+                        startup_markers.append(marker_path)
+                        (directory / f"{module}.py").write_text(
+                            'from pathlib import Path\n'
+                            f'Path({str(marker_path)!r}).write_text("loaded")\n')
                 program = home / ".local/share/session-peer/session_peer.py"
                 program.parent.mkdir(parents=True)
                 program.write_bytes(b"existing installation")
@@ -304,12 +327,16 @@ class VerifiedRelease(unittest.TestCase):
                 launcher.symlink_to(program)
                 env = {**os.environ, "HOME": str(home), "PYTHONPATH": str(fake_bin),
                        "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"],
-                       "RELEASE_FIXTURES": str(fixtures), "VERIFY_MODE": mode}
+                       "RELEASE_FIXTURES": str(fixtures), "VERIFY_MODE": mode,
+                       "REAL_PYTHON": sys.executable, "VERIFIER_BOOTSTRAP": bootstrap}
                 env.pop("CLAUDE_CONFIG_DIR", None)
                 env.pop("ANTHROPIC_CONFIG_DIR", None)
                 done = subprocess.run(["sh", str(ROOT / "install.sh")], env=env,
-                                      capture_output=True, text=True, timeout=30)
+                                      cwd=working_directory, capture_output=True, text=True, timeout=30)
                 self.assertEqual(done.returncode == 0, mode == "success", done.stderr)
+                for startup_marker in startup_markers:
+                    self.assertFalse(startup_marker.exists(),
+                                     f"isolated verifier loaded {startup_marker.name}")
                 if mode == "success":
                     self.assertEqual(program.read_bytes(), runtime)
                     self.assertEqual(skill.read_bytes(), payloads["SKILL.md"])
