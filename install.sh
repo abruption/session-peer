@@ -85,7 +85,7 @@ fetch() {
 
 verify_release() {
     # Generated trusted verifier; never import or run a downloaded verifier.
-    python3 - "$1" <<'SESSION_PEER_RELEASE_VERIFIER'
+    python3 -I -S - "$1" <<'SESSION_PEER_RELEASE_VERIFIER'
 """Verify release bytes before compiling, running, or installing downloaded code."""
 
 import ast

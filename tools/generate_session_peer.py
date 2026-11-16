@@ -115,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     # Source distributions deliberately omit the installer, but retain this tool.
     if installer.is_file():
         text = installer.read_text(encoding="utf-8")
-        start_marker = "    python3 - \"$1\" <<'SESSION_PEER_RELEASE_VERIFIER'\n"
+        start_marker = "    python3 -I -S - \"$1\" <<'SESSION_PEER_RELEASE_VERIFIER'\n"
         end_marker = "\ntry:\n    print(verified_release_download(Path(sys.argv[1]), include_support=True))"
         start = text.index(start_marker) + len(start_marker)
         end = text.index(end_marker, start)
