@@ -1,5 +1,11 @@
 # session-peer 릴리스
 
+## 공개 기록 — v1.6.1 (2026-11-17 확인)
+
+[GitHub v1.6.1](https://github.com/abruption/session-peer/releases/tag/v1.6.1)은 `2026-11-17T03:19:08Z`에 안정판·Latest로 공개됐으며 불변 상태입니다. 소스는 `23ec62bf0f25cbf1cdbf6ea04710d0854ad34e80`이며 경량 태그가 그 커밋을 직접 가리킵니다. PyPI의 철회되지 않은 wheel 업로드 시각은 `2026-11-17T03:21:20.924302Z`, sdist는 `2026-11-17T03:21:22.395012Z`이고 실제 다운로드가 잠긴 자산과 일치했습니다. 정확한 해시와 별도 GitHub 설치 프로그램 자산은 [공개 기록](docs/ko/releases/v1.6.1.md#v161-publication-record)에 있으며 이 자산은 PyPI의 세 번째 파일이 아닙니다.
+
+[main CI](https://github.com/abruption/session-peer/actions/runs/44007602649) 49개, [CodeQL](https://github.com/abruption/session-peer/actions/runs/44007603025) 3개, [준비](https://github.com/abruption/session-peer/actions/runs/44008951082) 5개와 [발행](https://github.com/abruption/session-peer/actions/runs/44009347500) 6개 작업이 모두 통과했습니다. 자산 7개의 해시·출처·인증된 증명을 검증했으며 발행 후 wheel/sdist를 각각 새 환경에 독립 설치했습니다. PyPI 환경의 필수 검토자 승인을 확인했으며 이 작업에서는 승인을 자동화하거나 보호를 우회하지 않았습니다. API는 정확한 승인 시각을 제공하지 않으며 관찰한 대기 상태의 정확한 UTC 시각은 별도로 기록하지 않았습니다. 아래 모든 기록을 바이트 그대로 보존합니다. 공개는 기존 설치 수리나 전역·서비스·Control·스킬 배포, 새 네이티브·SSH·ACK 검증을 뜻하지 않습니다.
+
 ## v1.6.1 준비
 
 공개된 v1.6.0을 기준으로 2026-11-17에 준비했습니다. 이 점검에서 v1.6.1은 미공개 소스 후보입니다. 통합 기준은 `0154c33f14dc5b9a64c4a3937c2eb50901ed28a4`이며 버전 준비 전 소스로 최종 릴리스 커밋이 아닙니다. [준비 기록](docs/ko/releases/v1.6.1.md)은 #401 내장 설치 검증기 시작 격리와 #403 Ubuntu/Python 3.9 runner 고정을 다룹니다. 다른 Python/SDK 하한, 런타임 계약과 독립 스킬 v0.5.1/최소 0.9.1/전체 1.4.0은 그대로입니다. 기존 설치나 옛 불변 자산을 수리하거나 실제 악용을 입증하거나 네이티브·SSH·ACK 검증을 추가하지 않습니다. #367은 제외됩니다.

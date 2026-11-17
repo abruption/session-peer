@@ -1,5 +1,11 @@
 # Releasing session-peer
 
+## Publication record — v1.6.1 (verified 2026-11-17)
+
+[GitHub v1.6.1](https://github.com/abruption/session-peer/releases/tag/v1.6.1) was published as stable/Latest and immutable at `2026-11-17T03:19:08Z`, from source `23ec62bf0f25cbf1cdbf6ea04710d0854ad34e80`. Its lightweight tag points directly to that commit. PyPI uploaded the non-yanked wheel at `2026-11-17T03:21:20.924302Z` and sdist at `2026-11-17T03:21:22.395012Z`; actual downloads match the locked assets. The [publication record](docs/releases/v1.6.1.md#v161-publication-record) includes exact hashes and the separate GitHub installer asset, which is not a third PyPI file.
+
+All 49 [main CI](https://github.com/abruption/session-peer/actions/runs/44007602649), 3 [CodeQL](https://github.com/abruption/session-peer/actions/runs/44007603025), 5 [preparation](https://github.com/abruption/session-peer/actions/runs/44008951082) and 6 [publication](https://github.com/abruption/session-peer/actions/runs/44009347500) jobs passed. All 7 asset hashes, provenance and authenticated attestations were verified; postverification independently installed wheel/sdist in fresh environments. Required human PyPI approval was confirmed; this task did not automate approval or bypass protections. The API exposes no exact approval timestamp, and the exact UTC of the pending observation was not separately recorded. Preserve all records below byte-for-byte. Publication does not repair existing installations or imply global/service/Control/skill rollout or new native/SSH/ACK acceptance.
+
 ## v1.6.1 preparation
 
 Prepared on 2026-11-17 against published v1.6.0. At this checkpoint v1.6.1 is an unpublished source candidate. Integrated base: `0154c33f14dc5b9a64c4a3937c2eb50901ed28a4`, before version preparation, not the final release commit. The [preparation notes](docs/releases/v1.6.1.md) cover #401 embedded installer verifier startup isolation and #403's Ubuntu/Python 3.9 runner pin. Other Python/SDK floors, runtime contracts and independent skill v0.5.1/minimum 0.9.1/full 1.4.0 remain unchanged. This does not repair installed runtimes or old immutable assets, establish actual exploitation, or add native/SSH/ACK qualification. #367 is excluded.

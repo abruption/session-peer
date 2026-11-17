@@ -1,5 +1,11 @@
 # session-peerのリリース
 
+## 公開記録 — v1.6.1（2026-11-17確認）
+
+[GitHub v1.6.1](https://github.com/abruption/session-peer/releases/tag/v1.6.1)は`2026-11-17T03:19:08Z`に安定版・Latestとして公開され、不変になりました。ソースは`23ec62bf0f25cbf1cdbf6ea04710d0854ad34e80`で、軽量タグがそのコミットを直接指します。PyPIの取り下げられていないwheelのアップロードは`2026-11-17T03:21:20.924302Z`、sdistは`2026-11-17T03:21:22.395012Z`で、実際のダウンロードが固定資産と一致しました。正確なハッシュと別のGitHubインストーラー資産は[公開記録](docs/ja/releases/v1.6.1.md#v161-publication-record)にあり、この資産はPyPIの3番目のファイルではありません。
+
+[main CI](https://github.com/abruption/session-peer/actions/runs/44007602649)の49ジョブ、[CodeQL](https://github.com/abruption/session-peer/actions/runs/44007603025)の3ジョブ、[準備](https://github.com/abruption/session-peer/actions/runs/44008951082)の5ジョブ、[公開](https://github.com/abruption/session-peer/actions/runs/44009347500)の6ジョブがすべて成功しました。7資産のハッシュ・来歴・認証済み証明を検証し、公開後にwheel/sdistを別々の新規環境へ独立インストールしました。必須の人によるPyPI承認を確認し、この作業では承認の自動化や保護の迂回を行っていません。APIは正確な承認時刻を公開せず、確認した承認待ち状態の正確なUTC時刻は別途記録していません。以下の全記録をバイト単位で保存します。公開は既存インストールの修復、グローバル・サービス・Control・スキル展開、新たなネイティブ・SSH・ACK検証を意味しません。
+
 ## v1.6.1準備
 
 公開済みv1.6.0を基準に2026-11-17に準備しました。この時点でv1.6.1は未公開のソース候補です。統合基準は`0154c33f14dc5b9a64c4a3937c2eb50901ed28a4`で、バージョン準備前のソースであり最終リリースコミットではありません。[準備記録](docs/ja/releases/v1.6.1.md)は#401の埋め込みインストーラー検証器の起動隔離と#403のUbuntu/Python 3.9 runner固定を扱います。他のPython/SDK下限、ランタイム契約、独立スキルv0.5.1/最小0.9.1/全範囲1.4.0は不変です。既存インストールや旧不変資産の修復、実際の悪用の立証、ネイティブ・SSH・ACKの検証を追加しません。#367は対象外です。

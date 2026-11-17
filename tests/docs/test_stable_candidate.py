@@ -12,6 +12,59 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StableCandidate(unittest.TestCase):
+    def test_v161_publication_preserves_preparation_and_records_separate_assets(self):
+        profiles = [
+            ('', '', 'Source version: ',
+             '9142e9e065aba97d470896ab41cd8e2b0a264c084e153c01fd147bab6867d1c4',
+             '82e15f9f5f5fc2fe5f3484d6f84e9db2d631d1a6cd6d09fbd9b810bc2b668ad9',
+             '5610f1b6c5959637edbd60bafb1f93dccfb75e25e50412872234d1dbe70d98fc'),
+            ('ko/', '.ko', '소스 버전: ',
+             '9819bf1913b08ad68b81f4b15122ed2d810cdf3849e4097616f62c2745b0a50d',
+             '5907becd7f9002b0a80afa493aef9ada6585630e94c1beaada73df135fe1c9cc',
+             '4e9b06abd05840da8508465f250e9c1f80071ca865b461055969441da19ef09c'),
+            ('ja/', '.ja', 'ソースバージョン：',
+             '2be5c63c1a0365a86db7416b91030770c6bb5127233ba8ecd35ca5e20520d795',
+             'b46e31f59fb91fafb91314cfed0103f08521db20043de2117297290ca28e0bd3',
+             '2d7b9250c54c57845bbe9d7c918aa7feee4a21338be47e73f1d9c3291986fae5'),
+            ('zh-CN/', '.zh-CN', '源码版本：',
+             'bbe3e4f522a238c641be462baad9716bdccdaab3993b8e6e5802dc54d9ad27bf',
+             '820f53e6d924042f0796d0aacb06af721d6bc4de5a52f0b31e18b67a7e3f8790',
+             '171e0ac8d6b2398e0c6a94043dfe86c877a9bdc98d1c8780a24caf8339d0600e'),
+        ]
+        for locale, suffix, prefix, notes_hash, book_hash, hero_hash in profiles:
+            notes = (ROOT / ('docs/' + locale + 'releases/v1.6.1.md')).read_text(encoding='utf-8')
+            preparation, publication = notes.split('\n<a id="v161-publication-record"></a>', 1)
+            self.assertEqual(notes_hash, hashlib.sha256(preparation.encode('utf-8')).hexdigest())
+            for fact in ('23ec62bf0f25cbf1cdbf6ea04710d0854ad34e80', 'type=commit',
+                    '2026-11-17T03:19:08Z', '2026-11-17T03:21:20.924302Z', '2026-11-17T03:21:22.395012Z',
+                    'session_peer-1.6.1-py3-none-any.whl', 'session_peer-1.6.1.tar.gz',
+                    '6eaeb0e9e2598fbb3a1681c752f1d6222488cfb666c444413d290fcb0c01217c',
+                    'a04e189bfb15741c888387241ec1578138219ff84c12d3eb3f2870bd456bd5f3',
+                    'install.sh', '3ba1bac086c009691a269964e23ff66e422295a389a14ef040633b630eff1900',
+                    'session_peer.py', '0100e9646f779cef49360aa2b34ae372a6835296e804b72825fbfdc3f45f1c90',
+                    '44007602649', '44007603025', '44008951082', '44009347500', 'pypi', 'abruption',
+                    '0.5.1', '0.9.1', '1.4.0', '922512869577cc3d8b9d305641479e2dd659f0e669298584ca06f1ca15de1d31'):
+                with self.subTest(locale=locale, fact=fact):
+                    self.assertIn(fact, publication)
+            table = '\n'.join(line for line in publication.splitlines() if line.startswith('|'))
+            self.assertEqual(2, sum(line.startswith('| `session_peer-') for line in table.splitlines()))
+            self.assertNotIn('install.sh', table)
+            book = (ROOT / ('RELEASING' + suffix + '.md')).read_text(encoding='utf-8')
+            marker = {'': '## v1.6.1 preparation', '.ko': '## v1.6.1 준비',
+                      '.ja': '## v1.6.1準備', '.zh-CN': '## v1.6.1准备'}[suffix]
+            self.assertEqual(book_hash, hashlib.sha256(book[book.index(marker):].encode('utf-8')).hexdigest())
+            readme = (ROOT / ('README' + suffix + '.md')).read_text(encoding='utf-8')
+            self.assertEqual(hero_hash, hashlib.sha256(readme.split(prefix, 1)[0].encode('utf-8')).hexdigest())
+            notice = next(line for line in readme.splitlines() if line.startswith(prefix))
+            for fact in ('**1.6.1**', 'releases/v1.6.1.md#v161-publication-record',
+                         'https://pypi.org/project/session-peer/1.6.1/', 'releases/v1.6.0.md#v160-publication-record'):
+                self.assertIn(fact, notice)
+        publication = (ROOT / 'docs/releases/v1.6.1.md').read_text(encoding='utf-8').split(
+            '<a id="v161-publication-record"></a>', 1)[1]
+        for boundary in ('not a third PyPI file', 'exact UTC of that observation was not separately recorded',
+                         'no exact approval timestamp', 'This task did not automate approval', 'not a repair'):
+            self.assertIn(boundary, publication)
+
     def test_v161_preparation_keeps_patch_scope_and_publication_gates(self):
         histories = [
             ('', '', '## Publication record — v1.6.0 (verified 2026-11-15)',
@@ -26,7 +79,7 @@ class StableCandidate(unittest.TestCase):
         for locale, suffix, marker, digest in histories:
             book = (ROOT / ('RELEASING' + suffix + '.md')).read_text(encoding='utf-8')
             self.assertEqual(digest, hashlib.sha256(book[book.index(marker):].encode('utf-8')).hexdigest())
-            notes = (ROOT / ('docs/' + locale + 'releases/v1.6.1.md')).read_text(encoding='utf-8')
+            notes = (ROOT / ('docs/' + locale + 'releases/v1.6.1.md')).read_text(encoding='utf-8').split('\n<a id="v161-publication-record"></a>', 1)[0]
             for fact in ('2026-11-17', '1.6.1', '1.6.0', '0154c33f14dc5b9a64c4a3937c2eb50901ed28a4',
                     '#401', '#403', 'f133153b32f68e39061d9c49d91e5042359e888f', 'python3 -I -S -',
                     'PYTHONPATH', 'sitecustomize', 'usercustomize', 'ubuntu-24.04', '3.9', '49', '44003241812',
