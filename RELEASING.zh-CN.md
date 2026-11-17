@@ -1,5 +1,11 @@
 # 发布session-peer
 
+## 发布记录 — v1.6.1（2026-11-17核实）
+
+[GitHub v1.6.1](https://github.com/abruption/session-peer/releases/tag/v1.6.1)于`2026-11-17T03:19:08Z`作为稳定版/Latest发布且为不可变状态。源码为`23ec62bf0f25cbf1cdbf6ea04710d0854ad34e80`，轻量标签直接指向此提交。PyPI未撤回wheel的上传时间为`2026-11-17T03:21:20.924302Z`，sdist为`2026-11-17T03:21:22.395012Z`，实际下载匹配锁定资产。准确哈希及单独的GitHub安装程序资产见[发布记录](docs/zh-CN/releases/v1.6.1.md#v161-publication-record)；此资产不是第三个PyPI文件。
+
+[main CI](https://github.com/abruption/session-peer/actions/runs/44007602649)的49项、[CodeQL](https://github.com/abruption/session-peer/actions/runs/44007603025)的3项、[准备](https://github.com/abruption/session-peer/actions/runs/44008951082)的5项及[发布](https://github.com/abruption/session-peer/actions/runs/44009347500)的6项作业全部成功。已验证7项资产的哈希、来源记录及认证的证明，并在发布后分别于独立新环境中安装wheel/sdist。已确认必需的人工PyPI批准，本任务没有自动批准或绕过保护。API不提供准确批准时间，观察到待批准状态的准确UTC时间未单独记录。逐字节保留以下全部记录。发布不表示修复既有安装、全局/服务/Control/技能部署，或新增原生/SSH/ACK验证。
+
 ## v1.6.1准备
 
 于2026-11-17基于已发布v1.6.0准备。在此检查点v1.6.1仍是未发布源码候选版。集成基准为`0154c33f14dc5b9a64c4a3937c2eb50901ed28a4`，是版本准备前源码，并非最终发布提交。[准备记录](docs/zh-CN/releases/v1.6.1.md)涵盖#401内嵌安装验证器启动隔离及#403 Ubuntu/Python 3.9 runner固定。其他Python/SDK下限、运行时契约以及独立技能v0.5.1/最低0.9.1/完整1.4.0保持不变。不修复既有安装或旧不可变资产、不证明实际利用，也不新增原生/SSH/ACK验证。#367不在范围内。

@@ -7,8 +7,8 @@
     "zh-CN"
   ],
   "sources": {
-    "README.md": "2eb07a06e5453a209a20e56eb86ffc7782e9a8cbb87fc5746574d2bbf1f2b81f",
-    "RELEASING.md": "5b6de948c577aadbed45b13d718c7cc999662dde73a1392e6f441909c583bd04",
+    "README.md": "05347c4edb6ced68a4c907c18d5a83a6ededd84d08f287e93b423e8a9f83d6d9",
+    "RELEASING.md": "db6a1657a2b723073f780f2efa5aa3b191845ed4c168b00b0772de920efdf621",
     "SECURITY.md": "664a18269b49508c204276a9f52777e2357a74a183fc724f5028cbb0b6233e50",
     "docs/README.md": "b8dc37a3c94014a593fb9529cc8e15968ab06d52cbd226c8012151009c863b1b",
     "docs/agent-adapters.md": "bf185d3121c94829bb412071a25c4d943302e10a6b2e713111e653b8f8c3ea91",
@@ -61,7 +61,7 @@
     "docs/releases/v1.4.2.md": "ef7c0cc5ddb04016b9b5ca1a886b3edf0f51c7f5d968a90a368a5394254b9f87",
     "docs/releases/v1.5.0.md": "5e5cd23933264be97d3ed8e737efb229198e5cb61eb0837201ad6dcbd7082ce3",
     "docs/releases/v1.6.0.md": "dc0a8c998da2917ee86ac57c2883f1b19fa77e4931a47936c0dea528c661ca0a",
-    "docs/releases/v1.6.1.md": "9142e9e065aba97d470896ab41cd8e2b0a264c084e153c01fd147bab6867d1c4",
+    "docs/releases/v1.6.1.md": "096acf6dc8b53f90a63d78e2e9fb1db02a76e467cbae13ec0675a701b1d374f6",
     "docs/validation/69-rc.md": "70c3f0525e652f767358ad24efa78960c18f96f54c96d3c6bdbd6f97dfbf1dee",
     "docs/validation/85-antigravity.md": "f89b175191cd98ab03d4029b487065133814b3c8dd8de8cd0a5cc367e2579e4f",
     "docs/wake.md": "cde135da2ea7be21c815bb265e694f737dbe467d8e76bb82eb118e3b86e29d22",
