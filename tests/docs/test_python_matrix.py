@@ -41,8 +41,21 @@ def cells(name):
         axes.append((key, scalars))
     result = {tuple(zip((key for key, _ in axes), values))
               for values in product(*(values for _, values in axes))} if axes else set()
-    includes = re.findall(r'^          - os: ([^\n]+)\n            python: \'([^\']+)\'$', text, re.M)
-    result.update((('os', os_name), ('python', python)) for os_name, python in includes)
+    # Only the literal os/python modifier pairs used here are supported.
+    # Keep excludes out of include expansion and apply exclusion first.
+    for modifier in ('exclude', 'include'):
+        section = re.search(r'^        ' + modifier + r':\n((?: {10,}.+\n)+)', text, re.M)
+        if section is None:
+            continue
+        pairs = re.findall(r'^          - os: ([^\n]+)\n            python: \'([^\']+)\'$',
+                           section.group(1), re.M)
+        if len(pairs) != len(re.findall(r'^          - ', section.group(1), re.M)):
+            raise AssertionError('Unsupported matrix modifier')
+        entries = {(('os', os_name), ('python', python)) for os_name, python in pairs}
+        if modifier == 'exclude':
+            result.difference_update(entries)
+        else:
+            result.update(entries)
     return [dict(cell) for cell in result]
 
 
@@ -50,6 +63,8 @@ class PythonMatrix(unittest.TestCase):
     def test_core_floors_new_posix_interpreter_and_windows_are_retained(self):
         actual = {(x['os'], x['python']) for x in cells('test')}
         expected = set(product(('ubuntu-latest', 'macos-latest'), ('3.9', '3.13', '3.14')))
+        expected.remove(('ubuntu-latest', '3.9'))
+        expected.add(('ubuntu-24.04', '3.9'))
         expected.add(('windows-latest', '3.13'))
         self.assertEqual(expected, actual)
         for suite in ('core', 'adapters', 'codex', 'distribution'):

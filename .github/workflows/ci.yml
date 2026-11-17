@@ -53,7 +53,13 @@ jobs:
         # 3.9 is the floor the README promises; macOS is half the fleet.
         os: [ubuntu-latest, macos-latest]
         python: ['3.9', '3.13', '3.14']
+        # Python 3.9 builds are unavailable for Ubuntu 26.04 (ubuntu-latest).
+        exclude:
+          - os: ubuntu-latest
+            python: '3.9'
         include:
+          - os: ubuntu-24.04
+            python: '3.9'
           - os: windows-latest
             python: '3.13'
     steps:
