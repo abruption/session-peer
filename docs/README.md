@@ -24,6 +24,7 @@ installation paths.
 
 ## Development and history
 
+- [v1.6.1 preparation (2026-11-17)](releases/v1.6.1.md) covers installer-verifier startup isolation and the Python 3.9 CI runner pin; publication remains gated.
 - [v1.6.0 preparation checkpoint (2026-11-15)](releases/v1.6.0.md) records bounded MCP pages and Claude permission-error reporting against then-published v1.5.0; preparation does not establish publication or operational rollout.
 
 - [v1.5.0 publication record](releases/v1.5.0.md#v150-publication-record) records the 2026-11-09 GitHub/PyPI publication, source and hashes; installation, services and independent skills remain separate.

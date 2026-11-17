@@ -12,6 +12,39 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class StableCandidate(unittest.TestCase):
+    def test_v161_preparation_keeps_patch_scope_and_publication_gates(self):
+        histories = [
+            ('', '', '## Publication record — v1.6.0 (verified 2026-11-15)',
+             '32154ab7f6aba91578e38cbcc40d61a03a6a02a5d453f18a0caeb21da5625ac2'),
+            ('ko/', '.ko', '## 공개 기록 — v1.6.0 (2026-11-15 확인)',
+             'dce6290f48251f24a25ed4ab709804cd46f3dc36b89c4aee5dca7e662c5d645b'),
+            ('ja/', '.ja', '## 公開記録 — v1.6.0（2026-11-15確認）',
+             'c9c8861361fb94536c80953ab16b252638a99278982e540b0300942153de1a7f'),
+            ('zh-CN/', '.zh-CN', '## 发布记录 — v1.6.0（2026-11-15核实）',
+             'b5a1860fdd6206709f562983e03d949f5972a0f0b852f6ed2d5cdf12edb303da'),
+        ]
+        for locale, suffix, marker, digest in histories:
+            book = (ROOT / ('RELEASING' + suffix + '.md')).read_text(encoding='utf-8')
+            self.assertEqual(digest, hashlib.sha256(book[book.index(marker):].encode('utf-8')).hexdigest())
+            notes = (ROOT / ('docs/' + locale + 'releases/v1.6.1.md')).read_text(encoding='utf-8')
+            for fact in ('2026-11-17', '1.6.1', '1.6.0', '0154c33f14dc5b9a64c4a3937c2eb50901ed28a4',
+                    '#401', '#403', 'f133153b32f68e39061d9c49d91e5042359e888f', 'python3 -I -S -',
+                    'PYTHONPATH', 'sitecustomize', 'usercustomize', 'ubuntu-24.04', '3.9', '49', '44003241812',
+                    '0.5.1', '0.9.1', '1.4.0', '1.0.1', '31688',
+                    '922512869577cc3d8b9d305641479e2dd659f0e669298584ca06f1ca15de1d31',
+                    'SHA256SUMS', 'release-provenance.json', '#367'):
+                with self.subTest(locale=locale, fact=fact):
+                    self.assertIn(fact, notes)
+            self.assertNotIn('releases/tag/v1.6.1', notes)
+            self.assertNotIn('pypi.org/project/session-peer/1.6.1/', notes)
+            self.assertIn('releases/v1.6.1.md', (ROOT / ('docs/' + locale + 'README.md')).read_text(encoding='utf-8'))
+        english = (ROOT / 'docs/releases/v1.6.1.md').read_text(encoding='utf-8')
+        for boundary in ('unpublished source candidate', 'not the final release commit',
+                'does not isolate every Python invocation', 'repair existing installations',
+                'does not replace independent review', 'required human PyPI environment approval',
+                'does not waive that approval', 'does not install globally'):
+            self.assertIn(boundary, english)
+
     def test_v160_publication_preserves_preparation_and_current_availability(self):
         source = "8a45803748baf371dd31bb33db5db68373cd45f5"
         histories = {
@@ -551,8 +584,8 @@ class StableCandidate(unittest.TestCase):
             self.assertIn(marker, english)
 
     def test_package_and_generated_core_version_agree(self):
-        self.assertEqual(session_peer.__version__, "1.6.0")
-        self.assertIn('__version__ = "1.6.0"',
+        self.assertEqual(session_peer.__version__, "1.6.1")
+        self.assertIn('__version__ = "1.6.1"',
                       (ROOT / "session_peer_core/common.py").read_text(encoding="utf-8"))
 
     def test_current_readmes_and_runbooks_match_source_version(self):
@@ -591,16 +624,16 @@ class StableCandidate(unittest.TestCase):
 
     def test_stable_release_keeps_operational_deployment_separate(self):
         profiles = (
-            ("", "Source version: **1.6.0**",
+            ("", "Source version: **1.6.1**",
              "At the 2026-10-28 preparation checkpoint, the last verified published stable release was **1.3.1**.",
              "Development candidate 1.2.1 is unpublished"),
-            (".ko", "소스 버전: **1.6.0**",
+            (".ko", "소스 버전: **1.6.1**",
              "2026-10-28 준비 시점의 마지막 확인 공개 안정판은 **1.3.1**이었습니다.",
              "개발 후보 1.2.1은 미공개입니다"),
-            (".ja", "ソースバージョン：**1.6.0**",
+            (".ja", "ソースバージョン：**1.6.1**",
              "2026-10-28の準備時点で、最後に確認した公開済み安定版は**1.3.1**でした。",
              "開発候補1.2.1は未公開です"),
-            (".zh-CN", "源码版本：**1.6.0**",
+            (".zh-CN", "源码版本：**1.6.1**",
              "在2026-10-28的准备检查时，最后确认的已发布稳定版本为**1.3.1**。",
              "开发候选版本1.2.1尚未发布"),
         )
