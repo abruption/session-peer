@@ -1,5 +1,13 @@
 # Releasing session-peer
 
+## v1.6.1 preparation
+
+Prepared on 2026-11-17 against published v1.6.0. At this checkpoint v1.6.1 is an unpublished source candidate. Integrated base: `0154c33f14dc5b9a64c4a3937c2eb50901ed28a4`, before version preparation, not the final release commit. The [preparation notes](docs/releases/v1.6.1.md) cover #401 embedded installer verifier startup isolation and #403's Ubuntu/Python 3.9 runner pin. Other Python/SDK floors, runtime contracts and independent skill v0.5.1/minimum 0.9.1/full 1.4.0 remain unchanged. This does not repair installed runtimes or old immutable assets, establish actual exploitation, or add native/SSH/ACK qualification. #367 is excluded.
+
+The owner has authorized preparation, normal review/merge, tagging and publication. Require independent review, exact preparation-head and final protected-main checks, reproducible artifacts, current audits and fresh wheel/sdist installs. Verify all 7 frozen assets including `SHA256SUMS` and `release-provenance.json`, exact tag/source and authenticated attestations; required human PyPI environment approval remains mandatory even when private login/binding rechecks are omitted. Do not bypass protections or announce availability before verification. Global installs, receivers, MCP server restarts, Node Control and skill rollout remain separate.
+
+Preserve every record below byte-for-byte. Add actual GitHub/PyPI publication evidence separately; never rebuild or replace old tags/assets for wording changes.
+
 ## Publication record — v1.6.0 (verified 2026-11-15)
 
 [GitHub v1.6.0](https://github.com/abruption/session-peer/releases/tag/v1.6.0) was published as stable/Latest and immutable at `2026-11-15T05:34:06Z`. Its lightweight tag points directly to source `8a45803748baf371dd31bb33db5db68373cd45f5`; it is not an annotated tag. PyPI uploaded the non-yanked wheel at `2026-11-15T05:36:12.216330Z` and sdist at `2026-11-15T05:36:13.738944Z`. Actual downloads match the locked assets; exact hashes and tag details are in the [publication record](docs/releases/v1.6.0.md#v160-publication-record).

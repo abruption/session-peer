@@ -1,5 +1,13 @@
 # 发布session-peer
 
+## v1.6.1准备
+
+于2026-11-17基于已发布v1.6.0准备。在此检查点v1.6.1仍是未发布源码候选版。集成基准为`0154c33f14dc5b9a64c4a3937c2eb50901ed28a4`，是版本准备前源码，并非最终发布提交。[准备记录](docs/zh-CN/releases/v1.6.1.md)涵盖#401内嵌安装验证器启动隔离及#403 Ubuntu/Python 3.9 runner固定。其他Python/SDK下限、运行时契约以及独立技能v0.5.1/最低0.9.1/完整1.4.0保持不变。不修复既有安装或旧不可变资产、不证明实际利用，也不新增原生/SSH/ACK验证。#367不在范围内。
+
+所有者已授权准备、正常审查/合并、创建标签及发布。仍须完成独立审查、准确准备head及最终受保护main检查、可复现资产、当前审计和新环境wheel/sdist安装检查。验证包括`SHA256SUMS`与`release-provenance.json`的全部7项固定资产、准确标签/源码及已认证attestation；即使省略私有登录/binding复查，必需的人工PyPI环境批准仍须保留。不得绕过保护或在验证前宣布可用。全局安装、receiver、MCP服务器重启、Node Control及技能推广仍相互独立。
+
+逐字节保留以下全部记录。实际GitHub/PyPI发布证据须另行添加；不得为修改文字而重建或替换旧标签/资产。
+
 ## 发布记录 — v1.6.0（2026-11-15核实）
 
 [GitHub v1.6.0](https://github.com/abruption/session-peer/releases/tag/v1.6.0)于`2026-11-15T05:34:06Z`作为稳定版/Latest发布且为不可变状态。轻量标签直接指向源码`8a45803748baf371dd31bb33db5db68373cd45f5`，不是附注标签。PyPI未撤回wheel的上传时间为`2026-11-15T05:36:12.216330Z`，sdist为`2026-11-15T05:36:13.738944Z`。实际下载匹配锁定资产，准确哈希及标签说明见[发布记录](docs/zh-CN/releases/v1.6.0.md#v160-publication-record)。
