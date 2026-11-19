@@ -16,10 +16,10 @@
     "db:migrate": "tsx src/server/migrate.ts"
   },
   "dependencies": {
-    "@better-auth/core": "1.7.18",
-    "better-auth": "1.7.18",
+    "@better-auth/core": "1.7.25",
+    "better-auth": "1.7.25",
     "better-sqlite3": "12.8.0",
-    "jose": "6.2.15",
+    "jose": "6.2.17",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
