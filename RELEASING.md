@@ -1,5 +1,9 @@
 # Releasing session-peer
 
+## v1.6.2 preparation
+
+2026-11-19. The v1.6.2 source candidate includes Vite 8.3.8 from #407 (GHSA-p4f5-76q4-ffq7) and better-sqlite3 12.8.0, which bundles the SQLite 3.51.3 WAL-reset fix. Control deployments build from verified source and its lockfile. Verify the Python wheel and sdist separately.
+
 ## Publication record — v1.6.1 (verified 2026-11-17)
 
 [GitHub v1.6.1](https://github.com/abruption/session-peer/releases/tag/v1.6.1) was published as stable/Latest and immutable at `2026-11-17T03:19:08Z`, from source `23ec62bf0f25cbf1cdbf6ea04710d0854ad34e80`. Its lightweight tag points directly to that commit. PyPI uploaded the non-yanked wheel at `2026-11-17T03:21:20.924302Z` and sdist at `2026-11-17T03:21:22.395012Z`; actual downloads match the locked assets. The [publication record](docs/releases/v1.6.1.md#v161-publication-record) includes exact hashes and the separate GitHub installer asset, which is not a third PyPI file.
