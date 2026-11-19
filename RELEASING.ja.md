@@ -1,5 +1,9 @@
 # session-peerのリリース
 
+## v1.6.2 準備
+
+2026-11-19. v1.6.2のソース候補には、#407のVite 8.3.8の修正（GHSA-p4f5-76q4-ffq7）と、SQLite 3.51.3のWALリセット修正を含むbetter-sqlite3 12.8.0が入ります。Controlは検証済みのソースとロックファイルからビルドします。Pythonのwheelとsdistは別途検証します。
+
 ## 公開記録 — v1.6.1（2026-11-17確認）
 
 [GitHub v1.6.1](https://github.com/abruption/session-peer/releases/tag/v1.6.1)は`2026-11-17T03:19:08Z`に安定版・Latestとして公開され、不変になりました。ソースは`23ec62bf0f25cbf1cdbf6ea04710d0854ad34e80`で、軽量タグがそのコミットを直接指します。PyPIの取り下げられていないwheelのアップロードは`2026-11-17T03:21:20.924302Z`、sdistは`2026-11-17T03:21:22.395012Z`で、実際のダウンロードが固定資産と一致しました。正確なハッシュと別のGitHubインストーラー資産は[公開記録](docs/ja/releases/v1.6.1.md#v161-publication-record)にあり、この資産はPyPIの3番目のファイルではありません。

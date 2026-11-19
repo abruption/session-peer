@@ -1,5 +1,9 @@
 # session-peer 릴리스
 
+## v1.6.2 준비
+
+2026-11-19. v1.6.2 소스 후보에는 #407의 Vite 8.3.8 보안 수정(GHSA-p4f5-76q4-ffq7)과 SQLite 3.51.3의 WAL 재설정 수정을 포함한 better-sqlite3 12.8.0이 들어 있습니다. Control은 검증된 소스와 잠금 파일로 빌드합니다. Python wheel과 sdist는 별도로 검증합니다.
+
 ## 공개 기록 — v1.6.1 (2026-11-17 확인)
 
 [GitHub v1.6.1](https://github.com/abruption/session-peer/releases/tag/v1.6.1)은 `2026-11-17T03:19:08Z`에 안정판·Latest로 공개됐으며 불변 상태입니다. 소스는 `23ec62bf0f25cbf1cdbf6ea04710d0854ad34e80`이며 경량 태그가 그 커밋을 직접 가리킵니다. PyPI의 철회되지 않은 wheel 업로드 시각은 `2026-11-17T03:21:20.924302Z`, sdist는 `2026-11-17T03:21:22.395012Z`이고 실제 다운로드가 잠긴 자산과 일치했습니다. 정확한 해시와 별도 GitHub 설치 프로그램 자산은 [공개 기록](docs/ko/releases/v1.6.1.md#v161-publication-record)에 있으며 이 자산은 PyPI의 세 번째 파일이 아닙니다.

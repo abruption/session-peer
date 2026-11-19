@@ -1,5 +1,9 @@
 # 发布session-peer
 
+## v1.6.2 准备
+
+2026-11-19. v1.6.2源码候选包含 #407 的 Vite 8.3.8 修复（GHSA-p4f5-76q4-ffq7），以及内置 SQLite 3.51.3 WAL 重置修复的 better-sqlite3 12.8.0。Control 使用经过验证的源码和锁定文件构建。请单独验证 Python wheel 和 sdist。
+
 ## 发布记录 — v1.6.1（2026-11-17核实）
 
 [GitHub v1.6.1](https://github.com/abruption/session-peer/releases/tag/v1.6.1)于`2026-11-17T03:19:08Z`作为稳定版/Latest发布且为不可变状态。源码为`23ec62bf0f25cbf1cdbf6ea04710d0854ad34e80`，轻量标签直接指向此提交。PyPI未撤回wheel的上传时间为`2026-11-17T03:21:20.924302Z`，sdist为`2026-11-17T03:21:22.395012Z`，实际下载匹配锁定资产。准确哈希及单独的GitHub安装程序资产见[发布记录](docs/zh-CN/releases/v1.6.1.md#v161-publication-record)；此资产不是第三个PyPI文件。
