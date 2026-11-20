@@ -1,6 +1,6 @@
 # Experimental handoff runtime
 
-Dry-run validates the original prepared target, not a newly resolved replacement. Claude keeps the original PID/generation check; Codex rechecks and compares the original home/writer context. Changed evidence refuses without native submission and never rewrites the prepared binding.
+Dry-run checks the target recorded during preparation. It never picks a replacement. For Claude, it keeps the original PID and generation check. For Codex, it checks the home and writer again and compares them with the original record. If the evidence changes, the command refuses the request. It submits nothing to the agent and keeps the prepared target binding.
 
 This guide describes the limited experimental handoff implementation shipped in Python v1.1.0 on 2026-10-09 for [#181](https://github.com/abruption/session-peer/issues/181). The [frozen Handoff v1 design](contracts/handoff-v1.md) and its synthetic fixture are unchanged. Publication does not complete every design acceptance gate or certify every platform or live-agent route.
 

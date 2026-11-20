@@ -1,9 +1,6 @@
 # Diagnostics and reply-address contract
 
-`session-peer doctor` inspects the machine that owns the target sessions. With
-`--host`, the same standard-library script runs on that host over SSH, so paths,
-users, processes, sockets, and databases are evaluated in the correct security
-boundary.
+`session-peer doctor` checks the machine where the target sessions run. With `--host`, it runs the same standard-library script on that host over SSH. It checks paths, users, processes, sockets, and databases in that host’s security context.
 
 The command is read-only. It does not connect to a Claude inbox, submit a Codex
 queue item, scan arbitrary filesystem roots, change permissions, enroll an SSH
