@@ -1,2 +1,2 @@
 # Current compatible 1.x; minimum is tested independently.
-mcp>=1.30,<2
+mcp>=2.3.0,<3
