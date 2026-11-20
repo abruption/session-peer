@@ -90,7 +90,8 @@ it("issues first-party device session only after code verification and explicit 
     {},
   );
   expect(disallowedPoll.status).toBe(400);
-  expect((await disallowedPoll.json()).error).toBe("invalid_grant");
+  // Better Auth rejects an unknown client before validating the grant.
+  expect((await disallowedPoll.json()).error).toBe("invalid_client");
   const headers = { cookie: f.cookie, origin: f.config.origin };
   const claim = await f.request(
     "/api/auth/device?user_code=" + code.user_code,
