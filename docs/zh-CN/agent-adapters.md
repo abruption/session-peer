@@ -1,6 +1,6 @@
 # 开发内部 agent 适配器
 
-这是一份源码扩展指南，而非外部插件安装接口。有关契约版本控制、兼容性、结果语义和信任边界，请参见[架构决策](architecture/agent-transports.md)。
+本指南介绍如何在源码中添加适配器。外部插件的安装不在本指南范围内。有关适配器契约的版本管理、兼容性、结果含义和信任范围，请参见[架构决策](architecture/agent-transports.md)。
 
 适配器子类化 `AgentAdapter`，声明一个唯一的小写 `name`，并实现 `list(context)` 和 `submit(context, text)`。在 `main()` 执行前使用 `AGENTS.register(...)` 显式注册它。如果必须通过 SSH 工作，请将其实现保留在独立源码中。对于基本的新适配器，无需更改 CLI 路由器或 SSH 派发器。
 
