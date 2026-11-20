@@ -1,8 +1,6 @@
 # Developing an internal agent adapter
 
-This is a source-extension guide, not an external plugin installation interface.
-See the [architecture decision](architecture/agent-transports.md) for contract
-versioning, compatibility, result semantics and trust boundaries.
+Use this guide to add an adapter in the source tree. It does not cover installing external plugins. The [architecture decision](architecture/agent-transports.md) explains how adapter contracts are versioned, which changes are compatible, what results mean, and what each adapter can trust.
 
 An adapter subclasses `AgentAdapter`, declares a unique lowercase `name`, and
 implements `list(context)` and `submit(context, text)`. Register it explicitly

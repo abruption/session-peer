@@ -2,10 +2,7 @@
 
 [Back to the overview](../README.md)
 
-This guide is concise input for a coding agent or AI assistant. It helps the
-assistant choose the smallest session-peer setup, perform the work, validate the
-result, and report any remaining limits. It does not grant new permissions or
-turn a submitted message into proof that the receiving agent read it.
+Give this guide to a coding agent or AI assistant. It explains how to choose a session-peer setup with only the components you need, check that it works, and report any limits. The assistant still needs permission for the work. A submitted message alone cannot tell you whether the receiving agent read it.
 
 ## Copy this request
 
