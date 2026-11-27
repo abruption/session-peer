@@ -1,12 +1,10 @@
 # 私有中继控制与认证 (v1.0)
 
-状态：已实现的 control-to-relay 协约的 v1.0 运维参考文档。
-Abruption 托管部署与软件包发布分别运营；本文不保证服务可用性。
-普通 Python 安装不会增加侦听器、OAuth 账户或 Node 依赖。
+本文是自行部署 Control 和 Relay 的 v1.0 运维参考。Abruption 托管的 Relay（`relay.abruption.dev`）已于 2026-11-27 停用。请使用自己部署的主机名和 OAuth 回调地址。普通 Python 安装不会添加侦听端口、OAuth 账号或 Node 依赖。[停用公告](https://github.com/abruption/session-peer/issues/413)
 
 ## 信任边界
 
-`control/` 是一个独立的 Node 22/24 React/Vite + BetterAuth **1.7.5** 服务。
+`control/` 是一个独立的 Node 22/24 React/Vite + Better Auth 服务。
 GitHub 和 Google 是唯一配置的登录提供商。缺失提供商
 凭据不会暴露任何虚假登录。密码登录/注册已被禁用。OAuth
 账户 ID 是授权身份，而非电子邮件地址。每次 control
@@ -70,8 +68,8 @@ CLI 会显示 `login_expired`。请再次执行显式设备登录；HTTP 403 仍
 OAuth 回调（需要运维人员应用配置）：
 
 ```
-https://relay.abruption.dev/api/auth/callback/github
-https://relay.abruption.dev/api/auth/callback/google
+https://relay.example.com/api/auth/callback/github
+https://relay.example.com/api/auth/callback/google
 ```
 
 ## control API (v1.0)
@@ -240,7 +238,7 @@ OAuth 登录/注册不会取代端点 E2EE 配对/PIN 策略。
 密钥。React 路由为 `/admin/metrics`，每 30 秒刷新一次
 汇总视图。
 
-`admin.abruption.dev` 继续作为现有的 Authelia 管理门户。其根路径和
+Abruption 的部署使用 `admin.abruption.dev` 作为 Authelia 管理门户。其根路径和
 `/api/*` 路由已由认证控制台占用。将 session-peer 与精确的 `/session-peer` 门户页面集成，
 并用 Authelia 同时保护该页面和 `/session-peer/api/metrics`。聚合 API 由
 独立的 `127.0.0.1:3771` 监听器提供，绝不能经由公共中继主机路由。这样
@@ -316,7 +314,7 @@ npm run build
 
 ```
 NODE_ENV=production
-SESSION_PEER_CONTROL_ORIGIN=https://relay.abruption.dev
+SESSION_PEER_CONTROL_ORIGIN=https://relay.example.com
 SESSION_PEER_ALLOWED_ACCOUNTS=[{"provider":"github","accountId":"REPLACE_WITH_NUMERIC_PROVIDER_ID"}]
 SESSION_PEER_PUBLIC_SIGNUP=true
 SESSION_PEER_CONTROL_DATA=/var/lib/session-peer-control/private

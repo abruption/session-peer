@@ -1,12 +1,10 @@
 # プライベートリレーの制御と認証 (v1.0)
 
-ステータス: 実装済みの control-to-relay 契約に関する v1.0 運用者向け文書です。
-Abruption のホスト型サービスはパッケージ公開とは別に運用され、この文書は可用性を保証しません。
-通常の Python インストール環境にリスナー、OAuth アカウント、Node 依存関係は追加されません。
+自分で運用する Control と Relay の v1.0 運用者向け資料です。Abruption のホスト型 Relay（`relay.abruption.dev`）は 2026-11-27 に終了しました。配備には自分の環境のホスト名と OAuth コールバックを使います。通常の Python インストールでリスナー、OAuth アカウント、Node 依存関係が追加されることはありません。[終了のお知らせ](https://github.com/abruption/session-peer/issues/413)
 
 ## 信頼境界
 
-`control/` は、独立した Node 22/24 React/Vite + BetterAuth **1.7.5** サービスです。
+`control/` は、独立した Node 22/24 React/Vite + Better Auth サービスです。
 GitHub と Google のみが構成されたログインプロバイダーです。プロバイダーの
 認証情報が不足していても、偽のログインが公開されることはありません。パスワードによるログイン／登録は無効化されています。メールアドレスではなく、
 OAuth アカウント ID が認可のアイデンティティとなります。すべての control
@@ -79,8 +77,8 @@ Sessions API は不透明なセッション ID とメタデータのみを返し
 OAuth コールバック（オペレーターのアプリ構成が必要）:
 
 ```
-https://relay.abruption.dev/api/auth/callback/github
-https://relay.abruption.dev/api/auth/callback/google
+https://relay.example.com/api/auth/callback/github
+https://relay.example.com/api/auth/callback/google
 ```
 
 ## control API (v1.0)
@@ -249,7 +247,7 @@ OAuth ログイン／登録は、エンドポイントの E2EE ペアリング�
 シークレットは決して返されません。React ルートは `/admin/metrics` であり、30 秒ごとに
 集計ビューを更新します。
 
-`admin.abruption.dev` は既存の Authelia 管理ポータルとして維持します。
+Abruption の配備では、`admin.abruption.dev` を Authelia の管理ポータルとして使用します。
 ルートと `/api/*` はすでに認証コンソールが所有しています。session-peer を正確な
 `/session-peer` ポータルページに統合し、そのページと `/session-peer/api/metrics` の両方を
 Authelia で保護してください。集約 API は独立した `127.0.0.1:3771`
@@ -328,7 +326,7 @@ npm run build
 
 ```
 NODE_ENV=production
-SESSION_PEER_CONTROL_ORIGIN=https://relay.abruption.dev
+SESSION_PEER_CONTROL_ORIGIN=https://relay.example.com
 SESSION_PEER_ALLOWED_ACCOUNTS=[{"provider":"github","accountId":"REPLACE_WITH_NUMERIC_PROVIDER_ID"}]
 SESSION_PEER_PUBLIC_SIGNUP=true
 SESSION_PEER_CONTROL_DATA=/var/lib/session-peer-control/private

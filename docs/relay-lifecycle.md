@@ -241,6 +241,8 @@ revision high-water mark and must be preserved for the service's lifetime.
 
 ## KR service backup and restore staging
 
+The KR backup procedure below records the hosted deployment before its retirement on 2026-11-27. For a self-hosted deployment, review your own services and restore procedure. [Retirement notice](https://github.com/abruption/session-peer/issues/413)
+
 The deployed KR service uses `deploy/ops/abruption-kr/session-peer-backup-snapshot.py` before
 its encrypted Restic job. The helper briefly stops the coordinated stack and
 creates a root-only recovery set containing a transactionally consistent control

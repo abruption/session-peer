@@ -26,8 +26,7 @@ At the end report: outcome, files or systems changed, commands and tests run, me
 - 对同一台机器或SSH主机上的会话，只安装核心CLI。
 - 仅在目标代理需要时配置可选适配器。
 - 仅在MCP客户端需要session-peer工具时添加MCP。
-- 仅当SSH不合适且运维人员接受额外的身份、恢复和服务工作时，
-  才使用配对设备或加密中继。
+- 仅在可以通过私有 TCP 访问接收端时使用 Direct 配对。Abruption 托管的 Relay 已于 2026-11-27 停用。自行部署中继需要运维人员另行批准并配置。[停用公告](https://github.com/abruption/session-peer/issues/413)
 
 不要仅仅因为仓库中包含中继代码就部署中继。普通使用应继续默认采用
 依赖更少、更简单的本地或SSH工作流。

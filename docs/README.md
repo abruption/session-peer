@@ -18,13 +18,13 @@ installation paths.
 
 ## Paired devices and operators
 
-- [Paired devices](paired-devices.md) is the user path for direct or hosted end-to-end encrypted relay use.
+- [Paired devices](paired-devices.md) covers Direct pairing over private TCP and optional self-hosted Relay. Abruption retired its hosted Relay on 2026-11-27. [Retirement notice](https://github.com/abruption/session-peer/issues/413)
 - [Relay authentication](relay-auth.md), [lifecycle and recovery](relay-lifecycle.md), [watchdog](relay-watchdog.md), and [edge policy](relay-edge-policy.md) are operator references.
 - [Deployment material](../deploy/README.md) separates reusable examples from the Abruption KR operational reference.
 
 ## Development and history
 
-- [v1.6.1 preparation (2026-11-17)](releases/v1.6.1.md) covers installer-verifier startup isolation and the Python 3.9 CI runner pin; publication remains gated.
+- [v1.6.1 preparation and publication](releases/v1.6.1.md) keeps the 2026-11-17 installer-verifier and Python 3.9 CI preparation separate from the later publication record.
 - [v1.6.0 preparation checkpoint (2026-11-15)](releases/v1.6.0.md) records bounded MCP pages and Claude permission-error reporting against then-published v1.5.0; preparation does not establish publication or operational rollout.
 
 - [v1.5.0 publication record](releases/v1.5.0.md#v150-publication-record) records the 2026-11-09 GitHub/PyPI publication, source and hashes; installation, services and independent skills remain separate.

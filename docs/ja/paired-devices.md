@@ -1,5 +1,7 @@
 # ペアリングされたデバイスとプライベートリレー (v1.0)
 
+Abruption のホスト型 Relay（`relay.abruption.dev`）は 2026-11-27 に終了しました。接続セッションの発行と接続のエンドポイントは `410 Gone` を返します。プライベート TCP で到達できる場合は Direct を使えます。Relay を自分で運用することもできます。[終了のお知らせ](https://github.com/abruption/session-peer/issues/413)
+
 ## 接続設定ガイド（明示的な選択）
 
 `session-peer setup` はインストールを変更せず、ローカル・SSH と Relay を案内します。
@@ -312,20 +314,26 @@ session-peer device routes --state ./client-state --peer RECEIVER_FINGERPRINT \
   --relay wss://relay.example.com/v1/connect
 ```
 
+ペアリング済みの場合は、受信側にプライベート TCP で到達できることを確認します。`device routes --direct` で保存済みの経路を更新し、`list --device-route direct` で対象を確認してください。受信端末の識別情報が変わった場合や失効した場合は、再ペアリングの手順に従ってください。
+
 ルートの変更によって新しいアイデンティティが承認されたり、失効したデバイスが復活したりすることはありません。制限された実稼働 Antigravity テストおよび残りのリリースゲートについては、[パブリックパイロットの証拠](relay-public-pilot-2026-09-17.md) を参照してください。
 
 <a id="公開relayへの初回接続"></a>
 
-## ホスト型Relayへの初回接続
+<a id="ホスト型relayへの初回接続"></a>
+
+## 自分で運用する認証付き Relay に接続する
+
+自分で運用する Relay の Control オリジンと WSS アドレスを使います。以下の `relay.example.com` は例示用です。
 
 Python 3.11+のmacOS/Linux(WindowsはWSL)と別途Relay extraが必要です。skill/pluginだけでは導入されません。新規pipx環境は `pipx install --python python3.11 'session-peer[relay]'` を使い、既存環境は元の管理者を維持してください。standaloneはlocal/SSH用のまま、Relay環境を別途選びます。両端で個別のprivate stateを使い、`FULL-UUID`を新しい操作UUIDに置き換えます。不確実な応答では同じUUIDを保持します。
 
 ```sh
 session-peer device init --state /private/device-state
-session-peer device login --state /private/device-state --server https://relay.abruption.dev
+session-peer device login --state /private/device-state --server https://relay.example.com
 session-peer device enroll --state /private/device-state --name laptop --operation-id FULL-UUID
 ```
 
-上記schemaのreceiver policyを作り、`session-peer` `device serve --state /private/device-state --policy /private/receiver-policy.json --relay wss://relay.abruption.dev/v1/connect --login --seconds 3600` を起動します。別terminalで `session-peer` `device invite --state /private/device-state --relay wss://relay.abruption.dev/v1/connect --out /private/invite.json` を実行し、招待を安全にclientへ渡します。login・enroll済みclientで10分以内に `session-peer` `device pair --state /private/client-state --invite /private/invite.json --route relay --login`、続いて `session-peer list --device RECEIVER-ID --device-state /private/client-state --device-route relay --relay-login --json` を実行します。receiverを動かし続けてください。enroll、pairing、native権限は別です。送信前はdry-run、queuedはACKではありません。自動install/login/retryはしません。一般403/404や `no_authenticated_route` からreceiver停止を断定しません。login の欠落・失効と明示的なデバイス未検出の証拠には個別のヒントを示し、不確実な送信は再送せず照合します。
+上記schemaのreceiver policyを作り、`session-peer` `device serve --state /private/device-state --policy /private/receiver-policy.json --relay wss://relay.example.com/v1/connect --login --seconds 3600` を起動します。別terminalで `session-peer` `device invite --state /private/device-state --relay wss://relay.example.com/v1/connect --out /private/invite.json` を実行し、招待を安全にclientへ渡します。login・enroll済みclientで10分以内に `session-peer` `device pair --state /private/client-state --invite /private/invite.json --route relay --login`、続いて `session-peer list --device RECEIVER-ID --device-state /private/client-state --device-route relay --relay-login --json` を実行します。receiverを動かし続けてください。enroll、pairing、native権限は別です。送信前はdry-run、queuedはACKではありません。自動install/login/retryはしません。一般403/404や `no_authenticated_route` からreceiver停止を断定しません。login の欠落・失効と明示的なデバイス未検出の証拠には個別のヒントを示し、不確実な送信は再送せず照合します。
 
 ペアリング済み受信側は、認証した TLS 証明書のフィンガープリントを引用本文の外に表示します。これはペアリングした機器の鍵を識別するもので、人物やネイティブエージェントのセッションを識別するものではありません。本文中の From や Reply-To の申告で置き換えることはできません。引用後の本文、フィンガープリント、警告は、ジャーナルへの受け入れやネイティブ配送の前に 32 KiB の上限に収まる必要があります。Reply-To の信頼性は周囲の枠の信頼性を超えません。第三者への経路はセッション所有者に確認してください。この枠は承認を回避せず、プロンプトインジェクションへの完全な防御も保証しません。

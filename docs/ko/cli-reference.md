@@ -105,6 +105,8 @@ Send의 메시지 입력 요구사항과 한도는 동일합니다. 평소처럼
 [페어링 기기 설정 및 운영 가이드](paired-devices.md)를 따르세요. 베타 버전은
 NAT 통과나 호스팅된 퍼블릭 서비스를 제공하지 않습니다.
 
+Direct를 사용하려면 수신기의 사설 TCP 포트에 접근할 수 있어야 합니다. Abruption의 호스팅 Relay는 2026-11-27에 종료했습니다. 직접 운영하는 Relay는 계속 사용할 수 있습니다. [종료 공지](https://github.com/abruption/session-peer/issues/413)
+
 Antigravity는 기존 TUI 내에서 명시적으로 시작된 브리지를 필요로 합니다.
 [Antigravity 설정](antigravity.md)을 참조하세요. 이는 옵트인 방식이며 Claude/Codex
 검색을 변경하지 않습니다. 활성 Antigravity 등록도 필터링되지 않은 목록에 표시됩니다.

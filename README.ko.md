@@ -33,7 +33,9 @@ session-peer 1.0.2를 사용해 실제 로컬 요청과 회신을 주고받았�
 ### 설치
 
 Python 3.9 이상이 필요합니다. 기본 로컬·SSH CLI는 외부 Python 패키지에 의존하지 않습니다.
-소스 버전: **1.6.2** (후보). 공개 런타임 **1.6.1** (2026-11-17에 안정판 [GitHub v1.6.1](https://github.com/abruption/session-peer/releases/tag/v1.6.1)으로 공개됐으며 [PyPI](https://pypi.org/project/session-peer/1.6.1/)에서도 제공됩니다). [공개 기록](docs/ko/releases/v1.6.1.md#v161-publication-record)에 소스 `23ec62bf0f25cbf1cdbf6ea04710d0854ad34e80`, 정확한 업로드 시각·해시와 별도 GitHub 설치 프로그램 자산을 남겼습니다. 날짜가 있는 [준비 점검](docs/ko/releases/v1.6.1.md)은 과거 기록으로 유지합니다. 이전 공개 런타임: **1.6.0** (2026-11-15에 안정판 [GitHub v1.6.0](https://github.com/abruption/session-peer/releases/tag/v1.6.0)으로 공개됐으며 [PyPI](https://pypi.org/project/session-peer/1.6.0/)에서도 제공됩니다). [공개 기록](docs/ko/releases/v1.6.0.md#v160-publication-record)에 소스 `8a45803748baf371dd31bb33db5db68373cd45f5`, 정확한 업로드 시각과 해시를 남겼습니다. 날짜가 있는 [준비 점검](docs/ko/releases/v1.6.0.md)은 과거 기록으로 유지합니다. [v1.5.0 공개 기록](docs/ko/releases/v1.5.0.md#v150-publication-record)은 소스 `9a0b23ff5e1f83e1cee4dc22bec7e3c0ca8063bb`와 [PyPI 버전 기록](https://pypi.org/project/session-peer/1.5.0/)을 보존하며 [v1.4.2](docs/ko/releases/v1.4.2.md#v142-publication-record), [v1.4.1](docs/ko/releases/v1.4.1.md), [v1.4.0](docs/ko/releases/v1.4.0.md#v140-publication-record)도 과거 근거로 남깁니다. 패키지 공개·전역 설치·Node Control 배포·독립 관리 스킬 갱신은 별개입니다.
+소스 버전: **1.6.2**. 안정판 **1.6.2**는 2026-11-19 [GitHub](https://github.com/abruption/session-peer/releases/tag/v1.6.2)와 [PyPI](https://pypi.org/project/session-peer/1.6.2/)에 공개했습니다.
+
+이전 공개 버전 **1.6.1** (2026-11-17에 안정판 [GitHub v1.6.1](https://github.com/abruption/session-peer/releases/tag/v1.6.1)으로 공개됐으며 [PyPI](https://pypi.org/project/session-peer/1.6.1/)에서도 제공됩니다). [공개 기록](docs/ko/releases/v1.6.1.md#v161-publication-record)에 소스 `23ec62bf0f25cbf1cdbf6ea04710d0854ad34e80`, 정확한 업로드 시각·해시와 별도 GitHub 설치 프로그램 자산을 남겼습니다. 날짜가 있는 [준비 점검](docs/ko/releases/v1.6.1.md)은 과거 기록으로 유지합니다. 그보다 앞선 공개 런타임: **1.6.0** (2026-11-15에 안정판 [GitHub v1.6.0](https://github.com/abruption/session-peer/releases/tag/v1.6.0)으로 공개됐으며 [PyPI](https://pypi.org/project/session-peer/1.6.0/)에서도 제공됩니다). [공개 기록](docs/ko/releases/v1.6.0.md#v160-publication-record)에 소스 `8a45803748baf371dd31bb33db5db68373cd45f5`, 정확한 업로드 시각과 해시를 남겼습니다. 날짜가 있는 [준비 점검](docs/ko/releases/v1.6.0.md)은 과거 기록으로 유지합니다. [v1.5.0 공개 기록](docs/ko/releases/v1.5.0.md#v150-publication-record)은 소스 `9a0b23ff5e1f83e1cee4dc22bec7e3c0ca8063bb`와 [PyPI 버전 기록](https://pypi.org/project/session-peer/1.5.0/)을 보존하며 [v1.4.2](docs/ko/releases/v1.4.2.md#v142-publication-record), [v1.4.1](docs/ko/releases/v1.4.1.md), [v1.4.0](docs/ko/releases/v1.4.0.md#v140-publication-record)도 과거 근거로 남깁니다. 패키지 공개·전역 설치·Node Control 배포·독립 관리 스킬 갱신은 별개입니다.
 
 공개된 v1.5.0의 선택 설치 항목인 [MCP extra](docs/ko/mcp.md#sdk1-sdk2-published-v150)는 `mcp>=1.30,<3,!=2.0.*,!=2.1.*,!=2.2.*`를 사용하며 안정판 SDK 1.x의 1.30 이상 또는 SDK 2.x의 2.3 이상을 받습니다. 이전 v1.4.2 extra는 `mcp>=1.30,<2`였습니다. MCP의 Python 3.10+ 요건과 외부 의존성이 없는 Python 3.9 기본 CLI는 유지됩니다. 기존 MCP 환경은 원래 패키지 관리자·인터프리터·extra 선택을 유지해 명시적으로 업그레이드해야 하며, 공개만으로 SDK가 갱신되거나 서버가 재시작되지는 않습니다.
 
@@ -102,10 +104,7 @@ pipx upgrade session-peer
 - [AI 도구를 활용한 설치](https://github.com/abruption/session-peer/blob/main/docs/ko/ai-assistant-guide.md) · [프로젝트 사이트](https://abruption.dev/projects/session-peer/) · [릴리스 노트](https://github.com/abruption/session-peer/releases)
 - [릴리스 절차](https://github.com/abruption/session-peer/blob/main/RELEASING.ko.md)
 
-[기기 페어링·암호화 Relay](https://github.com/abruption/session-peer/blob/main/docs/ko/paired-devices.md)는
-Unix·Python 3.11 이상·`session-peer[relay]`, 고정된 기기 신원, 명시적 수신 정책이 필요합니다.
-패키지를 공개해도 호스팅 서비스의 가용성이 보장되지는 않습니다.
-Relay 중계 서버는 애플리케이션 메시지 내용을 복호화할 수 없습니다.
+[Direct 페어링](https://github.com/abruption/session-peer/blob/main/docs/ko/paired-devices.md)에는 macOS 또는 Linux, Python 3.11 이상, `session-peer[relay]`가 필요합니다. 기기 신원을 고정하고 수신 정책을 명시합니다. Abruption의 호스팅 Relay는 2026-11-27에 종료했습니다. 암호화 Relay를 직접 운영하는 기능은 계속 제공됩니다. [종료 공지](https://github.com/abruption/session-peer/issues/413)
 [MCP(Model Context Protocol)·Codex 플러그인](https://github.com/abruption/session-peer/blob/main/docs/ko/mcp.md)은 Python 3.10 이상과
 `session-peer[mcp]`가 필요하며, MCP 전송에서 실제 wake를 요청하려면 `send`와 `wake` 권한이 모두 필요합니다.
 [Wake](https://github.com/abruption/session-peer/blob/main/docs/ko/wake.md)는 명시적으로 요청한 경우에만 실행됩니다.

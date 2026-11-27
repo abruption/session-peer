@@ -1,5 +1,7 @@
 # Cloudflare 背后的原生客户端 (RC 验证)
 
+本文记录了 2026-11-27 停用之前的托管试点。下方的主机名和边缘规则是当时的验证记录。自行部署时，请核对自己的主机名、路径和边缘策略。[停用公告](https://github.com/abruption/session-peer/issues/413)
+
 中继的浏览器 UI 和原生 API 具有不同的客户端。成功的浏览器 OAuth 回调或公共健康检查 GET 并不意味着设备代码 POST 或经过身份验证的 WebSocket 连接可以正常工作。
 
 在 KR 试点中，原生设备代码请求返回了 HTTP 403 / Cloudflare 1010 (`browser_signature_banned`)。相应的 Cloudflare 安全事件识别出 `source=bic`、`ruleId=bic`、`action=block`。这确定了该请求的原因是 Browser Integrity Check；并未确定 Bot Fight Mode 是其原因。

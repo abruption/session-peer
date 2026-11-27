@@ -33,7 +33,9 @@ session-peer使用各智能体自身的收件箱和队列；接收方智能体�
 ### 安装
 
 需要Python 3.9或更高版本。核心本地与SSH CLI没有第三方Python依赖。
-源码版本：**1.6.2**（候选）。已发布的运行时 **1.6.1**（2026-11-17作为稳定版[GitHub v1.6.1](https://github.com/abruption/session-peer/releases/tag/v1.6.1)发布，[PyPI](https://pypi.org/project/session-peer/1.6.1/)也已提供）。[发布记录](docs/zh-CN/releases/v1.6.1.md#v161-publication-record)列出源码`23ec62bf0f25cbf1cdbf6ea04710d0854ad34e80`、准确上传时间及哈希，包括单独的GitHub安装程序资产。有日期的[准备检查](docs/zh-CN/releases/v1.6.1.md)作为历史保留。此前已发布运行时：**1.6.0**（2026-11-15作为稳定版[GitHub v1.6.0](https://github.com/abruption/session-peer/releases/tag/v1.6.0)发布，[PyPI](https://pypi.org/project/session-peer/1.6.0/)也已提供）。[发布记录](docs/zh-CN/releases/v1.6.0.md#v160-publication-record)列出源码`8a45803748baf371dd31bb33db5db68373cd45f5`、准确上传时间及哈希。有日期的[准备检查](docs/zh-CN/releases/v1.6.0.md)作为历史保留。[v1.5.0发布记录](docs/zh-CN/releases/v1.5.0.md#v150-publication-record)保留源码`9a0b23ff5e1f83e1cee4dc22bec7e3c0ca8063bb`及其[PyPI版本记录](https://pypi.org/project/session-peer/1.5.0/)；[v1.4.2](docs/zh-CN/releases/v1.4.2.md#v142-publication-record)、[v1.4.1](docs/zh-CN/releases/v1.4.1.md)及[v1.4.0](docs/zh-CN/releases/v1.4.0.md#v140-publication-record)仍是历史证据。包发布、全局安装、Node Control部署及独立管理技能更新相互区分。
+源码版本：**1.6.2**。稳定版 **1.6.2** 已于 2026-11-19 在 [GitHub](https://github.com/abruption/session-peer/releases/tag/v1.6.2) 和 [PyPI](https://pypi.org/project/session-peer/1.6.2/) 发布。
+
+此前的公开版本 **1.6.1**（2026-11-17作为稳定版[GitHub v1.6.1](https://github.com/abruption/session-peer/releases/tag/v1.6.1)发布，[PyPI](https://pypi.org/project/session-peer/1.6.1/)也已提供）。[发布记录](docs/zh-CN/releases/v1.6.1.md#v161-publication-record)列出源码`23ec62bf0f25cbf1cdbf6ea04710d0854ad34e80`、准确上传时间及哈希，包括单独的GitHub安装程序资产。有日期的[准备检查](docs/zh-CN/releases/v1.6.1.md)作为历史保留。此前已发布运行时：**1.6.0**（2026-11-15作为稳定版[GitHub v1.6.0](https://github.com/abruption/session-peer/releases/tag/v1.6.0)发布，[PyPI](https://pypi.org/project/session-peer/1.6.0/)也已提供）。[发布记录](docs/zh-CN/releases/v1.6.0.md#v160-publication-record)列出源码`8a45803748baf371dd31bb33db5db68373cd45f5`、准确上传时间及哈希。有日期的[准备检查](docs/zh-CN/releases/v1.6.0.md)作为历史保留。[v1.5.0发布记录](docs/zh-CN/releases/v1.5.0.md#v150-publication-record)保留源码`9a0b23ff5e1f83e1cee4dc22bec7e3c0ca8063bb`及其[PyPI版本记录](https://pypi.org/project/session-peer/1.5.0/)；[v1.4.2](docs/zh-CN/releases/v1.4.2.md#v142-publication-record)、[v1.4.1](docs/zh-CN/releases/v1.4.1.md)及[v1.4.0](docs/zh-CN/releases/v1.4.0.md#v140-publication-record)仍是历史证据。包发布、全局安装、Node Control部署及独立管理技能更新相互区分。
 
 已发布v1.5.0的可选[MCP extra](docs/zh-CN/mcp.md#sdk1-sdk2-published-v150)使用`mcp>=1.30,<3,!=2.0.*,!=2.1.*,!=2.2.*`，接受稳定版SDK 1.x的1.30及以上版本或SDK 2.x的2.3及以上版本。此前v1.4.2 extra使用`mcp>=1.30,<2`。MCP的Python 3.10+要求及无外部依赖的Python 3.9基本CLI不变。既有MCP环境须保留原管理器、解释器及extra选择，显式升级；发布本身不会升级SDK或重启服务器。
 
@@ -102,10 +104,7 @@ pipx upgrade session-peer
 - [AI辅助安装](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/ai-assistant-guide.md) · [项目网站](https://abruption.dev/projects/session-peer/) · [发行说明](https://github.com/abruption/session-peer/releases)
 - [发布流程](https://github.com/abruption/session-peer/blob/main/RELEASING.zh-CN.md)
 
-[设备配对与加密Relay](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/paired-devices.md)需要
-Unix、Python 3.11以上和 `session-peer[relay]`，并要求固定设备身份及显式接收策略。
-软件包发布不保证托管服务可用性。
-盲转发Relay无法解密应用消息的内容。
+[Direct 配对](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/paired-devices.md)需要 macOS 或 Linux、Python 3.11 及以上版本和 `session-peer[relay]`。配对会固定设备身份，接收端需要明确的访问策略。Abruption 托管的 Relay 已于 2026-11-27 停用。仍可自行部署加密中继。[停用公告](https://github.com/abruption/session-peer/issues/413)
 [MCP与Codex插件](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/mcp.md)需要Python 3.10以上及
 `session-peer[mcp]`；MCP 发送中实际请求 wake 时，需要同时具备 `send` 和 `wake` 两项权限。
 [Wake](https://github.com/abruption/session-peer/blob/main/docs/zh-CN/wake.md)仅在显式请求时运行，

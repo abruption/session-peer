@@ -1,13 +1,10 @@
 # Private relay control and authentication (v1.0)
 
-Status: v1.0 operator reference for the implemented control-to-relay contract.
-The Abruption-hosted deployment is operated separately from package publication;
-this document does not promise its availability. This project adds no listeners,
-OAuth accounts, or Node dependency to a normal Python installation.
+Status: v1.0 operator reference for self-hosted Control and Relay. Abruption retired its hosted Relay at `relay.abruption.dev` on 2026-11-27. Use the hostname and OAuth callbacks of your own deployment. A normal Python installation adds no listeners, OAuth accounts, or Node dependency. [Retirement notice](https://github.com/abruption/session-peer/issues/413)
 
 ## Trust boundaries
 
-`control/` is an independent Node 22/24 React/Vite + BetterAuth **1.7.5** service.
+`control/` is an independent Node 22/24 React/Vite + Better Auth service.
 GitHub and Google are the only configured login providers. Missing provider
 credentials expose no fake login. Password login/signup are disabled. OAuth
 account IDs, not email addresses, are the authorization identity. Every control
@@ -83,8 +80,8 @@ admission credentials retain their separate short lifetime and device-state chec
 OAuth callbacks (operator app configuration required):
 
 ```
-https://relay.abruption.dev/api/auth/callback/github
-https://relay.abruption.dev/api/auth/callback/google
+https://relay.example.com/api/auth/callback/github
+https://relay.example.com/api/auth/callback/google
 ```
 
 ## Control API (v1.0)
@@ -255,7 +252,7 @@ provider account ID, internal user ID, device principal, certificate, token or
 secret. The React route is `/admin/metrics` and refreshes the aggregate view every
 30 seconds.
 
-`admin.abruption.dev` remains the existing Authelia administration portal. Its
+In the Abruption deployment, `admin.abruption.dev` is the Authelia administration portal. Its
 root and `/api/*` routes are already owned by the authentication console. Integrate
 session-peer with the exact `/session-peer` portal page and protect both that page
 and `/session-peer/api/metrics` with Authelia. The aggregate API is served on a
@@ -335,7 +332,7 @@ operator-owned OAuth apps. Example **non-secret** values:
 
 ```
 NODE_ENV=production
-SESSION_PEER_CONTROL_ORIGIN=https://relay.abruption.dev
+SESSION_PEER_CONTROL_ORIGIN=https://relay.example.com
 SESSION_PEER_ALLOWED_ACCOUNTS=[{"provider":"github","accountId":"REPLACE_WITH_NUMERIC_PROVIDER_ID"}]
 SESSION_PEER_PUBLIC_SIGNUP=true
 SESSION_PEER_CONTROL_DATA=/var/lib/session-peer-control/private

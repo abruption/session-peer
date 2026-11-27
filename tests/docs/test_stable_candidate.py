@@ -11,6 +11,10 @@ import session_peer
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def readme_publication_history(readme, source_prefix):
+    return readme[readme.index(source_prefix):].split("\n\n", 2)[1]
+
+
 class StableCandidate(unittest.TestCase):
     def test_v161_publication_preserves_preparation_and_records_separate_assets(self):
         profiles = [
@@ -55,10 +59,10 @@ class StableCandidate(unittest.TestCase):
             self.assertEqual(book_hash, hashlib.sha256(book[book.index(marker):].encode('utf-8')).hexdigest())
             readme = (ROOT / ('README' + suffix + '.md')).read_text(encoding='utf-8')
             self.assertEqual(hero_hash, hashlib.sha256(readme.split(prefix, 1)[0].encode('utf-8')).hexdigest())
-            notice = next(line for line in readme.splitlines() if line.startswith(prefix))
+            history = readme_publication_history(readme, prefix)
             for fact in ('**1.6.1**', 'releases/v1.6.1.md#v161-publication-record',
                          'https://pypi.org/project/session-peer/1.6.1/', 'releases/v1.6.0.md#v160-publication-record'):
-                self.assertIn(fact, notice)
+                self.assertIn(fact, history)
         publication = (ROOT / 'docs/releases/v1.6.1.md').read_text(encoding='utf-8').split(
             '<a id="v161-publication-record"></a>', 1)[1]
         for boundary in ('not a third PyPI file', 'exact UTC of that observation was not separately recorded',
@@ -134,10 +138,10 @@ class StableCandidate(unittest.TestCase):
                          "43681446312", "43681634997", "pypi", "abruption"):
                 self.assertIn(fact, book[:book.index(runbook_marker)])
             readme = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
-            current = next(line for line in readme.splitlines() if line.startswith(prefix))
+            history = readme_publication_history(readme, prefix)
             for fact in ("**1.6.0**", source, "releases/v1.6.0.md#v160-publication-record",
                          "https://pypi.org/project/session-peer/1.6.0/"):
-                self.assertIn(fact, current)
+                self.assertIn(fact, history)
             mcp = (ROOT / ("docs/" + locale + "mcp.md")).read_text(encoding="utf-8")
             self.assertIn("releases/v1.6.0.md#v160-publication-record", mcp.split("\n\n")[1])
             self.assertIn('<a id="bounded-session-listing-393"></a>', mcp)
@@ -182,10 +186,10 @@ class StableCandidate(unittest.TestCase):
             self.assertNotIn("releases/tag/v1.6.0", notes)
             self.assertNotIn("pypi.org/project/session-peer/1.6.0/", notes)
             readme = (ROOT / ("README" + suffix + ".md")).read_text(encoding="utf-8")
-            active = next(line for line in readme.splitlines() if line.startswith(prefix))
-            self.assertIn("**1.6.0**", active)
-            self.assertIn("2026-11-15", active)
-            self.assertIn("releases/v1.6.0.md", active)
+            history = readme_publication_history(readme, prefix)
+            self.assertIn("**1.6.0**", history)
+            self.assertIn("2026-11-15", history)
+            self.assertIn("releases/v1.6.0.md", history)
             runbook = (ROOT / ("RELEASING" + suffix + ".md")).read_text(encoding="utf-8")
             old_notes_hash, old_runbook_marker, old_runbook_hash = histories[locale]
             self.assertEqual(old_notes_hash, hashlib.sha256(

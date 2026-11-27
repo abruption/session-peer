@@ -62,6 +62,22 @@ def anchors(text):
 class DocumentationTranslationsTest(unittest.TestCase):
     maxDiff = None
 
+    def test_current_guides_do_not_offer_the_retired_relay_as_a_destination(self):
+        notice = "https://github.com/abruption/session-peer/issues/413"
+        for locale in ("", *LANGUAGES):
+            readme = ROOT / ("README.{}.md".format(locale) if locale else "README.md")
+            guide = ROOT / "docs" / locale
+            with self.subTest(locale=locale):
+                self.assertIn("https://pypi.org/project/session-peer/1.6.2/", readme.read_text(encoding="utf-8"))
+                for chapter in ("README.md", "paired-devices.md", "cli-reference.md",
+                                "ai-assistant-guide.md", "relay-auth.md"):
+                    text = (guide / chapter).read_text(encoding="utf-8")
+                    self.assertIn(notice, text)
+                    self.assertNotRegex(text, r"(?:https|wss)://relay\.abruption\.dev")
+                paired = (guide / "paired-devices.md").read_text(encoding="utf-8")
+                self.assertIn("wss://relay.example.com/v1/connect", paired)
+                self.assertIn("`list --device-route direct`", paired)
+
     def test_inline_code_spans_can_wrap_without_capturing_translated_prose(self):
         source = "`vault\nstatus` reported `integrity=ok`"
         translated = "`vault\nstatus`는 `integrity=ok`를 보고했습니다."

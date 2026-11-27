@@ -1,5 +1,7 @@
 # Cloudflare 뒤의 네이티브 클라이언트 (RC 검증)
 
+이 문서는 2026-11-27 종료 이전의 호스팅 파일럿 기록입니다. 아래 호스트와 예외 규칙은 당시 검증 근거입니다. 직접 운영할 때는 실제 호스트 이름, 경로, 엣지 정책을 검토하세요. [종료 공지](https://github.com/abruption/session-peer/issues/413)
+
 릴레이의 브라우저 UI와 네이티브 API는 서로 다른 클라이언트를 가집니다. 브라우저 OAuth 콜백이나 공개 헬스체크 GET이 성공했다고 해서 기기 코드(device-code) POST나 인증된 WebSocket 연결이 작동한다고 단정할 수 없습니다.
 
 KR 파일럿에서 네이티브 기기 코드 요청이 HTTP 403 / Cloudflare 1010(`browser_signature_banned`)을 반환했습니다. 해당 Cloudflare 보안 이벤트는 `source=bic`, `ruleId=bic`, `action=block`으로 확인되었습니다. 이는 해당 요청에 대해 Browser Integrity Check가 원인임을 식별한 것이며, Bot Fight Mode가 원인으로 식별된 것은 아닙니다.

@@ -1,5 +1,7 @@
 # Paired devices and private relay (v1.0)
 
+Abruption retired its hosted Relay at `relay.abruption.dev` on 2026-11-27. Its admission and connection endpoints return `410 Gone`. Use Direct over reachable private TCP or a relay you operate. [Retirement notice](https://github.com/abruption/session-peer/issues/413)
+
 ## Guided connection setup (explicit opt-in)
 
 `session-peer setup` explains local/SSH and Relay choices without installing
@@ -495,20 +497,26 @@ session-peer device routes --state ./client-state --peer RECEIVER_FINGERPRINT \
   --relay wss://relay.example.com/v1/connect
 ```
 
+If you already have a paired device, use an authenticated Direct route when the receiver is reachable over private TCP. Update its saved routes with `device routes --direct`, then verify the destination with `list --device-route direct`. If the receiving identity has changed or been revoked, follow the re-pairing procedure.
+
 A route change does not authorize a new identity or revive a revoked device.
 See [public pilot evidence](relay-public-pilot-2026-09-17.md) for the bounded live
 Antigravity test and remaining release gates.
 
-## First hosted Relay connection
+<a id="first-hosted-relay-connection"></a>
+
+## Connect to a self-hosted authenticated Relay
+
+Use the Control origin and WSS address provided by the operator of your own Relay. The examples below use `relay.example.com` as a placeholder.
 
 Relay requires Python 3.11+ on macOS/Linux (WSL for Windows) and the separately installed extra, not just a skill/plugin. For a new pipx installation, use `pipx install --python python3.11 'session-peer[relay]'`. Existing installations must use their original manager; standalone stays useful for local/SSH and needs a separately chosen Relay environment. Run the following on both endpoints with separate private state directories; replace `FULL-UUID` with a new operation UUID and retain it if the response is uncertain.
 
 ```sh
 session-peer device init --state /private/device-state
-session-peer device login --state /private/device-state --server https://relay.abruption.dev
+session-peer device login --state /private/device-state --server https://relay.example.com
 session-peer device enroll --state /private/device-state --name laptop --operation-id FULL-UUID
 ```
 
-Create a receiver policy using the schema above and start `session-peer` `device serve --state /private/device-state --policy /private/receiver-policy.json --relay wss://relay.abruption.dev/v1/connect --login --seconds 3600`. In another terminal create `device invite --state /private/device-state --relay wss://relay.abruption.dev/v1/connect --out /private/invite.json` (also prefixed by `session-peer`). Securely transfer that invitation to the logged-in/enrolled client, pair within ten minutes with `session-peer` `device pair --state /private/client-state --invite /private/invite.json --route relay --login`, then inspect using `session-peer list --device RECEIVER-ID --device-state /private/client-state --device-route relay --relay-login --json`. Keep the receiver running. Enrollment is not pairing, and pairing does not grant native target permissions. Use a dry-run before sending; queued is not an ACK. Guidance never installs, logs in or retries automatically. A generic 403/404 or `no_authenticated_route` does not prove the receiver is stopped. Missing/expired login and explicit device-not-found evidence receive separate hints; uncertain sends must be reconciled, not resent.
+Create a receiver policy using the schema above and start `session-peer` `device serve --state /private/device-state --policy /private/receiver-policy.json --relay wss://relay.example.com/v1/connect --login --seconds 3600`. In another terminal create `device invite --state /private/device-state --relay wss://relay.example.com/v1/connect --out /private/invite.json` (also prefixed by `session-peer`). Securely transfer that invitation to the logged-in/enrolled client, pair within ten minutes with `session-peer` `device pair --state /private/client-state --invite /private/invite.json --route relay --login`, then inspect using `session-peer list --device RECEIVER-ID --device-state /private/client-state --device-route relay --relay-login --json`. Keep the receiver running. Enrollment is not pairing, and pairing does not grant native target permissions. Use a dry-run before sending; queued is not an ACK. Guidance never installs, logs in or retries automatically. A generic 403/404 or `no_authenticated_route` does not prove the receiver is stopped. Missing/expired login and explicit device-not-found evidence receive separate hints; uncertain sends must be reconciled, not resent.
 
 The paired receiver adds the authenticated TLS certificate fingerprint outside the quoted message body. It identifies the paired device key, not a person or native agent session; a From or Reply-To claim inside the body cannot replace it. The final quoted body, fingerprint and warning must fit the 32 KiB limit before journal admission or native delivery. Reply-To is only as trustworthy as its surrounding frame: confirm third-party routes with the session owner. This framing does not bypass approvals or guarantee resistance to prompt injection.

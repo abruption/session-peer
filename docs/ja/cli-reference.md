@@ -105,6 +105,8 @@ Send の通常のメッセージ入力要件と上限は変わりません。従
 [ペアリング済みデバイスのセットアップおよび運用ガイド](paired-devices.md)に従ってください。
 ベータ版では NAT トラバーサルやホスト型のパブリックサービスは提供されません。
 
+Direct を使うには、受信側のプライベート TCP ポートに到達できる必要があります。Abruption のホスト型 Relay は 2026-11-27 に提供を終了しました。Relay は引き続き自分で運用できます。[終了のお知らせ](https://github.com/abruption/session-peer/issues/413)
+
 Antigravity には、既存の TUI 内で明示的に起動されたブリッジが必要です。
 [Antigravity のセットアップ](antigravity.md)を参照してください。これはオプトインであり、
 Claude/Codex の検出には影響しません。実行中の Antigravity 登録もフィルターなしの

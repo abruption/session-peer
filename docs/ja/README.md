@@ -17,13 +17,13 @@
 
 ## ペアデバイスと運用者
 
-- [ペアデバイス](paired-devices.md)は、直接またはホスト型のエンドツーエンド暗号化リレーを使うユーザー向け経路です。
+- [端末のペアリング](paired-devices.md)では、プライベート TCP での Direct ペアリングと自分で運用する Relay を説明します。Abruption のホスト型 Relay は 2026-11-27 に終了しました。[終了のお知らせ](https://github.com/abruption/session-peer/issues/413)
 - [リレー認証](relay-auth.md)、[ライフサイクルと復旧](relay-lifecycle.md)、[ウォッチドッグ](relay-watchdog.md)、[エッジポリシー](relay-edge-policy.md)は運用者向け資料です。
 - [デプロイ資料](../../deploy/README.md)は再利用可能な例とAbruption KRの運用参照を分離します。
 
 ## 開発と履歴
 
-- [v1.6.1準備（2026-11-17）](releases/v1.6.1.md)はインストーラー検証器の起動隔離とPython 3.9 CI runner固定を扱い、公開ゲートを維持します。
+- [v1.6.1 の準備と公開記録](releases/v1.6.1.md)では、2026-11-17 のインストーラー検証プロセスの起動分離と Python 3.9 CI ランナーの固定を、その後の公開記録と区別しています。
 - [v1.6.0準備確認（2026-11-15）](releases/v1.6.0.md)は当時公開済みv1.5.0に対する制限付きMCPページとClaude権限エラー報告を記録します。準備は公開や運用展開を意味しません。
 
 - [v1.5.0公開記録](releases/v1.5.0.md#v150-publication-record)は2026-11-09のGitHub・PyPI公開、ソース・ハッシュを記録します。インストール、サービス、独立スキルは別です。

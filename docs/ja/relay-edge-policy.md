@@ -1,5 +1,7 @@
 # Cloudflare 背後のネイティブクライアント (RC 検証)
 
+この文書は 2026-11-27 のサービス終了前に行ったホスト型サービスの試験記録です。以下のホスト名とエッジルールは当時の検証内容です。自分で配備する場合はホスト名、パス、エッジポリシーを個別に確認してください。[終了のお知らせ](https://github.com/abruption/session-peer/issues/413)
+
 リレーのブラウザ UI とネイティブ API には異なるクライアントが存在します。ブラウザの OAuth コールバックや公開ヘルスチェック GET が成功したとしても、デバイスコードの POST や認証済み WebSocket 接続が機能することの証明にはなりません。
 
 KR パイロットにおいて、ネイティブのデバイスコードリクエストが HTTP 403 / Cloudflare 1010 (`browser_signature_banned`) を返しました。対応する Cloudflare セキュリティイベントでは、`source=bic`、`ruleId=bic`、`action=block` が特定されました。これにより、そのリクエストに対して Browser Integrity Check が原因であることが特定され、Bot Fight Mode が原因ではないことが判明しました。

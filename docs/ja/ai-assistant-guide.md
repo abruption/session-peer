@@ -26,8 +26,7 @@ At the end report: outcome, files or systems changed, commands and tests run, me
 - 同じマシンまたはSSHホスト上のセッションには、基本CLIだけをインストールします。
 - 対象エージェントが必要とする場合だけ、追加アダプターを設定します。
 - MCPクライアントがsession-peerツールを必要とする場合だけ、MCPを追加します。
-- SSHが適さず、運用者が追加の識別・復旧・サービス作業を受け入れる場合だけ、
-  ペアデバイスまたは暗号化リレーを使います。
+- 受信側へプライベート TCP で到達できる場合は Direct ペアリングを使います。Abruption のホスト型 Relay は 2026-11-27 に終了しました。Relay を自分で運用する場合は、運用担当者の承認と設定が必要です。[終了のお知らせ](https://github.com/abruption/session-peer/issues/413)
 
 リポジトリにリレーコードがあるという理由だけでリレーを配備しないでください。
 通常の利用では、依存関係が少なく単純なローカル・SSH経路を既定にします。

@@ -1,5 +1,7 @@
 # 페어링된 기기 및 비공개 릴레이 (v1.0)
 
+Abruption의 호스팅 Relay(`relay.abruption.dev`)는 2026-11-27에 종료했습니다. 접속 세션 발급과 연결 요청은 `410 Gone`을 반환합니다. 사설 TCP로 도달할 수 있으면 Direct를 사용하세요. 직접 운영하는 Relay도 사용할 수 있습니다. [종료 공지](https://github.com/abruption/session-peer/issues/413)
+
 ## 연결 설정 안내(명시적 선택)
 
 `session-peer setup`은 설치를 변경하지 않고 로컬·SSH와 Relay 사용 방식을 안내합니다.
@@ -312,20 +314,26 @@ session-peer device routes --state ./client-state --peer RECEIVER_FINGERPRINT \
   --relay wss://relay.example.com/v1/connect
 ```
 
+이미 페어링했다면 수신기에 사설 TCP로 도달할 수 있는지 확인하세요. `device routes --direct`로 저장된 경로를 갱신하고 `list --device-route direct`로 대상을 확인하세요. 수신 기기의 신원이 바뀌었거나 폐기됐다면 재페어링 절차를 따르세요.
+
 경로 변경이 새 신원을 승인하거나 철회된 기기를 되살리지는 않습니다. 제한된 실시간 Antigravity 테스트 및 남은 릴리스 게이트에 대해서는 [공개 파일럿 근거](relay-public-pilot-2026-09-17.md)를 참조하십시오.
 
 <a id="공개-relay-첫-연결"></a>
 
-## 호스팅 Relay 첫 연결
+<a id="호스팅-relay-첫-연결"></a>
+
+## 직접 운영하는 인증 Relay에 연결
+
+직접 운영하는 Relay의 Control 주소와 WSS 주소를 사용하세요. 아래 예제의 `relay.example.com`은 예시 주소입니다.
 
 Python 3.11+ macOS/Linux(Windows는 WSL)와 별도 Relay extra가 필요하며 스킬·플러그인만으로 설치되지 않습니다. 신규 pipx 설치는 `pipx install --python python3.11 'session-peer[relay]'`를 사용합니다. 기존 설치는 원래 관리자를 유지하고 standalone은 로컬·SSH용으로 보존한 채 별도 Relay 환경을 선택합니다. 양쪽에서 각각의 비공개 state로 다음을 실행하고 `FULL-UUID`는 새 작업 UUID로 바꿉니다. 응답이 불확실하면 해당 UUID를 보존합니다.
 
 ```sh
 session-peer device init --state /private/device-state
-session-peer device login --state /private/device-state --server https://relay.abruption.dev
+session-peer device login --state /private/device-state --server https://relay.example.com
 session-peer device enroll --state /private/device-state --name laptop --operation-id FULL-UUID
 ```
 
-위 스키마로 수신 정책을 만든 뒤 `session-peer` `device serve --state /private/device-state --policy /private/receiver-policy.json --relay wss://relay.abruption.dev/v1/connect --login --seconds 3600`를 실행합니다. 다른 터미널에서 `session-peer` `device invite --state /private/device-state --relay wss://relay.abruption.dev/v1/connect --out /private/invite.json`로 초대장을 만들고 안전하게 클라이언트로 전달합니다. 로그인·등록된 클라이언트에서 10분 안에 `session-peer` `device pair --state /private/client-state --invite /private/invite.json --route relay --login`를 실행한 뒤 `session-peer list --device RECEIVER-ID --device-state /private/client-state --device-route relay --relay-login --json`로 확인합니다. 수신기는 계속 실행해야 합니다. 등록·페어링·native 권한은 별개이며 전송 전 dry-run을 사용합니다. queued는 ACK가 아닙니다. 안내는 자동 설치·로그인·재시도를 하지 않습니다. 일반 403/404나 `no_authenticated_route`만으로 수신기 종료를 단정하지 않습니다. 로그인 누락·만료와 명시적인 기기 미발견 증거에는 각각 별도의 안내를 제공하며, 불확실한 전송은 재전송하지 않고 대조합니다.
+위 스키마로 수신 정책을 만든 뒤 `session-peer` `device serve --state /private/device-state --policy /private/receiver-policy.json --relay wss://relay.example.com/v1/connect --login --seconds 3600`를 실행합니다. 다른 터미널에서 `session-peer` `device invite --state /private/device-state --relay wss://relay.example.com/v1/connect --out /private/invite.json`로 초대장을 만들고 안전하게 클라이언트로 전달합니다. 로그인·등록된 클라이언트에서 10분 안에 `session-peer` `device pair --state /private/client-state --invite /private/invite.json --route relay --login`를 실행한 뒤 `session-peer list --device RECEIVER-ID --device-state /private/client-state --device-route relay --relay-login --json`로 확인합니다. 수신기는 계속 실행해야 합니다. 등록·페어링·native 권한은 별개이며 전송 전 dry-run을 사용합니다. queued는 ACK가 아닙니다. 안내는 자동 설치·로그인·재시도를 하지 않습니다. 일반 403/404나 `no_authenticated_route`만으로 수신기 종료를 단정하지 않습니다. 로그인 누락·만료와 명시적인 기기 미발견 증거에는 각각 별도의 안내를 제공하며, 불확실한 전송은 재전송하지 않고 대조합니다.
 
 페어링된 수신기는 인증한 TLS 인증서의 지문을 인용된 본문 밖에 표시합니다. 이는 페어링된 기기 키를 식별할 뿐 사람이나 네이티브 에이전트 세션을 식별하지 않습니다. 본문 속 From이나 Reply-To 주장으로 이 지문을 대체할 수 없습니다. 최종 인용 본문과 지문·경고는 저널에 요청을 수용하거나 네이티브 전달을 수행하기 전에 32 KiB 한도에 들어가야 합니다. Reply-To의 신뢰 수준은 주변 표시의 신뢰 수준을 넘지 않습니다. 제삼자 경로는 세션 소유자에게 확인하십시오. 이 표시는 승인을 우회하지 않으며 프롬프트 주입에 대한 완전한 방어를 보장하지 않습니다.
