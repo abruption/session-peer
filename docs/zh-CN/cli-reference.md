@@ -80,6 +80,8 @@ Send 的消息输入要求和限制保持不变。按原有方式使用 `--messa
 
 这些功能自 PyPI v0.9.0 起提供。Antigravity 仍处于实验阶段，配对传输仍处于 Beta 阶段；仍需进行操作验证。使用 `pipx install 'session-peer[relay]'` 安装额外组件。`[relay]` 额外组件（Unix、Python 3.11+）支持通过直接连接或自建 WSS 中继进行经过身份验证的配对设备传递。配对会固定设备身份；单独的操作员策略允许特定的代理目标和操作。盲中继无法解密应用消息。在公开端点之前，请遵循[配对设备设置与操作指南](paired-devices.md)。该测试版不提供 NAT 穿透或托管公共服务。
 
+使用 Direct 时，必须能访问接收端的私有 TCP 端口。Abruption 托管的 Relay 已于 2026-11-27 停用。仍可自行部署中继。[停用公告](https://github.com/abruption/session-peer/issues/413)
+
 Antigravity 需要在现有 TUI 内显式启动桥接器；参见 [Antigravity 设置](antigravity.md)。它是可选的，不会改变 Claude/Codex 发现机制；活跃的 Antigravity 注册项也会出现在未过滤的列表中。常规的本地和 SSH 命令保留其仅依赖标准库的安装方式。参见 [v0.9 发布说明](releases/v0.9.0.md)。
 
 ### 消息输入与结果输出

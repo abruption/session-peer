@@ -1,5 +1,7 @@
 # v0.9.0 integration work (active)
 
+This page records the v0.9.0 integration plan at the time it was written. Use the [current paired-device guide](paired-devices.md) for setup.
+
 Goal: integrate real-agent paired direct/E2EE relay delivery, validate installation
 and operation, prepare v0.9.0 release PR, then after merge publish tag/PyPI and
 perform operational validation before v1.0.0-rc.

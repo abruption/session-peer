@@ -33,7 +33,9 @@ session-peer 1.0.2による実際のローカル通信です。CodexがClaude Co
 ### インストール
 
 Python 3.9以上が必要です。基本のローカル・SSH CLIに外部Python依存パッケージはありません。
-ソースバージョン：**1.6.2**（候補）。公開済みランタイム **1.6.1**（2026-11-17に安定版[GitHub v1.6.1](https://github.com/abruption/session-peer/releases/tag/v1.6.1)として公開され、[PyPI](https://pypi.org/project/session-peer/1.6.1/)でも提供されています）。[公開記録](docs/ja/releases/v1.6.1.md#v161-publication-record)にソース`23ec62bf0f25cbf1cdbf6ea04710d0854ad34e80`、正確なアップロード時刻・ハッシュ、別のGitHubインストーラー資産を記録しました。日付付き[準備確認](docs/ja/releases/v1.6.1.md)は履歴として維持します。以前の公開済みランタイム：**1.6.0**（2026-11-15に安定版[GitHub v1.6.0](https://github.com/abruption/session-peer/releases/tag/v1.6.0)として公開され、[PyPI](https://pypi.org/project/session-peer/1.6.0/)でも提供されています）。[公開記録](docs/ja/releases/v1.6.0.md#v160-publication-record)にソース`8a45803748baf371dd31bb33db5db68373cd45f5`、正確なアップロード時刻、ハッシュを記載しています。日付付き[準備確認](docs/ja/releases/v1.6.0.md)は履歴として保持します。[v1.5.0公開記録](docs/ja/releases/v1.5.0.md#v150-publication-record)にはソース`9a0b23ff5e1f83e1cee4dc22bec7e3c0ca8063bb`と[PyPIバージョン記録](https://pypi.org/project/session-peer/1.5.0/)を保持し、[v1.4.2](docs/ja/releases/v1.4.2.md#v142-publication-record)、[v1.4.1](docs/ja/releases/v1.4.1.md)、[v1.4.0](docs/ja/releases/v1.4.0.md#v140-publication-record)も過去の証拠として残します。パッケージ公開、グローバルインストール、Node Control配備、独立管理スキルの更新は別です。
+ソースバージョン：**1.6.2**。安定版 **1.6.2** は 2026-11-19 に [GitHub](https://github.com/abruption/session-peer/releases/tag/v1.6.2) と [PyPI](https://pypi.org/project/session-peer/1.6.2/) で公開しました。
+
+以前の公開版 **1.6.1**（2026-11-17に安定版[GitHub v1.6.1](https://github.com/abruption/session-peer/releases/tag/v1.6.1)として公開され、[PyPI](https://pypi.org/project/session-peer/1.6.1/)でも提供されています）。[公開記録](docs/ja/releases/v1.6.1.md#v161-publication-record)にソース`23ec62bf0f25cbf1cdbf6ea04710d0854ad34e80`、正確なアップロード時刻・ハッシュ、別のGitHubインストーラー資産を記録しました。日付付き[準備確認](docs/ja/releases/v1.6.1.md)は履歴として維持します。さらに前の公開版：**1.6.0**（2026-11-15に安定版[GitHub v1.6.0](https://github.com/abruption/session-peer/releases/tag/v1.6.0)として公開され、[PyPI](https://pypi.org/project/session-peer/1.6.0/)でも提供されています）。[公開記録](docs/ja/releases/v1.6.0.md#v160-publication-record)にソース`8a45803748baf371dd31bb33db5db68373cd45f5`、正確なアップロード時刻、ハッシュを記載しています。日付付き[準備確認](docs/ja/releases/v1.6.0.md)は履歴として保持します。[v1.5.0公開記録](docs/ja/releases/v1.5.0.md#v150-publication-record)にはソース`9a0b23ff5e1f83e1cee4dc22bec7e3c0ca8063bb`と[PyPIバージョン記録](https://pypi.org/project/session-peer/1.5.0/)を保持し、[v1.4.2](docs/ja/releases/v1.4.2.md#v142-publication-record)、[v1.4.1](docs/ja/releases/v1.4.1.md)、[v1.4.0](docs/ja/releases/v1.4.0.md#v140-publication-record)も過去の証拠として残します。パッケージ公開、グローバルインストール、Node Control配備、独立管理スキルの更新は別です。
 
 公開済みv1.5.0の任意[MCPエクストラ](docs/ja/mcp.md#sdk1-sdk2-published-v150)は`mcp>=1.30,<3,!=2.0.*,!=2.1.*,!=2.2.*`を使い、安定版SDK 1.xの1.30以降またはSDK 2.xの2.3以降を受け入れます。以前のv1.4.2エクストラは`mcp>=1.30,<2`でした。MCPのPython 3.10+要件と外部依存のないPython 3.9基本CLIは維持します。既存MCP環境は元の管理ツール・インタープリター・エクストラを保って明示的に更新する必要があり、公開だけでSDK更新やサーバー再起動は行われません。
 
@@ -102,10 +104,7 @@ pipx upgrade session-peer
 - [AIを利用したセットアップ](https://github.com/abruption/session-peer/blob/main/docs/ja/ai-assistant-guide.md) · [プロジェクトサイト](https://abruption.dev/projects/session-peer/) · [リリースノート](https://github.com/abruption/session-peer/releases)
 - [リリース手順](https://github.com/abruption/session-peer/blob/main/RELEASING.ja.md)
 
-[デバイスのペアリング・暗号化Relay](https://github.com/abruption/session-peer/blob/main/docs/ja/paired-devices.md)には
-Unix、Python 3.11以上、`session-peer[relay]`、固定した識別情報と明示的な受信ポリシーが必要です。
-パッケージの公開はホスト型サービスの可用性を保証しません。
-ブラインドRelayはアプリケーションのメッセージ内容を復号できません。
+[Direct ペアリング](https://github.com/abruption/session-peer/blob/main/docs/ja/paired-devices.md)には、macOS または Linux、Python 3.11 以上、`session-peer[relay]` が必要です。端末の識別情報を固定し、受信ポリシーを明示します。Abruption のホスト型 Relay は 2026-11-27 に終了しました。暗号化 Relay は引き続き自分で運用できます。[終了のお知らせ](https://github.com/abruption/session-peer/issues/413)
 [MCP・Codexプラグイン](https://github.com/abruption/session-peer/blob/main/docs/ja/mcp.md)にはPython 3.10以上と
 `session-peer[mcp]` が必要で、MCP の送信で実際に wake を要求するには `send` と `wake` の両方の権限（capability）が必要です。
 [Wake](https://github.com/abruption/session-peer/blob/main/docs/ja/wake.md)は明示的に依頼した場合だけ実行し、

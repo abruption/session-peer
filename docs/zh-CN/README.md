@@ -16,13 +16,13 @@
 
 ## 配对设备与运维人员
 
-- [配对设备](paired-devices.md)是使用直连或托管端到端加密中继的用户路径。
+- [设备配对](paired-devices.md)介绍通过私有 TCP 进行 Direct 配对，也说明如何自行部署中继。Abruption 托管的 Relay 已于 2026-11-27 停用。[停用公告](https://github.com/abruption/session-peer/issues/413)
 - [中继认证](relay-auth.md)、[生命周期与恢复](relay-lifecycle.md)、[看门狗](relay-watchdog.md)和[边缘策略](relay-edge-policy.md)是运维参考。
 - [部署资料](../../deploy/README.md)区分可复用示例和Abruption KR运维参考。
 
 ## 开发与历史
 
-- [v1.6.1准备（2026-11-17）](releases/v1.6.1.md)涵盖安装验证器启动隔离与Python 3.9 CI runner固定，发布关卡仍须满足。
+- [v1.6.1 准备和发布记录](releases/v1.6.1.md)分别记录 2026-11-17 的安装验证器启动隔离、Python 3.9 CI 运行环境固定，以及后续发布。
 - [v1.6.0准备检查（2026-11-15）](releases/v1.6.0.md)记录以当时已发布v1.5.0为基准的有界MCP分页及Claude权限错误报告；准备不证明发布或运维推出。
 
 - [v1.5.0发布记录](releases/v1.5.0.md#v150-publication-record)记录2026-11-09 GitHub／PyPI发布、源码与哈希；安装、服务和独立技能相互区分。

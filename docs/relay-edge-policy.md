@@ -1,5 +1,7 @@
 # Native clients behind Cloudflare (RC validation)
 
+This document records the hosted pilot before its retirement on 2026-11-27. The host and edge rule below are historical evidence. For a private deployment, review your own hostname, paths and edge policy. [Retirement notice](https://github.com/abruption/session-peer/issues/413)
+
 The relay's browser UI and native API have different clients. A successful
 browser OAuth callback or public health GET does not establish that device-code
 POSTs or authenticated WebSocket connections work.

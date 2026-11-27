@@ -26,8 +26,7 @@ At the end report: outcome, files or systems changed, commands and tests run, me
 - For sessions on the same machine or an SSH host, install only the core CLI.
 - Configure an optional adapter only when the target agent requires it.
 - Add MCP only when an MCP client needs session-peer tools.
-- Use paired devices or the encrypted relay only when SSH is unsuitable and an
-  operator accepts the additional identity, recovery, and service work.
+- Use Direct pairing only when the receiver is reachable over private TCP. Abruption retired its hosted Relay on 2026-11-27. A self-hosted relay requires separate operator approval and setup. [Retirement notice](https://github.com/abruption/session-peer/issues/413)
 
 Do not deploy a relay merely because the repository contains relay code. The
 core local and SSH workflow is simpler, has fewer dependencies, and should stay

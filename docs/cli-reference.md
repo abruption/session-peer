@@ -107,6 +107,8 @@ operations. The blind relay cannot decrypt application messages. Follow the
 [paired-device setup and operations guide](paired-devices.md) before exposing
 an endpoint. The beta does not provide NAT traversal or a hosted public service.
 
+Direct requires a reachable private TCP port. Abruption retired its hosted Relay on 2026-11-27. The optional self-hosted Relay remains available. [Retirement notice](https://github.com/abruption/session-peer/issues/413)
+
 Antigravity requires an explicitly started bridge inside the existing TUI; see
 [Antigravity setup](antigravity.md). It is opt-in and does not change
 Claude/Codex discovery; live Antigravity registrations also appear in unfiltered

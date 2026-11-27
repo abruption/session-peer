@@ -1,12 +1,10 @@
 # 프라이빗 릴레이 제어 및 인증 (v1.0)
 
-상태: 구현된 control-to-relay 계약의 v1.0 운영자 참고 문서입니다.
-Abruption 호스팅 배포는 패키지 발행과 별도로 운영되며, 이 문서는 서비스 가용성을 보장하지 않습니다.
-일반적인 Python 설치 환경에는 리스너, OAuth 계정 또는 Node 의존성을 추가하지 않습니다.
+직접 운영하는 Control과 Relay의 v1.0 운영자 참고 문서입니다. Abruption의 호스팅 Relay(`relay.abruption.dev`)는 2026-11-27에 종료했습니다. 배포 시 운영자가 관리하는 호스트 이름과 OAuth 콜백을 사용하세요. 일반 Python 설치에는 리스너, OAuth 계정, Node 의존성이 추가되지 않습니다. [종료 공지](https://github.com/abruption/session-peer/issues/413)
 
 ## 신뢰 경계
 
-`control/`는 독립적인 Node 22/24 React/Vite + BetterAuth **1.7.5** 서비스입니다.
+`control/`는 독립적인 Node 22/24 React/Vite + Better Auth 서비스입니다.
 GitHub와 Google만이 구성된 유일한 로그인 제공자입니다. 제공자 자격 증명이
 누락되어도 가짜 로그인이 노출되지 않습니다. 비밀번호 로그인/가입은 비활성화되어 있습니다. 이메일 주소가 아닌
 OAuth 계정 ID가 권한 부여 신원입니다. 모든 제어
@@ -75,8 +73,8 @@ principal에 암호학적으로 바인딩되지 않습니다. 토큰을 등록�
 OAuth 콜백 (운영자 앱 구성 필요):
 
 ```
-https://relay.abruption.dev/api/auth/callback/github
-https://relay.abruption.dev/api/auth/callback/google
+https://relay.example.com/api/auth/callback/github
+https://relay.example.com/api/auth/callback/google
 ```
 
 <a id="최종-control-api-미출시-후보"></a>
@@ -247,7 +245,7 @@ OAuth 로그인/등록은 엔드포인트 E2EE 페어링/PIN 정책을 대체하
 비밀 정보는 절대 반환하지 않습니다. React 경로는 `/admin/metrics`이며 30초마다
 집계 뷰를 새로고침합니다.
 
-`admin.abruption.dev`는 기존 Authelia 관리 포털로 유지합니다. 루트와
+Abruption 배포에서는 `admin.abruption.dev`를 Authelia 관리 포털로 사용합니다. 루트와
 `/api/*` 경로는 이미 인증 콘솔이 소유합니다. session-peer를 정확한 `/session-peer` 포털 페이지와 통합하고 해당 페이지와 `/session-peer/api/metrics`를 모두 Authelia로 보호하십시오.
 집계 API는 별도의 `127.0.0.1:3771` 리스너에서 제공하며 공개 릴레이
 호스트로 라우팅해서는 안 됩니다. 이 방식은 Authelia를 유일한 브라우저
@@ -325,7 +323,7 @@ npm run build
 
 ```
 NODE_ENV=production
-SESSION_PEER_CONTROL_ORIGIN=https://relay.abruption.dev
+SESSION_PEER_CONTROL_ORIGIN=https://relay.example.com
 SESSION_PEER_ALLOWED_ACCOUNTS=[{"provider":"github","accountId":"REPLACE_WITH_NUMERIC_PROVIDER_ID"}]
 SESSION_PEER_PUBLIC_SIGNUP=true
 SESSION_PEER_CONTROL_DATA=/var/lib/session-peer-control/private

@@ -26,8 +26,7 @@ At the end report: outcome, files or systems changed, commands and tests run, me
 - 같은 장비나 SSH 호스트의 세션에는 core CLI만 설치하세요.
 - 대상 에이전트에 필요한 경우에만 선택 어댑터를 설정하세요.
 - MCP 클라이언트가 session-peer 도구를 사용해야 할 때만 MCP를 추가하세요.
-- SSH를 사용할 수 없고 운영자가 추가 신원·복구·서비스 작업을 수용한
-  경우에만 paired device 또는 암호화 릴레이를 사용하세요.
+- 수신기에 사설 TCP로 접근할 수 있으면 Direct 페어링을 사용하세요. Abruption의 호스팅 Relay는 2026-11-27에 종료했습니다. 직접 Relay를 운영하려면 운영자의 별도 승인과 설정이 필요합니다. [종료 공지](https://github.com/abruption/session-peer/issues/413)
 
 저장소에 릴레이 코드가 있다는 이유만으로 릴레이를 배포하면 안 됩니다.
 일반적인 사용에는 의존성이 적고 단순한 로컬·SSH 흐름을 기본값으로

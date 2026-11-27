@@ -17,13 +17,13 @@
 
 ## 페어링 기기와 운영자
 
-- [페어링 기기](paired-devices.md)는 직접 또는 호스팅된 종단 간 암호화 릴레이를 사용하는 사용자 경로입니다.
+- [기기 페어링](paired-devices.md)에서는 사설 TCP를 통한 Direct 페어링과 직접 운영하는 Relay를 안내합니다. Abruption의 호스팅 Relay는 2026-11-27에 종료했습니다. [종료 공지](https://github.com/abruption/session-peer/issues/413)
 - [릴레이 인증](relay-auth.md), [수명주기와 복구](relay-lifecycle.md), [와치독](relay-watchdog.md), [엣지 정책](relay-edge-policy.md)은 운영자 참고 문서입니다.
 - [배포 자료](../../deploy/README.md)는 재사용 예제와 Abruption KR 운영 참조를 구분합니다.
 
 ## 개발과 이력
 
-- [v1.6.1 준비 (2026-11-17)](releases/v1.6.1.md)는 설치 검증기 시작 격리와 Python 3.9 CI runner 고정을 다루며 공개 관문은 유지됩니다.
+- [v1.6.1 준비 및 공개 기록](releases/v1.6.1.md)은 2026-11-17 설치 검증기 시작 격리와 Python 3.9 CI 러너 고정 작업을 이후 공개 기록과 구분합니다.
 - [v1.6.0 준비 점검 (2026-11-15)](releases/v1.6.0.md)은 당시 공개된 v1.5.0을 기준으로 제한된 MCP 페이지와 Claude 권한 오류 보고를 기록하며, 준비가 공개·운영 전파를 뜻하지는 않습니다.
 
 - [v1.5.0 공개 기록](releases/v1.5.0.md#v150-publication-record)은 2026-11-09 GitHub·PyPI 공개와 소스·해시를 남깁니다. 설치·서비스·독립 스킬은 별개입니다.

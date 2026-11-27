@@ -1,5 +1,7 @@
 # 配对设备与私有中继 (v1.0)
 
+Abruption 托管的 Relay（`relay.abruption.dev`）已于 2026-11-27 停止服务。接入会话签发和连接端点返回 `410 Gone`。设备之间若能通过私有 TCP 连接，可使用 Direct，也可自行部署中继。[停用公告](https://github.com/abruption/session-peer/issues/413)
+
 ## 连接设置向导（明确选择）
 
 `session-peer setup` 不改变安装，只说明本地、SSH 与 Relay 选项。本地、SSH 使用标准
@@ -370,21 +372,27 @@ session-peer device routes --state ./client-state --peer RECEIVER_FINGERPRINT \
   --relay wss://relay.example.com/v1/connect
 ```
 
+设备已配对时，请先确认可通过私有 TCP 访问接收端。用 `device routes --direct` 更新保存的路由，再用 `list --device-route direct` 核对目标。如果接收设备的身份已变更或撤销，请按流程重新配对。
+
 路由变更不会授权新身份或恢复已被吊销的设备。有关有界实时 Antigravity
 测试和剩余发布关卡，请参阅[公开试点证据](relay-public-pilot-2026-09-17.md)。
 
 <a id="首次连接公共relay"></a>
 
-## 首次连接托管Relay
+<a id="首次连接托管relay"></a>
+
+## 连接自行部署的认证中继
+
+请使用自行部署的 Relay 的 Control 源地址和 WSS 地址。以下 `relay.example.com` 是占位域名。
 
 需要Python 3.11+的macOS/Linux(Windows使用WSL)和另装的Relay extra，skill/plugin本身不会安装。新pipx环境使用 `pipx install --python python3.11 'session-peer[relay]'`，已有环境保留原管理器；standalone继续用于local/SSH，另选Relay环境。两端分别使用私有state执行以下命令，将 `FULL-UUID` 替换为新的操作UUID，响应不确定时保留此UUID。
 
 ```sh
 session-peer device init --state /private/device-state
-session-peer device login --state /private/device-state --server https://relay.abruption.dev
+session-peer device login --state /private/device-state --server https://relay.example.com
 session-peer device enroll --state /private/device-state --name laptop --operation-id FULL-UUID
 ```
 
-按上方schema创建receiver policy，启动 `session-peer` `device serve --state /private/device-state --policy /private/receiver-policy.json --relay wss://relay.abruption.dev/v1/connect --login --seconds 3600`。在另一终端运行 `session-peer` `device invite --state /private/device-state --relay wss://relay.abruption.dev/v1/connect --out /private/invite.json`，安全转交邀请。已登录并注册的client须在10分钟内运行 `session-peer` `device pair --state /private/client-state --invite /private/invite.json --route relay --login`，然后 `session-peer list --device RECEIVER-ID --device-state /private/client-state --device-route relay --relay-login --json`。保持receiver运行。注册、配对和native权限互不等同。发送前先dry-run；queued不是ACK。引导不会自动安装、登录或重试。一般403/404或 `no_authenticated_route` 不能证明receiver已停止。登录缺失/过期与明确的设备未找到证据会获得不同的提示，不确定的发送须核对而非重发。
+按上方schema创建receiver policy，启动 `session-peer` `device serve --state /private/device-state --policy /private/receiver-policy.json --relay wss://relay.example.com/v1/connect --login --seconds 3600`。在另一终端运行 `session-peer` `device invite --state /private/device-state --relay wss://relay.example.com/v1/connect --out /private/invite.json`，安全转交邀请。已登录并注册的client须在10分钟内运行 `session-peer` `device pair --state /private/client-state --invite /private/invite.json --route relay --login`，然后 `session-peer list --device RECEIVER-ID --device-state /private/client-state --device-route relay --relay-login --json`。保持receiver运行。注册、配对和native权限互不等同。发送前先dry-run；queued不是ACK。引导不会自动安装、登录或重试。一般403/404或 `no_authenticated_route` 不能证明receiver已停止。登录缺失/过期与明确的设备未找到证据会获得不同的提示，不确定的发送须核对而非重发。
 
 配对接收端会在引用正文之外显示已认证的 TLS 证书指纹。它识别的是配对设备的密钥，而不是人员或原生代理会话；正文中的 From 或 Reply-To 声明不能替换它。最终的引用正文、指纹和警告必须在将请求纳入处理日志或进行原生投递之前满足 32 KiB 限制。Reply-To 的可信度不会超过其外围标记的可信度；第三方路由应由会话所有者确认。此机制不绕过审批，也不保证完全抵御提示注入。
